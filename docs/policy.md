@@ -47,10 +47,12 @@ size, and the policy engine never executes them on its own:
 - A policy change, because a rule the human did not click is how every other guarantee gets
   removed.
 
-Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
-spends a coin the app cannot price or one whose listed price nothing in the quote can check (see
-[Money](money.md#swap)), and every move the chat's agent proposes after it read a web page (see
-below).
+Three more cases wait for a click whatever their size: a swap the app cannot measure, because it
+spends a coin the app cannot price, one whose listed price nothing in the quote can check, a
+coin 1Click puts no dollar figure on, or a price from the solver relay it could not check against
+a quote 1Click signed (see
+[Money](money.md#swap)); a swap while an earlier swap of the same coin may still go through; and
+every move an agent proposes after it read text from outside Phosphor (see below).
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
 arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On an
@@ -63,20 +65,44 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 
 ### After a web page
 
-Once the agent in the chat has searched the web or read a page, every money move it proposes in
-that chat waits for your click, whatever its size, until the chat starts a new session (the agent
-restarts, or you start a new chat). Why it asks, in the card's Details, says: "It read a web
-page earlier in this chat, so this one waits for your OK." A chart label the agent writes after
-a web read carries the same mark, and an agent that later reads that label is marked too. A move
+Once the agent in the chat has searched the web, read a page, or read a stranger's words through
+Phosphor (news headlines, token names and memos on a chain, or a venue's own words that Phosphor
+does not know: an error from 1Click, the solver relay, Hyperliquid or a chain's node, a refund
+reason or status word off the venue's list, the NEAR Intents status page's title), every money
+move it proposes in that chat waits for your click, whatever its size, until the chat starts a new session (the agent
+restarts, or you start a new chat). The card says why under its head: "This chat read text
+from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
+highlight the agent writes after a web read carries the same mark, and an agent that later reads
+one is marked too. So do a board post and a worker's report, and a worker that a marked agent
+starts begins marked. A move
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
+
+An ordinary refusal Phosphor knows (too little margin, an order under the venue's minimum, a price
+too far from the market, an amount under a route's minimum) reaches the agent in Phosphor's own
+words and changes nothing; the card still shows the venue's exact words.
+
+### An agent you started outside Phosphor
+
+An agent in your terminal or in another app attaches with a secret the app writes into its data
+folder, and any program running as you can read that folder. So the first time one attaches, the
+window asks "Allow this agent?", and until you allow it, every money move it proposes waits for
+your click, whatever its size. The card says under its head: "This agent was started outside
+Phosphor and is not allowed yet, so this move waits for your OK." Allow lets its next moves run
+under these rules like the chat's own agent, and a move it already asked for still waits; Ask
+each time keeps every one waiting, and its row in the conversation keeps a Change that asks
+again. An Allow holds for that one connection: restart the agent and the window asks again.
+Phosphor cannot see what such an agent reads with its own tools, so a read it makes through
+Phosphor (news, a chain read) still marks it as above, and the card says to allow only an agent
+you started yourself. It cannot read a page through Phosphor: `web_read` opens only an address a
+search in the chat returned or you typed in the chat.
 
 ### After a move that did not go through
 
 When a move your agent proposed does not go through, the app wakes the agent to tell you in one
 line, without waiting for your next message. Nobody typed that turn, so every money move the agent
-proposes in it waits for your click, whatever its size. Why it asks says: "Your agent asked for
-this on its own after a move did not go through, so it waits for your OK." The mark ends with that
+proposes in it waits for your click, whatever its size. The card says under its head: "Your
+agent asked for this on its own after a move did not go through, so it waits for your OK." The mark ends with that
 turn, and a move that would have been refused is still refused.
 
 ## Policy as sentences

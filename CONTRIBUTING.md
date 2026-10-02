@@ -37,7 +37,11 @@ that a user can see updates the page it touches and adds a line under the curren
 - No key, seed, secret, address or personal path in the tree, in a test fixture or in a commit
   message. `.gitignore` keeps `config.local.json` out; keep it that way.
 - No new dependency without a reason in the pull request: what it does that the standard library
-  and the current dependencies cannot. Every dependency runs with `ignore-scripts`.
+  and the current dependencies cannot. Every dependency runs with `ignore-scripts`, and CI checks
+  each one's registry signature (`npm audit signatures`).
+- The backend holds the wallet key, so the packages that can load into it are a reviewed list
+  (`tests/unit/key-process-packages.test.ts`). A change that adds one, directly or through a
+  dependency's update, fails that test until somebody has read the package and added it.
 - Commit messages say what changed and why, in a sentence.
 
 ## Security problems

@@ -197,6 +197,48 @@ async function withNoAgents<T>(fn: () => Promise<T>): Promise<T> {
   }
 }
 
+/* REGRESSION, 2026-10-01: a copy of the app on a throwaway folder wrote the person's real agent
+   settings. A pick on such a copy, with the agent on this Mac and signed in, runs no `mcp add`:
+   it answers with the line to paste and says why. The codex here records every call it gets. */
+test('a pick on a copy that is not the app on its own folder leaves the agent\'s settings alone', async () => {
+  const app = await boot();
+  const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-one-agent-'));
+  const bin = path.join(home, 'bin');
+  const log = path.join(home, 'codex-calls.txt');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'codex'),
+    `#!/bin/sh\nprintf '%s\\n' "$*" >> ${JSON.stringify(log)}\ncase "$1" in\n  --version) echo "codex-cli 0.154.0" ;;\n  login) echo "Logged in using ChatGPT" ;;\nesac\nexit 0\n`,
+    { mode: 0o755 },
+  );
+  process.env.PATH = bin;
+  process.env.HOME = home;
+  delete process.env.PHOSPHOR_APP_DATA;
+  delete process.env.PHOSPHOR_DATA_DIR;
+  try {
+    const { status, json } = await post(app, '/api/driver', { action: 'agent-pick', agent: 'codex' });
+    assert.equal(status, 200);
+    assert.equal((json.check as Record<string, unknown>).state, 'installed_and_logged_in');
+    assert.equal(json.registered, false);
+    assert.equal(json.registrationFailed, false);
+    assert.equal(json.registrationSkipped, true);
+    assert.equal(typeof json.command, 'string', 'the line to paste is there instead');
+    assert.equal(readPick(app.dataDir)?.agent, 'codex', 'the pick itself is the app\'s own file and is kept');
+    assert.equal(readPick(app.dataDir)?.registered, undefined);
+    const calls = fs.existsSync(log) ? fs.readFileSync(log, 'utf8').trim().split('\n') : [];
+    assert.ok(!calls.some((c) => c.startsWith('mcp')), `codex was asked to change its settings: ${calls.join(' | ')}`);
+    assert.ok(app.lines.some((l) => l.type === 'app_start' && /codex registration not written: left as it was/.test(l.msg)));
+  } finally {
+    for (const [k, v] of Object.entries(saved)) {
+      if (v === undefined) delete process.env[k];
+      else process.env[k] = v;
+    }
+    fs.rmSync(home, { recursive: true, force: true });
+    await app.close();
+  }
+});
+
 test('a pick of an agent that is not on this Mac says it is not here yet, and stores nothing', async () => {
   const app = await boot();
   try {

@@ -42,11 +42,13 @@
   var ASK_CHOICES = [25, 100, 500, 1000];
   var PROVE_COUNT = 3;
 
-  /* What the freeze does, from the code that runs it (src/main.ts setKill and
+  /* What the freeze does, from the code that runs it (src/kill.ts and
      src/runner/host.ts stopAll): every open position on the trading account is
      closed at the market price, every plan stops, and every write is refused
-     until it is turned off. The bar's panel (ui/screens/shell.js) says the same
-     thing, so the two ways to the same switch never disagree. */
+     until it is turned off. A position needs the trading key to close, and when
+     none is in reach the answer says which stayed open (doFreeze). The bar's
+     panel (ui/screens/shell.js) says the same thing, so the two ways to the same
+     switch never disagree. */
   var FREEZE = {
     off: {
       line: 'Stops every move at once.',
@@ -404,7 +406,12 @@
   function doFreeze(on) {
     window.PhosphorShell.setPending(refs.freezeGo, true);
     api.kill(on)
-      .then(function () { return window.PhosphorShell.refresh({}); })
+      .then(function (answer) {
+        /* A freeze with no trading key in reach closes no position, and
+           the answer says which stayed open (src/kill.ts). */
+        if (answer && answer.note) window.PhosphorToast.show(answer.note);
+        return window.PhosphorShell.refresh({});
+      })
       .then(function () { closeFreeze(true); })
       .catch(function (err) { say(refs.freezeError, net.readable(err)); })
       .finally(function () { window.PhosphorShell.setPending(refs.freezeGo, false); });
@@ -414,7 +421,7 @@
 
   function buildLock(host) {
     var r = row('Locks after', 'window');
-    r.main.appendChild(text('vault-text', 'The window locks after this long without you and hides everything until you open it.'));
+    r.main.appendChild(text('vault-text', 'The window locks after this long without you, and whenever your Mac\'s screen locks. It hides everything until you open it.'));
     refs.lockNow = button('Lock now', 'btn-quiet btn-sm', 'Locking');
     /* The glyph and the word share one face: a button that can wait stacks its
        children in one cell (components.css), so a glyph beside the label
@@ -594,7 +601,7 @@
           flowProblem('No phrase came back.');
           return;
         }
-        phrase = { words: answer.words.slice(), paths: answer.paths || null };
+        phrase = { words: answer.words.slice(), paths: answer.paths || null, prove: provable(answer.prove, answer.words.length) };
         showWords();
       })
       .catch(function (err) { flowProblem(net.readable(err)); })
@@ -660,7 +667,7 @@
             input.value = '';
             var words = material && Array.isArray(material.mnemonic) ? material.mnemonic : [];
             if (!words.length) throw new Error('No phrase came back.');
-            phrase = { words: words.slice(), paths: null };
+            phrase = { words: words.slice(), paths: null, prove: provable(material.prove, words.length) };
             showWords();
           })
           .catch(function (err) {
@@ -766,21 +773,28 @@
     }
   }
 
-  /* Prove. Three positions picked here, never the same three, typed back and
-     checked by the backend against the phrase it holds. Only a match clears
-     "not backed up"; a miss says so and reveals nothing about which word. Two
-     misses show the words again. */
-  function pickPositions(count, total) {
+  /* Prove. The three positions the app picked when it showed the words, the
+     only three it can check (src/vault/phrase-proof.ts), typed back. Only a
+     match clears "not backed up"; a miss says so and reveals nothing about
+     which word. Two misses show the words again. */
+  function provable(list, total) {
+    if (!Array.isArray(list) || list.length !== PROVE_COUNT) return [];
     var out = [];
-    while (out.length < count && out.length < total) {
-      var at = Math.floor(Math.random() * total);
-      if (out.indexOf(at) === -1) out.push(at);
+    for (var i = 0; i < list.length; i += 1) {
+      var at = list[i];
+      if (typeof at !== 'number' || at % 1 !== 0 || at < 0 || at >= total || out.indexOf(at) !== -1) return [];
+      out.push(at);
     }
     return out.sort(function (a, b) { return a - b; });
   }
 
   function showProve() {
     if (!phrase) return;
+    if (!phrase.prove.length) {
+      wipePhrase();
+      window.PhosphorToast.show('Show your words once more with Back it up, then type three of them back.');
+      return;
+    }
     grow(refs.backupRow, drawProve, refs.phraseFlow);
   }
 
@@ -794,7 +808,7 @@
     flow.appendChild(text('vault-sub', 'Type three of your words back, by their number, from the copy you made.'));
 
     var fields = dom.el('div', 'vault-fields');
-    var positions = pickPositions(PROVE_COUNT, phrase.words.length);
+    var positions = phrase.prove;
     var inputs = [];
     positions.forEach(function (at) {
       var field = dom.el('div', 'field');
@@ -839,6 +853,14 @@
       api.vaultBackupProven(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            /* The words in this row were shown long enough ago that the app no
+               longer holds them to check against (or it restarted): the row
+               closes and Back it up shows them again. */
+            if (answer.code === 'reveal_again') {
+              wipePhrase();
+              window.PhosphorToast.show(answer.error || 'Show your words once more with Back it up, then type three of them back.');
+              return;
+            }
             if (answer.code === 'wrong_words') {
               misses += 1;
               if (misses >= 2) {
@@ -1168,10 +1190,11 @@
       var made = dateWords(enclave.keyMadeAt);
       dom.setText(refs.custodyValue, 'Touch ID');
       dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? ' Made on ' + made + '.' : ''));
-      /* Which of the two bindings is live, in words. An unsigned copy of the
-         app keeps the key where any process running as you can present it. */
+      /* Which of the two bindings is live, in words, off the binding and never
+         the signature: every build so far, signed or not, keeps the key bound to
+         this Mac, where any process running as you can present it. */
       var device = enclave.binding === 'device';
-      dom.setText(refs.custodyMore, device ? 'This copy of Phosphor is not signed, so other apps on this Mac could ask for the key. The signed Phosphor app keeps it to itself.' : '');
+      dom.setText(refs.custodyMore, device ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.' : '');
       dom.setHidden(refs.custodyMore, !device);
       var reach = enclave.attached === false
         ? 'Touch ID only works inside the Phosphor app. Open the app to use this wallet.'

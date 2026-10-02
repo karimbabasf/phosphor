@@ -12,13 +12,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { orderErrors } from '../../src/hl/exchange.ts';
+import { venueSaid } from '../../src/venue-words.ts';
+
+// Each refusal comes back as the venue's own words, quoted as data: it rides into a plan's end
+// reason and a move's detail, which an agent reads, and the label is what marks that agent.
+const venue = (text: string): string => venueSaid('Hyperliquid', text);
 
 test('the shape that started this: ok on top, refused underneath', () => {
   const live = {
     status: 'ok',
     response: { type: 'order', data: { statuses: [{ error: 'Price too far from oracle asset=4' }] } },
   };
-  assert.deepEqual(orderErrors(live), ['Price too far from oracle asset=4']);
+  assert.deepEqual(orderErrors(live), [venue('Price too far from oracle asset=4')]);
 });
 
 test('a resting order and a fill are both accepted, and report nothing', () => {
@@ -36,18 +41,18 @@ test('one refusal among several accepted orders is still a refusal', () => {
     status: 'ok',
     response: { data: { statuses: [{ resting: { oid: 1 } }, { error: 'Insufficient margin' }, { resting: { oid: 2 } }] } },
   };
-  assert.deepEqual(orderErrors(mixed), ['Insufficient margin']);
+  assert.deepEqual(orderErrors(mixed), [venue('Insufficient margin')]);
 });
 
 test('every refusal is reported, not just the first', () => {
   const both = { status: 'ok', response: { data: { statuses: [{ error: 'a' }, { error: 'b' }] } } };
-  assert.deepEqual(orderErrors(both), ['a', 'b']);
+  assert.deepEqual(orderErrors(both), [venue('a'), venue('b')]);
 });
 
 test('a top-level failure carries its reason as a bare string', () => {
   // The scheduleCancel shape: no per-order statuses at all.
   const locked = { status: 'err', response: 'Cannot set scheduled cancel time until enough volume traded.' };
-  assert.deepEqual(orderErrors(locked), ['Cannot set scheduled cancel time until enough volume traded.']);
+  assert.deepEqual(orderErrors(locked), [venue('Cannot set scheduled cancel time until enough volume traded.')]);
 });
 
 test('an absent or unreadable body reads as a failure rather than as success', () => {
@@ -70,7 +75,7 @@ test('a bare top-level error with no status key is a refusal, not a success', ()
   // Hyperliquid answers 429 on a rate limit and the body need not carry a `status` key. Without
   // this the response fell through to "no statuses array, therefore no errors" and a rejected
   // order was booked as placed, with the in-flight reservation never released.
-  assert.deepEqual(orderErrors({ error: 'Too many requests' }), ['Too many requests']);
+  assert.deepEqual(orderErrors({ error: 'Too many requests' }), [venue('Too many requests')]);
 });
 
 test('an empty error string is not treated as an error', () => {
@@ -100,7 +105,7 @@ test('a refused cancel is a refusal, so the human is not told an order is gone',
   // The venue answers a cancel with statuses too, and a refusal there means the order is still
   // working. Reported as 'cancelled N order(s)' it becomes an order someone stops watching.
   const refused = { status: 'ok', response: { type: 'cancel', data: { statuses: [{ error: 'Order was never placed' }] } } };
-  assert.deepEqual(orderErrors(refused), ['Order was never placed']);
+  assert.deepEqual(orderErrors(refused), [venue('Order was never placed')]);
 
   const fine = { status: 'ok', response: { type: 'cancel', data: { statuses: ['success', 'success'] } } };
   assert.deepEqual(orderErrors(fine), []);

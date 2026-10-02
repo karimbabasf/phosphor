@@ -134,7 +134,7 @@ test('a click on an enclave wallet waits for a finger, and the finger approves e
   assert.ok(done !== undefined);
   assert.ok(['executed', 'failed', 'executing'].includes(done.status), `the proposal ran after the touch (${done.status})`);
   assert.equal(done.decidedBy, 'human');
-  assert.equal(h.keystore.state(), 'unlocked', 'the touch opened the wallet for the session');
+  assert.equal(h.keystore.state(), 'locked', 'the touch opened the wallet for that move alone, not for the session');
   const messages = h.audit.tail(80).map((e) => e.msg);
   assert.ok(messages.some((m) => m.includes('waiting for Touch ID')));
   assert.ok(messages.some((m) => m.includes('with Touch ID')));

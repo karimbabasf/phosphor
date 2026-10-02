@@ -160,18 +160,19 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     return { status: res.status, json: await res.json().catch(() => null) };
   }
   async function get(route: string, opts: { origin?: string } = {}) {
-    const res = await fetch(`${url}${route}`, { headers: { origin: opts.origin ?? url } });
+    const res = await fetch(`${url}${route}`, { headers: { origin: opts.origin ?? url, 'x-phosphor-token': token } });
     return { status: res.status, json: await res.json().catch(() => null) };
   }
   /* Exactly the headers a browser sends, which is not the same set the helper above
      sends: a same-origin GET carries no Origin at all, and it does carry Sec-Fetch-Site.
      This goes through node:http rather than fetch because Sec-Fetch-* are forbidden
-     header names, so fetch silently drops them and the request under test never happens. */
+     header names, so fetch silently drops them and the request under test never happens. The
+     window's credential rides along, as it does on every read the window makes. */
   function getRaw(route: string, headers: Record<string, string>): Promise<{ status: number; json: any }> {
     return new Promise((resolve, reject) => {
       const target = new URL(`${url}${route}`);
       const req = http.request(
-        { hostname: target.hostname, port: target.port, path: target.pathname, method: 'GET', headers },
+        { hostname: target.hostname, port: target.port, path: target.pathname, method: 'GET', headers: { 'x-phosphor-token': token, ...headers } },
         (res) => {
           let body = '';
           res.on('data', (chunk) => { body += chunk; });
@@ -239,6 +240,36 @@ test('creating a wallet returns the words once and leaves it unlocked', async ()
     // A short password is refused before anything is written.
     const second = await b.post('/api/wallet/create', { token: b.token, password: 'short' });
     assert.equal(second.status, 400);
+  } finally {
+    await b.close();
+  }
+});
+
+/* The first run shows the words a create returned and then asks for three of them back, so the
+   create leaves what a reveal leaves for that check (src/vault/phrase-proof.ts). It left nothing,
+   and Prove it answered "Show your words once more with Back it up" on a screen with no Back it
+   up. The check also holds over a lock, since writing the words down is when the idle lock or
+   the screen lock lands: unlock, then prove. */
+test('three of the words a create returned prove the backup, after a lock and an unlock too', async () => {
+  const b = await boot();
+  try {
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const words: string[] = made.json.mnemonic;
+    const asked: number[] = made.json.prove;
+    assert.equal(new Set(asked).size, 3, `the create named ${JSON.stringify(asked)} as the three to ask`);
+    const typed = (at: number[]) => at.map((index) => ({ index, word: words[index] }));
+    await b.post('/api/lock', { token: b.token, whenIdle: true, reason: 'screen' });
+    assert.equal(b.keystore.state(), 'locked');
+    assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
+
+    const wrong = await b.post('/api/vault/backup-proven', { token: b.token, words: [{ index: asked[0], word: 'notaword' }, ...typed(asked.slice(1))] });
+    assert.equal(wrong.json.code, 'wrong_words');
+    const elsewhere = words.map((_, index) => index).filter((index) => !asked.includes(index)).slice(0, 3);
+    const unasked = await b.post('/api/vault/backup-proven', { token: b.token, words: typed(elsewhere) });
+    assert.equal(unasked.json.code, 'wrong_words', 'right words at three positions the app did not name proved the backup');
+    const right = await b.post('/api/vault/backup-proven', { token: b.token, words: typed(asked) });
+    assert.equal(right.json.ok, true, JSON.stringify(right.json));
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {
     await b.close();
   }
@@ -429,6 +460,27 @@ test('reveal is a two step handshake whose nonce works exactly once', async () =
     // And an unissued nonce is refused, so guessing is the only attack and it is 32 bytes wide.
     const guess = await b.get(`/api/wallet/reveal/${'0'.repeat(64)}`);
     assert.equal(guess.status, 404);
+  } finally {
+    await b.close();
+  }
+});
+
+/* A lock wipes every reveal the window has not read (re-audit R-L5), and never what Prove it checks
+   against: that is not a reveal, it answers at most five tries, and a lock lands most often while
+   the words are being written down. The Vault's Prove it after an unlock needs only the words. */
+test('a lock wipes an unread reveal but keeps what Prove it checks against', async () => {
+  const b = await boot();
+  try {
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const words: string[] = made.json.mnemonic;
+    const asked: number[] = made.json.prove;
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    assert.equal(start.json.ok, true);
+    await b.post('/api/lock', { token: b.token });
+    assert.equal((await b.get(`/api/wallet/reveal/${start.json.nonce}`)).status, 404, 'the lock left the unread reveal redeemable');
+    assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
+    const proven = await b.post('/api/vault/backup-proven', { token: b.token, words: asked.map((index) => ({ index, word: words[index] })) });
+    assert.equal(proven.json.ok, true, JSON.stringify(proven.json));
   } finally {
     await b.close();
   }
@@ -654,21 +706,26 @@ test('a wrong password on a backup still refuses, and still counts toward the ba
   }
 });
 
-test('a reveal from behind the lock announces the unlock and releases what was queued', async () => {
+/* A password typed to see the words shows the words and opens nothing. The reveal used to be a
+   full unlock, announced, releasing the queue: the wallet then stayed open for signing until the
+   idle lock on a password the window asked for in order to show twelve words. */
+test('a reveal from behind the lock shows the words and leaves the wallet locked, releasing nothing', async () => {
   const b = await boot();
   try {
-    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
     await b.post('/api/lock', { token: b.token });
 
     const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
     assert.equal(start.json.ok, true);
-    assert.equal(b.keystore.state(), 'unlocked', 'the handshake needs the wallet open, and it says so');
-    assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
+    assert.equal(b.keystore.state(), 'locked', 'the password proved the person, and opened nothing');
+    assert.equal((await b.get('/api/state')).json.lock.state, 'locked');
 
-    // The queue is released in the background: this response carries a nonce that dies in
-    // thirty seconds, and releasing a queue means sending a rail apiece.
-    await waitFor(() => b.releases() === 1, 'the queue behind the lock was never released');
-    assert.equal(b.releases(), 1);
+    const words = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(words.status, 200, 'the material was read under the password, so the GET needs no open wallet');
+    assert.deepEqual(words.json.mnemonic, made.json.mnemonic);
+    assert.equal(b.keystore.state(), 'locked');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(b.releases(), 0, 'nothing queued behind the lock was released');
   } finally {
     await b.close();
   }
@@ -704,6 +761,80 @@ test('health reports the lock the app is actually in', async () => {
 
     await b.post('/api/unlock', { token: b.token, password: PASSWORD });
     assert.equal(((await b.get('/api/health')).json as { locked: boolean }).locked, false);
+  } finally {
+    await b.close();
+  }
+});
+
+// ---------- a lock ends every reveal (re-audit R-L5) ----------
+
+test('Lock wipes every reveal slot: a key and words asked for before it are gone after it', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const keys = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    const words = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    assert.equal(keys.json.ok, true);
+    assert.equal(words.json.ok, true);
+    const locked = await b.post('/api/lock', { token: b.token });
+    assert.equal(locked.json.ok, true);
+    assert.equal(b.keystore.state(), 'locked');
+    for (const nonce of [keys.json.nonce, words.json.nonce]) {
+      const after = await b.get(`/api/wallet/reveal/${nonce}`);
+      assert.equal(after.status, 404, 'nothing to spend after the lock');
+      assert.equal(after.json?.keys, undefined);
+      assert.equal(after.json?.mnemonic, undefined);
+    }
+  } finally {
+    await b.close();
+  }
+});
+
+test('a lock by any other door wipes the slots too: the idle lock, the screen lock and a touch lease all turn the keystore', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    assert.equal(b.keystore.lock(), true, 'what the idle lock and the screen lock call');
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404);
+    assert.equal(after.json?.keys, undefined);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal the window never spends is wiped by its own timer at its expiry', async (t) => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    t.mock.timers.tick(30_001);
+    t.mock.timers.reset();
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404, 'the slot is gone, not merely expired');
+    assert.equal(after.json?.keys, undefined);
+  } finally {
+    await b.close();
+  }
+});
+
+test('Lock on a wallet already locked still wipes a reveal asked for while it was locked', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+    // A reveal reads under the password and opens nothing, so it works on a locked wallet.
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    assert.equal(b.keystore.state(), 'locked');
+    await b.post('/api/lock', { token: b.token });
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404);
+    assert.equal(after.json?.keys, undefined);
   } finally {
     await b.close();
   }

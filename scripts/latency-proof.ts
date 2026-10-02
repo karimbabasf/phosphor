@@ -203,8 +203,8 @@ type Frame = { id: string; at: number };
 /* Reads /api/events for the life of the run and keeps the arrival time of every frame that
    names a proposal. The frame carries the id and nothing else (src/http/sse.ts, broadcastProposal),
    so what is measured is exactly what a window gets: the signal to refetch that row. */
-async function watchEvents(base: string, frames: Frame[], control: AbortController): Promise<void> {
-  const res = await fetch(`${base}/api/events`, { signal: control.signal });
+async function watchEvents(base: string, token: string, frames: Frame[], control: AbortController): Promise<void> {
+  const res = await fetch(`${base}/api/events`, { signal: control.signal, headers: { 'x-phosphor-token': token } });
   if (!res.ok || res.body === null) throw new Error(`/api/events answered ${res.status}`);
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -242,8 +242,8 @@ async function watchEvents(base: string, frames: Frame[], control: AbortControll
 
 type Row = { id: string; status: string; settledAt?: string; stageAt?: Record<string, string>; lastChangeAt?: string; result?: { detail?: string } };
 
-async function proposalRows(base: string): Promise<Row[]> {
-  const res = await fetch(`${base}/api/proposals?limit=50`);
+async function proposalRows(base: string, token: string): Promise<Row[]> {
+  const res = await fetch(`${base}/api/proposals?limit=50`, { headers: { 'x-phosphor-token': token } });
   const body = (await res.json()) as { proposals?: Row[] };
   return body.proposals ?? [];
 }
@@ -268,7 +268,8 @@ async function main(): Promise<number> {
     env,
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  app.stdin.write(`${crypto.randomBytes(32).toString('hex')}\n`);
+  const token = crypto.randomBytes(32).toString('hex');
+  app.stdin.write(`${token}\n`);
   app.stdin.end();
   app.stdout.on('data', (chunk: Buffer) => appOutput.push(chunk.toString()));
   app.stderr.on('data', (chunk: Buffer) => appOutput.push(chunk.toString()));
@@ -327,7 +328,7 @@ async function main(): Promise<number> {
     let up = false;
     while (Date.now() < until && app.exitCode === null) {
       try {
-        const res = await fetch(`${base}/api/state`);
+        const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
         if (res.ok) {
           await res.json();
           up = true;
@@ -346,7 +347,7 @@ async function main(): Promise<number> {
 
     // The watcher opens before the first proposal exists, so a row's very first frame is caught.
     const frames: Frame[] = [];
-    await watchEvents(base, frames, events);
+    await watchEvents(base, token, frames, events);
 
     const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(ROOT, 'src', 'mcp.ts')], cwd: ROOT, env });
     client = new Client({ name: 'phosphor-latency-proof', version: '0.1.0' });
@@ -421,12 +422,12 @@ async function main(): Promise<number> {
     const walkUntil = Date.now() + 30_000 + 30_000 * Number(stageScale);
     let done: Row[] = [];
     while (Date.now() < walkUntil) {
-      const all = await proposalRows(base);
+      const all = await proposalRows(base, token);
       done = all.filter((r) => underIds.includes(r.id) && DONE.has(r.status));
       if (done.length === underIds.length) break;
       await sleep(250);
     }
-    const all = await proposalRows(base);
+    const all = await proposalRows(base, token);
     const mine = all.filter((r) => underIds.includes(r.id) || overIds.includes(r.id));
     for (const id of underIds) {
       const row = mine.find((r) => r.id === id);

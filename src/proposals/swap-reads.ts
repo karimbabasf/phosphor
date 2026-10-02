@@ -108,7 +108,8 @@ export type SideAsk = { asked: string; chain?: string };
                several held is the question.
      bought -> its NEAR version (nearVersion), so one coin never sits in the balance as several
                tiles (Karim, 2026-09-25: "default to near intents always"); with none, the one
-               held the most of; otherwise pickBoughtByQuote asks what each would get.
+               held the most of, but only when the price band says every version is one coin
+               (oneCoin); otherwise pickBoughtByQuote asks what each would get.
    What is still several after this is the candidates the next step, or the person, chooses from.
    swap_quote alone prices a spent coin none of whose versions is held, as the bought rule lands it
    (resolveBought): the preview of a later step of a plan. propose_swap still spends only what is held. */
@@ -146,11 +147,29 @@ function resolveBought(to: SideAsk, list: OneClickToken[], held: ReadonlyMap<str
   }
   if (pick.kind === 'many' && !named(to)) {
     const near = nearVersion(pick.candidates, list);
-    const owned = pick.candidates.filter((s) => held.has(s.assetId)).sort((a, b) => Number(held.get(b.assetId)) - Number(held.get(a.assetId)));
     if (near !== null) pick = { kind: 'one', side: near };
-    else if (owned.length > 0) pick = { kind: 'one', side: owned[0]! };
+    else if (oneCoin(pick.candidates, list)) {
+      const owned = pick.candidates.filter((s) => held.has(s.assetId)).sort((a, b) => Number(held.get(b.assetId)) - Number(held.get(a.assetId)));
+      if (owned.length > 0) pick = { kind: 'one', side: owned[0]! };
+    }
   }
   return pick;
+}
+
+/* THE PRICE BAND BEFORE WHAT IS HELD (the residual of audit finding 8, closed 2026-10-01). Anyone
+   can send a coin into the balance, so a lookalike under a real ticker is "held" as soon as it
+   arrives, and held-first used to buy it before the band could say the two were different coins.
+   Held-first now picks only among versions that are visibly one coin: every one priced, all within
+   SAME_COIN_BAND. Anything else is left to pickBoughtByQuote, which asks the person when the prices
+   disagree and never prefers an unpriced version over a priced one. */
+function oneCoin(candidates: SwapSide[], list: OneClickToken[]): boolean {
+  const prices: number[] = [];
+  for (const s of candidates) {
+    const p = list.find((t) => t.assetId === s.assetId)?.price;
+    if (typeof p !== 'number' || !Number.isFinite(p) || p <= 0) return false;
+    prices.push(p);
+  }
+  return prices.length > 0 && Math.max(...prices) <= Math.min(...prices) * (1 + SAME_COIN_BAND);
 }
 
 /* THE NEAR VERSION OF A COIN WORTH FAKING, by exact id: the near rows of data/tokens.json. The

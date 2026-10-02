@@ -13,11 +13,17 @@
 // either and a skipped test is honest where a passing one would be a lie. It costs no model
 // tokens: the init event is emitted before the first turn, so the child is killed as soon as the
 // first line of stdout has been read.
+//
+// RUN IT UNDER YOUR OWN HOME. Claude Code turns some tools on per account: on 2026-10-01 releases
+// 2.1.284 to 2.1.287 granted TaskCreate, TaskGet, TaskList and TaskUpdate under this Mac's login
+// and not under a fresh HOME, so a run with HOME pointed elsewhere passes on a profile that leaks.
+// The last test below holds the deny lists to them whatever HOME says.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -36,11 +42,13 @@ function claudeAvailable(): string | null {
 // Reads the init event and nothing else, then kills the child. Resolves with the whole event: the
 // tool list is what the two profile tests read, and memory_paths is what the auto-memory test
 // reads. Rejects on anything that is not a clean init, because "could not tell" has to fail.
-function announcedInit(bin: string, settings: string, env?: NodeJS.ProcessEnv): Promise<Record<string, unknown>> {
+function announcedInit(bin: string, settings: string, env?: NodeJS.ProcessEnv, extra: string[] = []): Promise<Record<string, unknown>> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       bin,
       [
+        // First, because --tools takes a list and would swallow the prompt at the end.
+        ...extra,
         '--print',
         '--output-format',
         'stream-json',
@@ -114,12 +122,13 @@ test(
     const init = await announcedInit(bin as string, path.join(REPO, 'operator', 'driver.settings.json'));
     const tools = Array.isArray(init.tools) ? (init.tools as string[]) : [];
     const builtins = tools.filter((t) => !t.startsWith('mcp__phosphor__')).sort();
-    // WebFetch and WebSearch on Karim's decision of 2026-09-23 (src/providers/claude.ts WEB_TOOLS).
+    // WebSearch on Karim's decision of 2026-09-23 (src/providers/claude.ts WEB_TOOLS). WebFetch is
+    // off since 2026-10-01: pages come through mcp__phosphor__web_read (src/web-gate.ts).
     assert.deepEqual(
       builtins,
-      ['WebFetch', 'WebSearch'],
+      ['WebSearch'],
       `operator/driver.settings.json is out of date: this Claude Code release grants ${builtins.join(', ')}. ` +
-        'Deny anything but the two web tools. The in-app driver refuses to run until only they are left.',
+        'Deny anything but WebSearch. The in-app driver refuses to run until only it is left.',
     );
   },
 );
@@ -188,6 +197,49 @@ test(
 
    A general check would need the release's full tool list, which nothing announces, so this names
    the three. The live tests above are the general check. */
+/* THE OPERATOR'S BUILT-INS ARE AN ALLOWLIST (2026-10-01), as the driver's are. operator/phosphor-operator
+   passes --tools Read, so the session holds Read and Phosphor's MCP tools whatever a deny list
+   misses. Proved with the profile's deny list emptied: a release that adds a tool, or an account
+   that turns one on, still announces Read alone. */
+test('the operator launcher names its built-ins in full: Read, and nothing a deny list has to catch', async (t) => {
+  const launcher = fs.readFileSync(path.join(REPO, 'operator', 'phosphor-operator'), 'utf8');
+  const exec = launcher.slice(launcher.indexOf('exec claude'));
+  assert.match(exec, /\n\s+--tools Read \\\n\s+--/, 'phosphor-operator does not pass --tools Read ahead of another flag');
+  if (bin === null) {
+    t.skip('the claude CLI is not installed on this machine');
+    return;
+  }
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-operator-nodeny-'));
+  try {
+    const profile = JSON.parse(fs.readFileSync(path.join(REPO, 'operator', 'settings.json'), 'utf8')) as { permissions: { deny: string[] } };
+    profile.permissions.deny = [];
+    const bare = path.join(dir, 'settings.json');
+    fs.writeFileSync(bare, JSON.stringify(profile));
+    const init = await announcedInit(bin, bare, undefined, ['--tools', 'Read']);
+    const tools = Array.isArray(init.tools) ? (init.tools as string[]) : [];
+    assert.deepEqual(tools.filter((name) => !name.startsWith('mcp__phosphor__')).sort(), ['Read']);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+/* THE TASK LIST, denied by name in both profiles (2026-10-01). The tools spawn nothing and run
+   nothing, but the list is a file under the Claude config directory, keyed by the session, that
+   any program running as this user can write, and Claude Code pastes its entries into the model's
+   context by itself ("Here are the existing tasks"): words in front of an agent that moves money
+   that no Phosphor read ever marked. The two live tests above see these only under an account
+   that has them, so this one holds the lists to them on any machine. TodoWrite is their older
+   form. */
+test('both profiles deny the task list tools by name, whatever this account grants', () => {
+  const taskList = ['TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TodoWrite'];
+  for (const name of ['driver.settings.json', 'settings.json']) {
+    const profile = JSON.parse(fs.readFileSync(path.join(REPO, 'operator', name), 'utf8')) as {
+      permissions: { deny: string[] };
+    };
+    for (const tool of taskList) assert.ok(profile.permissions.deny.includes(tool), `operator/${name} does not deny ${tool}`);
+  }
+});
+
 test('neither profile names a tool this Claude Code release has never heard of', () => {
   const dead = ['SlashCommand', 'NotebookRead', 'MultiEdit'];
   for (const name of ['driver.settings.json', 'settings.json']) {

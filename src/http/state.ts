@@ -15,6 +15,7 @@ import { intParam, jsonWithEtag } from './respond.ts';
 import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { vaultStatus } from './vault.ts';
+import { lockReasonFor } from '../keystore/lock-reason.ts';
 import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../rails/intents-address.ts';
 
 /* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
@@ -46,6 +47,8 @@ export const PROPOSAL_PAGE_MAX = 200;
 
 // Still waiting on someone: a person, an unlock, or a look at the chain. Never trimmed.
 const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch', 'needs_reconciliation']);
+// Of those, the ones waiting on the person's OK: the lock screen counts these.
+const ASKING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch']);
 
 /* The trim, in store order.
    The order is load-bearing rather than cosmetic: ui/screens/decision.js takes pending[0] out of
@@ -159,6 +162,12 @@ export function buildState(ctx: Ctx): unknown {
       addresses: { evm: lockAddresses.addresses.evm },
       verified: lockAddresses.verified,
       tampered: lockAddresses.tampered,
+      /* What the lock screen says under its title. `reason` is a fixed code (screen, switch,
+         idle, sleep) or null, never the text a caller sent; see src/keystore/lock-reason.ts.
+         `waiting` is a count only: the proposals below already carry what they are, and this
+         adds nothing a reader of this payload could not count for itself. */
+      reason: lockReasonFor(ctx.keystore).code(),
+      waiting: list.filter((p) => ASKING.has(p.status)).length,
     },
     /* The vault beside the lock: which custody, whether the enclave is reachable, what the
        Touch ID dialog is waiting on, whether the phrase is proven backed up. The Vault tab, the
@@ -168,6 +177,8 @@ export function buildState(ctx: Ctx): unknown {
        terms screen ahead of everything else until this says so. */
     terms: ctx.terms.get(),
     deposit: ctx.deposits.current(),
+    // The latest invite claim's id, status and amount, for a window opened after its frame. Never the code.
+    invite: ctx.invites.state(),
     /* Every chain the window may have to name, so no card keeps a table of its own. Fixed size
        and it does not grow with use, which is the rule this payload is held to. */
     chains: CHAIN_TABLE,
@@ -215,6 +226,12 @@ export function buildState(ctx: Ctx): unknown {
         parent: m.parent,
         since: m.since,
         ops: m.ops,
+        // Who started it, and the person's answer for one started outside Phosphor: the window's
+        // card asks about an outside agent that is askable, not allowed and not put off.
+        origin: m.origin,
+        allowed: m.allowed,
+        later: m.later,
+        askable: m.askable,
       })),
       capacity: ctx.agents.capacity(),
       workers: (ctx.crewIfAny()?.list() ?? []).map((j) => ({ id: j.id, label: j.label, state: j.state })),
@@ -281,6 +298,7 @@ type StateCache = {
   auditLines: number;
   lockState: string;
   snapshot: unknown;
+  invite: number;
 };
 
 const caches = new WeakMap<Ctx, StateCache>();
@@ -289,8 +307,11 @@ function stateKey(ctx: Ctx): Omit<StateCache, 'built' | 'at'> {
   return {
     storeRevision: ctx.store.revision(),
     auditLines: ctx.audit.lineCount(),
-    lockState: ctx.keystore.state(),
+    // The lock and its reason, so a code noted after the lock's own frame still rebuilds.
+    lockState: `${ctx.keystore.state()}:${lockReasonFor(ctx.keystore).code() ?? ''}`,
     snapshot: ctx.ledger.snapshot(),
+    // A claim's running frame writes no audit line, so its status moves the key on its own.
+    invite: ctx.invites.revision(),
   };
 }
 
@@ -303,6 +324,7 @@ export function buildStateCached(ctx: Ctx): CachedJson {
     held.auditLines === key.auditLines &&
     held.lockState === key.lockState &&
     held.snapshot === key.snapshot &&
+    held.invite === key.invite &&
     Date.now() - held.at < STATE_CACHE_MAX_MS
   ) {
     return held.built;
@@ -322,6 +344,7 @@ export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buil
     proposals: ctx.proposals.list(),
     events: ctx.audit.tail(LOG_LIMIT_MAX),
     selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
+    invites: ctx.invites.landed(),
   });
   return { entries };
 }

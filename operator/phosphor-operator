@@ -24,8 +24,13 @@ mcp_config=$(printf '%s\n' "$resolved" | sed -n 2p)
 # The repo becomes the working directory: the operator reads the code it drives, and nothing else.
 cd "$repo"
 
+# --tools names the built-ins in full, the way the app's own driver does: Read and nothing else, so a
+# tool a later Claude Code release adds (or turns on for an account) never reaches this session,
+# whatever the deny list in operator/settings.json has caught up with. Phosphor's tools are MCP
+# tools and come through --mcp-config.
 exec claude \
   --settings "$repo/operator/settings.json" \
+  --tools Read \
   --mcp-config "$mcp_config" \
   --strict-mcp-config \
   --permission-mode default \

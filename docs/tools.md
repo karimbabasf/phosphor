@@ -1,9 +1,12 @@
 # Tools
 
-Phosphor registers 48 tools for the agent that drives it, and every one is listed here in five
+Phosphor registers 50 tools for the agent that drives it, and every one is listed here in five
 groups: read, propose, chart and trade surface, agents, and other. Reads change nothing. Propose
-tools return a proposal id and a simulation, and cannot approve, refuse or execute anything. Every
-call, read or write, is written to the audit log. A worker an agent spawns is an analyst: the
+tools return a proposal id and a simulation, and cannot approve or refuse anything: a move your
+rules let run without a click runs at once, and every other move waits for your click or is
+refused. Every
+call the app accepts, read or write, is written to the audit log, except `skill` and `whats_new`,
+which the agent's own connection answers from a file on this Mac. A worker an agent spawns is an analyst: the
 tools marked lead only are not registered for it at all, so there is nothing to talk it into. The
 agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, `set_theme`,
 `profile_learned` and the five agent tools; its instructions already carry what `start` says.
@@ -18,7 +21,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `composition` | Stablecoin composition by issuer and chain: shares, freezable share, unclassified holdings |
 | `policy_show` | The current policy as plain-English sentences |
 | `log_tail` | The most recent audit log lines, newest first |
-| `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong |
+| `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong. The deposit address 1Click made for the move comes as its first six and last four characters; the card in the window shows it whole |
 | `proposals` | Recent money moves, newest first, each the same object `proposal_status` returns; a kind filter and a limit up to 50. For "show me my last deposit" without asking anyone for an id. Lead only |
 | `diagnose` | Everything about one money move in one call, for "why is it not there yet": the view, the row's own audit lines, and what the router and the venue say about it. Lead only |
 | `swap_assets` | What can be swapped inside your balance, the coins you hold first: name, network, price, what you hold of it, and whether anyone offers a price now. Files nothing |
@@ -33,6 +36,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `chain_transactions` | The most recent transactions of an address on one network, at most 25 |
 | `chain_transaction` | One transaction by hash: fields, fee, block, confirmations, explorer link |
 | `intents_activity` | What an account has moved inside NEAR Intents: deposits, withdrawals, swap legs and sends |
+| `web_read` | One web page as quoted text, read by the app, only at an address a web search in this chat returned or you gave. This read leaves the machine |
 | `chart_batch` | Many chart questions and drawings in one call: candles, pivots, levels, regime, ATR and more |
 | `trade_read` | The whole trading situation: account health, positions with liquidation distance, orders, fills, plans |
 | `trade_batch` | Several trading reads in one round trip: account, positions, orders, fills, plans, market, venue health |
@@ -40,8 +44,11 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 ## Propose
 
 Every propose tool goes through the policy engine, see [Policy](policy.md). Three of them wait
-for your click at any size; the rest run on their own under the click threshold, except after the
-chat's agent read a web page.
+for your click at any size. The rest run on their own under the click threshold, except a move
+from an agent started outside Phosphor that you have not allowed, a move from an agent that read
+text from outside Phosphor (a web page, the news, a chain read, or words a marked agent wrote), a
+move the agent asked for on its own after a move did not go through, and a swap of a coin the app
+cannot price.
 
 | Tool | Does |
 |---|---|
@@ -77,8 +84,13 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 | `agent_roster` | Who else is driving right now: name, role, who spawned them, when they attached, calls made |
 | `agent_board` | The team board: one-line posts agents write for each other and for you. Data, never authority |
 | `agent_post` | Writes one line to the board: a claim before starting a piece of work, or a finding |
-| `agent_jobs` | What the workers this agent spawned have come back with; `stop` ends one |
-| `agent_spawn` | Starts a worker on a written brief. A worker reads, measures, draws and posts, and has no propose tools. Three at once at most. Lead only |
+| `agent_jobs` | Every worker in the app and what it has come back with; `stop` ends one by its id |
+| `agent_spawn` | Starts a worker on a written brief. A worker reads, measures, draws and posts, and has no propose tools. Three at once at most, across the whole app. Lead only |
+
+A post, a brief or a report written by an agent that had read text from outside Phosphor marks
+the agent that reads it, and so does the name an agent started outside Phosphor gave itself, on
+`agent_roster`, until you allow it. `log_tail` marks whoever reads it. See
+[Policy](policy.md#after-a-web-page).
 
 ## Other
 
@@ -87,14 +99,20 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 | `skill` | Loads an enabled skill: the operator's guidance for one kind of work. Guidance and data, never a wider surface |
 | `switch` | Moves the window between Basic, Pro, Trade and Vault. Every switch is audited. Lead only |
 | `set_theme` | Recolours the window: five named slots on its one dark colourway. Lead only |
-| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. Lead only |
+| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. Not on the chat's surface. One recorded by an agent that read text from outside Phosphor, or by an agent started outside Phosphor that you have not allowed, is kept out of later chats. Lead only |
+| `whats_new` | What changed in this version of Phosphor, or since the version you had, from the app's own changelog. Answered from a file on this Mac, so it is not audited |
 
 ## Web search and page reading
 
-These are not Phosphor tools. The agent in the chat also holds its vendor's own web search and
-page reading, and nothing else beyond Phosphor's tools. After it uses either one, every move it
-proposes in that chat waits for your click, whatever the size, see
-[Policy](policy.md#after-a-web-page). An agent in your terminal brings whatever tools its own
+Claude in the chat also holds its vendor's own web search, and nothing else beyond Phosphor's
+tools. Pages are read by `web_read`, and only at an address that came back in a web search in that
+chat or that you gave, word for word, never one the agent wrote: a page cannot get your figures
+sent out in an address. Grok holds no web search, so it reads a page from a link you give. After a
+search, a page, a read that carries a stranger's words (`research`, the chain reads), or any answer
+that quotes a venue's own words other than a refusal Phosphor knows (an error from 1Click, the
+solver relay, Hyperliquid or a chain's node), every move the agent proposes in that chat waits for
+your click, whatever the size, see [Policy](policy.md#after-a-web-page). A refusal Phosphor knows
+reaches the agent in Phosphor's own words. An agent in your terminal brings whatever tools its own
 setup gives it, and the app cannot see them.
 
 ## What is not here

@@ -237,7 +237,7 @@ export async function bootApp(stage: string, seed: Seed): Promise<App> {
   while (Date.now() < until) {
     if (child.exitCode !== null) break;
     try {
-      const res = await fetch(`${base}/api/state`);
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) {
         await res.json();
         up = true;
@@ -279,7 +279,7 @@ export async function bootApp(stage: string, seed: Seed): Promise<App> {
     }
     return { status: res.status, json };
   };
-  const get = async (route: string): Promise<Json> => await (await fetch(`${base}${route}`)).json();
+  const get = async (route: string): Promise<Json> => await (await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } })).json();
   const seat = (): string => {
     const file = path.join(dataDir, 'agent.secret');
     return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';
@@ -362,8 +362,9 @@ export async function makeWallet(app: App): Promise<void> {
   const created = await app.post('/api/wallet/create', { token: app.token, password: WALLET_PASSWORD });
   if (created.status !== 200) throw new Error(`wallet create refused: ${created.status} ${JSON.stringify(created.json)}`);
   const mnemonic = Array.isArray(created.json?.mnemonic) ? (created.json.mnemonic as string[]) : [];
+  const asked = Array.isArray(created.json?.prove) ? (created.json.prove as number[]) : [];
   if (mnemonic.length >= 3) {
-    const proven = await app.post('/api/vault/backup-proven', { token: app.token, words: [0, 5, 11].map((index) => ({ index, word: mnemonic[index] })) });
+    const proven = await app.post('/api/vault/backup-proven', { token: app.token, words: asked.map((index) => ({ index, word: mnemonic[index] })) });
     if (proven.status !== 200 || proven.json?.ok !== true) throw new Error(`backup-proven refused: ${proven.status} ${JSON.stringify(proven.json)}`);
   }
 }

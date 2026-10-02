@@ -84,6 +84,8 @@ function swapDraft(over: Partial<SwapDraft> = {}): SwapDraft {
     to: OWNER,
     counterparty: INTENTS_NATIVE_COUNTERPARTY,
     quote: null,
+    // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+    assets: { origin: { assetId: WNEAR, decimals: 24 }, destination: { assetId: USDC, decimals: 6 } },
     ...over,
   };
 }

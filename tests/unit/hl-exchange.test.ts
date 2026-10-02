@@ -15,6 +15,7 @@ import {
   orderErrors,
 } from '../../src/hl/exchange.ts';
 import { signL1Action } from '../../src/hl/sign.ts';
+import { venueSaid } from '../../src/venue-words.ts';
 
 // A throwaway key. It signs nothing on any real network and holds nothing.
 const KEY = '0x0123456789012345678901234567890123456789012345678901234567890123' as const;
@@ -149,7 +150,7 @@ test('an action the venue rejected as expired is a definite refusal, never ambig
     transport: async () => ({ status: 'err', response: 'Action expired: expiresAfter 1700000060000 is before the current time' }),
   });
   const res = await ex.order([base]);
-  assert.deepEqual(orderErrors(res), ['Action expired: expiresAfter 1700000060000 is before the current time']);
+  assert.deepEqual(orderErrors(res), [venueSaid('Hyperliquid', 'Action expired: expiresAfter 1700000060000 is before the current time')]);
   assert.equal(isAmbiguousVenue(res), false, 'the venue answered: the action does not exist');
   assert.equal(expiredAction(res), true);
   assert.equal(expiredAction({ status: 'ok', response: { type: 'order', data: { statuses: [{ error: 'Insufficient margin' }] } } }), false);

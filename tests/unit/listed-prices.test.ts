@@ -217,3 +217,63 @@ test('a swap between two coins priced only by the list waits for a click, howeve
   assert.match(p.verdict.reasons.at(-1) ?? '', /nothing in its quote can check that price/);
   assert.equal(ran.length, 0, 'nothing ran on the list checked against itself');
 });
+
+/* Said on the card at every size: over the click threshold the card's why used to be the threshold
+   alone. */
+test('the card says the list cannot check its own price at $20 and at $5,000', async () => {
+  for (const usd of [20, 5000]) {
+    const ran: SwapDraft[] = [];
+    const base = railThat('swap', async (draft) => {
+      ran.push(draft as SwapDraft);
+      return { ok: true, detail: 'swapped', txids: ['intent-h'] };
+    });
+    const rail: Rail = {
+      ...base,
+      spend: async () => ({ assetId: WBTC, decimals: 8, heldBase: 100_000_000n }),
+      simulate: async () => ({ ok: true, summary: 'About 0.9995 cbBTC.', swap: { receives: '0.9995', receivesAtLeast: '0.9895', feeUsd: 1, etaSeconds: 12 } }),
+    };
+    const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '100000000', 8, usd), holding(CBBTC, 'cbBTC', '100000000', 8, usd)]), rails: [rail] });
+    const p = await landed(h, h.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'base', toSymbol: 'cbBTC', amountIn: 'all', minAmountOut: 0.9895 }));
+    assert.equal(p.status, 'pending', `$${usd}: ${p.status} ${p.decidedBy ?? ''}`);
+    assert.equal((p.draft as SwapDraft).amountUsd, usd);
+    assert.equal(
+      p.verdict.reasons.at(-1),
+      "This swap spends WBTC at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.",
+      `$${usd}`,
+    );
+    assert.equal(ran.length, 0, `$${usd}: nothing ran`);
+  }
+});
+
+/* BOTH, WHEN BOTH HOLD. A swap only the list prices, of a coin an earlier swap may still spend,
+   waits for both reasons and its card says each on its own line: the listed price never hides the
+   earlier swap. Over the click threshold the policy's own rule comes first. */
+test('a swap held by the list and by an earlier swap of its coin says both, each its own line, at $20 and at $5,000', async () => {
+  const LISTED = "This swap spends WBTC at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.";
+  const EARLIER = 'An earlier swap of this coin may still go through, so this one waits for your OK.';
+  for (const usd of [20, 5000]) {
+    const evidence = { handle: 'dep-1', deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
+    const answers = [{ ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence }];
+    const base = railThat('swap', async () => answers.shift() ?? { ok: true, detail: 'swapped', txids: ['intent-2'] });
+    const rail: Rail = {
+      ...base,
+      spend: async () => ({ assetId: WBTC, decimals: 8, heldBase: 100_000_000n }),
+      simulate: async () => ({ ok: true, summary: 'About 0.9995 cbBTC.', swap: { receives: '0.9995', receivesAtLeast: '0.9895', feeUsd: 1, etaSeconds: 12 } }),
+    };
+    const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '100000000', 8, usd), holding(CBBTC, 'cbBTC', '100000000', 8, usd)]), rails: [rail] });
+    const swap = (minAmountOut: number) => h.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'base', toSymbol: 'cbBTC', amountIn: 'all', minAmountOut });
+
+    // The earlier swap: held by the list, clicked, and left watching with a transfer that can still run.
+    const first = await landed(h, swap(0.9895));
+    const watched = await landed(h, h.svc.approve(first.id));
+    assert.equal(watched.status, 'needs_reconciliation', `$${usd}: ${watched.status}`);
+
+    const p = await landed(h, swap(0.989));
+    assert.equal(p.status, 'pending', `$${usd}: ${p.status} ${JSON.stringify(p.verdict)}`);
+    assert.deepEqual(p.verdict.reasons.slice(-2), [LISTED, EARLIER], `$${usd}: both reasons, the earlier swap kept`);
+    const why = p.verdict.outcome === 'needs_approval' ? p.verdict.why : undefined;
+    assert.deepEqual(why?.slice(-2), [LISTED, EARLIER], `$${usd}: each its own line on the card`);
+    if (usd === 5000) assert.match(why?.[0] ?? '', /above the \$100\.00 click threshold/, 'over the line the rule comes first');
+    else assert.equal(why?.length, 2, 'under the line, the two reasons alone');
+  }
+});

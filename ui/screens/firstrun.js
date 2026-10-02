@@ -32,21 +32,21 @@
   var store = window.PhosphorState;
 
   var FLOWS = {
-    create: ['welcome', 'choose', 'password', 'words', 'prove', 'addresses', 'money', 'connect', 'threshold', 'done'],
-    import: ['welcome', 'choose', 'password', 'import', 'addresses', 'money', 'connect', 'threshold', 'done'],
-    enclave: ['welcome', 'create', 'addresses', 'connect'],
-    foreign: ['welcome', 'foreign', 'addresses', 'connect']
+    create: ['welcome', 'invite', 'choose', 'password', 'words', 'prove', 'addresses', 'money', 'connect', 'threshold', 'done'],
+    import: ['welcome', 'invite', 'choose', 'password', 'import', 'addresses', 'money', 'connect', 'threshold', 'done'],
+    enclave: ['welcome', 'invite', 'create', 'addresses', 'connect'],
+    foreign: ['welcome', 'invite', 'foreign', 'addresses', 'connect']
   };
 
-  /* What the progress names. The welcome and the terms come before any of
-     it and are not counted. */
+  /* What the progress names. The welcome, the terms and the invite come
+     before any of it and are not counted. */
   var PHASES = [
     { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'foreign'] },
     { name: 'Backup', steps: ['words', 'prove'] },
     { name: 'Money', steps: ['addresses', 'money'] },
     { name: 'Assistant', steps: ['connect', 'threshold', 'done'] }
   ];
-  var UNCOUNTED = ['welcome', 'terms'];
+  var UNCOUNTED = ['welcome', 'terms', 'invite'];
   var PROVE_COUNT = 3;
   var ASK_CHOICES = [25, 100, 500, 1000];
 
@@ -61,6 +61,8 @@
   var progress = null;
   var ghost = null;
   var fieldCanvas = null;
+  var fieldHandle = null;
+  var lockWatch = null;
   var runs = { field: null, welcome: null, body: null, ghost: null };
   var stepHandle = null;
   var step = 0;
@@ -68,8 +70,9 @@
   /* `agent` is what the assistant step learned: which agent was picked, the app's check of it,
      whether it is on the door, and whether the app started it. The done screen reads its
      sentence off this rather than asserting a connection nobody made. `moneyIn` is whether the
-     money step saw the balance land. */
-  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '' };
+     money step saw the balance land. `invite` is a code the app said is good, with what it
+     holds, until the addresses step claims it; `claim` is that claim once asked for. */
+  var draft = { path: 'create', password: '', mnemonic: [], prove: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '', invite: '', inviteAmount: '', inviteAsset: '', claim: null };
   var open_ = false;
 
   function boot() {
@@ -89,6 +92,10 @@
       ? FLOWS.foreign
       : (vault.enclave && vault.enclave.ready === true ? FLOWS.enclave : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
     var steps = base.slice();
+    /* The invite step needs its screen (ui/screens/invite.js). A window without it goes
+       straight from the welcome to the wallet, as the terms step leaves when it has nothing
+       to show. */
+    if (!window.PhosphorInvite) steps.splice(steps.indexOf('invite'), 1);
     var terms = window.PhosphorTerms;
     if (terms && typeof terms.required === 'function' && typeof terms.content === 'function' && terms.required(state)) steps.splice(1, 0, 'terms');
     return steps;
@@ -109,6 +116,8 @@
     draft.path = 'create';
     draft.backedUp = false;
     draft.wordsNote = '';
+    dropInvite();
+    draft.claim = null;
     STEPS = flowOf();
     dom.setAttr(document.body, 'data-locked', 'true');
     /* The page is not frosted behind this card, it is not painted at all
@@ -139,13 +148,30 @@
     cleanupStep();
     unmountField();
     draft.mnemonic = [];
+    draft.prove = [];
     draft.password = '';
+    /* The code goes with the phrase, from the draft and from the field the card
+       keeps until it next opens. A claim already asked for is the invite
+       screen's to finish: closing here only stops this card showing it, and its
+       end is said on Basic instead (ui/screens/invite.js). */
+    dropInvite();
+    var codeField = card ? card.querySelector('.invite-input') : null;
+    if (codeField) codeField.value = '';
+    draft.claim = null;
     open_ = false;
     dom.setHidden(host, true);
     dom.setAttr(document.body, 'data-locked', null);
     dom.setAttr(document.body, 'data-firstrun', null);
     setPageInert(false);
+    var invite = window.PhosphorInvite;
+    if (invite && typeof invite.firstRunClosed === 'function') invite.firstRunClosed();
     window.PhosphorShell.refresh({});
+  }
+
+  function dropInvite() {
+    draft.invite = '';
+    draft.inviteAmount = '';
+    draft.inviteAsset = '';
   }
 
   /* Same pair as lock.js: the page behind this card is hidden by the
@@ -169,7 +195,8 @@
     fieldCanvas.className = 'field-layer';
     fieldCanvas.setAttribute('aria-hidden', 'true');
     host.insertBefore(fieldCanvas, shell);
-    Field.mount(fieldCanvas, { clear: shell, fps: 30 });
+    fieldHandle = Field.mount(fieldCanvas, { clear: shell, fps: 30 });
+    watchLock();
     var Motion = window.Motion;
     if (!Motion || typeof Motion.animate !== 'function') return;
     runs.field = Motion.animate(fieldCanvas, { opacity: [0, 1] }, { duration: reduced() ? 0.3 : 0.6, ease: EASE });
@@ -181,10 +208,31 @@
   }
 
   function unmountField() {
+    if (lockWatch) lockWatch.disconnect();
+    lockWatch = null;
+    fieldHandle = null;
     var Field = window.PhosphorField;
     if (Field && typeof Field.unmount === 'function') Field.unmount();
     if (fieldCanvas && fieldCanvas.parentNode) fieldCanvas.parentNode.removeChild(fieldCanvas);
     fieldCanvas = null;
+  }
+
+  /* While the lock card is up the first run is hidden behind it (lock.css,
+     keyed on the lock screen's hidden attribute), so the field stops drawing
+     on that same attribute and starts again as the card goes, rather than
+     drawing 30 frames a second nobody can see. A hidden window needs nothing
+     here: the motion loop idles the whole page then. */
+  function watchLock() {
+    var lock = document.getElementById('screen-lock');
+    if (!lock || !fieldHandle || typeof MutationObserver !== 'function') return;
+    var follow = function () {
+      if (!fieldHandle) return;
+      if (lock.hidden) fieldHandle.start();
+      else fieldHandle.stop();
+    };
+    lockWatch = new MutationObserver(follow);
+    lockWatch.observe(lock, { attributes: true, attributeFilter: ['hidden'] });
+    if (!lock.hidden) fieldHandle.stop();
   }
 
   function refitField() {
@@ -333,6 +381,7 @@
     drawProgress();
     if (name === 'welcome') screenWelcome();
     else if (name === 'terms') screenTerms();
+    else if (name === 'invite') screenInvite();
     else if (name === 'create') screenCreate();
     else if (name === 'foreign') screenForeign();
     else if (name === 'choose') screenChoose();
@@ -422,7 +471,10 @@
       var skip = dom.el('button', 'btn btn-quiet');
       skip.appendChild(dom.el('span', 'btn-label', opts.skip));
       row.appendChild(skip);
-      dom.on(skip, 'click', function () { next(); });
+      dom.on(skip, 'click', function () {
+        if (typeof opts.onSkip === 'function') opts.onSkip();
+        next();
+      });
     }
     /* `quiet` draws the primary as a ghost: a step that is waiting on the world
        (money landing) has no action to press yet, and the caller turns it
@@ -506,7 +558,7 @@
     var facts = dom.el('ul', 'firstrun-facts');
     facts.appendChild(fact(icon('mac'), 'Made and kept on this Mac.', 'Nothing is uploaded, and there is no account to make.'));
     if (kind === 'enclave') {
-      facts.appendChild(fact(icon('lock'), 'Locked by this Mac\'s Secure Enclave.', 'Touch ID opens it, and the key never leaves the chip.'));
+      facts.appendChild(fact(icon('lock'), 'Locked by this Mac\'s Secure Enclave.', 'Touch ID opens it, and the key that seals it never leaves the chip.'));
     } else {
       facts.appendChild(fact(icon('lock'), 'Locked by your password.', 'Nobody can reset it, not us, not your assistant. Your recovery phrase brings the wallet back.'));
     }
@@ -647,6 +699,126 @@
     }, { pending: 'Saving' });
   }
 
+  /* HAVE AN INVITE CODE? After the welcome and the terms, before the wallet, in
+     every flow, and not counted by the progress. Skip is the quiet default: a
+     person with no code presses it and the wallet steps start where they always
+     did, and Use code stays an outline until the field holds something, or
+     after a refusal the same code would get again until the field changes
+     (invite.js holds). A pasted code is checked the moment it lands, a typed
+     one when Use code is pressed. The check moves nothing. A good code is kept in the draft beside
+     the password and the phrase, the key turns into Continue, and the claim
+     fires on the addresses step, the first moment there is a wallet to pay
+     (claimInvite). close() wipes it with the rest. */
+  function screenInvite() {
+    var invite = window.PhosphorInvite;
+    var words = invite.COPY;
+    card.appendChild(dom.el('h1', 'title', words.title));
+    card.appendChild(dom.el('p', 'body dim', words.lead));
+
+    var f = dom.el('div', 'field');
+    var input = invite.codeInput();
+    var label = dom.el('label', 'label', words.label);
+    label.htmlFor = input.id;
+    f.appendChild(label);
+    f.appendChild(input);
+    card.appendChild(f);
+
+    var said = dom.el('p', 'invite-said firstrun-invite-said');
+    said.setAttribute('role', 'status');
+    said.setAttribute('aria-live', 'polite');
+    said.hidden = true;
+    card.appendChild(said);
+
+    var live = true;
+    /* Which check is the latest: an edit, Skip or a newer check drops an answer
+       still on its way. */
+    var asked = 0;
+    var checked = draft.invite ? 'valid' : null;
+    if (draft.invite) input.value = draft.invite;
+
+    var primary = actions(words.use, function () {
+      if (checked === 'valid') next();
+      else check();
+    }, {
+      skip: words.skip,
+      onSkip: function () {
+        asked += 1;
+        input.value = '';
+        dropInvite();
+      },
+      pending: 'Checking'
+    });
+    var skip = primary.parentNode.querySelector('.btn-quiet');
+
+    function paint() {
+      var good = checked === 'valid';
+      invite.say(said, checked ? invite.toneOf(checked) : null, checked ? invite.sentence(checked, 'firstrun', draft.inviteAmount, draft.inviteAsset) : '');
+      dom.setText(primary.querySelector('.btn-label'), good ? 'Continue' : (checked === 'offline' ? words.retry : words.use));
+      dom.setHidden(skip, good);
+      if (primary.dataset.pending !== 'true') primary.disabled = invite.holds(checked) || (!good && !String(input.value).trim());
+    }
+
+    /* Busy is over when the claim it named ends: the same code can be checked again. */
+    var stopEnds = invite.onEnd(function () {
+      if (!live || checked !== 'busy') return;
+      checked = null;
+      paint();
+    });
+
+    function check() {
+      var code = String(input.value).trim();
+      if (!code) return;
+      asked += 1;
+      var mine = asked;
+      checked = null;
+      paint();
+      window.PhosphorShell.setPending(primary, true);
+      invite.check(code).then(function (answer) {
+        if (!live || mine !== asked) return;
+        window.PhosphorShell.setPending(primary, false);
+        if (answer.ok) {
+          draft.invite = code;
+          draft.inviteAmount = answer.net;
+          draft.inviteAsset = answer.asset;
+          checked = 'valid';
+        } else {
+          dropInvite();
+          checked = answer.reason;
+        }
+        paint();
+        if (!answer.ok && typeof input.focus === 'function') input.focus();
+      });
+    }
+
+    /* An edit takes back whatever was said about the code before it. */
+    dom.on(input, 'input', function () {
+      asked += 1;
+      if (primary.dataset.pending === 'true') window.PhosphorShell.setPending(primary, false);
+      dropInvite();
+      checked = null;
+      paint();
+    });
+    dom.on(input, 'paste', function () {
+      window.setTimeout(function () {
+        if (live && String(input.value).trim()) check();
+      }, 0);
+    });
+    dom.on(input, 'keydown', function (event) {
+      if (event.key !== 'Enter') return;
+      event.preventDefault();
+      if (!primary.disabled) primary.click();
+    });
+
+    stepHandle = {
+      destroy: function () {
+        live = false;
+        stopEnds();
+        asked += 1;
+      }
+    };
+    paint();
+  }
+
   /* 1. Two paths, as one choice: the tile picked is raised, with a tick. */
   function screenChoose() {
     card.appendChild(dom.el('h1', 'title', 'Create or bring a wallet'));
@@ -738,6 +910,7 @@
              served again. They live in this page's memory until the flow ends
              and nowhere else. */
           draft.mnemonic = Array.isArray(answer.mnemonic) ? answer.mnemonic : [];
+          draft.prove = provable(answer.prove, draft.mnemonic.length);
           draft.addresses = answer.addresses || null;
           go('words');
         })
@@ -824,24 +997,29 @@
     }
   }
 
-  /* Three positions, never the same three. */
-  function pickPositions(count, total) {
+  /* The three positions the app picked when it showed the words, the only
+     three it can check (src/vault/phrase-proof.ts), or none when the answer
+     named none. */
+  function provable(list, total) {
+    if (!Array.isArray(list) || list.length !== PROVE_COUNT) return [];
     var out = [];
-    while (out.length < count && out.length < total) {
-      var at = Math.floor(Math.random() * total);
-      if (out.indexOf(at) === -1) out.push(at);
+    for (var i = 0; i < list.length; i += 1) {
+      var at = list[i];
+      if (typeof at !== 'number' || at % 1 !== 0 || at < 0 || at >= total || out.indexOf(at) !== -1) return [];
+      out.push(at);
     }
     return out.sort(function (a, b) { return a - b; });
   }
 
-  /* 4. Prove it: three words typed back and checked by the app against the
-     phrase it holds, the check that marks the wallet backed up. A miss says
-     so; two misses show the words again with a line that says why. */
+  /* 4. Prove it: three words typed back and checked by the app against what
+     showing them left behind (src/vault/phrase-proof.ts), the check that
+     marks the wallet backed up. A miss says so; two misses show the words
+     again with a line that says why. */
   function screenProve() {
     card.appendChild(dom.el('h1', 'title', 'Prove it'));
     card.appendChild(dom.el('p', 'body dim', 'Type three of your words back, by their number.'));
 
-    var picks = pickPositions(PROVE_COUNT, draft.mnemonic.length);
+    var picks = draft.prove;
     var inputs = [];
     var fields = dom.el('div', 'firstrun-fields');
     for (var i = 0; i < picks.length; i += 1) {
@@ -861,6 +1039,18 @@
     var tries = 0;
 
     actions('Continue', function (button) {
+      /* Words that came with no positions to ask: reading them again names them. */
+      if (!picks.length) {
+        window.PhosphorShell.setPending(button, true);
+        readAgain()
+          .then(function () {
+            if (draft.prove.length) return go('prove');
+            fail(error, 'Your words could not be checked just now. Press Continue to try again.');
+          })
+          .catch(function (err) { fail(error, net.readable(err)); })
+          .finally(function () { window.PhosphorShell.setPending(button, false); });
+        return;
+      }
       var words = [];
       for (var i = 0; i < inputs.length; i += 1) {
         var value = inputs[i].value.trim().toLowerCase();
@@ -869,9 +1059,12 @@
       }
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
-      api.vaultBackupProven(words)
+      proveWords(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            /* The app's sentence for a check it let go names the Vault's Back it up, which this
+               card does not have; it only gets here when the read again did not take. */
+            if (answer.code === 'reveal_again') return fail(error, 'Your words could not be checked just now. Press Continue to try again.');
             if (answer.code !== 'wrong_words') return fail(error, answer.error || 'That did not work.');
             tries += 1;
             if (tries >= 2) {
@@ -887,6 +1080,37 @@
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
     }, { pending: 'Checking' });
+  }
+
+  /* The app keeps what Prove it checks against for half an hour and five
+     misses, and a person writing twenty-four words down slowly can outlast
+     either. It then answers reveal_again, and this card has no Back it up to
+     send them to: the words are read again under the password set two steps
+     back, which leaves a fresh check, and the same three are asked once more.
+     That read is the Vault's own Back it up, password and all, so it gives
+     the check no try that a person without the password could use. */
+  function proveWords(words) {
+    return api.vaultBackupProven(words).then(function (answer) {
+      if (!answer || answer.code !== 'reveal_again' || !draft.password) return answer;
+      return readAgain().then(function (read) {
+        return read && read.ok === false ? read : api.vaultBackupProven(words);
+      });
+    });
+  }
+
+  /* Spent at once, so no reveal waits in the app for its timer; the words it
+     brings back are the ones this card already holds, and the positions it
+     names are the three already asked. */
+  function readAgain() {
+    var spent = function () { return { ok: true }; };
+    return api.revealStart(draft.password, 'mnemonic').then(function (answer) {
+      if (!answer || answer.ok === false) return answer || { ok: false };
+      return api.revealFetch(answer.nonce).then(function (material) {
+        var asked = provable(material && material.prove, draft.mnemonic.length);
+        if (asked.length) draft.prove = asked;
+        return spent();
+      }, spent);
+    });
   }
 
   /* The import path's own step: the phrase, 12 or 24 words, in a box that
@@ -926,13 +1150,44 @@
      when it does not. The wallet exists by now: no Back into making it. */
   function screenAddresses() {
     card.appendChild(dom.el('h1', 'title', 'Your addresses'));
+    var watching = claimInvite();
     var body = dom.el('div', 'stack');
     card.appendChild(body);
     var pick = window.PhosphorNetPick;
-    stepHandle = pick && typeof pick.render === 'function'
+    var picker = pick && typeof pick.render === 'function'
       ? pick.render(body, { context: 'firstrun' })
-      : window.PhosphorMoneyIn.render(body);
+      : window.PhosphorMoneyIn.render(body, { context: 'firstrun' });
     actions('Continue', function () { next(); }, { back: false });
+    stepHandle = {
+      destroy: function () {
+        if (picker && typeof picker.destroy === 'function') picker.destroy();
+        if (watching) watching();
+      }
+    };
+  }
+
+  /* THE CLAIM, once: on the first visit to the addresses step with a good code
+     in the draft, because the wallet exists now and this is the one step every
+     flow shares. The code leaves the draft as the claim is asked for. While the
+     step is up, one line under its title follows the claim; a person who moves
+     on hears how it ended as a toast on Basic (ui/screens/invite.js), and a
+     visit back here shows it again. Nothing waits on it. */
+  function claimInvite() {
+    var invite = window.PhosphorInvite;
+    if (!invite) return null;
+    if (draft.invite && !draft.claim) {
+      draft.claim = invite.claim(draft.invite, { amount: draft.inviteAmount, asset: draft.inviteAsset });
+      dropInvite();
+    }
+    if (!draft.claim) return null;
+    var said = dom.el('p', 'invite-said firstrun-invite-said firstrun-claim');
+    said.setAttribute('role', 'status');
+    said.setAttribute('aria-live', 'polite');
+    card.appendChild(said);
+    return draft.claim.watch(function (status, entry) {
+      invite.say(said, invite.claimTone(entry), invite.claimSentence(entry, 'firstrun'));
+      return true;
+    });
   }
 
   /* 6. The money step is the deposit watch, live, not a spinner: the same line
@@ -1348,6 +1603,9 @@
     cannot: 'Chat apps like Claude Desktop cannot drive Phosphor yet.',
     inUse: 'Your assistant',
     registrationFailed: ' is on this Mac, but Phosphor could not add itself to it. Paste this line into your terminal:',
+    /* A copy of the app on a test data folder never writes an agent's settings
+       (src/agents-catalog.ts ownsAgentSettings): it says so, and gives the line. */
+    registrationSkipped: ' is on this Mac. This copy of Phosphor runs on a test folder, so it leaves its settings alone. To connect it here, paste this line into your terminal:',
     runIt: 'Run this in Terminal, then press Check again.',
     onDoor: ' is connected.'
   };
@@ -1430,6 +1688,7 @@
       command: null,
       registered: false,
       registrationFailed: false,
+      registrationSkipped: false,
       connected: false,
       busy: false,
       /* Which request is the latest. A click that lands while an earlier
@@ -1591,8 +1850,8 @@
            registration that failed changes its next step to the line to
            paste, and another agent's next step is the line itself. Both are
            the one thing left to do, so they are open. */
-        if (picked && state.registrationFailed && state.command) {
-          line = entry.name + COPY.registrationFailed;
+        if (picked && (state.registrationFailed || state.registrationSkipped) && state.command) {
+          line = entry.name + (state.registrationSkipped ? COPY.registrationSkipped : COPY.registrationFailed);
           command = state.command;
           folded = false;
         } else if (picked && entry.id === 'mcp' && state.command) {
@@ -1694,6 +1953,7 @@
       state.command = answer && typeof answer.command === 'string' ? answer.command : null;
       state.registered = !!(answer && answer.registered);
       state.registrationFailed = !!(answer && answer.registrationFailed);
+      state.registrationSkipped = !!(answer && answer.registrationSkipped);
       var whole = store && typeof store.get === 'function' ? (store.get() || {}) : {};
       state.connected = !!state.agent && onDoor(state.agent, whole);
     }

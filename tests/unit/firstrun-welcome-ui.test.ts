@@ -200,15 +200,28 @@ type World = {
   calls: Any[];
   frames: Array<(now: number) => void>;
   animations: Any[];
+  /* The document's own events (motion.js listens for visibilitychange), fired by the test. */
+  fireDocument: (type: string) => void;
+  /* The lock screen's hidden attribute set the way dom.setHidden sets it, and every observer
+     watching it told, as the browser tells a MutationObserver. */
+  setLockHidden: (hidden: boolean) => void;
 };
 
-type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean };
+type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean; lockScreen?: boolean };
 
 const MNEMONIC = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
+// The three positions the app names with the words, the only three it checks (src/vault/phrase-proof.ts).
+const PROVE = [2, 6, 11];
 
 function build(state: Any, opts: Options = {}): World {
   const nodes: Record<string, Any> = {};
   for (const id of ['screen-firstrun', 'screen-terms', 'page']) nodes[id] = makeNode('div');
+  if (opts.lockScreen) {
+    nodes['screen-lock'] = makeNode('div');
+    nodes['screen-lock'].hidden = true;
+  }
+  const docListeners: Record<string, Array<() => void>> = {};
+  const watchers: Array<{ owner: Any; target: Any; filter: string[]; fn: () => void; live: boolean }> = [];
   const body = makeNode('body');
   const root = makeNode('html');
   const calls: Any[] = [];
@@ -222,7 +235,8 @@ function build(state: Any, opts: Options = {}): World {
     createElement: makeNode,
     getElementById: (id: string) => nodes[id] ?? null,
     querySelectorAll: () => [],
-    addEventListener() {},
+    addEventListener(type: string, fn: () => void) { (docListeners[type] ||= []).push(fn); },
+    hidden: false,
   };
   let rafId = 0;
   const sandbox: Any = {
@@ -243,6 +257,14 @@ function build(state: Any, opts: Options = {}): World {
     print() { calls.push({ route: 'print', sheet: body.childNodes.find((n: Any) => n.className === 'print-sheet') ?? null }); },
   };
   sandbox.window = sandbox;
+  if (opts.lockScreen) {
+    sandbox.MutationObserver = class {
+      fn: () => void;
+      constructor(fn: () => void) { this.fn = fn; }
+      observe(target: Any, options: Any) { watchers.push({ owner: this, target, filter: options?.attributeFilter ?? [], fn: this.fn, live: true }); }
+      disconnect() { for (const w of watchers) if (w.owner === this) w.live = false; }
+    };
+  }
   sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
   if (opts.motion !== 'real') sandbox.PhosphorMotion = { reduced: () => opts.reduced === true };
   if (opts.fakeMotion) sandbox.Motion = fakeMotion(animations);
@@ -265,7 +287,7 @@ function build(state: Any, opts: Options = {}): World {
   sandbox.PhosphorApi = {
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }); },
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
-    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} }); },
+    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {}, prove: PROVE.slice() }); },
     vaultBackupProven: (words: Any[]) => {
       calls.push({ route: '/api/vault/backup-proven', words });
       return Promise.resolve(words.every((w: Any) => MNEMONIC[w.index] === w.word) ? { ok: true } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' });
@@ -299,7 +321,16 @@ function build(state: Any, opts: Options = {}): World {
   sandbox.PhosphorState.put(state);
   if (opts.terms) sandbox.PhosphorTerms.boot();
   sandbox.PhosphorFirstRun.boot();
-  return { sandbox, nodes, calls, frames, animations };
+  const fireDocument = (type: string): void => {
+    for (const fn of docListeners[type] ?? []) fn();
+  };
+  const setLockHidden = (hidden: boolean): void => {
+    const lock = nodes['screen-lock'];
+    if (!lock || lock.hidden === hidden) return;
+    lock.hidden = hidden;
+    for (const w of watchers.slice()) if (w.live && w.target === lock && w.filter.includes('hidden')) w.fn();
+  };
+  return { sandbox, nodes, calls, frames, animations, fireDocument, setLockHidden };
 }
 
 const firstRun = (vault: Any, opts: Options = {}): World =>
@@ -369,6 +400,8 @@ test('the create screen says where the key is held in three lines, and the techn
     const facts = find(screen, '.firstrun-fact');
     assert.equal(facts.length, 3);
     assert.ok(facts[0].textContent.endsWith('Nothing is uploaded, and there is no account to make.'));
+    // The chip keeps the key that seals the wallet; the wallet's own key is opened into memory to sign (re-audit R-L14).
+    if (name === 'enclave') assert.ok(facts[1].textContent.endsWith('Touch ID opens it, and the key that seals it never leaves the chip.'), facts[1].textContent);
 
     // The switch is the shared control, off, and the list is marked for it.
     const control = find(screen, '.dev-switch');
@@ -469,6 +502,45 @@ test('opening registers the field with the motion loop, and close() leaves no lo
   assert.equal(motion.handles().length, 1);
   world.sandbox.PhosphorFirstRun.close();
   assert.equal(motion.handles().length, 0);
+});
+
+test('the field draws nothing while the lock card covers the first run or the window is hidden, and draws again after', async () => {
+  const world = firstRun({}, { motion: 'real', field: true, lockScreen: true });
+  const motion = world.sandbox.PhosphorMotion;
+  world.sandbox.PhosphorFirstRun.open();
+  const field = motion.handles()[0];
+  let now = performance.now();
+  /* Every frame the loop asks for, each 40 ms after the last (the field's cap is 30 a second),
+     until it asks for no more or ten have run. */
+  const frames = async (): Promise<number> => {
+    const before = field.stats().frames;
+    for (let i = 0; i < 10; i += 1) {
+      await flush();
+      const tick = world.frames.shift();
+      if (!tick) break;
+      now += 40;
+      tick(now);
+    }
+    return field.stats().frames - before;
+  };
+  assert.ok((await frames()) >= 5, 'the field is not drawing on the first run');
+
+  world.setLockHidden(false);
+  assert.equal(await frames(), 0, 'the field drew behind the lock card');
+  world.setLockHidden(true);
+  assert.ok((await frames()) >= 5, 'the field did not draw again once the lock card went');
+
+  world.sandbox.document.hidden = true;
+  world.fireDocument('visibilitychange');
+  assert.equal(await frames(), 0, 'the field drew in a hidden window');
+  world.sandbox.document.hidden = false;
+  world.fireDocument('visibilitychange');
+  assert.ok((await frames()) >= 5, 'the field did not draw again when the window showed');
+
+  world.sandbox.PhosphorFirstRun.close();
+  world.setLockHidden(false);
+  world.setLockHidden(true);
+  assert.equal(motion.handles().length, 0, 'closing left the field registered');
 });
 
 /* ---------- the moments ---------- */
@@ -691,7 +763,7 @@ test('with the terms still to accept, the welcome comes first and the terms are 
   buttonNamed(screen, 'Get started').click();
   assert.ok(textOf(screen).includes('Before you start'), 'the terms are not the step after the welcome');
   assert.equal(find(screen, '.screen-progress').length, 0, 'the terms are counted as a wallet step');
-  assert.equal(find(screen, '.terms-fact').length, 4);
+  assert.equal(find(screen, '.terms-fact').length, 5);
   buttonNamed(screen, 'Accept and continue').click();
   await flush();
   await flush();
@@ -785,7 +857,7 @@ test('two misses on Prove it show the words again with the line that says why', 
   buttonNamed(screen, 'Continue').click();
   const typed = find(screen, 'input.input');
   const picks = typed.map((f: Any) => Number(f.dataset.index));
-  assert.equal(new Set(picks).size, 3, 'a word was asked twice');
+  assert.deepEqual(picks, PROVE, 'the window asked other positions than the three the app named');
   for (const field of typed) field.value = 'wrong';
   buttonNamed(screen, 'Continue').click();
   await flush();
@@ -795,4 +867,118 @@ test('two misses on Prove it show the words again with the line that says why', 
   assert.ok(textOf(screen).includes('Save your recovery words'), 'two misses did not show the words again');
   assert.ok(textOf(screen).includes('Two tries did not match. Check your copy, then try again.'));
   assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 2);
+});
+
+/* The app keeps what Prove it checks against for half an hour and five misses. Past either it
+   answers reveal_again, and this card has no Back it up: the words are read again under the
+   password set on the password step, and the same three are asked once more. */
+async function toProve(world: World): Promise<Any> {
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const tick = find(screen, 'input').find((n: Any) => n.type === 'checkbox') as Any;
+  tick.checked = true;
+  tick.dispatch('change');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Prove it'));
+  for (const field of find(screen, 'input.input')) field.value = MNEMONIC[Number(field.dataset.index)];
+  return screen;
+}
+
+test('Prove it after the app let its check go reads the words again under the password and asks once more', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  let held = false;
+  api.vaultBackupProven = (words: Any[]) => {
+    world.calls.push({ route: '/api/vault/backup-proven', words });
+    return Promise.resolve(held ? { ok: true } : { ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  };
+  api.revealStart = (password: string, what: string) => {
+    world.calls.push({ route: '/api/wallet/reveal', password, what });
+    held = true;
+    return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  };
+  api.revealFetch = (nonce: string) => {
+    world.calls.push({ route: '/api/wallet/reveal/:nonce', nonce });
+    return Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
+  };
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.deepEqual(world.calls.filter((c) => c.route.startsWith('/api/vault/backup-proven') || c.route.startsWith('/api/wallet/reveal')).map((c) => c.route),
+    ['/api/vault/backup-proven', '/api/wallet/reveal', '/api/wallet/reveal/:nonce', '/api/vault/backup-proven']);
+  const read = world.calls.find((c) => c.route === '/api/wallet/reveal') as Any;
+  assert.deepEqual([read.password, read.what], ['longenough', 'mnemonic'], 'the words were not read under the password set two steps back');
+  const proven = world.calls.filter((c) => c.route === '/api/vault/backup-proven') as Any[];
+  assert.deepEqual(proven[1].words, proven[0].words, 'the second check asked for other words');
+  assert.ok(textOf(screen).includes('Your addresses'), 'the first run stayed on Prove it');
+  assert.ok(!textOf(screen).some((t) => t.includes('Back it up')), 'the card sent the person to a Back it up it does not have');
+});
+
+/* A lock between the read's two requests wipes its slot (src/http/wallet.ts wipeReveals) and the
+   GET answers 404; the check the POST left behind is what counts, so the words are asked again. */
+test('a read again whose words a lock wiped before they were fetched still asks the check once more', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  let held = false;
+  api.vaultBackupProven = () => Promise.resolve(held ? { ok: true } : { ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => { held = true; return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 }); };
+  api.revealFetch = () => Promise.reject(Object.assign(new Error('that reveal has already been used, or was never issued'), { status: 404 }));
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Your addresses'));
+});
+
+test('a check the app still lets go after the read again is said in the card\'s own words, never as a Back it up', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.vaultBackupProven = () => Promise.resolve({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Your words could not be checked just now. Press Continue to try again.'));
+  assert.ok(!textOf(screen).some((t) => t.includes('Back it up')), 'the card sent the person to a Back it up it does not have');
+  assert.ok(textOf(screen).includes('Prove it'));
+});
+
+/* The app checks only the three positions it named with the words. A create that named none sends
+   the card to read the words again, and the three that read names are the ones asked. */
+test('words that came without the three positions to ask are read again, and the three it names are asked', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.walletCreate = () => Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} });
+  api.revealStart = (password: string, what: string) => {
+    world.calls.push({ route: '/api/wallet/reveal', password, what });
+    return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  };
+  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
+  const screen = await toProve(world);
+  assert.equal(find(screen, 'input.input').length, 0, 'the card asked positions of its own');
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/reveal' && c.password === 'longenough'));
+  assert.deepEqual(find(screen, 'input.input').map((f: Any) => Number(f.dataset.index)), PROVE);
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 0, 'a check went out with no words in it');
+});
+
+test('a read again that the app refuses says why and stays on Prove it', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.vaultBackupProven = () => Promise.resolve({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => Promise.resolve({ ok: false, error: 'Too many tries. Wait 30 seconds and try again.', code: 'locked_out', retryInSec: 30 });
+  api.revealFetch = () => { throw new Error('a refused read has no nonce to spend'); };
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Too many tries. Wait 30 seconds and try again.'));
+  assert.ok(textOf(screen).includes('Prove it'));
 });

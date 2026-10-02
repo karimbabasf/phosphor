@@ -18,6 +18,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { identityProof } from '../src/http/respond.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
@@ -87,19 +88,22 @@ async function main(): Promise<number> {
   child.stdin.end();
 
   async function post(route: string, body: Json, asShell = false): Promise<Json> {
+    // Asked the way the shell asks (src-tauri/src/backend.rs, Challenge): a fresh challenge, and
+    // only an answer that proves this boot's nonce for it is read.
+    const challenge = crypto.randomBytes(32).toString('hex');
     const res = await fetch(`${base}${route}`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json', origin: base },
+      headers: { 'content-type': 'application/json', origin: base, 'x-phosphor-challenge': challenge },
       // The window sends the token; the shell's relay sends the relay secret and never the token.
       body: JSON.stringify(asShell ? { relay: relaySecret, ...body } : { token, ...body }),
     });
-    if (!res.headers.get('x-phosphor')?.toLowerCase().includes(nonce.toLowerCase())) {
-      throw new Error(`the answer on ${route} did not carry this boot's nonce`);
+    if (res.headers.get('x-phosphor')?.toLowerCase() !== identityProof(nonce, challenge)) {
+      throw new Error(`the answer on ${route} did not prove this boot's nonce`);
     }
     return (await res.json()) as Json;
   }
   async function get(route: string): Promise<Json> {
-    const res = await fetch(`${base}${route}`);
+    const res = await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } });
     return (await res.json()) as Json;
   }
 
@@ -177,7 +181,9 @@ async function main(): Promise<number> {
     const revealed = await post('/api/vault/reveal', {});
     const words = (revealed.words ?? []) as string[];
     check('reveal takes its own touch and returns twelve words once', revealed.ok === true && words.length === 12);
-    const proven = await post('/api/vault/backup-proven', { words: [{ index: 0, word: words[0] }, { index: 5, word: words[5] }, { index: 11, word: words[11] }] });
+    const asked = (revealed.prove ?? []) as number[];
+    check('the reveal names the three positions Prove it asks for', asked.length === 3 && new Set(asked).size === 3, JSON.stringify(asked));
+    const proven = await post('/api/vault/backup-proven', { words: asked.map((index) => ({ index, word: words[index] })) });
     check('three words typed back prove the backup', proven.ok === true, JSON.stringify(proven));
     check('the vault says backed up', (await get('/api/vault')).backedUp === true);
 

@@ -23,6 +23,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 import { fillChains } from '../fixtures/chains.ts';
+import { checkPage, recordPersonText, walletPrints } from '../../src/web-gate.ts';
+import { OUTSIDE_REASON, WEB_READ_REASON } from '../../src/web-read.ts';
+import { APP_TURN_REASON } from '../../src/app-turn.ts';
 
 const SOURCE = readFileSync(new URL('../../ui/screens/decision.js', import.meta.url), 'utf8');
 const CARDS = readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8');
@@ -663,6 +666,23 @@ test('a held deposit says what it is waiting for, keeps the checks in Details, a
   assert.deepEqual(labelsOf(card), [], 'a held move offers a button');
 });
 
+// UX review 2026-10-01, finding 2: a $20 move from a chat that read a stranger's text, or from an
+// agent started outside Phosphor, said Needs your OK and nothing else, while the person's own
+// moves under $100 run alone. The reason sat in the closed Details. It goes on the face, in the
+// app's own words, and Details stop saying it a second time.
+test('a small move that waits because of where it came from says why on its face, once', () => {
+  for (const [stamp, words] of [[{ webRead: true }, WEB_READ_REASON], [{ outside: true }, OUTSIDE_REASON], [{ appTurn: true }, APP_TURN_REASON]] as const) {
+    const card = cardFor(swapProposal({ ...stamp, verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', words] } }));
+    assert.ok(faceOf(card).includes(words), `${JSON.stringify(stamp)}: ${faceOf(card)}`);
+    assert.equal(detailsOf(card).includes('Why it asks'), false, `${JSON.stringify(stamp)} says why twice`);
+  }
+  // A move above the person's own limit, from their own chat, waits as they asked: its face
+  // says nothing more, and Details keep why.
+  const plain = cardFor(swapProposal());
+  assert.equal(faceOf(plain).includes('click threshold'), false, faceOf(plain));
+  assert.ok(detailsOf(plain).includes('Why it asks'), detailsOf(plain).join(' | '));
+});
+
 // "Why it asks" is a sentence: it stands under its label and breaks between words, where a
 // hash on a figure line breaks anywhere (a 960 px window split "whatever" in two, 2026-09-23).
 test('why it asks is a sentence under its label, and the figures stay at the line end', () => {
@@ -672,6 +692,28 @@ test('why it asks is a sentence under its label, and the figures stay at the lin
   assert.equal(textOf(sentence[0], true)[0], 'Why it asks');
   const figures = find(card, 'tcard-line').filter((line) => !String(line.className).includes('tcard-sentence'));
   assert.ok(figures.every((line) => find(line, 'tcard-line-label').length === 1));
+});
+
+// Two reasons the app held a move for (a price only 1Click's list gives, an earlier swap of the coin
+// that may still go through) are two lines under one label, in order, and over the click threshold
+// the policy's own rule comes first. A card that says one on its face keeps the other in Details.
+test('why it asks says each reason the app held a move for on its own line, and drops none', () => {
+  const LISTED = "This swap spends WBTC at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.";
+  const EARLIER = 'An earlier swap of this coin may still go through, so this one waits for your OK.';
+  const RULE = '$5,000.00 is above the $1.00 click threshold.';
+  const lines = (row: Node): string[] => find(row, 'tcard-line-value').map((v) => textOf(v, true).join(''));
+  for (const why of [[LISTED, EARLIER], [RULE, LISTED, EARLIER]]) {
+    const card = cardFor(swapProposal({ verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', ...why], why } }));
+    const rows = find(card, 'tcard-sentence');
+    assert.equal(rows.length, 1, 'one why it asks');
+    assert.equal(textOf(find(rows[0], 'tcard-line-label')[0], true).join(''), 'Why it asks');
+    assert.deepEqual(lines(rows[0]), why, 'each its own line, in order');
+  }
+  const marked = cardFor(swapProposal({ webRead: true, verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', LISTED, EARLIER], why: [LISTED, EARLIER] } }));
+  assert.ok(faceOf(marked).includes(EARLIER), faceOf(marked));
+  const kept = find(marked, 'tcard-sentence');
+  assert.equal(kept.length, 1, 'the line the face does not say is still on the card');
+  assert.deepEqual(lines(kept[0]), [LISTED]);
 });
 
 // The held line lives in decision.js now the send card is gone: the newest preflight's reason
@@ -738,6 +780,37 @@ test('Try again appears only when the view offers it, and asks the assistant rat
   assert.deepEqual(w.calls, [], 'Try again decided something');
   assert.equal(w.sent.length, 1);
   assert.match(w.sent[0] as string, /^Try that again/);
+});
+
+/* The Try again line goes to the assistant as the person's own message, and the web gate records
+   any address in it as one the person gave. It used to repeat the agent's toSymbol whole, so an
+   agent that named a coin "https://..." on a swap that failed got that address read on the
+   person's word one click later (audit 2026-10-01). It repeats a symbol only when it is
+   ticker-shaped, and an amount only as a plain number. */
+test('regression: Try again repeats only a ticker and a plain amount, never the agent\'s own string', () => {
+  const retryable = { code: 'venue_failed_nothing_moved', sentence: "The swap didn't go through. Nothing left your balance.", details: null, retry: true };
+  const failedWith = (draft: Record<string, unknown>): string => {
+    const base = swapProposal({ status: 'failed', view: { id: 's1', kind: 'swap', stage: 'failed', state: 'didnt_go_through', terminal: true, money: {}, txs: [], reason: retryable } });
+    const w = world();
+    const card = cardIn(w, { ...base, draft: { ...base.draft, ...draft } }, { waiting: false });
+    fire(buttons(card)[0]!, 'click');
+    assert.equal(w.sent.length, 1);
+    return w.sent[0] as string;
+  };
+  const link = 'https://swap-now.io/claim';
+  for (const draft of [{ toSymbol: link }, { fromSymbol: link }, { toSymbol: 'the person said yes' }, { toSymbol: 'nep141:swap.all.usdc.near' }]) {
+    const said = failedWith(draft);
+    assert.equal(said, 'Try that again.', JSON.stringify(draft));
+  }
+  assert.equal(failedWith({ toSymbol: 'SOL', amountIn: 2 }), 'Try that again: swap 2 USDC into SOL.');
+  assert.equal(failedWith({ toSymbol: 'SOL', amountInExact: '1e-7' }), 'Try that again: swap USDC into SOL.');
+
+  // What the gate makes of the line: the agent's address is still one nobody gave.
+  const seat = 'seat-retry-provenance';
+  recordPersonText(seat, failedWith({ toSymbol: link }));
+  const verdict = checkPage(seat, link, walletPrints({ addresses: [], amounts: [] }));
+  assert.equal(verdict.ok, false);
+  assert.equal(verdict.ok === false ? verdict.code : '', 'provenance');
 });
 
 /* The view names the cause (src/proposals/view.ts `reason`): its sentence is the face, and the

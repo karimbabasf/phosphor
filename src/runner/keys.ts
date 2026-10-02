@@ -11,20 +11,14 @@
 //
 // It lives under a distinct field so an install that has an EVM key but has never approved an
 // agent fails with a sentence that says what to do, rather than by silently signing orders with
-// the master key, which would be the worst possible fallback.
+// the master key, which would be the worst possible fallback. Which field, when an older file
+// carries two shapes, is apiWalletOf in src/keystore/store.ts.
 //
-// A keys.json written before 2026-09-01 keyed the agent by a venue axis this app no longer
-// has. The reader takes the entry that names this venue first and falls back to the flat
-// field an older file carries, so no install loses its agent to a shape change. It never
-// writes that file back and never removes anything from it: it is key material, and a human
-// removes what a human put there.
+// The keystore holds it beside the payload as its own 32 bytes, so a runner start reads that and
+// never decodes the payload, which carries the recovery phrase: a decoded copy is a string, and
+// nothing can wipe a string.
 
-import { isLocked, keyMaterial } from '../keystore/index.ts';
-import type { AgentEntry } from '../keystore/store.ts';
-
-function validKey(value: unknown): value is `0x${string}` {
-  return typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value);
-}
+import { apiWallet, isLocked, keyHeld } from '../keystore/index.ts';
 
 export type ApiWalletRead = {
   key: `0x${string}` | null;
@@ -37,23 +31,14 @@ export type ApiWalletRead = {
 
 export function readApiWallet(keysPath: string): ApiWalletRead {
   const absent: ApiWalletRead = { key: null, source: 'absent', address: null };
-  if (isLocked()) return { key: null, source: 'locked', address: null };
+  /* A wallet closing behind moves already under way (Keystore.lockWhen) still serves them: a
+     trade whose plan was arming when the lock was asked for gets its key. Nothing new reaches this
+     read while it closes, because a new move cannot start and plans re-arm only on an announced
+     unlock. */
+  if (isLocked() && !keyHeld()) return { key: null, source: 'locked', address: null };
   try {
-    const parsed = keyMaterial(keysPath);
-
-    const keyed = parsed.hyperliquidAgents?.mainnet;
-    if (validKey(keyed?.privateKey)) {
-      return { key: keyed.privateKey, source: 'present', address: keyed.address ?? null };
-    }
-
-    // The flat entry. Read it rather than refuse: a file written under either older shape
-    // has a perfectly good key in it, and a shape change should not cost an install its agent.
-    const flat: AgentEntry | undefined = parsed.hyperliquidAgent;
-    if (validKey(flat?.privateKey)) {
-      return { key: flat.privateKey, source: 'present', address: flat.address ?? null };
-    }
-
-    return absent;
+    const held = apiWallet(keysPath);
+    return held === null ? absent : { key: held.key, source: 'present', address: held.address };
   } catch {
     // A malformed or missing wallet reads as no key rather than as an exception. Nothing can
     // arm without a key, which is the safe direction for this failure to point.

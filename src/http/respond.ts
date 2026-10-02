@@ -14,6 +14,10 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
+import { errText } from '../err-text.ts';
+
+export { errText };
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', '..', 'ui');
 
@@ -35,10 +39,6 @@ export type JsonBody = Record<string, unknown>;
 // `status` is on the failure because the two refusals are different answers: a body this
 // surface will not read at all is 415, a body it read and could not parse is 400.
 type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string; status: number };
-
-export function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export function asRecord(value: unknown): JsonBody {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};
@@ -93,18 +93,29 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+/* AN ANSWER CAN BE REWORDED FOR WHOEVER READS IT, after it is written and before its length is.
+   The agent door registers one (src/http/mcp.ts: a venue's known refusal in the app's words);
+   every other route sends what it built. */
+const rewordings = new WeakMap<http.ServerResponse, (body: string) => string>();
+
+export function rewordAnswer(res: http.ServerResponse, reword: (body: string) => string): void {
+  rewordings.set(res, reword);
+}
+
 /* The identity header rides on every JSON answer too, not only on the page. The shell's enclave
-   relay reads it on /api/vault/pending and /api/vault/answer and refuses any answer without
-   this boot's nonce, so a local process that took the port cannot hand the relay a request to
-   run against the enclave, nor swallow the answer to one. It was the page's header alone until
+   relay reads it on /api/vault/pending and /api/vault/answer and refuses any answer that does not
+   prove this boot's nonce, so a local process that took the port cannot hand the relay a request
+   to run against the enclave, nor swallow the answer to one. It was the page's header alone until
    the relay existed; nothing about the page changes. */
 export function sendJson(res: http.ServerResponse, status: number, payload: unknown): void {
-  const body = JSON.stringify(payload);
+  const written = JSON.stringify(payload);
+  const reword = rewordings.get(res);
+  const body = reword === undefined ? written : reword(written);
   res.writeHead(status, {
     'content-type': 'application/json; charset=utf-8',
     'content-length': Buffer.byteLength(body),
     'cache-control': 'no-store',
-    [IDENTITY_HEADER]: identityValue(),
+    [IDENTITY_HEADER]: identityValue(res.req),
   });
   res.end(body);
 }
@@ -205,32 +216,46 @@ const CONTROL_CSP = [
    recognised, and the app failed as a 45-second timeout with nothing actually wrong with it.
    A response header cannot be moved by a redesign. src-tauri/src/backend.rs reads it.
 
-   THE NAME IS FIXED AND THE VALUE IS NOT, and that is the security half. The value used to be the
-   word below, always, which made the marker a liveness probe being used as an identity check: any
-   local process can send `x-phosphor: control`, so a process that took the port during the boot
-   race or the three-second respawn backoff was recognised as the backend and handed a window with
-   the approval token injected into it, and then the keystore passphrase. The shell now mints a
-   nonce per boot, writes it down this process's stdin beside the window token, and this process
-   echoes it here. A squatter cannot read the pipe and cannot guess 32 random bytes, so it cannot
-   answer as this boot's backend.
+   THE NAME IS FIXED AND THE VALUE IS A PROOF. The value used to be the word below, always, which
+   made the marker a liveness probe being used as an identity check: any local process can send
+   `x-phosphor: control`. Then it was the boot nonce itself, echoed on every answer, and that was
+   the same probe one step later: any local process could GET /api/health once, read the nonce off
+   the header and answer with it after the backend died (audit 2026-10-01, L15).
 
-   The word below stays as the fallback, for `npm run app` with no shell above it. Nothing is
-   weakened by that: a backend with no nonce is a backend no shell is waiting on, and a shell that
-   minted a nonce refuses anything that answers with anything else. */
+   So the nonce never leaves this process now. The shell sends a fresh 32-byte challenge in
+   `x-phosphor-challenge` on every request whose answer it is about to trust, and this process
+   answers with HMAC-SHA256(nonce, "phosphor identity\n" + challenge). An answer seen once is
+   worth nothing for the next challenge, and the shell mints a new nonce for every backend it
+   spawns, so not even a key read out of a dead process answers for the next one.
+
+   A request with no challenge, or one that is not 64 lowercase hex characters, gets the fixed word:
+   the launch survey only asks whether a Phosphor is on the port, and the page never asks at all.
+   The word is also the whole answer for `npm run app` with no shell above it, which has no nonce
+   and no shell waiting on it. */
 export const IDENTITY_HEADER = 'x-phosphor';
+export const CHALLENGE_HEADER = 'x-phosphor-challenge';
 export const IDENTITY_VALUE = 'control';
 
-let identity = IDENTITY_VALUE;
+const CHALLENGE = /^[0-9a-f]{64}$/;
 
-/* Written once at boot from src/main.ts, off the shell's pipe, before the port opens. A caller
-   with nothing to say leaves the fallback in place rather than blanking the header, because a
-   missing marker is a boot the shell cannot recognise at all. */
+let identityKey = '';
+
+/* Written once at boot from src/main.ts, off the shell's pipe, before the port opens. An empty
+   value leaves the backend answering the fixed word, never a proof under an empty key. */
 export function useIdentityValue(nonce: string): void {
-  if (nonce.length > 0) identity = nonce;
+  if (nonce.length > 0) identityKey = nonce;
 }
 
-export function identityValue(): string {
-  return identity;
+/* What the shell computes on its side too (src-tauri/src/backend.rs, Challenge). The domain line
+   keeps this MAC from ever being equal to one computed over the same key for another purpose. */
+export function identityProof(nonce: string, challenge: string): string {
+  return crypto.createHmac('sha256', nonce).update(`phosphor identity\n${challenge}`).digest('hex');
+}
+
+export function identityValue(req?: http.IncomingMessage): string {
+  const asked = req?.headers[CHALLENGE_HEADER];
+  if (identityKey === '' || typeof asked !== 'string' || !CHALLENGE.test(asked)) return IDENTITY_VALUE;
+  return identityProof(identityKey, asked);
 }
 
 export function serveStatic(pathname: string, res: http.ServerResponse): void {
@@ -266,7 +291,7 @@ export function serveStatic(pathname: string, res: http.ServerResponse): void {
     'content-type': type,
     'content-length': body.length,
     'cache-control': cache,
-    [IDENTITY_HEADER]: identityValue(),
+    [IDENTITY_HEADER]: identityValue(res.req),
     ...(type === MIME['.html'] ? { 'content-security-policy': CONTROL_CSP } : {}),
   });
   res.end(body);

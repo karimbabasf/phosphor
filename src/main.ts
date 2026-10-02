@@ -3,6 +3,10 @@
 // This is the authoritative state owner. The MCP process (src/mcp.ts) is a thin
 // client of the HTTP surface this file boots.
 
+// FIRST, before any other module of this app: the payload resolve guard, so nothing can be loaded
+// from outside the digested payload (src/boot-guard.ts, audit 2026-10-01, L14).
+import './boot-guard.ts';
+
 import fs from 'node:fs';
 import path from 'node:path';
 import { Readable } from 'node:stream';
@@ -14,8 +18,9 @@ import { createMarkingsFile } from './markings.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { recordAuditChain } from './http/health.ts';
-import { createKeystore, useKeystore } from './keystore/index.ts';
+import { createKeystore, isLocked, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
+import { lockReasonFor } from './keystore/lock-reason.ts';
 import { createStore } from './store.ts';
 import { installCrashHandlers } from './crash.ts';
 import { acquireInstanceLock } from './instancelock.ts';
@@ -41,6 +46,7 @@ import { MAX_AGENTS, RESERVED_SEATS, createAgents, seatSecretPath } from './agen
 import { atomicWrite } from './fsatomic.ts';
 import { createRunnerHost } from './runner/host.ts';
 import { readApiWallet, readApiWalletKey } from './runner/keys.ts';
+import { createKill } from './kill.ts';
 import { createTradeService } from './trade/service.ts';
 import type { TradeService } from './trade/service.ts';
 import { createPlanStore } from './trade/plans.ts';
@@ -48,7 +54,9 @@ import type { TradeDeps } from './trade/rail.ts';
 import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
-import { mintToken, readWindowToken } from './http/auth.ts';
+import { createVaultPrefs } from './vault/prefs.ts';
+import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
+import { readKeyPath } from './http/read-gate.ts';
 import { refreshRegistration } from './http/mutation.ts';
 import { useIdentityValue } from './http/respond.ts';
 import { sweepOrphans, useSeatSecret } from './driver.ts';
@@ -105,8 +113,9 @@ useKeystore(keystore);
    Five lines, in this order, written by src-tauri/src/backend.rs and then the pipe is closed:
 
      1. the window token, which every write from the control page carries
-     2. the boot nonce, which this process echoes in its x-phosphor header so the shell can tell
-        its OWN backend from anything else that took the port
+     2. the boot nonce, the key this process answers the shell's challenges with in its x-phosphor
+        header, so the shell can tell its OWN backend from anything else that took the port. It is
+        never served itself; see src/http/respond.ts
      3. the roster seat secret, which reaches the agents this app spawns and nothing else
      4. the enclave transport key, under which the Secure Enclave sidecar seals the wallet's data
         key on its way back here over loopback; see src/vault/relay.ts
@@ -171,8 +180,8 @@ const windowTokenValue = await readWindowToken({
   stdin: Readable.from([`${handshake[0] ?? ''}\n`]) as NodeJS.ReadableStream,
 });
 
-// The identity header answers with this boot's nonce from here on. Set before the port opens, so
-// there is no window in which this app answers with the fixed word the shell would refuse.
+// The identity header proves this boot's nonce from here on. Set before the port opens, so there
+// is no window in which this app answers a challenge with the fixed word the shell would refuse.
 useIdentityValue(handshake[1] ?? '');
 
 /* The roster seat secret, and a minted one when nobody sent it.
@@ -188,10 +197,20 @@ useIdentityValue(handshake[1] ?? '');
    Mode 0600 keeps out another account on this Mac and nothing else. The attacker http/auth.ts
    names, a process this same user owns, reads it and takes a seat; what that costs it is a line
    in the audit log, a row on the roster and the presence light. The seat is not the wall. The
-   human click is, and no seat reaches one. src/mcp.ts says the same thing where it reads this. */
+   human click is, and no seat reaches one. src/mcp.ts says the same thing where it reads this.
+   TWO VALUES SINCE 2026-10-01 (review gap 4). The shell's goes to the agents this app spawns and
+   nowhere else; the file gets one minted here. A seat taken with the file's is OUTSIDE
+   (src/agents.ts): every move it asks for waits for the person's click until they allow that
+   agent in the window, so a process that read the file gets a card the person answers, never a
+   move that runs on its own. */
 const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) : mintToken();
+const handSeatSecret = mintToken();
 useSeatSecret(seatSecret);
-atomicWrite(seatSecretPath(cfg.dataDir), `${seatSecret}\n`, { mode: 0o600 });
+atomicWrite(seatSecretPath(cfg.dataDir), `${handSeatSecret}\n`, { mode: 0o600 });
+// The read key, for a program the person runs: every GET under /api/ wants it or the token, and
+// only the window and the shell hold the token. Owner-readable, rewritten every boot. See
+// src/http/read-gate.ts for who holds which credential.
+atomicWrite(readKeyPath(cfg.dataDir), `${readKeyFor(windowTokenValue)}\n`, { mode: 0o600 });
 
 /* The enclave transport key, line 4, and the relay built over it. Absent (a bare `npm run app`,
    an older shell) means a relay with no key, which answers every ask with no_relay: the wallet
@@ -214,23 +233,28 @@ if (transportKey !== null) {
   });
 }
 
-const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret });
+const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret, handSecret: handSeatSecret });
 
 /* The lock's clock, and the signing sessions armed rules hold, in one object because they are
    two halves of one question: how long may this process keep a key. It is built here rather
    than inside createServer because the runner needs it too, and there must be exactly one.
    `announceLock` is filled once the server exists, since the frame it sends needs SSE clients
-   to send it to. Until then a lock is still a lock, it is simply not narrated. */
+   to send it to. Until then a lock is still a lock, it is simply not narrated.
+   The idle time is the one the Vault tab shows, read on every tick. This session used to be
+   built without it, and the server takes this session over its own, so the app locked at a
+   fixed fifteen minutes whatever the tab said. */
 let announceLock: (() => void) | null = null;
+const vaultPrefs = createVaultPrefs(cfg.dataDir);
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
+  idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
   lock: (reason) => {
-    keystore.lock();
+    if (keystore.lock()) lockReasonFor(keystore).note(reason);
     audit.append(
       'app_start',
       reason === 'sleep'
         ? 'the wallet locked: this machine was asleep'
-        : 'the wallet locked after fifteen minutes with nobody at the window',
+        : `the wallet locked after ${vaultPrefs.get().idleMinutes} minutes with nobody at the window`,
       { reason },
     );
     announceLock?.();
@@ -450,6 +474,7 @@ const runner = createRunnerHost({
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a plan was allowed to arm.
   killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
+  walletOpen: () => !isLocked(),
   store: createPlanStore(cfg.dataDir),
   meta: (coin) => tradeService?.meta(coin) ?? null,
   mark: (coin) => tradeService?.mark(coin) ?? null,
@@ -685,29 +710,12 @@ function setTheme(next: Theme): void {
   writeTheme(cfg.dataDir, next);
 }
 
-function setKill(on: boolean): void {
-  const p = getPolicy();
-  if (p === null) {
-    audit.append('error', 'kill toggle ignored: policy file unreadable (writes already refused)');
-    return;
-  }
-  p.killSwitch = on;
-  savePolicy(cfg.dataDir, p);
-  audit.append('kill_switch', on ? 'kill switch ON: all writes refused' : 'kill switch off');
-  /* Anchored now rather than on the next tick of the timer. This is the line somebody goes
-     looking for straight after pulling the switch, and what usually follows a kill switch is
-     somebody stopping the app in a hurry. */
-  audit.flushTip();
-
-  // Stop what is already running, not just what tries to start next.
-  //
-  // The switch used to be consulted only when a plan armed, so flipping it while a plan held a
-  // position refused future proposals and left the plan running: the one situation a kill
-  // switch exists for. setKilled stops any fire from now on; stopAll cancels every resting
-  // order, closes every position and takes the child out whether or not it answered.
-  runner.setKilled(on);
-  if (on) void runner.stopAll('kill switch');
-}
+/* The Freeze switch. It stops what is already running, not just what tries to start next: the
+   switch used to be consulted only when a plan armed, so flipping it while a plan held a position
+   refused future proposals and left the plan running, the one situation a kill switch exists for.
+   The runner is told before the policy file is read (src/kill.ts), so a file that will not load
+   can never be the reason a plan kept firing. */
+const setKill = createKill({ dataDir: cfg.dataDir, audit, runner, tradingKey: () => readApiWallet(cfg.keysPath).source });
 
 // ATR per coin, refreshed on a slow timer and served from a cache.
 //
@@ -817,6 +825,11 @@ const server = createServer({
      who wants an agent started for them sets `driver.autostart: true` in config.json. */
   autostart: cfg.driver?.autostart === true,
 });
+
+/* An invite claim this app published before it last stopped is finished here, by the same proof
+   the claim itself waits on: the code's nonce spent and its balance down, or the signed deadline
+   passed unspent on the chain's clock. Never awaited: it reads the network. See src/invite/claim.ts. */
+server.invites.reconcile();
 
 /* Now that there are clients to tell, an automatic lock says so on the wire.
    The `lock` frame itself is not sent from here. The server subscribes to the keystore, so the

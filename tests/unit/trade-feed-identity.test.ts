@@ -222,6 +222,7 @@ test('the runner child is forked with the wallet as it is at arm time, not at bo
     baseUrl: 'http://127.0.0.1:1',
     user: () => current,
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: () => {},
     store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-feed-identity-'))),
     meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),

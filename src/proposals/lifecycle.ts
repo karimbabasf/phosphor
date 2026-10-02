@@ -27,6 +27,8 @@ import { evaluate } from '../policy/engine.ts';
 import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { isLocked } from '../keystore/index.ts';
+import { CLOSE_GRACE_MS } from '../keystore/store.ts';
+import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
@@ -94,9 +96,7 @@ export function pct(share: number): string {
   return (share * 100).toFixed(2) + '%';
 }
 
-export function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+export { errText };
 
 export function totalUsdOf(draft: WriteDraft): number {
   if (draft.kind === 'policy_change') return 0;
@@ -419,7 +419,7 @@ export function newProposal(
   draft: WriteDraft,
   simulation: SimulationResult | null,
   verdict: Verdict,
-  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean },
+  origin?: { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean; outside?: boolean },
 ): Proposal {
   const clientKey = origin?.clientKey;
   const by = typeof origin?.by === 'string' && origin.by !== '' ? origin.by : undefined;
@@ -440,6 +440,8 @@ export function newProposal(
     ...(origin?.webRead === true ? { webRead: true as const } : {}),
     // And the app-turn stamp, taken the same way (src/app-turn.ts).
     ...(origin?.appTurn === true ? { appTurn: true as const } : {}),
+    // And the outside stamp: a seat the app did not spawn and the person has not allowed.
+    ...(origin?.outside === true ? { outside: true as const } : {}),
   };
 }
 
@@ -541,14 +543,13 @@ export function enclaveGated(ctx: PCtx): boolean {
 }
 
 /* The second half of an enclave-gated approval: the shell has answered. A data key opens the
-   wallet (which also lifts anything parked as pending_unlock, through releaseQueued's rules,
-   not through this one) and this proposal alone goes to approved and executes. Anything else
-   (a cancelled dialog, a relay that died, a key that did not open the file) puts the proposal
-   back to pending with the reason in the audit log: the click is not lost, and nothing has
-   been signed. */
+   wallet for this proposal alone, which goes to approved and executes. Anything else (a
+   cancelled dialog, a relay that died, a key that did not open the file) puts the proposal back
+   to pending with the reason in the audit log: the click is not lost, and nothing has been
+   signed. */
 export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): Promise<Proposal | null> {
-  // A data key that arrives with nowhere to go is wiped here; unlockWithDataKey is the only other
-  // place that wipes it, and every path that does not reach it must.
+  // A data key that arrives with nowhere to go is wiped here; the keystore wipes every one it is
+  // handed, and every path that does not reach it must.
   const drop = (): void => {
     if (result.ok && result.op === 'unwrap') result.dek.fill(0);
   };
@@ -573,12 +574,39 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
     ctx.audit.append('proposal_created', `${id} goes back to pending: the enclave answered the wrong thing`, { id });
     return persist(ctx, { ...current, status: 'pending' });
   }
-  const opened = ctx.keystore.unlockWithDataKey(result.dek);
+  /* THE ENGINE RUNS AGAIN HERE, the last moment before anything signs. approve() judged the
+     click when it was made, and the dialog can then sit open for a minute: a kill switch turned
+     on in that minute, a policy file that stopped loading, or other clicks whose touches landed
+     first all change the answer. Inside the serialiser, so the spend it reads is every move
+     ahead of this one. A refusal opens nothing and the data key is wiped, as retryHeld refuses
+     a held row. */
+  const verdict = evaluate(current.draft, buildCtx(ctx, ctx.ledger.snapshot(), loadPolicy(ctx.dataDir)));
+  if (verdict.outcome === 'refuse') {
+    drop();
+    ctx.audit.append('policy_refused', `${id} refused after Touch ID: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
+    return persist(ctx, { ...current, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+  }
+  /* THE TOUCH OPENS THE WALLET FOR THIS ONE MOVE (Keystore.openFor). The dialog named one move,
+     and it used to be a full unlock: every move under the click threshold then ran with no click
+     until the idle lock, anything waiting on an unlock could follow, and plans whose session had
+     ended re-armed. Now a shut wallet stays shut to everything else, nothing is announced, and
+     the key goes as soon as this move has signed (mayStillSign), or at the cap. An open wallet
+     stays as it was. A move the preflight holds has signed nothing, so the key goes then too,
+     and the hold closes at its next try with the wallet locked. */
+  const opened = ctx.keystore.openFor(
+    `approve:${id}`,
+    result.dek,
+    () => {
+      const row = ctx.store.get(id);
+      return row === undefined || !mayStillSign(row);
+    },
+    CLOSE_GRACE_MS,
+  );
   if (!opened.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
     return persist(ctx, { ...current, status: 'pending' });
   }
-  const approved = persist(ctx, { ...current, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+  const approved = persist(ctx, { ...current, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   rememberRecipient(ctx, approved);
   return ctx.execute(approved);
@@ -711,8 +739,26 @@ function countsAgainstCap(p: Proposal): boolean {
   // or an ambiguous venue send, a nonce for an ambiguous Hyperliquid action. Each is money that
   // may be live at the venue, and a budget that forgot it is the under-count that let a retry
   // spend twice. A row with none of them is the app not knowing, and holds nothing.
+  return leftEvidence(p);
+}
+
+// What a rail hands the row the moment it has signed: a hash, a handle, or a nonce.
+function leftEvidence(p: Proposal): boolean {
   const evidence = p.result?.evidence;
   return (p.result?.txids?.length ?? 0) > 0 || evidence?.handle !== undefined || evidence?.nonce !== undefined;
+}
+
+/* WHETHER A ROW MAY STILL NEED THE KEY, which is what a lock asked for while somebody steps away
+   waits on (src/http/wallet.ts handleLock, Keystore.lockWhen). Approved and on its way to the
+   rail, or executing with nothing at the venue yet: every rail writes its handle, hash or nonce
+   onto the row right after its signature, so a row that carries one is in its delivery watch,
+   which is minutes of polling that need no key. A rail that signs once more after that (a
+   Hyperliquid deposit moving what landed on spot over to perp, a withdrawal resending the same
+   nonce) finds the key gone and says so on the row, as it does after the person's own Lock. A
+   held row is waiting on the chain, not signing, and a lock closes its hold at the next retry. */
+export function mayStillSign(p: Proposal): boolean {
+  if (p.status === 'approved') return p.heldSince === undefined;
+  return p.status === 'executing' && !leftEvidence(p);
 }
 
 export function dailyLimit(ctx: PCtx, capUsd: number): DailyLimit {

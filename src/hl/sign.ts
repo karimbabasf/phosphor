@@ -1,9 +1,9 @@
 // Signing Hyperliquid L1 actions: orders, cancels, modifies, leverage changes.
 //
-// This is the THIRD signing site in the repo and the only one that holds a key which cannot
-// move funds. src/chain/evm.ts signs EVM transactions with the master key.
-// src/rails/hyperliquid-withdraw.ts signs user actions with the master key and is reachable
-// only from scripts/. This file signs with an API wallet, which the venue permits to trade and
+// This is the only signing site in the repo that holds a key which cannot move funds. The
+// master key signs intents (src/intents-sign.ts) and Hyperliquid user actions
+// (src/rails/hl-user-signed.ts), never a chain transaction. This file signs with an API wallet,
+// which the venue permits to trade and
 // forbids from withdrawing, transferring, or approving another agent. That split is why the
 // key in the hot path is allowed to be online at all.
 //

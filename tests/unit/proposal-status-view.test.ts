@@ -32,6 +32,8 @@ const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..',
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
 const SELF = '0x1111111111111111111111111111111111111111';
 const SEAT = 's'.repeat(64);
+// The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
+const TOKEN = 'f'.repeat(64);
 
 const rail: Rail = {
   kind: 'hl_deposit',
@@ -87,6 +89,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void>; id: st
   agents.claim({ session: 'unnamed-session', client: 'test' });
 
   const server = createServer({
+    token: TOKEN,
     cfg,
     audit,
     store,
@@ -121,7 +124,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void>; id: st
 function get(base: string, route: string): Promise<{ status: number; json: unknown }> {
   const u = new URL(base + route);
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search }, (res) => {
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'x-phosphor-token': TOKEN } }, (res) => {
       let d = '';
       res.on('data', (c) => (d += c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, json: d === '' ? null : JSON.parse(d) }));

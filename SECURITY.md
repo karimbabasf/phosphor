@@ -12,7 +12,7 @@ It is private to the maintainer until an advisory is published.
 If that is not available to you, open a public issue that asks for a private channel and says
 nothing technical. No details, no reproduction, no addresses.
 
-Useful reports carry: the version or commit, the config that was live (network, gate state, policy),
+Useful reports carry: the version or commit, the config that was live (network, policy),
 the exact steps, what you expected the policy engine to do, and what it did.
 
 ## In scope
@@ -24,16 +24,20 @@ the exact steps, what you expected the policy engine to do, and what it did.
   `decidedBy: 'human'` when no person clicked.
 - A policy rule (budget, allowlist, threshold, composition limit, kill switch) that can be bypassed
   or silently skipped.
-- A proposal whose displayed facts differ from what actually gets signed, on any of the three
-  windows.
+- A proposal whose displayed facts differ from what actually gets signed, on any screen.
 - Prompt injection that reaches a real capability rather than only the agent's text.
 
 ## Out of scope
 
 - Bugs in third-party protocols, chains, bridges, venues or RPC providers. Report those to them.
 - Losses caused by your own configuration, your own approval, or a rule that did what it said.
-- Anything that needs an attacker who already has your machine, your shell or your key file.
+- Anything that needs an attacker who already has your key file, root, or code running as you
+  that docs/security-model.md says it does not defend against.
 - Limits the security model already states as known and unclaimed. Read it first.
+
+A program running as you that breaks a boundary the security model says holds against one (the
+click, the window token, the read gate, the update check, the enclave service's caller check) is
+in scope.
 
 ## What to expect
 

@@ -26,17 +26,33 @@
     return host;
   }
 
-  function show(message, tone, ms) {
-    var node = dom.el('div', 'toast', message);
+  /* `options` is how long it lives in ms, or { stay: true } for one that stays until its
+     quiet close key is pressed: news a person must not miss, such as money that did not
+     come. */
+  function show(message, tone, options) {
+    var opts = typeof options === 'number' ? { ms: options } : (options || {});
+    var node = dom.el('div', opts.stay ? 'toast toast-stay' : 'toast', opts.stay ? null : message);
     if (tone) node.dataset.tone = tone;
-    toastHost().appendChild(node);
-    var life = ms || (tone === 'down' ? 7000 : 4200);
-    window.setTimeout(function () {
+    function leave() {
+      if (node.dataset.leaving === 'true') return;
       node.dataset.leaving = 'true';
       window.setTimeout(function () {
         if (node.parentNode) node.parentNode.removeChild(node);
       }, 240);
-    }, life);
+    }
+    if (opts.stay) {
+      node.appendChild(dom.el('span', 'toast-words', message));
+      var close = dom.el('button', 'dock-close');
+      close.type = 'button';
+      close.setAttribute('aria-label', 'Close');
+      close.title = 'Close';
+      var icons = window.PhosphorIcons;
+      close.appendChild(icons && typeof icons.svg === 'function' ? icons.svg('close') : dom.el('span', 'sr-only', 'Close'));
+      dom.on(close, 'click', leave);
+      node.appendChild(close);
+    }
+    toastHost().appendChild(node);
+    if (!opts.stay) window.setTimeout(leave, opts.ms || (tone === 'down' ? 7000 : 4200));
     return node;
   }
 

@@ -18,10 +18,26 @@
 // (audit finding 12). A label an agent writes while its seat is marked is stamped the same way
 // (webRead on the level, the mark or the drawing, kept in the file), and a seat that a read hands
 // a stamped label back to is marked as if it had read the page itself.
+//
+// AND BY ANYTHING ONE SEAT WRITES FOR ANOTHER (audit 2026-10-01: a marked worker's post reached an
+// unmarked lead, whose next small move ran with no click). A board post and a worker's job are
+// stamped the same way (src/board.ts, src/crew.ts jobStamp), the reads that hand them over mark
+// with markIfCarried, a worker a marked seat spawns starts marked because its brief is that seat's
+// words, and log_tail, which carries every seat's arguments, marks outright (src/http/context.ts).
+
+//
+// A SEAT THE APP DID NOT SPAWN STARTS MARKED (review gap 5, 2026-10-01). An agent in a terminal or
+// another app reads with its own tools, and nothing this app sees says what it read. It stays
+// marked until the person allows it in the window (src/agents.ts allow); a read the app sees
+// marks it again, like any seat. Its moves carry their own reason (OUTSIDE_REASON), which says
+// what the person can do about it.
 
 const marked = new Set<string>();
+const outside = new Set<string>();
 
-export const WEB_READ_REASON = 'It read a web page earlier in this chat, so this one waits for your OK.';
+// The lead's wording (2026-10-01): a chain read or news sets the mark too, not only a page.
+export const WEB_READ_REASON = 'This chat read text from outside Phosphor, so this move waits for your OK.';
+export const OUTSIDE_REASON = 'This agent was started outside Phosphor and is not allowed yet, so this move waits for your OK.';
 
 export function markWebRead(seat: string): void {
   if (seat !== '') marked.add(seat);
@@ -32,12 +48,33 @@ export function clearWebRead(seat: string): void {
 }
 
 export function webReadBy(seat: string | undefined): boolean {
-  return seat !== undefined && marked.has(seat);
+  return seat !== undefined && (marked.has(seat) || outside.has(seat));
+}
+
+export function markOutside(seat: string): void {
+  if (seat !== '') outside.add(seat);
+}
+
+// The person's Allow in the window. Lifts only the mark the seat started with, never a read's.
+export function allowOutside(seat: string): void {
+  outside.delete(seat);
+}
+
+export function outsideBy(seat: string | undefined): boolean {
+  return seat !== undefined && outside.has(seat);
 }
 
 // The stamp a label takes as it is written: only an agent's, and only while its seat is marked.
 export function webReadStamp(source: string, by: unknown): { webRead?: true } {
-  return source === 'agent' && typeof by === 'string' && marked.has(by) ? { webRead: true } : {};
+  return source === 'agent' && typeof by === 'string' && webReadBy(by) ? { webRead: true } : {};
+}
+
+/* The stamp a seat's own words carry: the session id, label and client name an outside seat chose
+   for itself (an app seat's are the app's, or a worker's parent's, stamped on its job). Marked
+   while the person has not allowed it, or once it has read a stranger's text through the app. */
+export function seatWordsStamp(seat: unknown, origin: string | undefined): { webRead?: true } {
+  if (typeof seat !== 'string' || seat === '') return {};
+  return outside.has(seat) || (origin === 'outside' && marked.has(seat)) ? { webRead: true } : {};
 }
 
 // Called by every read that hands labels to an agent, with the labels it hands over.

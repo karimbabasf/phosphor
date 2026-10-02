@@ -33,6 +33,7 @@
 import { isAddress } from 'viem';
 
 import type { InfoClient } from '../hl/info.ts';
+import { venueSaid } from '../venue-words.ts';
 
 export type FeedStatus = {
   connected: boolean;
@@ -607,7 +608,7 @@ export function createTradeFeed(deps: {
       case 'subscriptionResponse':
         return;
       case 'error':
-        lastError = typeof data === 'string' ? data : JSON.stringify(data ?? null);
+        lastError = venueSaid('Hyperliquid', typeof data === 'string' ? data : JSON.stringify(data ?? null));
         break;
       case 'clearinghouseState':
         onClearing(data);

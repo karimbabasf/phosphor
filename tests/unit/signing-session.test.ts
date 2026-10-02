@@ -89,6 +89,7 @@ function host(now: () => number, key: `0x${string}` | null = `0x${'11'.repeat(32
     baseUrl: 'https://api.hyperliquid.xyz',
     user: '0x2222222222222222222222222222222222222222',
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: (e) => events.push(e),
     session,
     store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-signing-'))),

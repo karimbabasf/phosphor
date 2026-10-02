@@ -25,6 +25,8 @@
 //   the same split as the rest of the app, held at the one place where it would be most
 //   tempting to blur it.
 
+import { webReadStamp } from '../web-read.ts';
+
 export type Source = 'agent' | 'human';
 
 // A discriminated union for the same reason as src/chart.ts: a refusal has to carry a sentence,
@@ -61,6 +63,9 @@ export type Highlight = {
   id: string;
   note: string;
   source: Source;
+  // The note was written by an agent whose seat had read a stranger's text (src/web-read.ts): a
+  // seat the trade read later hands it to is marked as if it had read the page itself.
+  webRead?: true;
   at: string;
   atMs: number;
   ttlSec: number;
@@ -111,7 +116,7 @@ export function createTradeView(
   state(): TradeViewState;
   rev(): number;
   setFocus(patch: Record<string, unknown>, source: Source): Outcome;
-  highlight(args: Record<string, unknown>, source: Source): Outcome;
+  highlight(args: Record<string, unknown>, source: Source, by?: string | null): Outcome;
   setOverlay(args: Record<string, unknown>, source: Source): Outcome;
   clear(what: string): Outcome;
   agentObjects(): number;
@@ -174,7 +179,7 @@ export function createTradeView(
       return { ok: true, notes: [] };
     },
 
-    highlight(args, source) {
+    highlight(args, source, by = null) {
       const kind = str(args.kind);
       if (kind === null || !(HIGHLIGHT_KINDS as readonly string[]).includes(kind)) {
         return {
@@ -215,6 +220,7 @@ export function createTradeView(
         id: id.trim(),
         note,
         source,
+        ...(note === '' ? {} : webReadStamp(source, by)),
         at: new Date(t).toISOString(),
         atMs: t,
         ttlSec,

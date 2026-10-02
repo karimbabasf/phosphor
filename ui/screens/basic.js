@@ -392,16 +392,22 @@
      total, so the steps have the room. Done fades the steps out first; they
      are torn down only once they are off screen, and the focus goes back to
      Add money. */
-  function openSteps() {
-    if (steps) return;
+  function openSteps(options) {
+    /* A code the chat kept out of the conversation (ui/screens/invite.js open)
+       arrives here, into the invite field, with the steps already open or not. */
+    var code = options && typeof options.invite === 'string' ? options.invite : '';
+    if (steps) {
+      if (code && window.PhosphorMoneyIn && typeof window.PhosphorMoneyIn.invite === 'function') window.PhosphorMoneyIn.invite(code);
+      return;
+    }
     if (window.PhosphorLazy) window.PhosphorLazy.load('qr');
     inPanel(null, function () {
       dom.setHidden(refs.list, true);
       dom.setHidden(refs.flow, false);
       dom.setAttr(refs.panel, 'data-flow', 'true');
-      steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic' }) || {};
+      steps = window.PhosphorMoneyIn.render(refs.flowBody, { context: 'basic', invite: code }) || {};
       fitTotal();
-      if (refs.title.focus) refs.title.focus();
+      if (!code && refs.title.focus) refs.title.focus();
     }, refs.flow);
   }
 
@@ -644,5 +650,10 @@
     }, GLOW_IN_MS);
   }
 
-  window.PhosphorBasic = { boot: boot };
+  window.PhosphorBasic = {
+    boot: boot,
+    addMoney: function (options) {
+      if (mounted) openSteps(options || {});
+    }
+  };
 })();

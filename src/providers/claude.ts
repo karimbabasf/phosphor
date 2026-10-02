@@ -13,13 +13,15 @@ import type { Provider, SpawnInput, SpawnSpec, ToolCall } from './types.ts';
 // being driven, and the person using the desktop app is not that developer.
 export const MCP_PREFIX = 'mcp__phosphor__';
 
-/* The two built-ins the chat holds besides Phosphor's own, on Karim's decision of 2026-09-23: the
-   agent has to be able to research anything (he asked it about NEAR AI and its sources were
-   crypto-only). WebSearch finds the page; WebFetch reads one page and answers a focused question
-   about it with a small model, which is the cheap way to get one value. `--tools` names exactly
-   these two, operator/driver.settings.json allows exactly these two, and the surface check reads
-   back that nothing else came with them. */
-export const WEB_TOOLS: Readonly<Record<string, 'web_search' | 'web_fetch'>> = { WebSearch: 'web_search', WebFetch: 'web_fetch' };
+/* The one built-in the chat holds besides Phosphor's own. Karim's decision of 2026-09-23 gave it
+   the web (he asked about NEAR AI and every source it held was crypto-only), and WebSearch still
+   finds the page. WebFetch is OFF since 2026-10-01 (accepted audit finding 3): it fetched any
+   address the model wrote, so a hostile page could ask for the person's figures in one and they
+   left before the window showed a thing. Pages are read by mcp__phosphor__web_read, which the app
+   runs only at an address a search returned or the person gave (src/web-gate.ts). `--tools` names
+   WebSearch alone, operator/driver.settings.json allows it alone and denies WebFetch, a PreToolUse
+   hook there refuses WebFetch before it runs, and the surface check reads back the rest. */
+export const WEB_TOOLS: Readonly<Record<string, 'web_search'>> = { WebSearch: 'web_search' };
 
 // Where `claude` lives when nobody set a PATH. A GUI process launched from Finder inherits
 // /usr/bin:/bin:/usr/sbin:/sbin and nothing else, so the install location every developer takes
@@ -80,7 +82,7 @@ export function buildArgv(opts: {
     // list instead of blocking on a prompt that has no terminal to appear in.
     '--permission-mode',
     'dontAsk',
-    // The built-in set, named in full: the two web tools and nothing else (see WEB_TOOLS).
+    // The built-in set, named in full: web search and nothing else (see WEB_TOOLS).
     '--tools',
     Object.keys(WEB_TOOLS).join(','),
     '--session-id',
@@ -165,8 +167,11 @@ export const claude: Provider = {
        that tool, so each reads as the tool it spells (the pre-push audit's lockdown hardening). */
     const folded = name.toLowerCase();
     if (folded.startsWith(MCP_PREFIX)) return { kind: 'phosphor', name: `${MCP_PREFIX}${name.slice(MCP_PREFIX.length)}`, input };
+    // The page reader that is off, under any spelling: it would fetch whatever address it was
+    // given, so a call to it ends the session like any built-in the lockdown keeps out.
+    if (folded.replaceAll('_', '') === 'webfetch') return { kind: 'builtin', name };
     // Own keys only: `in` would also pass "constructor" and "toString". Underscores are ignored too,
-    // so a read under grok's spelling (web_fetch) still sets the web-read mark.
+    // so a search under grok's spelling (web_search) still sets the web-read mark.
     const web = Object.keys(WEB_TOOLS).find((t) => t.toLowerCase() === folded.replaceAll('_', ''));
     if (web !== undefined) return { kind: 'web', name: WEB_TOOLS[web] };
     // Another server's tool, or a built-in the profile keeps out: a real tool, so the session ends.

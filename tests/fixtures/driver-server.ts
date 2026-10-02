@@ -113,7 +113,7 @@ export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> 
         .filter((l) => l.trim() !== ''),
     token: async () => windowToken,
     chats: async () => {
-      const res = await fetch(`${booted.url}/api/driver`);
+      const res = await fetch(`${booted.url}/api/driver`, { headers: { 'x-phosphor-token': windowToken } });
       return ((await res.json()) as { chats?: Array<{ id: string; session: string }> }).chats ?? [];
     },
     driver: async (body) => {

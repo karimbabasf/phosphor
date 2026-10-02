@@ -597,6 +597,15 @@ test('a card says who decided: a click is the person\'s, an auto-run is the rule
   assert.ok(!lines.some((t) => t.startsWith('You approved it at') || t.startsWith('Your rules allowed')), lines.join(' | '));
   assert.ok(lines.some((t) => t.startsWith('Ended at')), lines.join(' | '));
   assert.ok(faceOf(world.cardNodes('move')[0]).includes('This swap cannot be valued in dollars.'));
+
+  /* The person's Cancel is a click too, and it said no (UX review 2026-10-01, finding 5: the
+     cancelled card's Details read "You approved it at 14:05" beside "You said no"). */
+  world.proposals([row('refused', 'human', { verdict: { outcome: 'needs_approval', reasons: [] },
+    view: view({ stage: 'declined', stageLabel: 'Declined', outcome: 'declined', decidedAt: '2026-09-20T22:41:00Z', decidedBy: 'human', settledAt: null }) })]);
+  assert.equal(stateWord(world.cardNodes('move')[0]), 'Cancelled');
+  lines = detailsOf(world.cardNodes('move')[0]);
+  assert.ok(lines.some((t) => t.startsWith('You said no at')), lines.join(' | '));
+  assert.ok(!lines.some((t) => t.startsWith('You approved it at')), lines.join(' | '));
 });
 
 test('a floor prints as a quantity, cut and never rounded up', () => {
@@ -1338,6 +1347,48 @@ test('a send to a named account is printed whole in one piece, and still says it
   assert.deepEqual(all(card, 'mcard-address-line').map((l: Any) => all(l, 'tcard-leg-group').map((g: Any) => g.textContent)), [[to]]);
   assert.ok(faceOf(card).includes('First send to this address.'), faceOf(card));
   assert.equal(faceOf(card).includes(' on '), false, 'a send inside NEAR Intents names a chain');
+});
+
+/* "Send 1 USDC" with USDC held from Base and from Arbitrum took the Base row, and nothing on the
+   card said so (Karim, 2026-10-01). When the coin is held from more than one chain the draft names
+   the one that leaves, and the card says it after the amount: on the face, which stays when the
+   move runs with no click, and in the figures the person approves. */
+test('a send of a coin held from several chains says which chain\'s coin leaves, on the face and in the figures', () => {
+  const world = build();
+  const to = 'alice.near';
+  const recipient = { known: true, count: 2, lastAt: '2026-09-30T10:00:00Z', ownAddress: false };
+  const draft = { kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near', fromChain: 'base', amount: 1, amountUsd: 1, from: 'you.near', to, counterparty: 'intents.near', recipient };
+  const filed = withView({ id: 'fc1', kind: 'intents_send', status: 'pending', createdAt: '2026-10-01T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'send', send: { arrives: '1', arrivesAtLeast: '1', feeUsd: 0, etaSeconds: 5 } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 1, symbol: 'USDC', to },
+    data: { id: 'fc1', status: 'pending', verdict: filed.verdict, simulation: filed.simulation, view: filed.view, send: { kind: 'intents_send', where: 'intents', to, symbol: 'USDC', fromChain: 'base', amount: 1, amountUsd: 1, recipient } } });
+  const card = world.cardNodes('move')[0];
+  assert.match(faceOf(card), /^1 USDC from Base alice\.near/, `the reply alone: ${faceOf(card)}`);
+  world.proposals([filed]);
+  assert.match(faceOf(card), /^1 USDC from Base alice\.near/, faceOf(card));
+  assert.match(faceOf(card), /You send 1 USDC from Base They get at least 1 USDC/, faceOf(card));
+  assert.deepEqual(all(card, 'mcard-place').map((n: Any) => n.textContent), [' from Base', ' from Base']);
+  // Sent, the figures fold away and the move line keeps saying which coin left.
+  world.proposals([withView({ ...filed, status: 'executed', decidedAt: '2026-10-01T10:00:05Z', decidedBy: 'human', settledAt: '2026-10-01T10:00:09Z', result: { ok: true, detail: 'sent', txids: ['0xsend'] } })]);
+  assert.match(faceOf(card), /^1 USDC from Base alice\.near/, faceOf(card));
+});
+
+test('a send of a coin held from one chain names no chain, and a payout says its source before its destination', () => {
+  const world = build();
+  const draft = { kind: 'intents_send', symbol: 'USDC', originAsset: 'nep141:eth-usdc', amount: 5, amountUsd: 5, from: 'you.near', to: 'alice.near', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const one = withView({ id: 'fc2', kind: 'intents_send', status: 'pending', createdAt: '2026-10-01T10:00:00Z', draft, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'send', send: { arrives: '5', arrivesAtLeast: '5', feeUsd: 0, etaSeconds: 5 } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 5, symbol: 'USDC', to: 'alice.near' }, data: { id: 'fc2', status: 'pending', verdict: one.verdict, simulation: one.simulation, view: one.view } });
+  world.proposals([one]);
+  const card = world.cardNodes('move')[0];
+  assert.equal(all(card, 'mcard-place').length, 0, faceOf(card));
+  assert.match(faceOf(card), /^5 USDC alice\.near/, faceOf(card));
+
+  const to = '0xAbCdEf0123456789abcdef0123456789ABCDEF01';
+  const pay = { kind: 'intents_pay', symbol: 'USDC', originAsset: 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near', fromChain: 'arb', network: 'eth', amount: 25, amountUsd: 25, minReceived: 24.6, from: '0x1', to, toChecksum: 'valid', counterparty: 'intents.near', recipient: { known: false, count: 0, lastAt: null, ownAddress: false } };
+  const paid = withView({ id: 'fc3', kind: 'intents_pay', status: 'pending', createdAt: '2026-10-01T10:00:00Z', draft: pay, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'pay', send: { arrives: '24.7', arrivesAtLeast: '24.6', feeUsd: 0.3, etaSeconds: 60 } } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_send', input: { amount: 25, symbol: 'USDC', to, where: 'eth' }, data: { id: 'fc3', status: 'pending', verdict: paid.verdict, simulation: paid.simulation, view: paid.view } });
+  world.proposals([one, paid]);
+  const payCard = world.cardNodes('move')[1];
+  assert.match(faceOf(payCard), /^25 USDC from Arbitrum 0xAbCdEf01...ABCDEF01 on Ethereum/, faceOf(payCard));
 });
 
 test('a late move says it is late with the minutes, and a held one says what it waits on', () => {

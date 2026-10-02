@@ -16,12 +16,14 @@
   Two states, chosen by the shell:
 
     window.__PHOSPHOR_SPLASH__ = { state: "starting" }                  before any script runs
-    window.__phosphorFailed({ title, message, detail })                 through WebviewWindow::eval
+    window.__phosphorFailed({ title, message, detail, kind })           through WebviewWindow::eval
     window.__phosphorStarting()                                         after Try again
 
   A failure is drawn here, in the app's own look, never as a system alert: the mark stops, one
   sentence says what happened in plain words, the shell's own reason sits behind Details, and
   Try again and Quit are two IPC commands (splash_retry, splash_quit) like the update window's.
+  A failure of kind "altered" (the app's files are not the ones it was built with) offers the
+  download page (splash_get_phosphor) in place of Try again, which would only find the same files.
 
   The window is dark only, so this page paints one colourway. The block below is the same values
   as ui/design/tokens.css; only the tokens this page uses.
@@ -173,6 +175,11 @@
     gap: 12px;
   }
 
+  /* With Details open the stepped-back mark makes room for the well, so every word stays in view. */
+  body[data-state="failed"]:has(details[open]) .mark {
+    display: none;
+  }
+
   .opening {
     margin: 0;
     font-size: 15px;
@@ -229,7 +236,12 @@
   details[open] summary::after { transform: rotate(180deg); margin-top: -4px; }
   details summary:focus-visible { outline: 2px solid var(--text-2); outline-offset: 2px; }
 
+  /* Three lines at most, scrolling inside the well, so Details can never push the words or the
+     keys out of the 420 x 300 window. A fade at its foot says there is more, because macOS hides
+     the scrollbar until a finger is on the pad. */
   details pre {
+    max-height: 4.5em;
+    overflow: auto;
     margin: 8px 0 0;
     padding: 8px 12px;
     border-radius: 12px;
@@ -242,6 +254,11 @@
     text-align: left;
     -webkit-user-select: text;
     user-select: text;
+  }
+
+  details pre[data-more="true"] {
+    -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
+    mask-image: linear-gradient(to bottom, #000 calc(100% - 14px), transparent);
   }
 
   .actions {
@@ -338,6 +355,7 @@
   <div class="actions state" id="actions" hidden>
     <button id="quit" class="btn" type="button">Quit</button>
     <button id="retry" class="btn btn-primary" type="button">Try again</button>
+    <button id="get" class="btn btn-primary" type="button" hidden>Open phosphor.money</button>
   </div>
 </main>
 <script>
@@ -355,6 +373,7 @@
     var more = document.getElementById('failed-more');
     var detail = document.getElementById('failed-detail');
     var retry = document.getElementById('retry');
+    var get = document.getElementById('get');
     var quit = document.getElementById('quit');
     var actions = document.getElementById('actions');
 
@@ -374,11 +393,26 @@
       detail.textContent = s.detail || '';
       more.hidden = !s.detail;
       more.open = false;
+      // Altered files come back however often it starts, so the way on is a fresh copy.
+      var altered = s.kind === 'altered';
+      retry.hidden = altered;
+      get.hidden = !altered;
       opening.hidden = true;
       failed.hidden = false;
       actions.hidden = false;
       body.setAttribute('data-state', 'failed');
     }
+
+    /* The fade at the foot of the Details well, only while there is more under it. */
+    function edge() {
+      if (detail.scrollTop + detail.clientHeight < detail.scrollHeight - 2) detail.setAttribute('data-more', 'true');
+      else detail.removeAttribute('data-more');
+    }
+    detail.addEventListener('scroll', edge);
+    more.addEventListener('toggle', function () {
+      edge();
+      if (more.open && detail.scrollIntoView) detail.scrollIntoView({ block: 'nearest' });
+    });
 
     window.__phosphorFailed = fail;
     window.__phosphorStarting = starting;
@@ -387,14 +421,15 @@
       starting();
       invoke('splash_retry');
     });
+    get.addEventListener('click', function () { invoke('splash_get_phosphor'); });
     quit.addEventListener('click', function () { invoke('splash_quit'); });
-    // Return tries again, without a focus ring sitting on the green button before anyone has
+    // Return presses the green button, without a focus ring sitting on it before anyone has
     // pressed anything.
     document.addEventListener('keydown', function (e) {
       var at = document.activeElement;
       if (e.key !== 'Enter' || body.getAttribute('data-state') !== 'failed') return;
-      if (at === quit || at === retry || (at && at.tagName === 'SUMMARY')) return;
-      retry.click();
+      if (at === quit || at === retry || at === get || (at && at.tagName === 'SUMMARY')) return;
+      (get.hidden ? retry : get).click();
     });
 
     var info = window.__PHOSPHOR_SPLASH__;

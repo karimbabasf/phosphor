@@ -17,15 +17,15 @@ import assert from 'node:assert/strict';
 
 import { bootDriverServer } from '../fixtures/driver-server.ts';
 
-async function chats(url: string): Promise<Record<string, unknown>> {
-  const res = await fetch(`${url}/api/driver`);
+async function chats(b: { url: string; token: () => Promise<string> }): Promise<Record<string, unknown>> {
+  const res = await fetch(`${b.url}/api/driver`, { headers: { 'x-phosphor-token': await b.token() } });
   return (await res.json()) as Record<string, unknown>;
 }
 
 test('with nothing running the window is told about one chat, and no agent was spawned', async () => {
   const b = await bootDriverServer();
   try {
-    const body = await chats(b.url);
+    const body = await chats(b);
     const list = body.chats as Array<Record<string, unknown>>;
     assert.equal(list.length, 1);
     assert.equal(list[0].id, '', 'a chat that exists yet has an id, and this one must not exist');
@@ -58,7 +58,7 @@ test('the plus opens a second chat and leaves the roster alone', async () => {
       'opening a chat evicted the roster, which kills the conversation the human is standing in',
     );
 
-    const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
+    const list = (await chats(b)).chats as Array<Record<string, unknown>>;
     assert.equal(list.length, 2);
     assert.notEqual(list[0].id, list[1].id);
   } finally {
@@ -110,7 +110,7 @@ test('a prompt reaches the chat it names and is written into that chat alone', a
     // The focused market is named only on trade, the one screen that shows it.
     assert.ok(/\[phosphor: the window is on the (basic|pro|trade) screen(, [A-Z0-9]+ focused)?(, [^\]]+)?\]$/.test(b.calls.sends[0]));
 
-    const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
+    const list = (await chats(b)).chats as Array<Record<string, unknown>>;
     const target = list.find((c) => c.id === id);
     const other = list.find((c) => c.id !== id);
     const said = (t: unknown) => (t as Array<Record<string, unknown>>).filter((e) => e.kind === 'said');
@@ -134,7 +134,7 @@ test('closing a chat stops its agent and takes it off the list', async () => {
     assert.equal(closed.status, 200);
     assert.equal(b.calls.stops, 1);
 
-    const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
+    const list = (await chats(b)).chats as Array<Record<string, unknown>>;
     assert.equal(list.length, 1);
     assert.equal(list.some((c) => c.id === id), false);
   } finally {
@@ -151,7 +151,7 @@ test('Turn off is stop then close: the process is stopped, the chat and its tran
   try {
     await b.driver({ action: 'start' });
     await b.driver({ action: 'prompt', text: 'what do I hold?' });
-    const before = await chats(b.url);
+    const before = await chats(b);
     const beforeList = before.chats as Array<Record<string, unknown>>;
     assert.equal((beforeList[0].transcript as unknown[]).length >= 1, true, 'the prompt was not written into the transcript');
 
@@ -161,7 +161,7 @@ test('Turn off is stop then close: the process is stopped, the chat and its tran
     assert.equal(closed.status, 200);
     assert.equal(b.calls.stops >= 1, true, 'the agent was never stopped');
 
-    const after = await chats(b.url);
+    const after = await chats(b);
     assert.equal(after.state, 'off');
     const list = after.chats as Array<Record<string, unknown>>;
     assert.equal(list.length, 1);
@@ -204,7 +204,7 @@ test('a move that ends is told to the conversation that proposed it, and to no o
     assert.equal(b.calls.sends.length, 0, 'a failure is noted at once, and its wake waits out the five seconds');
     assert.match(b.calls.notes[0], /withdrawal from Hyperliquid you proposed/);
     assert.match(b.calls.notes[0], /has ended: Failed/);
-    const list = (await chats(b.url)).chats as Array<Record<string, unknown>>;
+    const list = (await chats(b)).chats as Array<Record<string, unknown>>;
     for (const c of list) {
       const said = (c.transcript as Array<Record<string, unknown>>).filter((e) => e.kind === 'said');
       assert.equal(said.length, 0, 'an app-authored line is not drawn as the human speaking');

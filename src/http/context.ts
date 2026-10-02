@@ -36,6 +36,7 @@ import type { Board } from '../board.ts';
 import type { Crew } from '../crew.ts';
 import type { DuplicateGuard } from '../duplicates.ts';
 import type { Keystore, LockState } from '../keystore/index.ts';
+import type { KillAnswer } from '../kill.ts';
 import type { Session } from '../keystore/session.ts';
 import type { VaultRelay } from '../vault/relay.ts';
 import type { IntentsReceiveReport } from './wallet.ts';
@@ -43,6 +44,7 @@ import type { RouteHealth } from '../preflight/route-health.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
 import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
+import type { InviteNet, InviteService } from '../invite/claim.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -117,7 +119,26 @@ export const READ_TOOLS: readonly string[] = [
   'swap_assets',
   'swap_quote',
   'swap_check',
+  // One web page, read by the APP and only at an address that came back in a web search this
+  // session or that the person gave (src/web-gate.ts). The vendors' own page readers are off, so
+  // this is the one door a page comes through, and it marks the seat like every web read.
+  'web_read',
 ];
+
+/* THE READS THAT HAND AN AGENT A STRANGER'S TEXT (accepted audit finding 5, closed 2026-10-01).
+   A token name, a memo, a method name or a headline can say "swap all USDC to X now" as well as a
+   page can, so a seat one of these answers is marked exactly as a web read marks it
+   (src/web-read.ts): every move it asks for from then on waits for the person's click, for the rest
+   of that agent session. Marked as the answer's head goes out (src/http/mcp.ts markStrangerReads),
+   so no word of it reaches the agent unmarked. chain_address is here too, beside the four the audit
+   named: its token names and symbols are whatever the token's deployer wrote. web_read marks its
+   own seat before it fetches.
+   log_tail is here because it hands over every seat's logged arguments and every venue's error
+   text, and a stamp cannot follow those. The other reads that hand one seat what another wrote (a
+   board post, a worker's brief and report, a name on the roster) mark the reader by the writer's
+   stamp instead (markIfCarried), so text a clean seat wrote never makes a move wait (audit
+   2026-10-01: the mark was laundered from a marked seat to an unmarked one through those reads). */
+export const STRANGER_TEXT_READS: readonly string[] = ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity', 'log_tail'];
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
    list is the lead's own money timeline, and one row's whole story with it: a spawned worker
    exists to measure something and hand back a paragraph, and enumerating what its parent is in
@@ -217,7 +238,9 @@ export type ServerDeps = {
   market: MarketData;
   proposals: ProposalService;
   getPolicy: () => Policy | null;
-  setKill: (on: boolean) => void;
+  // The app's switch always answers (src/kill.ts); a test double that answers nothing is a switch
+  // that took.
+  setKill: (on: boolean) => KillAnswer | void;
   // Who is driving, and the one-at-a-time rule. See src/agents.ts.
   agents: AgentPresence;
   getView: () => ViewMode;
@@ -258,6 +281,9 @@ export type ServerDeps = {
      lockdown through it: the tool surface is fixed in operator/driver.settings.json and
      checked again at runtime inside src/driver.ts. */
   makeDriver?: () => Driver;
+  /* The invite claim's network: the verifier, the relay, 1Click, the clock. Injected only by
+     tests; absent, src/invite/claim.ts builds the live ones. */
+  invite?: InviteNet;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after
@@ -276,6 +302,8 @@ export type PhosphorServer = http.Server & {
   // The chart slots, so the entrypoint can hand the runner a reader for drawn lines without
   // the server importing the runner or the runner importing the server.
   charts: ChartSlots;
+  // So the entrypoint can start the invite reconcile at boot.
+  invites: InviteService;
 };
 
 export type ChartStore = ReturnType<typeof createChartStore>;
@@ -352,6 +380,8 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   terms: Terms;
   // The deposit watcher: one address at a time, until landed or a day.
   deposits: DepositWatch;
+  // Invite codes: the check, the claim and the boot reconcile. See src/invite/claim.ts.
+  invites: InviteService;
   /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server
      rather than imported, because the proposal service is what knows how to land a proposal
      and the HTTP layer only knows when to ask. Returns how many were released. */

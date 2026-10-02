@@ -351,13 +351,16 @@
 
 /* The technical form. devmode.css shows it as a block while the switch is
    on, so the rhythm here is margins, not a flex gap. Names are set in the
-   mono face at the size the meta line uses. It keeps to 160 px and scrolls
-   inside itself, so the card still fits the window's smallest height. */
+   mono face at the size the meta line uses. It keeps to 160 px, less in a
+   short window, and scrolls inside itself, so the tallest card (Set a
+   password) fits the window down to its smallest size and the screen never
+   scrolls: the rest of that card and the air around it take about 680 px of
+   the window's height, 640 under the short-window rule. */
 .firstrun-dev {
   list-style: none;
   margin: 0;
   padding: 0 0 0 calc(16px + var(--s-3));
-  max-height: 160px;
+  max-height: min(160px, calc(100vh - 680px));
   overflow-y: auto;
   overscroll-behavior: contain;
   font-size: var(--fs-12);
@@ -373,6 +376,12 @@
 .firstrun-dev code {
   font-size: var(--fs-11);
   color: var(--text-2);
+}
+
+@media (max-height: 760px) {
+  .firstrun-dev {
+    max-height: max(64px, calc(100vh - 640px));
+  }
 }
 
 /* ---------- create or bring ---------- */

@@ -68,10 +68,11 @@ function builtSwap(): Proposal {
 // What the door handed the swap builder last, so a test can see what a stray field did.
 let lastSwapParams: Record<string, unknown> | null = null;
 
-async function boot(over: Partial<Parameters<typeof createServer>[0]['proposals']> = {}): Promise<{ url: string; close: () => Promise<void> }> {
+async function boot(over: Partial<Parameters<typeof createServer>[0]['proposals']> = {}): Promise<{ url: string; token: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
   // Play the shell: the window token arrives in the environment, never over a route.
-  process.env.PHOSPHOR_WINDOW_TOKEN = crypto.randomBytes(32).toString('hex');
+  const token = crypto.randomBytes(32).toString('hex');
+  process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,
@@ -144,7 +145,7 @@ async function boot(over: Partial<Parameters<typeof createServer>[0]['proposals'
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
-  return { url: `http://127.0.0.1:${port}`, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { url: `http://127.0.0.1:${port}`, token, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // A request with explicit control over Host and Origin, which fetch() will not let a caller set.
@@ -173,11 +174,11 @@ test('a forged Host is refused on every route, closing DNS-rebinding (Finding 4)
   const h = await boot();
   try {
     for (const route of ['/api/state', '/api/trade']) {
-      const out = await raw(h.url, route, { headers: { Host: 'evil.com' } });
+      const out = await raw(h.url, route, { headers: { Host: 'evil.com', 'x-phosphor-token': h.token } });
       assert.equal(out.status, 403, `${route} under a foreign Host must be refused`);
     }
     // The real loopback name still answers.
-    const ok = await raw(h.url, '/api/state', { headers: { Host: '127.0.0.1' } });
+    const ok = await raw(h.url, '/api/state', { headers: { Host: '127.0.0.1', 'x-phosphor-token': h.token } });
     assert.equal(ok.status, 200);
   } finally {
     await h.close();
@@ -434,7 +435,7 @@ test('a floor the agent does name is still refused at the door when it is not ab
 test('no route serves the window token (P0-1)', async () => {
   const h = await boot();
   try {
-    const gone = await raw(h.url, '/api/session', { headers: { Origin: h.url } });
+    const gone = await raw(h.url, '/api/session', { headers: { Origin: h.url, 'x-phosphor-token': h.token } });
     assert.equal(gone.status, 404, 'GET /api/session must not exist');
 
     const routes = [
@@ -447,7 +448,7 @@ test('no route serves the window token (P0-1)', async () => {
     ];
     const token = process.env.PHOSPHOR_WINDOW_TOKEN ?? '';
     for (const route of routes) {
-      const out = await raw(h.url, route, { headers: { Origin: h.url } });
+      const out = await raw(h.url, route, { headers: { Origin: h.url, 'x-phosphor-token': h.token } });
       assert.ok(token.length > 0 && !out.body.includes(token), `${route} echoes the window token`);
       assert.doesNotMatch(out.body, /"token"\s*:\s*"[^"]/, `${route} carries a token field`);
     }
@@ -559,7 +560,12 @@ test('a good amount still gets through, so the bound is a bound and not a wall',
 test('health answers without a token and in the shape the spec fixes', async () => {
   const h = await boot();
   try {
-    const out = await raw(h.url, '/api/health');
+    // A caller with no credential learns only that the app is up and which version it is.
+    const open = await raw(h.url, '/api/health');
+    assert.equal(open.status, 200);
+    assert.deepEqual(Object.keys(JSON.parse(open.body) as Record<string, unknown>).sort(), ['ok', 'uptimeSec', 'version']);
+
+    const out = await raw(h.url, '/api/health', { headers: { 'x-phosphor-token': h.token } });
     assert.equal(out.status, 200);
     const body = JSON.parse(out.body) as Record<string, unknown>;
     assert.deepEqual(Object.keys(body).sort(), [
@@ -593,10 +599,11 @@ test('health answers without a token and in the shape the spec fixes', async () 
 test('health names no secret, no token and no balance', async () => {
   const h = await boot();
   try {
-    const out = await raw(h.url, '/api/health');
     // The whole body, not a field list: a future addition that leaks has to fail something.
-    for (const forbidden of ['token', 'key', 'secret', 'address', 'holdings', 'balance', 'mnemonic']) {
-      assert.doesNotMatch(out.body.toLowerCase(), new RegExp(forbidden), `health mentioned ${forbidden}`);
+    for (const out of [await raw(h.url, '/api/health'), await raw(h.url, '/api/health', { headers: { 'x-phosphor-token': h.token } })]) {
+      for (const forbidden of ['token', 'key', 'secret', 'address', 'holdings', 'balance', 'mnemonic']) {
+        assert.doesNotMatch(out.body.toLowerCase(), new RegExp(forbidden), `health mentioned ${forbidden}`);
+      }
     }
   } finally {
     await h.close();

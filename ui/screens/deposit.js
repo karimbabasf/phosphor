@@ -36,6 +36,9 @@
   var view = null;
   var current = null;
   var promptedFor = null;
+  /* "Have an invite code?" (ui/screens/invite.js), under the network tiles: on
+     the step whose title is Add money, never under an address. */
+  var invite = null;
 
   function pick() {
     return window.PhosphorNetPick;
@@ -135,6 +138,9 @@
      (ui/design/motion.js). */
   function close() {
     if (!dialog || !dialog.open) return;
+    /* A code goes with the card. A claim it started is still said: off screen,
+       the line no longer counts as the place to say it (ui/screens/invite.js). */
+    if (invite) invite.wipe();
     var motion = window.PhosphorMotion;
     if (motion && typeof motion.closeDialog === 'function') motion.closeDialog(dialog);
     else dialog.close();
@@ -168,6 +174,10 @@
       view.destroy();
       view = null;
     }
+    if (invite) {
+      invite.destroy();
+      invite = null;
+    }
     dom.clear(dialog);
     refs = {};
 
@@ -200,6 +210,9 @@
     refs.body = dom.el('div', 'deposit-host');
     card.appendChild(refs.body);
 
+    refs.invite = dom.el('div', 'deposit-invite');
+    card.appendChild(refs.invite);
+
     refs.backup = dom.el('div', 'deposit-backup');
     refs.backup.hidden = true;
     card.appendChild(refs.backup);
@@ -210,6 +223,11 @@
      the address is one tick and one click away. */
   function fill() {
     var deposit = current;
+    var Invite = window.PhosphorInvite;
+    if (Invite && typeof Invite.line === 'function') {
+      invite = Invite.line(refs.invite, {});
+      invite.show(false);
+    }
     view = pick().render(refs.body, {
       context: 'card',
       stage: 'address',
@@ -223,6 +241,7 @@
 
   /* The title follows the step the picker is on. */
   function title(stage, network) {
+    if (invite) invite.show(stage === 'network');
     if (!refs.titleText) return;
     var netpick = pick();
     var name = network && netpick ? netpick.name(network) : '';

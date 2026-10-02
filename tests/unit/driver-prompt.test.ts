@@ -124,12 +124,21 @@ test('a note waits for the next message and rides in front of it, once, never as
   assert.equal(run.turns[1], 'second', 'a note rides one turn');
 });
 
-test('a page read with WebFetch is shown as a web read, and never drawn as a card', async () => {
-  const run = await drive({ sends: ['what is near ai WEB-FETCH'] });
+test('a web search is shown as a web read, and never drawn as a card', async () => {
+  const run = await drive({ sends: ['what is near ai WEB-SEARCH'] });
   const calls = run.events.filter((e) => e.kind === 'tool' || e.kind === 'tool_result') as Array<{ kind: string; name: string; input?: unknown }>;
-  assert.deepEqual(calls.map((e) => `${e.kind} ${e.name}`), ['tool web_fetch', 'tool_result web_fetch']);
-  assert.deepEqual(calls[0].input, { url: 'https://near.ai', prompt: 'What is NEAR AI, in one line?' });
+  assert.deepEqual(calls.map((e) => `${e.kind} ${e.name}`), ['tool web_search', 'tool_result web_search']);
+  assert.deepEqual(calls[0].input, { query: 'what is near ai' });
   assert.equal(run.events.some((e) => e.kind === 'tool_data' || e.kind === 'error'), false);
+});
+
+// Audit finding 3: WebFetch fetched whatever address the model wrote. It is off, and a call to it
+// is a lockdown failure like any built-in the profile keeps out.
+test('a WebFetch call ends the session before its answer is read', async () => {
+  const run = await drive({ sends: ['what is near ai WEB-FETCH'] });
+  const error = run.events.find((e) => e.kind === 'error') as { message: string } | undefined;
+  assert.ok(error?.message.includes('WebFetch'), String(error?.message));
+  assert.equal(run.events.some((e) => e.kind === 'tool_result'), false, 'nothing of the page reached the window');
 });
 
 test('a tool the API ran inside Claude\'s reply ends the session', async () => {

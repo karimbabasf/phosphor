@@ -10,14 +10,17 @@
 // whether the page behind is painted, and the field's cost per frame.
 //
 // In demo mode the Secure Enclave reports not ready, so the software flow is what shows: the
-// welcome, Create or bring a wallet, then Set a password, which is the create step there.
+// welcome, the terms (Before you start), Have an invite code? (skipped), Create or bring a
+// wallet, then Set a password, which is the create step there.
 //
 // The software flow is then driven through to Add money at the small size, and that step is
 // shot with no watch, then with a deposit frame in each of its phases (watching, seen, bridged,
 // credited) put on the window's store the way the SSE frame would put it, so the line the step
-// draws for each can be looked at without waiting on a chain.
+// draws for each can be looked at without waiting on a chain. It ends on one summary line naming
+// any state whose card would scroll, and exits 1 when a step is not reached or the page behind
+// the card is painted, or the page throws.
 //
-// Fixture data only: a temp directory, never the live wallet. Run:
+// Fixture data only: a temp directory and a throwaway home, never the live wallet. Run:
 //   node scripts/firstrun-proof.ts
 // PROOF_OUT names another directory for the pictures. playwright-core is not a dependency of
 // this repo; point PLAYWRIGHT_CORE at a copy. Without playwright's own Chromium installed, point
@@ -58,6 +61,7 @@ function freePort(): Promise<number> {
 // ---------- the backend ----------
 
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-firstrun-proof-'));
+const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-firstrun-proof-home-'));
 let app: ChildProcess | null = null;
 let base = '';
 let token = '';
@@ -67,7 +71,7 @@ async function startApp(port: number): Promise<void> {
   base = `http://127.0.0.1:${port}`;
   app = spawn(process.execPath, ['src/main.ts'], {
     cwd: ROOT,
-    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir },
+    env: { ...process.env, ACC_MODE: 'demo', ACC_PORT: String(port), ACC_DATA_DIR: dataDir, CFFIXED_USER_HOME: home },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   app.stdout?.on('data', (d: Buffer) => log.push(d.toString()));
@@ -79,7 +83,7 @@ async function startApp(port: number): Promise<void> {
     if (m && token === '') token = m[1] as string;
     if (token !== '') {
       try {
-        const res = await fetch(`${base}/api/state`);
+        const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
         if (res.ok) return;
       } catch {
         // not listening yet
@@ -117,7 +121,7 @@ const MEASURE = `(function () {
   };
 })()`;
 
-async function main(): Promise<void> {
+async function main(): Promise<number> {
   const port = await freePort();
   await startApp(port);
 
@@ -126,7 +130,7 @@ async function main(): Promise<void> {
   // in the tree.
   const { chromium } = require(PLAYWRIGHT_CORE) as { chromium: Json };
   const browser = await chromium.launch({ headless: true, ...(BROWSER ? { executablePath: BROWSER } : {}) });
-  const results: Record<string, unknown> = {};
+  const results: Record<string, Json> = {};
   const shots: string[] = [];
   fs.mkdirSync(SHOTS, { recursive: true });
 
@@ -150,51 +154,49 @@ async function main(): Promise<void> {
     shots.push(file);
   }
 
-  // Get started, then (software flow) Continue past Create or bring a wallet, to the step
-  // where the wallet is made.
-  async function toCreate(page: Json): Promise<void> {
-    await page.click('#screen-firstrun .firstrun-welcome .btn-primary');
-    await page.waitForSelector('#screen-firstrun .screen-progress', { timeout: 5_000 });
-    await sleep(500);
-    const title = await page.evaluate('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent');
-    if (title === 'Create or bring a wallet') {
-      await page.click('#screen-firstrun .screen-body .btn-primary');
-      await sleep(500);
-    }
-    await page.waitForSelector('#screen-firstrun .firstrun-where', { timeout: 5_000 });
-    await sleep(400);
-  }
-
   const title = async (page: Json): Promise<string> =>
     String(await page.evaluate('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent'));
+  const primary = '#screen-firstrun .screen-body .screen-actions .btn-lg:last-child';
+  const onStep = async (page: Json, words: string): Promise<void> => {
+    await page.waitForFunction(`(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent === ${JSON.stringify(words)}`, undefined, { timeout: 10_000 });
+    await sleep(450);
+  };
+
+  // Get started, the terms, Skip on the invite step, then (software flow) Continue past Create or
+  // bring a wallet, to the step where the wallet is made.
+  async function toCreate(page: Json): Promise<void> {
+    await page.click('#screen-firstrun .firstrun-welcome .btn-primary');
+    await sleep(500);
+    if ((await title(page)) === 'Before you start') await page.click(primary);
+    await onStep(page, 'Have an invite code?');
+    await page.click('#screen-firstrun .screen-body .screen-actions .btn-quiet');
+    await onStep(page, 'Create or bring a wallet');
+    await page.click(primary);
+    await onStep(page, 'Set a password');
+    await page.waitForSelector('#screen-firstrun .firstrun-where', { timeout: 5_000 });
+  }
 
   // From the password step to Add money: the wallet is made by the demo backend, its words are
-  // read off the page and three of them typed back, the addresses step is passed.
+  // read off the page and the three Prove it asks for (by their number) typed back, the
+  // addresses step is passed.
   async function toMoney(page: Json): Promise<void> {
-    await page.evaluate(`(function () {
-      var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
-      fields[0].value = 'proof-password-1';
-      fields[1].value = 'proof-password-1';
-    })()`);
-    await page.click('#screen-firstrun .screen-body .btn-primary');
-    await page.waitForFunction('(document.querySelector("#screen-firstrun .screen-body h1") || {}).textContent === "Save your recovery words"', { timeout: 10_000 });
-    const words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .screen-body .body.mono")).map(function (n) { return n.textContent; })')) as string[];
+    await page.fill('#screen-firstrun .screen-body .field:nth-of-type(1) input', 'proof-password-1');
+    await page.fill('#screen-firstrun .screen-body .field:nth-of-type(2) input', 'proof-password-1');
+    await page.click(primary);
+    await onStep(page, 'Save your recovery words');
+    const words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .word-text")).map(function (n) { return n.textContent; })')) as string[];
     if (words.length !== 12) throw new Error(`expected twelve words on the page, saw ${words.length}`);
     await page.click('#screen-firstrun .screen-body input[type="checkbox"]');
-    await sleep(100);
-    await page.click('#screen-firstrun .screen-body .btn-primary');
-    await sleep(400);
-    if ((await title(page)) !== 'Prove it') throw new Error(`expected Prove it, saw ${await title(page)}`);
+    await page.click(primary);
+    await onStep(page, 'Prove it');
     await page.evaluate(`(function (w) {
       var fields = document.querySelectorAll('#screen-firstrun .screen-body input.input');
-      fields[0].value = w[2]; fields[1].value = w[6]; fields[2].value = w[10];
+      for (var i = 0; i < fields.length; i += 1) fields[i].value = w[Number(fields[i].dataset.index)];
     })(${JSON.stringify(words)})`);
-    await page.click('#screen-firstrun .screen-body .btn-primary');
-    await sleep(400);
-    if ((await title(page)) !== 'Your addresses') throw new Error(`expected Your addresses, saw ${await title(page)}`);
-    await page.click('#screen-firstrun .screen-body .screen-actions .btn-lg');
-    await sleep(500);
-    if ((await title(page)) !== 'Add money') throw new Error(`expected Add money, saw ${await title(page)}`);
+    await page.click(primary);
+    await onStep(page, 'Your addresses');
+    await page.click(primary);
+    await onStep(page, 'Add money');
   }
 
   /* The state the money step reads, put on the store the way shell.js puts a frame there. The
@@ -279,44 +281,54 @@ async function main(): Promise<void> {
       }
       await page.close();
     }
-    results.screenshots = shots;
   } finally {
     await browser.close();
   }
+  const states = Object.entries(results) as Array<[string, Json]>;
+  results.screenshots = shots;
   console.log(JSON.stringify(results, null, 2));
   const noise = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console'));
   if (noise.length) console.log(`browser noise:\n${noise.join('')}`);
+  const scrolls = states.filter(([, r]) => (r.overflow ?? 0) > 0).map(([name, r]) => `${name} by ${r.overflow} px`);
+  const painted = states.filter(([, r]) => r.pageVisibility !== 'hidden').map(([name]) => name);
+  const worst = Math.max(0, ...states.map(([, r]) => Number(r.fieldWorstMs ?? 0)));
+  const thrown = log.filter((l) => l.startsWith('[page]')).length;
+  console.log(
+    `firstrun proof: ${states.length} states shot; a card scrolls in ${scrolls.length}${scrolls.length ? ` (${scrolls.join(', ')})` : ''}; ` +
+      `the page is painted behind in ${painted.length}${painted.length ? ` (${painted.join(', ')})` : ''}; the field's worst frame ${worst} ms; page errors ${thrown}`,
+  );
+  return painted.length + thrown;
 }
 
-function stop(): void {
-  if (app !== null && app.exitCode === null) {
-    try {
-      app.kill('SIGTERM');
-    } catch {
-      // already gone
-    }
+/* A backend writes its audit tip as it shuts down, so its data dir goes once it has exited. */
+async function stopApp(): Promise<void> {
+  const child = app;
+  if (child !== null && child.exitCode === null && child.signalCode === null) {
+    await new Promise<void>((resolve) => {
+      const timer = setTimeout(resolve, 5_000);
+      child.once('exit', () => {
+        clearTimeout(timer);
+        resolve();
+      });
+      child.kill('SIGTERM');
+    });
   }
-  try {
-    fs.rmSync(dataDir, { recursive: true, force: true });
-  } catch {
-    // a temp dir that would not go is not a failure of the proof
-  }
+  for (const dir of [dataDir, home]) fs.rmSync(dir, { recursive: true, force: true });
 }
 
-process.on('exit', stop);
 process.on('SIGINT', () => {
-  stop();
+  if (app !== null && app.exitCode === null) app.kill('SIGTERM');
   process.exit(1);
 });
 
 main()
-  .then(() => {
-    stop();
-    process.exit(0);
+  .then(async (failed) => {
+    await stopApp();
+    process.exit(failed === 0 ? 0 : 1);
   })
-  .catch((err) => {
+  .catch(async (err) => {
     console.error(err instanceof Error ? err.stack ?? err.message : String(err));
     console.error(log.slice(-40).join(''));
-    stop();
+    await stopApp().catch(() => {});
     process.exit(1);
   });

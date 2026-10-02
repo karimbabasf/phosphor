@@ -82,7 +82,10 @@
     var custody = vault.custody === 'secure-enclave' ? 'enclave' : 'software';
     var ready = !!(vault.enclave && vault.enclave.ready === true);
     var key = state + ':' + custody + ':' + (ready ? 'touch' : 'none');
-    if (mode === key) return;
+    if (mode === key) {
+      why(lock, vault);
+      return;
+    }
     var fresh = mode === null || refs.host.hidden;
     mode = key;
     stopWait();
@@ -92,6 +95,7 @@
     if (state === 'needs_migration') buildMigrate();
     else if (custody === 'enclave') buildTouch();
     else buildLock(ready);
+    why(lock, vault);
     if (fresh) arrive();
   }
 
@@ -266,9 +270,47 @@
     var brand = dom.el('div', 'brand lock-brand');
     append(brand, dom.mark('brand-mark'));
         card.appendChild(brand);
-    card.appendChild(dom.el('h1', 'lock-title', 'Phosphor is locked'));
+    /* The title and, under it, why it locked and what waits: the block is
+       filled by why(), in place, so a new frame never rebuilds the field. */
+    var head = dom.el('div', 'lock-head');
+    head.appendChild(dom.el('h1', 'lock-title', 'Phosphor is locked'));
+    refs.why = dom.el('div', 'lock-why');
+    refs.why.setAttribute('aria-live', 'polite');
+    head.appendChild(refs.why);
+    card.appendChild(head);
     refs.host.appendChild(card);
     return card;
+  }
+
+  /* Why the wallet locked, from the fixed codes on the lock slice. A lock the
+     person asked for, the app's start and a code this file does not know all
+     say nothing. */
+  function reasonLine(code, vault) {
+    if (code === 'screen') return 'Locked when your screen locked.';
+    if (code === 'switch') return 'Locked when this Mac switched users.';
+    if (code === 'sleep') return 'Locked while this Mac was asleep.';
+    if (code !== 'idle') return '';
+    var minutes = vault && vault.idleMinutes;
+    if (minutes === 60) return 'Locked after a quiet hour.';
+    if (typeof minutes === 'number' && minutes > 1) return 'Locked after ' + minutes + ' quiet minutes.';
+    return 'Locked after a quiet while.';
+  }
+
+  /* A count only: what the moves are and how much stays behind the lock. */
+  function waitingLine(count) {
+    if (typeof count !== 'number' || count < 1) return '';
+    return count === 1 ? '1 move is waiting for your OK.' : count + ' moves are waiting for your OK.';
+  }
+
+  function why(lock, vault) {
+    var block = refs.why;
+    if (!block) return;
+    var lines = [reasonLine(lock.reason, vault), waitingLine(lock.waiting)].filter(Boolean);
+    var shown = Array.prototype.map.call(block.childNodes, function (n) { return n.textContent; });
+    if (shown.join('\n') === lines.join('\n')) return;
+    dom.clear(block);
+    for (var i = 0; i < lines.length; i += 1) block.appendChild(dom.el('p', 'lock-why-line', lines[i]));
+    block.hidden = lines.length === 0;
   }
 
   function finePrint(card, text) {
@@ -281,6 +323,7 @@
      ground over the frosted shell. */
   function shell() {
     dom.clear(refs.host);
+    refs.why = null;
     var card = dom.el('div', 'screen-card');
     refs.host.appendChild(card);
     return card;
@@ -337,7 +380,7 @@
     form.appendChild(unlock);
     card.appendChild(form);
 
-    finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked; orders already on the exchange still run.');
+    finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
 
     /* A forgotten password is not the end of the wallet: the recovery phrase
        brings it back. Restoring puts it behind Touch ID, so the way is offered
@@ -542,7 +585,7 @@
     actions.appendChild(unlock);
     actions.appendChild(error);
     card.appendChild(actions);
-    finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked; orders already on the exchange still run.');
+    finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
 
     /* One dialog at a time. The request answers when the person has touched the
        sensor or cancelled, which can be most of the 150 s the backend allows, so

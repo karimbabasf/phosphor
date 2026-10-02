@@ -1,8 +1,9 @@
 // Stages a release: the assets a GitHub Release carries, named the way the site and the
 // installed apps expect them, plus the manifest and the checksums.
 //
-// Tauri writes the Apple silicon build as bundle/dmg/Phosphor_<version>_aarch64.dmg and the
-// updater bundle as bundle/macos/Phosphor.app.tar.gz with a .sig beside it. Out of those, this
+// Tauri writes the Apple silicon build as bundle/dmg/Phosphor_<version>_aarch64.dmg;
+// notarize-mac.sh writes the updater bundle as bundle/macos/Phosphor.app.tar.gz, and
+// updater-sign.ts the .sig beside it. Out of those, this
 // writes into --out:
 //
 //   Phosphor-macOS-arm64.dmg                 the download; a stable name, so the site can link
@@ -93,7 +94,7 @@ function main(): void {
   const tarFrom = path.join(bundle, 'macos', 'Phosphor.app.tar.gz');
   const sigFrom = `${tarFrom}.sig`;
   for (const file of [dmgFrom, tarFrom, sigFrom]) {
-    if (!fs.existsSync(file)) throw new Error(`release-manifest: ${file} is missing; did tauri build run with the signing key set?`);
+    if (!fs.existsSync(file)) throw new Error(`release-manifest: ${file} is missing; did notarize-mac.sh and updater-sign.ts run?`);
   }
 
   const tarballName = `Phosphor_${version}_aarch64.app.tar.gz`;

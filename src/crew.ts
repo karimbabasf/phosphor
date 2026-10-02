@@ -30,6 +30,7 @@
 // nobody is watching. Both are ended here rather than noticed later.
 
 import { createDriver, type Driver, type DriverEvent, type DriverOptions } from './driver.ts';
+import { markWebRead, webReadBy } from './web-read.ts';
 
 export type CrewJobState = 'running' | 'done' | 'failed' | 'stopped' | 'timeout';
 
@@ -38,6 +39,8 @@ export type CrewJob = {
   label: string;
   brief: string;
   parent: string;
+  // The worker's own seat id, minted when its driver starts ('' before then).
+  session: string;
   state: CrewJobState;
   startedAt: string;
   finishedAt: string | null;
@@ -47,7 +50,16 @@ export type CrewJob = {
   // Tool calls it made, so the parent can tell a worker that measured from one that talked.
   calls: number;
   error: string | null;
+  // Stamped at spawn when the parent had read a stranger's text: the brief and label are its words.
+  webRead?: true;
 };
+
+/* Whether a job hands its reader a stranger's words (src/web-read.ts): a brief and label from a
+   parent that had read some, or a report from a worker that has. A worker's id is minted once and
+   never reused, so its mark is still there when the report is read. */
+export function jobStamp(job: CrewJob): { webRead?: true } {
+  return job.webRead === true || webReadBy(job.session) ? { webRead: true } : {};
+}
 
 export type CrewOptions = {
   repo: string;
@@ -65,6 +77,10 @@ export type CrewOptions = {
      createAgents in src/agents.ts: a worker announcing `role: "analyst"` was the app trusting a
      claim made by the thing being restricted. */
   onSpawned?(sessionId: string): void;
+  /* This wallet's own addresses and figures (src/http/read/web.ts printsOf), handed to every
+     worker's driver like the chat's: a worker reads wallet and composition and holds web search,
+     so a search of its that carries them closes its page reading too (review correction 2). */
+  prints?: DriverOptions['prints'];
   /* How a worker's process is made. The app never passes this and gets createDriver, which
      spawns a real Claude Code child; tests/unit/crew.test.ts passes a fake one, because the
      lifecycle below (a report accumulating, a deadline firing, a cap refusing, a stop landing
@@ -171,9 +187,10 @@ export function createCrew(opts: CrewOptions): Crew {
       if (live.length >= maxWorkers) {
         return {
           ok: false,
+          // Named by id, which this app minted, and never by label: a label is another agent's words.
           error:
-            `${maxWorkers} workers are already running (${live.map((j) => j.label).join(', ')}), which is the maximum. ` +
-            'Wait for one to report, or stop one with agent_stop.',
+            `${maxWorkers} workers are already running (${live.map((j) => j.id).join(', ')}), which is the maximum. ` +
+            'Wait for one to report, or stop one with agent_jobs and its id.',
         };
       }
       seq += 1;
@@ -189,6 +206,7 @@ export function createCrew(opts: CrewOptions): Crew {
         label,
         brief,
         parent: params.parent,
+        session: '',
         state: 'running',
         startedAt: new Date().toISOString(),
         finishedAt: null,
@@ -209,6 +227,7 @@ export function createCrew(opts: CrewOptions): Crew {
         label,
         parent: params.parent,
         systemPrompt: opts.workerPrompt(brief, label),
+        prints: opts.prints,
         onEvent: (event) => onEvent(id, event),
       });
       drivers.set(id, driver);
@@ -220,6 +239,14 @@ export function createCrew(opts: CrewOptions): Crew {
            proxy makes its first call. */
         const sessionId = driver.status().sessionId;
         if (sessionId !== '') opts.onSpawned?.(sessionId);
+        job.session = sessionId;
+        /* The brief is the parent's words and the worker's first turn. A parent that had read a
+           stranger's text hands it on, so the worker starts marked and the job carries the stamp:
+           set after start(), which clears the new seat, and before the brief goes down. */
+        if (webReadBy(params.parent)) {
+          markWebRead(sessionId);
+          job.webRead = true;
+        }
         // The brief is the whole conversation. Claude Code does not emit its init event until a
         // turn arrives, so the send is what starts the session as well as what asks the
         // question; see the note on `spawn` in src/driver.ts.

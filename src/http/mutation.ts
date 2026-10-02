@@ -20,6 +20,7 @@ import {
   agentById,
   checkAgent,
   connectionLine,
+  ownsAgentSettings,
   readPick,
   registerAgent,
   scanAgents,
@@ -31,6 +32,8 @@ import { savePolicyChecked } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
 import { AXIS_CEILING_USD } from '../policy/engine.ts';
 import { mergePatch, money } from '../proposals/lifecycle.ts';
+import { looksLikeInviteCode } from '../invite/code.ts';
+import { recordPersonText } from '../web-gate.ts';
 
 /* ---------- the agent connection ---------- */
 
@@ -69,6 +72,10 @@ export function translocated(spec: ConnectionSpec): boolean {
 export const TRANSLOCATED =
   'Phosphor is running from a temporary copy macOS made. Move it to your Applications folder, open it from there, then pick your agent again.';
 
+// The composer's own words (ui/screens/agent.js keepOut) for a chat message the backend turns
+// away because it carries an invite code.
+export const INVITE_KEPT_OUT = 'Invite codes never go to your assistant.';
+
 function sameSpec(a: ConnectionSpec | undefined, b: ConnectionSpec): boolean {
   return a !== undefined && a.nodeBin === b.nodeBin && a.serverPath === b.serverPath && a.port === b.port && a.dataDir === b.dataDir;
 }
@@ -90,6 +97,8 @@ export async function refreshRegistration(
   const pick = readPick(cfg.dataDir);
   const entry = pick === null ? null : agentById(pick.agent);
   if (pick === null || entry === null || !entry.registers) return null;
+  // Only the app on its own data folder writes into an agent's settings (ownsAgentSettings).
+  if (!ownsAgentSettings(cfg.dataDir)) return null;
   const spec = connectionSpecFor(cfg, opts.execPath);
   if (translocated(spec)) {
     audit.append('app_start', `${entry.name} registration left as it was: this copy of the app runs from an App Translocation path`, { agent: pick.agent });
@@ -103,7 +112,7 @@ export async function refreshRegistration(
     registration = await registerAgent(pick.agent, spec, { run: opts.run });
     if (registration.ok && registration.wrote) writeRegistered(cfg.dataDir, spec);
   } catch (error) {
-    registration = { ok: false, wrote: false, detail: error instanceof Error ? error.message : String(error) };
+    registration = { ok: false, wrote: false, detail: errText(error) };
   }
   audit.append(
     'app_start',
@@ -428,7 +437,7 @@ export async function handleMutation(
       if (registration.ok && registration.wrote) writeRegistered(dataDirOf(ctx), spec);
       if (registration.detail !== null || !registration.ok) {
         ctx.audit.append('app_start', registration.ok
-          ? `${agent} registration ${registration.wrote ? 'written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
+          ? `${agent} registration ${registration.wrote ? 'written' : registration.skipped === true ? 'not written' : 'not needed'}${registration.detail === null ? '' : `: ${registration.detail}`}`
           : `${agent} registration failed: ${registration.detail ?? 'no detail'}`, { agent, ok: registration.ok, wrote: registration.wrote });
       }
       ctx.sse.broadcastState();
@@ -437,6 +446,8 @@ export async function handleMutation(
         check,
         registered: registration.ok && registration.wrote,
         registrationFailed: !registration.ok,
+        // A copy on another data folder leaves the agent's settings alone; the window shows the line to paste.
+        ...(registration.skipped === true ? { registrationSkipped: true } : {}),
         ...connectionPayload(ctx, agent),
       });
     }
@@ -490,6 +501,15 @@ export async function handleMutation(
       const text = typeof body.text === 'string' ? body.text.trim() : '';
       if (text === '') return fail(res, 400, 'text is required');
       if (text.length > 8000) return fail(res, 400, 'text is too long: 8000 characters maximum');
+      /* AN INVITE CODE NEVER REACHES THE AGENT. The window keeps a code out of the box
+         (ui/core/invite.js codeIn); this is the wall behind it, for a window whose guard did not
+         load and for any other caller. The same test (looksLikeInviteCode) and the composer's own
+         sentence. The text is not sent, not put in the transcript, and not in the audit line:
+         the code is the key to money. */
+      if (looksLikeInviteCode(text)) {
+        ctx.audit.append('driver_prompt', `human to ${chat.label}: a message with an invite code in it was kept from the agent`, { chat: chat.id, refused: 'invite-code' });
+        return fail(res, 400, INVITE_KEPT_OUT, { reason: 'invite-code' });
+      }
       /* THE SCREEN RIDES WITH THE MESSAGE.
          The agent's system prompt names the screen the window was on when the child was
          spawned and can never be corrected after that, so an agent whose human clicked a tab
@@ -505,6 +525,10 @@ export async function handleMutation(
       } catch (err) {
         return fail(res, 409, errText(err));
       }
+      /* An address the person typed is one the agent may read (src/web-gate.ts). Only theirs: the
+         screen line above is the app's, an ended-move note is the app's, and a worker's brief is
+         another agent's, and none of those is recorded. */
+      recordPersonText(chat.session, text);
       /* Logged before anything the agent does with it. The dashcam is supposed to answer
          "why did this happen", and the tool calls alone only answer "what happened": a swap
          in the transcript with no instruction above it reads as the app acting on its own. */
@@ -569,16 +593,24 @@ export async function handleMutation(
     return;
   }
 
+  /* The answer and the log line say what the switch did, never what was asked: a press over a
+     policy file that would not load used to answer ok and log KILL SWITCH ON while nothing had
+     been saved and the runner had not been told (src/kill.ts). */
   if (route === '/api/kill') {
     const on = body.on === true;
-    ctx.setKill(on);
+    const answer = ctx.setKill(on) ?? { ok: true as const, killSwitch: on };
+    ctx.sse.broadcastState();
+    if (!answer.ok) {
+      ctx.audit.append('kill_switch', `${on ? 'Freeze' : 'Unfreeze'} pressed (human), and the switch was not saved: ${answer.error}`, { on, code: answer.code });
+      fail(res, 409, answer.error, { ok: false, code: answer.code, killSwitch: answer.killSwitch });
+      return;
+    }
     ctx.audit.append(
       'kill_switch',
-      on ? 'KILL SWITCH ON: all writes refused (human)' : 'kill switch off: writes allowed again, subject to policy (human)',
+      on ? `KILL SWITCH ON: all writes refused (human)${answer.note === undefined ? '' : '; trading positions left open, no trading key in reach'}` : 'kill switch off: writes allowed again, subject to policy (human)',
       { on },
     );
-    ctx.sse.broadcastState();
-    sendJson(res, 200, { ok: true, killSwitch: on });
+    sendJson(res, 200, { ok: true, killSwitch: answer.killSwitch, ...(answer.note === undefined ? {} : { note: answer.note }) });
     return;
   }
 

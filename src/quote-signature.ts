@@ -9,7 +9,10 @@
 // root certificate another tool installed, NODE_TLS_REJECT_UNAUTHORIZED=0 inherited from the
 // launching shell) could rewrite depositAddress, leave quoteRequest alone, pass every check and
 // take the transfer. This closes that, and it persists what was signed so a dispute has the
-// quote 1Click committed to rather than a reconstruction.
+// quote 1Click committed to rather than a reconstruction. It closes the answer, not the question:
+// the same position can add to the request on its way out, and 1Click signs what it priced. That
+// half is src/intents.ts requestEchoProblems, and the value checks it names for the unsigned
+// fields (appFees above all).
 //
 // WHAT IS SIGNED, in the vendor's words: a Base58-encoded SHA-256 of a deterministic JSON object,
 // `stringify({ ...quoteRequest, ...quoteResponse, timestamp })` with json-stable-stringify's key

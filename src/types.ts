@@ -199,9 +199,12 @@ export type PolicyPatch = {
    Only on a policy_change verdict, and only for the axes that actually moved. */
 export type PolicyAxisChange = { axis: string; before: number; after: number; factor: number | null };
 
+/* `why`, on a move the app itself held for a click: the card's "Why it asks", one line each. The
+   policy's own rule first when it asked anyway, then every reason the app added (also in
+   `reasons`), so a second one never hides the first (src/proposals/draft.ts heldFor). */
 export type Verdict =
   | { outcome: 'allow'; reasons: string[]; reasonCodes?: string[] }
-  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[]; changes?: PolicyAxisChange[] }
+  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[]; changes?: PolicyAxisChange[]; why?: string[] }
   | { outcome: 'refuse'; reasons: string[]; rule: string; reasonCodes?: string[] };
 
 // ---------- Writes ----------
@@ -250,7 +253,15 @@ export type SwapDraft = {
   to: string;
   counterparty: string; // the contract funds are handed to; must be on the policy allowlist
   quote: LegQuote | null;
+  assets?: MovedAssets; // pinned when the card was priced; absent until then, and on rows from before 0.10.13
 };
+
+/* A coin by the venue's own id and the decimals its amounts are counted in, as the card was
+   priced with them. Both come off 1Click's token list, which nothing signs, so the card's pair is
+   pinned into the draft when it lands (src/proposals/draft.ts) and execute signs for exactly that,
+   refusing a list that has changed since (src/rails/asset-pin.ts). */
+export type AssetPin = { assetId: string; decimals: number };
+export type MovedAssets = { origin: AssetPin; destination: AssetPin };
 
 // Collateral entering a Hyperliquid perps account. The kind is older than the mechanism: it
 // meant an ERC-20 transfer to Hyperliquid's Bridge2 contract, then a NEAR Intents route from a
@@ -272,6 +283,7 @@ export type HlDepositDraft = {
   from: string; // our account id inside intents.near: the EVM address, lowercased
   hlAccount: string; // the Hyperliquid account credited: an EVM address we hold the key for
   counterparty: string; // must be on the policy allowlist
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 // Collateral leaving a Hyperliquid perps account and landing back in the intents balance. The
@@ -303,6 +315,9 @@ export type IntentsSendDraft = {
   kind: 'intents_send';
   symbol: string;
   originAsset: string; // the 1Click asset id of the flavor held; the same asset arrives
+  /* The chain the coin that leaves came in on (a registry id), set only when the symbol is held
+     from more than one chain, so the card can say which one goes. Absent otherwise. */
+  fromChain?: string;
   amount: number;
   amountUsd: number;
   minReceived: number; // the least that may be credited to the receiver
@@ -310,6 +325,7 @@ export type IntentsSendDraft = {
   to: string; // the receiver's intents account id, as the verifier keys it
   counterparty: string; // must be on the policy allowlist
   recipient?: SendRecipient; // absent on rows written before the recipients book existed
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 // A balance inside intents.near paid out to an address on a real chain: a friend's wallet on
@@ -322,6 +338,7 @@ export type IntentsPayDraft = {
   kind: 'intents_pay';
   symbol: string;
   originAsset: string; // the 1Click asset id of the flavor held inside the verifier
+  fromChain?: string; // as on IntentsSendDraft: which chain's coin leaves, when several are held
   /* The real chain the payout lands on, as the one registry ids a chain (src/rails/
      intents-address.ts). Wider than ChainNetwork, which is the six chains this app can also READ
      an address on: a payout needs an address it can decode, and it can decode more chains than
@@ -339,6 +356,7 @@ export type IntentsPayDraft = {
   toGiven?: string;
   counterparty: string; // must be on the policy allowlist
   recipient: SendRecipient;
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 export type HlWithdrawDraft = {
@@ -454,6 +472,12 @@ export type RailResult = {
 export type RailHooks = {
   onEvidence?: (evidence: { txids?: string[]; pocket?: PocketRead } & RailEvidence) => void;
   onPreflight?: (preflight: Preflight) => void;
+  // Who decided the move the rail is running. A rail that could not check a price holds a move
+  // the policy decided, and runs one a person clicked on at the floor that person approved.
+  decidedBy?: DecidedBy;
+  // Called by a rail as the last step before its key signs, with nothing awaited between this
+  // call and the signature. Throws when the move may no longer sign (Freeze), and then nothing is.
+  lastCheck?: () => void;
 };
 
 // ---------- preflight ----------
@@ -534,6 +558,12 @@ export type SimulationResult = {
   error?: string;
   // Why it did not pass, as one code from src/rails/reasons.ts, when the rail knows.
   reason?: string;
+  // The coins this simulation priced, which the proposal pins into its draft (MovedAssets).
+  assets?: MovedAssets;
+  // A passed simulation the rail could not fully check, as the one sentence that says so: the
+  // proposal waits for a click whatever its size, and its card says why at every size
+  // (src/proposals/draft.ts proposeRail).
+  ask?: string;
 };
 
 // The asset a swap draft spends, resolved, and what the verifier holds of it for us.
@@ -641,6 +671,9 @@ export type Proposal = {
   // Set when it was asked for inside a turn the app started, not the person (src/app-turn.ts).
   // land() makes such a row wait for a click too, whatever its size.
   appTurn?: true;
+  // Set when the seat that asked is an agent the app did not spawn and the person has not allowed
+  // in the window (src/agents.ts, src/web-read.ts). land() makes such a row wait for a click.
+  outside?: true;
   // Set when a person filed an unconfirmed row from the dock ("Got it, waiting on the venue").
   // The row stays needs_reconciliation, keeps counting against the day and keeps its place in
   // Activity; only the dock stops asking. Cleared the moment a re-check changes what the venue
@@ -727,6 +760,9 @@ export type LogEvent = {
     // An agent was turned away: the roster was full, or the session had been replaced from
     // the window. One line per refused session, not per refused call: see src/agents.ts.
     | 'agent_rejected'
+    // The person answered the window's card about an agent started outside Phosphor: Allow, or
+    // Not now. data names the agent; src/http/agent-answer.ts.
+    | 'agent_answered'
     // Written by a human-run compaction, never by the app. The log is append-only,
     // so the one thing a removal owes its reader is a line saying it happened.
     | 'audit_compacted'
@@ -750,10 +786,18 @@ export type LogEvent = {
     // so the record exists while the venue is still working.
     | 'submitted'
     | 'approve_attempt_rejected'
+    // A GET under /api/ with no window token and no read key (src/http/read-gate.ts): one line,
+    // then at most one a minute with a count, so a loop of them cannot fill the disk.
+    | 'read_refused'
     | 'kill_switch'
     | 'policy_changed'
     // The person accepted the terms of use in the window; data names the version.
     | 'terms_accepted'
+    // An invite code's money landed in this wallet, or a claim the window started did not
+    // (src/invite/claim.ts). Never 'executed': no approval comes before a claim, and every
+    // executed line has to follow one. Neither line carries the code.
+    | 'invite_claimed'
+    | 'invite_failed'
     | 'chain_stale'
     // A view change is a thing an agent did to what a human sees, so the transcript
     // says so. 'view_refused' is HISTORICAL: the switch used to be declined while a

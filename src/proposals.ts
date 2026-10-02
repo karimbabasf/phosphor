@@ -7,7 +7,8 @@
 //   refuse          -> policy_refused, terminal
 // There is no override, no force flag and no fourth path. Approval re-runs the engine against
 // the policy and balances as they are at that moment, so a kill switch flipped after the
-// proposal was created still stops it. Every transition appends one line to the audit log.
+// proposal was created still stops it, and the Touch ID that completes an enclave approval
+// runs it once more before anything signs. Every transition appends one line to the audit log.
 //
 // This file is the door. The work is in src/proposals/, split by job: lifecycle.ts is what a
 // proposal is and what a click does to it, execute.ts is what actually runs, draft.ts is how a
@@ -42,10 +43,11 @@ import { proposePolicyChange } from './proposals/draft.ts';
 import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 import { swapAssets, swapCheck, swapQuote } from './proposals/swap-reads.ts';
-import { webReadBy } from './web-read.ts';
+import { outsideBy, webReadBy } from './web-read.ts';
 import { appTurnBy } from './app-turn.ts';
 
 export type { ProposalDeps };
+export { mayStillSign } from './proposals/lifecycle.ts';
 
 export function createProposalService(deps: ProposalDeps): ProposalService {
   /* The context every handler reads, assembled once. `execute` is the indirection that lets
@@ -100,10 +102,11 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
      and land() reads the row (src/web-read.ts). Whatever the mark does while the reads run or the
      queue waits, the move is judged by what its agent had read when it asked. The app-turn stamp
      rides the same way: whether it was asked inside a turn the app started (src/app-turn.ts). */
-  const stamped = <T extends { by?: string | null }>(p: T): T & { webRead: boolean; appTurn: boolean } => ({
+  const stamped = <T extends { by?: string | null }>(p: T): T & { webRead: boolean; appTurn: boolean; outside: boolean } => ({
     ...p,
     webRead: webReadBy(p.by ?? undefined),
     appTurn: appTurnBy(p.by ?? undefined),
+    outside: outsideBy(p.by ?? undefined),
   });
 
   return {

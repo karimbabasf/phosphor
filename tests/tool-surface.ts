@@ -109,6 +109,11 @@ export const EXPECTED_TOOLS: readonly string[] = [
   'chain_transactions',
   'chain_transaction',
   'intents_activity',
+  /* The one page reader (2026-10-01). It takes a `url`, which is the point and the risk: the app
+     reads only an address that came back in a web search this session or that the person gave,
+     with no figure or address of the wallet in it, a public name, https (src/web-gate.ts). The
+     vendors' page readers that fetched any address the model wrote are off. */
+  'web_read',
   // The chart's one write. View, indicators, presets, levels, marks, lines and zones in one
   // call, with `clear` scoped to the caller's own work: ten tools used to do this one call
   // each, and every one of those was a model turn. Withheld from a worker, as is the layout:

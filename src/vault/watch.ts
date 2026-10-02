@@ -75,6 +75,11 @@ export type DepositWatch = {
   show(chain: string, symbol: string, address: string | null, token?: DepositToken): DepositState;
   current(): DepositState | null;
   stop(): void;
+  /** An invite claim is about to move money into this wallet on `assetId` (src/invite/claim.ts),
+   *  and `walletBefore` is the wallet's balance of it read a moment before, when the claim could
+   *  read it. Until the returned release is called the watch never calls that asset credited; the
+   *  release says what the claim proved landed (base units), or null when it proved nothing. */
+  holdForClaim(assetId: string, walletBefore?: bigint | null): (proven: bigint | null) => void;
 };
 
 const POLL_MS = 3_000;
@@ -237,6 +242,31 @@ export function createDepositWatch(deps: Deps): DepositWatch {
   let creditedAt = 0;
   let inFlight = false;
   let ticks = 0;
+  /* THE INVITE HOLD. A claim lands on NEAR USDC with no bridge row, and the rise it makes is the
+     same signal as a deposit, so while one runs the watch holds "credited" on that asset. When
+     the claim is proven, its amount joins the baseline, and only when the baseline is known to
+     predate the claim: one the watch already had when the hold opened (the hold opens before the
+     claim is sent), or the wallet's balance the claim read just before sending, which a card
+     opened mid-claim takes as its baseline. The baseline is never read again, because a read
+     would swallow a real deposit landing in the same window. A card opened mid-claim with no such
+     read (a boot reconcile has none) takes no baseline until the claim ends. */
+  type Hold = { assetId: string; walletBefore: bigint | null; addOnProof: boolean; generation: number };
+  const holds = new Set<Hold>();
+
+  function claimRunning(assetId: string | undefined): boolean {
+    for (const h of holds) if (h.assetId === assetId) return true;
+    return false;
+  }
+
+  // A baseline for a card opened while a claim runs on its asset: the one hold's read from just
+  // before its send, which then adds its proof on release. Null when that cannot be known.
+  function baselineDuringHold(assetId: string): bigint | null {
+    const active = [...holds].filter((h) => h.assetId === assetId);
+    if (active.length !== 1 || active[0]!.walletBefore === null) return null;
+    active[0]!.addOnProof = true;
+    active[0]!.generation = generation;
+    return active[0]!.walletBefore;
+  }
 
   function announce(): void {
     if (state !== null) deps.sse.broadcast({ type: 'deposit', ...state });
@@ -307,7 +337,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       await priming;
       priming = null;
       if (gen !== generation) return;
-      baseline = baselineFromLedger();
+      if (!claimRunning(token?.assetId)) baseline = baselineFromLedger();
     }
 
     const askBridge = current.phase !== 'credited';
@@ -337,7 +367,9 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       next.error = 'The verifier is not answering, retrying';
     } else {
       next.error = bridge.failed ? 'The bridge is not answering, retrying' : null;
-      if (baseline === null) {
+      if (claimRunning(token.assetId)) {
+        // An invite claim is landing on this asset: no baseline and no credit until it ends.
+      } else if (baseline === null) {
         baseline = held;
         next.baseline = units(held, token.decimals);
       } else if (held > baseline) {
@@ -410,8 +442,10 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       firstPoll = true;
       creditedAt = 0;
       inFlight = false;
-      baseline = baselineFromLedger();
-      priming = baseline === null && token !== null ? deps.refresh().catch(() => undefined) : null;
+      // A ledger read taken while a claim lands on this asset may or may not hold it, so it is
+      // not used; the claim's own read from before its send is.
+      baseline = token !== null && claimRunning(token.assetId) ? baselineDuringHold(token.assetId) : baselineFromLedger();
+      priming = baseline === null && token !== null && !claimRunning(token.assetId) ? deps.refresh().catch(() => undefined) : null;
       state = {
         phase: 'watching',
         chain,
@@ -439,6 +473,14 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     stop() {
       stopTimer();
       if (state !== null && state.phase !== 'credited') commit({ ...state, phase: 'stopped' });
+    },
+    holdForClaim(assetId, walletBefore = null) {
+      const h: Hold = { assetId, walletBefore, addOnProof: baseline !== null && token !== null && token.assetId === assetId, generation };
+      holds.add(h);
+      return (proven) => {
+        if (!holds.delete(h)) return;
+        if (proven !== null && proven > 0n && h.addOnProof && h.generation === generation && baseline !== null) baseline += proven;
+      };
     },
   };
 }

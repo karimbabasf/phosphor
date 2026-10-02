@@ -49,6 +49,14 @@ export const KEYSTORE_FILENAME = 'keys.enc.json';
 // through the HTTP route at the speed of the event loop.
 const MAX_FAILURES = 5;
 const BACKOFF_MS = 30_000;
+/* How long a move already on its way may keep the key, after the wallet was told to lock, to
+   reach its signature: the quote, the checks and the reads a rail makes before it signs, each on
+   its own network timeout. Past it the key goes anyway, and a rail that had not signed yet fails
+   with the wallet locked and nothing signed. */
+export const CLOSE_GRACE_MS = 2 * 60_000;
+const CLOSE_SWEEP_MS = 250;
+
+const EVM_KEY = /^0x[0-9a-fA-F]{64}$/;
 
 /* DEMO MODE NEVER DESTROYS A KEY FILE, and this is the second lock on a door the config file
    already shut. The first lock is that a demo boot resolves its own key file and never the real
@@ -87,6 +95,23 @@ export type KeysPayload = {
 };
 
 export type StoredAddresses = { evm: string | null; solana: string | null; near: string | null; nearPublicKey: string | null };
+
+/* The Hyperliquid API wallet the runner signs orders with: a key that can trade and, by the
+   venue's own signing split, cannot withdraw, transfer or approve another agent. */
+export type ApiWallet = { key: `0x${string}`; address: string | null };
+
+/* Which entry in a payload is the API wallet. A keys.json written before 2026-09-01 keyed the
+   agent by a venue axis this app no longer has, so the entry that names this venue wins and the
+   flat field an older file carries is the fallback: no install loses its agent to a shape
+   change. Nothing here writes the payload back or removes anything from it; it is key material,
+   and a human removes what a human put there. */
+export function apiWalletOf(payload: KeysPayload): ApiWallet | null {
+  for (const entry of [payload.hyperliquidAgents?.mainnet, payload.hyperliquidAgent]) {
+    const key = entry?.privateKey;
+    if (typeof key === 'string' && EVM_KEY.test(key)) return { key: key as `0x${string}`, address: entry?.address ?? null };
+  }
+  return null;
+}
 
 /* The Secure Enclave key a version 2 file is wrapped to. `keyBlob` is the enclave's own opaque
    representation of the private key (CryptoKit dataRepresentation): useless off this Mac, and
@@ -164,7 +189,15 @@ export type AddressReport = { addresses: StoredAddresses; verified: boolean; tam
 
 export type Keystore = {
   state(): LockState;
+  // Open, and not closing: what a route that serves the person an open wallet asks.
   isUnlocked(): boolean;
+  // Whether a signer can read its key right now: open, or closing behind signatures still under
+  // way (lockWhen). Never the test for starting something new; isUnlocked() and state() are.
+  keyHeld(): boolean;
+  /* Lock once `done` says the signatures it waits for are made, and no later than `capMs` from
+     now; the state reads locked from this call on. Keyed so a repeated ask is one closer. False
+     when nothing is open. */
+  lockWhen(key: string, done: () => boolean, capMs: number): boolean;
   addresses(): StoredAddresses;
   // The same addresses with the two facts a display needs beside them. Every route that puts an
   // address in front of a person reads this one; addresses() stays for the signers and readers
@@ -184,6 +217,11 @@ export type Keystore = {
   reveal(): { mnemonic: string | null; keys: KeysPayload };
   // Throws when locked. Every signer goes through this or through the helpers below it.
   keys(): KeysPayload;
+  // The EVM private key and nothing else, which is all an EVM signature needs. Throws when locked,
+  // as keys() does, and never decodes the rest of the payload: see `evmKey` in createKeystore.
+  evmPrivateKey(): `0x${string}`;
+  // The same for the runner: the API wallet alone, or null when the wallet has none. See `apiKey`.
+  apiWallet(): ApiWallet | null;
   path(): string;
   onChange(fn: (state: LockState) => void): () => void;
 
@@ -197,6 +235,14 @@ export type Keystore = {
   // The version 2 unlock: the data key came back from the enclave, open the payload with it.
   // Wipes the buffer it is given either way.
   unlockWithDataKey(dek: Buffer): UnlockResult;
+  /* The payload opened for one read and wiped, under a data key or a password, with the lock
+     state exactly as it was: what a touch or a password asked for something other than opening
+     the wallet (showing an address, revealing the phrase) gets. The data key is wiped either way. */
+  readWithDataKey<T>(dek: Buffer, read: (payload: KeysPayload) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }>;
+  readWithPassword<T>(password: string, read: (payload: KeysPayload) => T): Promise<{ ok: true; value: T } | Extract<UnlockResult, { ok: false }>>;
+  /* An approval's Touch ID: the wallet is opened for one move and stays locked to everything else
+     (lockWhen under `key`), or, when it is already open, the touch is only proved. */
+  openFor(key: string, dek: Buffer, done: () => boolean, capMs: number): UnlockResult;
   createWithEnclave(enclave: EnclaveRef): { addresses: StoredAddresses };
   importWithEnclave(enclave: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): { addresses: StoredAddresses };
   // A version 1 file becomes a version 2 file: the password opens it once, a fresh data key is
@@ -207,6 +253,9 @@ export type Keystore = {
   updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses;
   // Shreds the file. The caller has already made the person prove they mean it.
   forget(): { destroyed: string };
+  // The scrypt parameters a new file is written with, a fresh salt each call. The words Prove it
+  // checks are slowed with the same (src/vault/phrase-proof.ts).
+  kdfParams(): KdfParams;
 };
 
 // ---------- files ----------
@@ -321,6 +370,17 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
      rewritten (an API wallet added) without a second Touch ID. It is no more than the payload
      already is, it is wiped by the same lock, and a version 1 wallet never sets it. */
   let dataKey: Buffer | null = null;
+  /* THE ONE KEY A SIGNATURE NEEDS, as its 32 bytes, set and wiped with the payload by hold() and
+     lock(). keys() decodes the WHOLE payload into a string and parses it, the recovery phrase and
+     every other key included, and every EVM signature used to go through it: each one left
+     another copy of the phrase in heap that nothing can overwrite, still there after a lock until
+     the allocator happens to reuse the memory. A signer reads this instead. The key still becomes
+     a hex string for viem and a bigint inside noble, and JavaScript can wipe neither, so a
+     signature still leaves the EVM key behind. It no longer leaves the phrase. */
+  let evmKey: Buffer | null = null;
+  // The runner's key, kept the same way for the same reason: every runner it starts reads it.
+  let apiKey: Buffer | null = null;
+  let apiAddress: string | null = null;
   let failures = 0;
   let backoffUntil = 0;
   /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
@@ -332,6 +392,15 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // Set when a correct password proved the header's addresses are not the ones this file was
   // written with. From then on this store serves no address at all.
   let tampered = false;
+  /* SHUT TO EVERYTHING NEW, OPEN TO WHAT IS ALREADY SIGNING. A closer keeps the payload held
+     after the wallet has been told to lock, until its `done` says the signatures it waits for are
+     made, or its cap runs out. state() says locked from the first closer on, so nothing new starts
+     (land, approve and a held retry all ask isLocked(), and no plan re-arms: that only follows an
+     announced unlock), while a signer already under way still reads its key. lock() is the end of
+     it, whoever calls it. See lockWhen. */
+  type Closer = { done: () => boolean; until: number };
+  const closers = new Map<string, Closer>();
+  let closeTimer: NodeJS.Timeout | null = null;
 
   function announce(): void {
     const s = state();
@@ -343,7 +412,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function state(): LockState {
-    if (plain !== null) return 'unlocked';
+    if (plain !== null) return closers.size === 0 ? 'unlocked' : 'locked';
     if (hasKeystore()) return 'locked';
     if (fs.existsSync(keysPath)) return 'needs_migration';
     return 'no_wallet';
@@ -398,6 +467,36 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (hasKeystore()) throw new Error('the wallet is locked: unlock it in the app window to sign anything');
     if (fs.existsSync(keysPath)) return JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload;
     throw new Error(`no wallet yet. Create one in the app window, or point PHOSPHOR_KEYS at an existing ${path.basename(keysPath)}`);
+  }
+
+  function evmPrivateKey(): `0x${string}` {
+    if (plain !== null) {
+      if (evmKey === null) throw new Error('this wallet has no valid EVM private key');
+      return `0x${evmKey.toString('hex')}`;
+    }
+    // Locked, or not migrated yet: keys() throws for the first and reads keys.json for the second.
+    const key = keys().evm?.privateKey;
+    if (typeof key !== 'string' || !EVM_KEY.test(key)) throw new Error('this wallet has no valid EVM private key');
+    return key as `0x${string}`;
+  }
+
+  function apiWallet(): ApiWallet | null {
+    if (plain !== null) return apiKey === null ? null : { key: `0x${apiKey.toString('hex')}`, address: apiAddress };
+    return apiWalletOf(keys());
+  }
+
+  // Every way the payload comes open lands here, so the keys beside it are never stale and never
+  // outlive it. An open is an open: a lock still waiting on its closers is called off.
+  function hold(body: Buffer, payload: KeysPayload): void {
+    stopClosing();
+    if (plain !== null && plain !== body) wipe(plain);
+    wipe(evmKey, apiKey);
+    plain = body;
+    const key = payload.evm?.privateKey;
+    evmKey = typeof key === 'string' && EVM_KEY.test(key) ? Buffer.from(key.slice(2), 'hex') : null;
+    const api = apiWalletOf(payload);
+    apiKey = api === null ? null : Buffer.from(api.key.slice(2), 'hex');
+    apiAddress = api?.address ?? null;
   }
 
   async function write(password: string, payload: KeysPayload, kdf: KdfParams): Promise<StoredAddresses> {
@@ -541,13 +640,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (!opened.ok) return opened;
     // Wiped, not dropped. Unlocking a wallet that was already open used to leave the previous
     // plaintext payload sitting in heap nothing would ever overwrite, which is the one thing
-    // holding the payload as bytes rather than as an object exists to make possible.
-    if (plain !== null) wipe(plain);
-    plain = opened.body;
+    // holding the payload as bytes rather than as an object exists to make possible. hold() does
+    // the wiping, for the signing key beside it too.
+    const payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+    hold(opened.body, payload);
     /* The addresses this wallet actually holds, derived from the keys that just came out of the
        envelope. Everything that shows somebody an address reads these from here on, so an edited
        header cannot reach the Money-in screen of an open wallet. */
-    openAddresses = addressesOf(JSON.parse(plain.toString('utf8')) as KeysPayload);
+    openAddresses = addressesOf(payload);
     tampered = false;
     announce();
     return { ok: true };
@@ -563,11 +663,58 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function lock(): boolean {
+    stopClosing();
     if (plain === null) return false;
-    wipe(plain, dataKey);
+    wipe(plain, dataKey, evmKey, apiKey);
     plain = null;
     dataKey = null;
+    evmKey = null;
+    apiKey = null;
+    apiAddress = null;
     announce();
+    return true;
+  }
+
+  function stopClosing(): void {
+    closers.clear();
+    if (closeTimer !== null) clearInterval(closeTimer);
+    closeTimer = null;
+  }
+
+  // A closer is finished when it says so or when its cap has passed; a `done` that throws cannot
+  // hold the key either. The last one finished locks.
+  function sweepClosers(): void {
+    const at = now();
+    for (const [key, closer] of closers) {
+      let finished = at >= closer.until;
+      if (!finished) {
+        try {
+          finished = closer.done();
+        } catch {
+          finished = true;
+        }
+      }
+      if (finished) closers.delete(key);
+    }
+    if (closers.size === 0) lock();
+  }
+
+  /* Lock once `done` says the signatures it waits for are made, and no later than `capMs` from
+     now. False when nothing is open to close. One closer per key, so a caller that asks again
+     (the shell's screen-lock loop asks once a second) neither stacks closers nor moves the cap.
+     The first closer is announced, because the state turns to locked there and the window has to
+     draw it. Never decided on the spot: `done` is read on the next sweep, after whatever the
+     caller is doing in this turn has written its rows. */
+  function lockWhen(key: string, done: () => boolean, capMs: number): boolean {
+    if (plain === null) return false;
+    if (closers.has(key)) return true;
+    const first = closers.size === 0;
+    closers.set(key, { done, until: now() + capMs });
+    if (closeTimer === null) {
+      closeTimer = setInterval(sweepClosers, CLOSE_SWEEP_MS);
+      closeTimer.unref?.();
+    }
+    if (first) announce();
     return true;
   }
 
@@ -632,15 +779,20 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function holdOpen(payload: KeysPayload, dek: Buffer, addrs: StoredAddresses): void {
-    if (plain !== null) wipe(plain);
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     if (dataKey !== null && dataKey !== dek) wipe(dataKey);
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
     dataKey = dek;
     openAddresses = addrs;
     announce();
   }
 
-  function unlockWithDataKey(dek: Buffer): UnlockResult {
+  /* The version 2 decrypt and NOTHING ELSE, the data-key twin of openOnce: whether the wallet
+     ends up open is the caller's decision. The data key is wiped on every failure and handed back
+     untouched on success. The addresses the header claims are compared against the ones the keys
+     actually give: a header any process can edit is never believed over the payload only the
+     enclave could open, so a mismatch is recorded, the derived addresses are served, and the
+     window is told. */
+  function openWithDataKey(dek: Buffer): { ok: true; body: Buffer; payload: KeysPayload } | Extract<UnlockResult, { ok: false }> {
     let stored: KeystoreFile | null;
     try {
       stored = readKeystoreFile(file);
@@ -656,28 +808,83 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       wipe(dek);
       return { ok: false, error: 'wrong_password', detail: 'this is a password wallet; the enclave cannot open it' };
     }
+    let body: Buffer | null = null;
     let payload: KeysPayload;
-    let body: Buffer;
     try {
       body = open(stored.payload, dek, proofAad(stored.header));
       payload = JSON.parse(body.toString('utf8')) as KeysPayload;
     } catch (err) {
-      wipe(dek);
+      wipe(dek, body);
       return { ok: false, error: 'damaged', detail: err instanceof Error ? err.message : String(err) };
     }
-    /* The addresses the header claims against the ones the keys actually give. A header any
-       process can edit is never believed over the payload only the enclave could open; a
-       mismatch is recorded, the derived addresses are served, and the window is told. */
     const derived = addressesOf(payload);
     tampered = !sameAddresses(derived, stored.header.addresses);
-    if (plain !== null) wipe(plain);
-    if (dataKey !== null) wipe(dataKey);
-    plain = body;
-    dataKey = dek;
     openAddresses = derived;
     failures = 0;
     backoffUntil = 0;
+    return { ok: true, body, payload };
+  }
+
+  function unlockWithDataKey(dek: Buffer): UnlockResult {
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    hold(opened.body, opened.payload);
+    if (dataKey !== null) wipe(dataKey);
+    dataKey = dek;
     announce();
+    return { ok: true };
+  }
+
+  /* A TOUCH OR A PASSWORD OPENS ONLY WHAT IT WAS ASKED FOR. The payload is opened for one read
+     and wiped, and the lock state is exactly what it was: nothing is held, nothing is announced,
+     so nothing queued is released and no plan re-arms. "Show your deposit address" verified the
+     addresses through an unlock and locked again, but the unlock had already told every listener,
+     and the runner re-armed a locked plan and took the trading key for a fresh session in that
+     same tick; "Reveal your recovery phrase" left the whole wallet open for signing until the
+     idle lock. Both read through here now. The addresses come out verified, as from any open. */
+  function readWithDataKey<T>(dek: Buffer, read: (payload: KeysPayload) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }> {
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    try {
+      return { ok: true, value: read(opened.payload) };
+    } finally {
+      wipe(opened.body, dek);
+    }
+  }
+
+  // The same for a password wallet, through openWith, so every guess is counted.
+  async function readWithPassword<T>(password: string, read: (payload: KeysPayload) => T): Promise<{ ok: true; value: T } | Extract<UnlockResult, { ok: false }>> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    try {
+      const payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+      openAddresses = addressesOf(payload);
+      tampered = false;
+      return { ok: true, value: read(payload) };
+    } finally {
+      wipe(opened.body);
+    }
+  }
+
+  /* An approval's Touch ID opens the wallet for that one move. On a wallet already open it only
+     proves the touch opened this file, and changes nothing. On a shut one the payload is held
+     the way a closing wallet holds it (lockWhen): state() says locked throughout, nothing is
+     announced, so no plan re-arms, nothing queued is released and no other move can start, and
+     the key goes as soon as `done` says this move has signed, or at the cap. It used to be a full
+     unlock, and every move under the click threshold then ran with no click until the idle lock,
+     on a touch whose dialog named one move. */
+  function openFor(key: string, dek: Buffer, done: () => boolean, capMs: number): UnlockResult {
+    if (plain !== null && closers.size === 0) {
+      const proved = readWithDataKey(dek, () => true);
+      return proved.ok ? { ok: true } : proved;
+    }
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    // The data key is not kept: nothing may rewrite the payload while the wallet is shut.
+    if (plain === null) hold(opened.body, opened.payload);
+    else wipe(opened.body);
+    wipe(dek);
+    lockWhen(key, done, capMs);
     return { ok: true };
   }
 
@@ -719,7 +926,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses {
-    if (plain === null || dataKey === null) throw new Error('the wallet is locked');
+    if (plain === null || dataKey === null || closers.size > 0) throw new Error('the wallet is locked');
     const stored = readKeystoreFile(file);
     if (stored === null || !isEnclaveFile(stored)) throw new Error('only an enclave wallet can be rewritten in place');
     const next = mutate(keys());
@@ -731,8 +938,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     } finally {
       wipe(body);
     }
-    if (plain !== null) wipe(plain);
-    plain = Buffer.from(JSON.stringify(next), 'utf8');
+    hold(Buffer.from(JSON.stringify(next), 'utf8'), next);
     openAddresses = addressesOf(next);
     announce();
     return openAddresses;
@@ -762,7 +968,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const addrs = await write(password, payload, params());
     // Unlocked immediately: the person is standing there having just typed the password, and
     // making them type it twice teaches nothing.
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     openAddresses = addrs;
     announce();
     return { mnemonic: made.mnemonic, addresses: addrs };
@@ -788,7 +994,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
     const payload = payloadFromImport(from);
     const addrs = await write(password, payload, params());
-    plain = Buffer.from(JSON.stringify(payload), 'utf8');
+    hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
     openAddresses = addrs;
     announce();
     return { addresses: addrs };
@@ -837,14 +1043,16 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function reveal(): { mnemonic: string | null; keys: KeysPayload } {
+    if (plain === null || closers.size > 0) throw new Error('the wallet is locked');
     const payload = keys();
-    if (plain === null) throw new Error('the wallet is locked');
     return { mnemonic: typeof payload.mnemonic === 'string' ? payload.mnemonic : null, keys: payload };
   }
 
   return {
     state,
-    isUnlocked: () => plain !== null,
+    isUnlocked: () => plain !== null && closers.size === 0,
+    keyHeld: () => plain !== null,
+    lockWhen,
     addresses,
     addressReport,
     header: () => readHeader(keysPath),
@@ -855,21 +1063,33 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     importWallet,
     migrate: async (password) => {
       if (demo) throw new Error(DEMO_REFUSAL);
-      return migrateInto({ keysPath, file, write, kdf: params, setPlain: (b) => { plain = b; openAddresses = addressesOf(JSON.parse(b.toString('utf8')) as KeysPayload); announce(); } }, password);
+      const setPlain = (b: Buffer): void => {
+        const payload = JSON.parse(b.toString('utf8')) as KeysPayload;
+        hold(b, payload);
+        openAddresses = addressesOf(payload);
+        announce();
+      };
+      return migrateInto({ keysPath, file, write, kdf: params, setPlain, open: openWith }, password);
     },
     exportTo,
     reveal,
     keys,
+    evmPrivateKey,
+    apiWallet,
     path: () => file,
     custody,
     enclave,
     enclaveRequest,
     unlockWithDataKey,
+    readWithDataKey,
+    readWithPassword,
+    openFor,
     createWithEnclave,
     importWithEnclave,
     rewrapToEnclave,
     updatePayload,
     forget,
+    kdfParams: params,
     onChange(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);
@@ -885,6 +1105,8 @@ type MigrateDeps = {
   write: (password: string, payload: KeysPayload, kdf: KdfParams) => Promise<StoredAddresses>;
   kdf: () => KdfParams;
   setPlain: (body: Buffer) => void;
+  // The keystore's own openWith: the failure counter and the backoff every password check takes.
+  open: (password: string) => Promise<{ ok: true; body: Buffer } | Extract<UnlockResult, { ok: false }>>;
 };
 
 // Every file beside keys.json that is a copy of it. The three the audit found by name
@@ -956,41 +1178,43 @@ function plaintextResidue(keysPath: string): string[] {
    exactly the state a kill inside the destroy loop leaves. The house rule still holds and is why
    this is not simply a delete: the envelope is opened with the password given and the addresses
    it derives are compared against the ones the surviving plaintext derives, so nothing is
-   shredded until the encrypted wallet is proved to hold the same keys. */
+   shredded until the encrypted wallet is proved to hold the same keys.
+   The password goes through the keystore's openWith, like every other check of it. This used to
+   derive and open on its own, which made it the one door with no failure count: a window-token
+   holder could grind guesses at full speed and never meet the backoff the unlock walls at. */
 async function resumeDestroy(deps: MigrateDeps, password: string, residue: string[]): Promise<{ destroyed: string[]; addresses: StoredAddresses }> {
-  const stored = readKeystoreFile(deps.file);
-  if (stored === null) throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
-  if (stored.header.kdf === undefined) throw new Error('the encrypted wallet is an enclave file, which this migration does not open');
-  const aad = aadFor(stored.header);
-  const kek = await deriveKek(password, stored.header.kdf);
-  let body: Buffer;
-  try {
-    const dataKey = open(stored.wrap as Sealed, kek, aad);
-    body = open(stored.payload, dataKey, aad);
-    wipe(dataKey);
-  } catch {
-    throw new Error('that password does not open the encrypted wallet, so the plaintext key file was left alone');
-  } finally {
-    wipe(kek);
+  const opened = await deps.open(password);
+  if (!opened.ok) {
+    const left = 'so the plaintext key file was left alone';
+    if (opened.error === 'locked_out') throw new Error(`Too many tries. Wait ${opened.retryInSec ?? 30} seconds and try again; the plaintext key file was left alone.`);
+    if (opened.error === 'enclave_required') throw new Error('the encrypted wallet is an enclave file, which this migration does not open');
+    if (opened.error === 'no_wallet' || opened.error === 'damaged') throw new Error('the encrypted wallet could not be read, so nothing was destroyed');
+    if (opened.error === 'tampered') throw new Error(`${opened.detail ?? 'the wallet file has been edited'} (${left})`);
+    throw new Error(`that password does not open the encrypted wallet, ${left}`);
   }
-
-  const encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
-  for (const target of residue) {
-    let onDisk: StoredAddresses;
-    try {
-      onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
-    } catch {
-      throw new Error(`${target} is not a key file this app can read, so it was left alone`);
-    }
-    if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
-      throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
-    }
-  }
-
+  const body = opened.body;
   const destroyed: string[] = [];
-  for (const target of residue) {
-    destroyPlaintext(target);
-    destroyed.push(target);
+  let encrypted: StoredAddresses;
+  try {
+    encrypted = addressesOf(JSON.parse(body.toString('utf8')) as KeysPayload);
+    for (const target of residue) {
+      let onDisk: StoredAddresses;
+      try {
+        onDisk = addressesOf(JSON.parse(fs.readFileSync(target, 'utf8')) as KeysPayload);
+      } catch {
+        throw new Error(`${target} is not a key file this app can read, so it was left alone`);
+      }
+      if (onDisk.evm !== encrypted.evm || onDisk.solana !== encrypted.solana || onDisk.near !== encrypted.near) {
+        throw new Error(`${target} holds a different wallet from the encrypted one, so it was left alone. Move it aside by hand.`);
+      }
+    }
+    for (const target of residue) {
+      destroyPlaintext(target);
+      destroyed.push(target);
+    }
+  } catch (err) {
+    wipe(body);
+    throw err;
   }
   deps.setPlain(body);
   return { destroyed, addresses: encrypted };

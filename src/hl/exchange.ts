@@ -19,6 +19,7 @@
 import { formatPrice, formatSize, roundToValidPrice, wireNumber } from './format.ts';
 import { signL1Action } from './sign.ts';
 import { venueWriteTimeout } from '../net.ts';
+import { venueSaid } from '../venue-words.ts';
 import { createHash } from 'node:crypto';
 
 export type Transport = (url: string, body: unknown) => Promise<unknown>;
@@ -405,7 +406,9 @@ export function buildScheduleCancelAction(timeMs: number | null): unknown {
 // identical to one that filled, and why a mandate could arm, fire, place nothing, and report
 // nothing. Found on 2026-08-20 while proving the bracket.
 //
-// Returns one string per refused order, empty when every order was accepted.
+// Returns one string per refused order, empty when every order was accepted. Each is the venue's
+// own words, quoted as data: they ride into a plan's end reason and a move's detail, which an
+// agent reads (src/venue-words.ts).
 export function orderErrors(response: unknown): string[] {
   const r = response as { status?: string; response?: { data?: { statuses?: unknown[] } } } | null;
   if (r === null || typeof r !== 'object') return ['the venue returned no response body'];
@@ -413,21 +416,21 @@ export function orderErrors(response: unknown): string[] {
   // A top-level failure carries its reason as a bare string where the object would be.
   if (r.status !== undefined && r.status !== 'ok') {
     const detail = typeof r.response === 'string' ? r.response : JSON.stringify(r.response ?? r.status);
-    return [detail];
+    return [venueSaid('Hyperliquid', detail)];
   }
 
   // A top-level `error` with no `status` beside it. Some venue responses and every proxy in
   // front of it can produce this shape, and without the check it falls through to "no statuses,
   // therefore no errors", which books a refusal as a fill.
   const bareError = (r as { error?: unknown }).error;
-  if (typeof bareError === 'string' && bareError !== '') return [bareError];
+  if (typeof bareError === 'string' && bareError !== '') return [venueSaid('Hyperliquid', bareError)];
 
   const statuses = r.response?.data?.statuses;
   if (!Array.isArray(statuses)) return [];
   const errors: string[] = [];
   for (const s of statuses) {
     if (typeof s === 'object' && s !== null && typeof (s as { error?: unknown }).error === 'string') {
-      errors.push((s as { error: string }).error);
+      errors.push(venueSaid('Hyperliquid', (s as { error: string }).error));
     }
   }
   return errors;

@@ -10,6 +10,8 @@ import { chainFetch, CALL_BUDGET_MS, DEFAULT_CAP } from './fetch.ts';
 import type { ChainFetchDeps } from './fetch.ts';
 import { NETWORKS } from './networks.ts';
 import type { ChainNetwork } from './networks.ts';
+import { venueReason } from '../venue-words.ts';
+import { errText } from '../err-text.ts';
 
 // ---------- results ----------
 
@@ -153,7 +155,7 @@ export function idText(v: unknown): string | null {
 }
 
 export function failure(err: unknown): string {
-  return dataText(err instanceof Error ? err.message : String(err), 160) || 'failed';
+  return dataText(errText(err), 160) || 'failed';
 }
 
 export function withDeadline(deps: ChainDeps): ChainDeps {
@@ -170,8 +172,9 @@ export async function rpc(url: string, method: string, params: unknown, deps: Ch
   const answer = rec(await chainFetch(url, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method, params }), cap, ttl }, deps));
   if (answer.error !== undefined) {
     const error = rec(answer.error);
-    const name = dataText(rec(error.cause).name, 40) || dataText(error.message, 80) || 'error';
-    throw new Error(`rpc ${name}`);
+    // The node's own word, or its sentence quoted: a send's check repeats it to the agent.
+    const name = dataText(rec(error.cause).name, 40) || dataText(error.message, 80);
+    throw new Error(`rpc ${name === '' ? 'error' : venueReason('The node', name, 80)}`);
   }
   return answer.result;
 }
@@ -183,7 +186,10 @@ export async function rpcBatch(url: string, calls: Array<{ method: string; param
   return calls.map((_c, i) => {
     const answer = answers.find((a) => a.id === i + 1);
     if (answer === undefined) return { error: 'no answer' };
-    if (answer.error !== undefined) return { error: dataText(rec(answer.error).message, 80) || 'error' };
+    if (answer.error !== undefined) {
+      const said = dataText(rec(answer.error).message, 80);
+      return { error: said === '' ? 'error' : venueReason('The node', said, 80) };
+    }
     return { result: answer.result };
   });
 }

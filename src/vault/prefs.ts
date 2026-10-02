@@ -8,6 +8,12 @@
 //
 // Nothing here is a control. A process that edits this file can clear the backed-up flag (and
 // get nagged) or set it (and lose the nag); it cannot reach a key by doing either.
+//
+// THE IDLE TIME IS STORED ONLY ONCE SOMEBODY PICKS ONE, so the default can change under the
+// wallets that never did. Until 0.10.13 every write here also saved the default beside the flag
+// it was writing, so a file that says 15 with no `idleChosen` beside it is that old default and
+// reads as no choice at all. A 15 picked on purpose under those versions cannot be told from it
+// and gets the new default too, which errs toward the shorter lock; 5 and 60 were always picks.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -16,6 +22,11 @@ import { atomicWrite } from '../fsatomic.ts';
 
 export const IDLE_MINUTES_CHOICES = [5, 15, 60] as const;
 export type IdleMinutes = (typeof IDLE_MINUTES_CHOICES)[number];
+
+// The window sits idle this long before the wallet locks, unless the person picked otherwise.
+export const DEFAULT_IDLE_MINUTES: IdleMinutes = 5;
+// What 0.10.12 and earlier wrote into the file when nobody had picked.
+const OLD_DEFAULT_IDLE_MINUTES = 15;
 
 export type VaultPrefsData = {
   backedUp: boolean;
@@ -30,38 +41,45 @@ export type VaultPrefs = {
   setIdleMinutes(minutes: number): VaultPrefsData;
 };
 
-const DEFAULTS: VaultPrefsData = { backedUp: false, backedUpAt: null, idleMinutes: 15 };
+// What the file holds: the idle time only when it was picked.
+type Stored = { backedUp: boolean; backedUpAt: string | null; chosen: IdleMinutes | null };
 
 export function createVaultPrefs(dataDir: string): VaultPrefs {
   const file = path.join(dataDir, 'vault.json');
 
-  function read(): VaultPrefsData {
+  function stored(): Stored {
     try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<VaultPrefsData>;
-      const idle = IDLE_MINUTES_CHOICES.find((m) => m === raw.idleMinutes) ?? DEFAULTS.idleMinutes;
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as Partial<VaultPrefsData> & { idleChosen?: unknown };
+      const idle = IDLE_MINUTES_CHOICES.find((m) => m === raw.idleMinutes) ?? null;
+      const picked = raw.idleChosen === true || idle !== OLD_DEFAULT_IDLE_MINUTES;
       return {
         backedUp: raw.backedUp === true,
         backedUpAt: typeof raw.backedUpAt === 'string' ? raw.backedUpAt : null,
-        idleMinutes: idle,
+        chosen: picked ? idle : null,
       };
     } catch {
-      return { ...DEFAULTS };
+      return { backedUp: false, backedUpAt: null, chosen: null };
     }
   }
 
-  function write(next: VaultPrefsData): VaultPrefsData {
-    atomicWrite(file, JSON.stringify(next, null, 2) + '\n', { mode: 0o600 });
-    return next;
+  function view(s: Stored): VaultPrefsData {
+    return { backedUp: s.backedUp, backedUpAt: s.backedUpAt, idleMinutes: s.chosen ?? DEFAULT_IDLE_MINUTES };
+  }
+
+  function write(next: Stored): VaultPrefsData {
+    const body = { backedUp: next.backedUp, backedUpAt: next.backedUpAt, ...(next.chosen === null ? {} : { idleMinutes: next.chosen, idleChosen: true }) };
+    atomicWrite(file, JSON.stringify(body, null, 2) + '\n', { mode: 0o600 });
+    return view(next);
   }
 
   return {
-    get: read,
-    markBackedUp: (now = Date.now) => write({ ...read(), backedUp: true, backedUpAt: new Date(now()).toISOString() }),
-    clearBackedUp: () => write({ ...read(), backedUp: false, backedUpAt: null }),
+    get: () => view(stored()),
+    markBackedUp: (now = Date.now) => write({ ...stored(), backedUp: true, backedUpAt: new Date(now()).toISOString() }),
+    clearBackedUp: () => write({ ...stored(), backedUp: false, backedUpAt: null }),
     setIdleMinutes(minutes) {
       const idle = IDLE_MINUTES_CHOICES.find((m) => m === minutes);
       if (idle === undefined) throw new Error(`idle minutes must be one of ${IDLE_MINUTES_CHOICES.join(', ')}`);
-      return write({ ...read(), idleMinutes: idle });
+      return write({ ...stored(), chosen: idle });
     },
   };
 }

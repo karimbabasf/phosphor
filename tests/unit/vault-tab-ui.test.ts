@@ -147,6 +147,8 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 
 const WORDS = ('abandon ability able about above absent absorb abstract absurd abuse access accident '
   + 'account accuse achieve acid acoustic acquire across act action actor actress actual').split(' ');
+// The three positions the app names with the words, the only three it checks (src/vault/phrase-proof.ts).
+const PROVE = [2, 6, 11];
 const EVM = '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d';
 
 function vaultState(overrides: Any = {}): Any {
@@ -187,7 +189,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   const toasts: string[] = [];
   const confirms: Any[] = [];
   const answer: Any = {
-    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" } },
+    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" }, prove: PROVE.slice() },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
@@ -195,7 +197,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     prefs: { ok: true },
     confirm: true,
     revealStart: { ok: true, nonce: 'n1' },
-    revealFetch: { ok: true, what: 'mnemonic', mnemonic: WORDS.slice(0, 12) },
+    revealFetch: { ok: true, what: 'mnemonic', mnemonic: WORDS.slice(0, 12), prove: PROVE.slice() },
     exportAnswer: { ok: true, path: '/Users/x/Documents/Phosphor backup.json' },
     post: {} as Record<string, Any>,
   };
@@ -261,7 +263,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
     vaultMigrate: (password: string) => { calls.push({ route: '/api/vault/migrate', password }); return Promise.resolve(answer.migrate); },
     vaultPrefs: (prefs: Any) => { calls.push(Object.assign({ route: '/api/vault/prefs' }, prefs)); return Promise.resolve(answer.prefs); },
-    kill: (on: boolean) => { calls.push({ route: '/api/kill', on }); return answer.kill ? Promise.reject(new Error(answer.kill)) : Promise.resolve({ ok: true }); },
+    kill: (on: boolean) => { calls.push({ route: '/api/kill', on }); return answer.kill ? Promise.reject(new Error(answer.kill)) : Promise.resolve(answer.killAnswer || { ok: true }); },
     lock: () => { calls.push({ route: '/api/lock' }); return Promise.resolve({ ok: true }); },
     revealStart: (password: string, what: string) => { calls.push({ route: '/api/wallet/reveal', password, what }); return Promise.resolve(answer.revealStart); },
     revealFetch: (nonce: string) => { calls.push({ route: '/api/wallet/reveal/' + nonce }); return Promise.resolve(answer.revealFetch); },
@@ -355,6 +357,14 @@ test('three sections in reading order, the assistant and Safety side by side fir
   assert.match(css, /@container vault \(min-width: 620px\)/, 'the two columns do not follow the page');
 });
 
+test('the lock row says the screen lock locks the window too, so a long timer is no surprise', () => {
+  const world = build();
+  const row = find(world.view, '.vault-row').find((r: Any) => r.dataset.surface === 'window');
+  assert.ok(row, 'no lock row');
+  assert.deepEqual(find(row, '.vault-text').map((t: Any) => t.textContent),
+    ["The window locks after this long without you, and whenever your Mac's screen locks. It hides everything until you open it."]);
+});
+
 test('no red but the freeze, and no green anywhere on the Vault but the tick on a proven phrase', () => {
   // btn-danger is set in the freeze's own code and nowhere else; btn-primary is Approve's.
   const danger = SOURCE.split('btn-danger').length - 1;
@@ -424,6 +434,22 @@ test('frozen, the row reads frozen before a word is read, and its way back is pl
   assert.ok(go, 'no Unfreeze in the step');
   assert.ok(!go.className.includes('btn-danger'), 'the way back is red');
   assert.ok(find(step, 'button').some((b: Any) => b.textContent === 'Keep frozen'));
+});
+
+/* A position needs the trading key to close. A freeze with none in reach still freezes, and the
+   answer's note (src/kill.ts) is said once, so the step that promised the close is not the last
+   word on positions that stayed open. */
+test('a freeze that could not close the trading positions says so once it lands', async () => {
+  const world = build();
+  const note = 'Frozen. Your trading positions are still open, because Phosphor has no trading key for this account; close them on Hyperliquid.';
+  world.answer.killAnswer = { ok: true, killSwitch: true, note };
+  const freeze = row(world, 'freeze');
+  buttonNamed(find(freeze, '.vault-row-act')[0], 'Freeze everything').click();
+  find(find(freeze, '.vault-confirm')[0], 'button')[1].click();
+  await flush();
+  await flush();
+  assert.deepEqual(world.toasts, [note]);
+  assert.ok(world.calls.some((c) => c.route === 'refresh'));
 });
 
 test('a freeze the app refuses says why in the step, in words', async () => {
@@ -670,8 +696,7 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   let inputs = find(panel, 'input');
   assert.equal(inputs.length, 3, 'the prove step does not ask for three words');
   const positions = inputs.map((i: Any) => Number(i.dataset.index));
-  assert.equal(new Set(positions).size, 3, 'a position was asked twice');
-  assert.ok(positions.every((p: number) => p >= 0 && p < 24));
+  assert.deepEqual(positions, PROVE, 'the window asked other positions than the three the app named');
   assert.ok(textOf(panel).some((t) => t === 'Word ' + (positions[0] + 1)), 'the field is not labelled by its number');
 
   // Wrong words: the backend refuses, the row stays, nothing is cleared.
@@ -726,6 +751,38 @@ test('Done, a lock, or leaving the tab wipes the words', async () => {
   assert.equal(find(flow(world), '.word').length, 24);
   world.put({ lock: { state: 'locked', idleLocksInSec: null } });
   assert.equal(find(flow(world), '.word').length, 0, 'the words stayed on a locked window');
+});
+
+/* The reveal opens nothing, so the proof is checked against what the reveal left in the app for
+   half an hour. Past that (or after a restart) the backend says to show the words again: the row
+   closes so Back it up is there to press, and the sentence says so once. */
+test('a proof the app can no longer check closes the row and says to show the words again', async () => {
+  const world = build();
+  world.answer.proven = () => ({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote them down').click();
+  const panel = flow(world);
+  find(panel, 'input').forEach((input: Any) => { input.value = WORDS[Number(input.dataset.index)]; });
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
+  assert.equal(find(flow(world), '.word').length, 0);
+  assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
+  assert.ok(backup(world).startsWith('Not backed up yet.'));
+});
+
+/* The app checks only the three positions it named with the words. Words that came without them
+   cannot be proven, so the row says to show them again rather than ask positions of its own. */
+test('words that came without the three positions to ask are shown again, never quizzed on a guess', async () => {
+  const world = build();
+  world.answer.reveal = { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" } };
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote them down').click();
+  assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 0);
+  assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
 });
 
 test('a cancelled Touch ID on the reveal shows nothing and says nothing', async () => {
@@ -826,7 +883,10 @@ test('the Keys row says which binding is live in plain words, and the software c
   const text = textOf(custody);
   assert.ok(text.includes('Touch ID'), 'the row does not say what opens the keys');
   assert.ok(text.includes('Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Made on Sep 14, 2026.'), JSON.stringify(text));
-  assert.ok(text.includes('This copy of Phosphor is not signed, so other apps on this Mac could ask for the key. The signed Phosphor app keeps it to itself.'));
+  assert.ok(text.includes('Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'), JSON.stringify(text));
+  // Every release so far is signed and still binds the key to the Mac: the row follows the
+  // binding, and a signature is never offered as the protection (the 0.10.13 audit).
+  assert.doesNotMatch(JSON.stringify(text), /signed/i, 'the row ties the binding to a signature');
   assert.equal(buttonNamed(custody, 'Protect with Touch ID').hidden, true);
 
   enclave.put({ vault: vaultState({ enclave: { attached: true, ready: true, capability: null, keyMadeAt: null, binding: 'app' } }) });

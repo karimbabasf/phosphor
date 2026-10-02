@@ -108,12 +108,14 @@ need the agent restarted. See [Connect an agent](connect-an-agent.md).
 
 ## A move card says Unlock to decide
 
-The wallet was locked when the agent proposed, or when you clicked. The move was drafted,
+The wallet was locked when the agent proposed or, on a password wallet, when you clicked. (On a
+Touch ID wallet a click on a locked wallet asks for Touch ID instead, and opens the wallet for
+that one move.) The move was drafted,
 priced and checked against your rules, and is waiting for the key. Press Unlock on the card, or
 unlock the window, with Touch ID or your password. Every waiting move is then decided again
 against the policy as it stands, and lands as something to click, small ones included: an unlock
 is not an approval. If the policy now refuses the move, it is refused whether or not there is a
-key to sign it with. See [Getting started](getting-started.md#the-15-minute-lock).
+key to sign it with. See [Getting started](getting-started.md#the-five-minute-lock).
 
 ## A send was refused for a typo
 

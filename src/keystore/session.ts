@@ -18,7 +18,9 @@
 // trading authority and not custody. It carries an expiry a human set when they armed it, and
 // when that expires the session goes and the child holding the key is killed.
 
-export const IDLE_LOCK_MS = 15 * 60 * 1000;
+// The vault's default idle time (DEFAULT_IDLE_MINUTES in src/vault/prefs.ts), for a session built
+// without the person's choice. The app's own session reads the choice on every tick.
+export const IDLE_LOCK_MS = 5 * 60 * 1000;
 export const TICK_MS = 15_000;
 // More than four ticks. A missed tick or two is a busy event loop; a minute is a machine that
 // was not running.

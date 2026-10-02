@@ -13,7 +13,8 @@ import { verifyMessage } from 'viem';
 import { privateKeyToAccount, signMessage } from 'viem/accounts';
 
 import type { RailHooks, SwapDraft } from '../../src/types.ts';
-import type { OneClickClient, OneClickToken, TokensFile } from '../../src/intents.ts';
+import type { OneClickClient, OneClickQuote, OneClickQuoteParams, OneClickToken, TokensFile } from '../../src/intents.ts';
+import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import type { RelayClient, RelayPublishResult, RelayQuote, RelayStatus } from '../../src/relay/client.ts';
 import type { VerifierPort } from '../../src/relay/verifier.ts';
 import { decodeNonce } from '../../src/relay/payload.ts';
@@ -27,9 +28,13 @@ import {
   RELAY_SIMULATE_TIMEOUT_MS,
   RELAY_SIMULATE_WAIT_MS,
   RELAY_TERMINAL,
+  SIGNED_PRICE_TIMEOUT_MS,
+  UNCHECKED_PRICE_ASK,
+  UNCHECKED_PRICE_HOLD,
   intentsRelayRail,
   settleTolerance,
 } from '../../src/rails/intents-relay.ts';
+import { ReasonError, reasonOf } from '../../src/rails/reasons.ts';
 import { relayClient } from '../../src/relay/client.ts';
 import { liveVerifier } from '../../src/relay/verifier.ts';
 import type { IntentsRelayRailDeps } from '../../src/rails/intents-relay.ts';
@@ -81,6 +86,8 @@ function draftOf(over: Partial<SwapDraft> = {}): SwapDraft {
     to: OWNER,
     counterparty: INTENTS_RELAY_COUNTERPARTY,
     quote: null,
+    // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+    assets: { origin: { assetId: USDC, decimals: 6 }, destination: { assetId: USDT, decimals: 6 } },
     ...over,
   };
 }
@@ -101,6 +108,65 @@ function statusOf(status: string, over: Partial<RelayStatus> = {}): RelayStatus 
   return { intentHash: INTENT_HASH, status, statusDetails: null, nearTxHash: null, filledAmounts: [], ...over };
 }
 
+/* 1Click's signed dry quote for the same pair and amount, the price the rail checks the relay's
+   by: a dollar a coin on both sides and one out for one in, unless the test says otherwise.
+   Signed with the test key the rail is told to trust (quoteKey). 'none' is 1Click not answering,
+   'unsigned' an answer with no signature; `after` changes the answer once it is signed. */
+type PriceAnswer =
+  | 'none'
+  | 'unsigned'
+  | {
+      amountOut?: (amountIn: string) => string;
+      inUsd?: string;
+      outUsd?: string;
+      // The question 1Click says it priced, changed before it signs.
+      asked?: (quoteRequest: Record<string, unknown>) => void;
+      after?: (raw: Record<string, unknown>) => void;
+    };
+
+function signedPriceClient(asks: OneClickQuoteParams[], answer?: PriceAnswer): OneClickClient {
+  const units = (base: string): string => (Number(base) / 1e6).toFixed(6);
+  return {
+    tokens: async () => apiTokens,
+    async quote(params: OneClickQuoteParams) {
+      asks.push(params);
+      if (answer === 'none') throw new Error('1click quote failed: 503');
+      const shaped = typeof answer === 'object' ? answer : {};
+      const out = shaped.amountOut?.(params.amount) ?? params.amount;
+      const quoteRequest: Record<string, unknown> = {
+        dry: params.dry,
+        swapType: 'EXACT_INPUT',
+        slippageTolerance: params.slippageToleranceBps,
+        originAsset: params.originAsset,
+        depositType: params.depositType,
+        destinationAsset: params.destinationAsset,
+        amount: params.amount,
+        refundTo: params.refundTo,
+        refundType: params.refundType,
+        recipient: params.recipient,
+        recipientType: params.recipientType,
+        deadline: new Date(NOW + 600_000).toISOString(),
+        referral: 'phosphor',
+      };
+      const quote = {
+        amountIn: params.amount,
+        amountInFormatted: units(params.amount),
+        amountInUsd: shaped.inUsd ?? units(params.amount),
+        minAmountIn: params.amount,
+        amountOut: out,
+        amountOutFormatted: units(out),
+        amountOutUsd: shaped.outUsd ?? units(out),
+        minAmountOut: out,
+        timeEstimate: 10,
+      };
+      shaped.asked?.(quoteRequest);
+      const raw: Record<string, unknown> = answer === 'unsigned' ? { quoteRequest, quote } : signQuote({ quoteRequest, quote });
+      shaped.after?.(raw);
+      return { quote: raw['quote'] as OneClickQuote, quoteRequest: raw['quoteRequest'], raw };
+    },
+  } as unknown as OneClickClient;
+}
+
 type Harness = {
   rail: ReturnType<typeof intentsRelayRail>;
   quotes: Array<{ assetIn: string; assetOut: string; exactAmountIn: string }>;
@@ -114,6 +180,7 @@ type Harness = {
   hooks: RailHooks;
   slept: number[];
   clock: { now: number };
+  priceAsks: OneClickQuoteParams[]; // every signed price the rail asked 1Click for
 };
 
 function harness(
@@ -130,6 +197,7 @@ function harness(
     salt?: Uint8Array | null;
     nonceUsed?: boolean | null; // what the verifier says once asked; default false, never asked on a measured settle
     random?: (n: number) => Uint8Array;
+    price?: PriceAnswer; // 1Click's signed price beside the relay's quote; default a dollar a coin, one for one
     deps?: Partial<IntentsRelayRailDeps>;
   } = {},
 ): Harness {
@@ -144,6 +212,7 @@ function harness(
     evidence: [] as Array<Record<string, unknown>>,
     slept: [] as number[],
     clock: { now: NOW },
+    priceAsks: [] as OneClickQuoteParams[],
   };
   let noReplies = options.publishNoReply ?? 0;
   const statuses = [...(options.statuses ?? [statusOf('SETTLED', { nearTxHash: NEAR_TX })])];
@@ -203,7 +272,7 @@ function harness(
     },
   };
 
-  const client = { tokens: async () => apiTokens } as unknown as OneClickClient;
+  const client = signedPriceClient(h.priceAsks, options.price);
   let seed = 0;
   const random = options.random ?? ((n: number) => Uint8Array.from({ length: n }, (_, i) => (seed * 31 + i + (seed += 1)) % 256));
 
@@ -213,6 +282,7 @@ function harness(
     signer,
     relay,
     client,
+    quoteKey: TEST_QUOTE_KEY,
     verifier,
     now: () => h.clock.now,
     sleepImpl: async (ms) => {
@@ -745,7 +815,8 @@ test('nothing throws after the signature: a verifier that throws on the after-re
       publishIntent: async () => ({ status: 'OK', intentHash: INTENT_HASH }),
       status: async () => statusOf('SETTLED', { nearTxHash: NEAR_TX }),
     },
-    client: { tokens: async () => apiTokens } as unknown as OneClickClient,
+    client: signedPriceClient([]),
+    quoteKey: TEST_QUOTE_KEY,
     verifier: throwing,
     now: () => h.clock.now,
     sleepImpl: async (ms) => {
@@ -836,4 +907,170 @@ test('quote gives the floor-free price in the bought coin\'s units, reads nothin
   const sim = await h.rail.simulate(draftOf({ minAmountOut: 0 }));
   assert.equal(sim.ok, false);
   assert.match(sim.error ?? '', /minAmountOut is 0/);
+});
+
+// ---------- the coin the card priced is the coin that is bought ----------
+
+test('a token list that names another coin for the bought side after the click refuses the swap before any quote or signature', async () => {
+  let swapped = false;
+  const JUNK = 'nep141:junk-listed-token.near';
+  const client = { tokens: async () => (swapped ? apiTokens.map((t) => (t.assetId === USDT ? { ...t, assetId: JUNK } : t)) : apiTokens) } as unknown as OneClickClient;
+  const h = harness({ deps: { client } });
+  const draft = draftOf();
+  const sim = await h.rail.simulate(draft);
+  assert.equal(sim.ok, true, String(sim.error));
+  assert.deepEqual(sim.assets, draft.assets, 'the card priced exactly the coins the proposal pins');
+  swapped = true;
+  const asked = h.quotes.length;
+  await assert.rejects(() => h.rail.execute(draft, 'p-1', h.hooks), /coin list now gives USDT on near as nep141:junk-listed-token\.near, not the nep141:usdt\.tether-token\.near this move was priced and approved with/);
+  assert.equal(h.quotes.length, asked, 'no quote is asked for the other coin');
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+});
+
+test('a relay swap approved before its coins were pinned is not run', async () => {
+  const h = harness();
+  const { assets: _pinned, ...unpinned } = draftOf();
+  await assert.rejects(() => h.rail.execute(unpinned, 'p-1', h.hooks), /approved before Phosphor pinned the coins it moves/);
+  assert.equal(h.quotes.length, 0);
+  assert.equal(h.signed.length, 0);
+});
+
+// ---------- the price the relay cannot write (re-audit R-M1, 2026-10-02) ----------
+
+test('a relay answering half the fair price sets no floor, and is refused at simulate and at execute with nothing signed', async () => {
+  // The re-audit's run: one solver at half of 1Click's signed one-for-one price, 2 USDC in.
+  const h = harness({ quotes: [quoteOf({ quoteHash: 'attacker-solver', amountOut: '1000000' })], balanceOut: [0n, 1_000_000n] });
+  await assert.rejects(
+    () => h.rail.quote!(draftOf({ minAmountOut: 0, amountUsd: 2 })),
+    (err: Error) => reasonOf(err) === 'simulation_failed' && /gives up 50\.0 percent/.test(err.message),
+  );
+  // A floor named under the lie, as the re-audit's floor was cut from it.
+  const draft = draftOf({ minAmountOut: 0.99, amountUsd: 2 });
+  const sim = await h.rail.simulate(draft);
+  assert.equal(sim.ok, false);
+  assert.equal(sim.reason, 'simulation_failed');
+  assert.match(sim.error ?? '', /gives up 50\.0 percent of its value \(\$2\.00 in, \$1\.00 out by 1Click's signed prices\), more than the 3 percent/);
+  await assert.rejects(() => h.rail.execute(draft, 'p1', h.hooks), /gives up 50\.0 percent .*; nothing was signed/);
+  console.log(`RA relay after the fix: simulate ok ${sim.ok} | execute refused | signatures ${h.signed.length} | publishes ${h.publishes.length}`);
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+  // A person's click does not lift the bound: it is the value check, not the click line.
+  await assert.rejects(() => h.rail.execute(draft, 'p2', { ...h.hooks, decidedBy: 'human' }), /gives up 50\.0 percent/);
+  assert.equal(h.signed.length, 0);
+});
+
+test('the bound is three percent of the signed value: 2.95 percent given up signs, 3.05 percent is refused', async () => {
+  const inside = harness({ quotes: [quoteOf({ amountOut: '1941000' })], balanceOut: [1_000_000n, 2_941_000n] });
+  const ok = await inside.rail.execute(draftOf({ minAmountOut: 1.93 }), 'p1', inside.hooks);
+  assert.equal(ok.ok, true, ok.detail);
+  assert.equal(inside.signed.length, 1);
+
+  const past = harness({ quotes: [quoteOf({ amountOut: '1939000' })] });
+  await assert.rejects(() => past.rail.execute(draftOf({ minAmountOut: 1.93 }), 'p1', past.hooks), /gives up 3\.0 percent/);
+  assert.equal(past.signed.length, 0);
+});
+
+test('the signed price is a dry INTENTS quote of the same pair, amount and account, asked beside the relay and reused by simulate and the click', async () => {
+  const h = harness();
+  const priced = await h.rail.quote!(draftOf({ minAmountOut: 0 }));
+  assert.equal(priced, 1.961996);
+  assert.equal(h.priceAsks.length, 1);
+  const ask = h.priceAsks[0];
+  assert.equal(ask.dry, true);
+  assert.equal(ask.originAsset, USDC);
+  assert.equal(ask.destinationAsset, USDT);
+  assert.equal(ask.amount, '2000000');
+  assert.equal(ask.refundTo, ACCOUNT);
+  assert.equal(ask.recipient, ACCOUNT);
+  assert.deepEqual([ask.depositType, ask.refundType, ask.recipientType], ['INTENTS', 'INTENTS', 'INTENTS']);
+  assert.equal(ask.timeoutMs, SIGNED_PRICE_TIMEOUT_MS);
+  assert.equal(SIGNED_PRICE_TIMEOUT_MS, RELAY_SIMULATE_TIMEOUT_MS, 'never a longer wait than the relay is given');
+
+  const sim = await h.rail.simulate(draftOf());
+  assert.equal(sim.ok, true, String(sim.error));
+  assert.equal(sim.ask, undefined, 'a checked price asks for nothing');
+  assert.match(sim.developer ?? '', /checked against 1Click's signed dry quote: \$2\.0000 in, \$1\.9620 out/);
+  assert.equal(h.priceAsks.length, 1, 'simulate reuses the price quote() asked for');
+  const result = await h.rail.execute(draftOf(), 'p1', h.hooks);
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(h.priceAsks.length, 1, 'the click signs the checked quote without asking again');
+  assert.equal(h.quotes.length, 1);
+});
+
+test('with no signed price, simulate passes and asks for a click; execute holds a move the policy decided and runs one a person clicked', async () => {
+  const h = harness({ price: 'none' });
+  const sim = await h.rail.simulate(draftOf());
+  assert.equal(sim.ok, true, String(sim.error));
+  assert.equal(sim.ask, UNCHECKED_PRICE_ASK);
+  assert.match(sim.developer ?? '', /no signed 1Click price to check this one by/);
+
+  for (const hooks of [h.hooks, { ...h.hooks, decidedBy: 'policy' as const }]) {
+    const held = await h.rail.execute(draftOf(), 'p1', hooks);
+    assert.equal(held.ok, false);
+    assert.equal(held.held, true);
+    assert.equal(held.reason, 'simulation_failed');
+    assert.equal(held.detail, UNCHECKED_PRICE_HOLD);
+  }
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+
+  const clicked = harness({ price: 'none' });
+  const ran = await clicked.rail.execute(draftOf(), 'p1', { ...clicked.hooks, decidedBy: 'human' });
+  assert.equal(ran.ok, true, ran.detail);
+  assert.equal(clicked.signed.length, 1, 'a clicked move runs at the floor the person approved');
+});
+
+test('a price 1Click did not sign, signed for another question, or put no dollar figure on is no price at all', async () => {
+  const answers: Array<[string, PriceAnswer]> = [
+    ['unsigned', 'unsigned'],
+    ['changed after signing', { after: (raw) => ((raw['quote'] as Record<string, unknown>)['amountOutUsd'] = '4.000000') }],
+    ['another amount', { asked: (req) => (req['amount'] = '1000000') }],
+    ['another coin', { asked: (req) => (req['destinationAsset'] = 'nep141:junk.near') }],
+    ['a live question', { asked: (req) => (req['dry'] = false) }],
+    ['priced at nothing', { outUsd: '0' }],
+  ];
+  for (const [label, price] of answers) {
+    const h = harness({ price });
+    const sim = await h.rail.simulate(draftOf());
+    assert.equal(sim.ok, true, `${label}: ${String(sim.error)}`);
+    assert.equal(sim.ask, UNCHECKED_PRICE_ASK, label);
+    const held = await h.rail.execute(draftOf(), 'p1', { ...h.hooks, decidedBy: 'policy' });
+    assert.equal(held.held, true, label);
+    assert.equal(h.signed.length, 0, label);
+  }
+});
+
+test('a fee hidden in 1Click\'s own answer moves its amount and its dollar figure together, so the relay is judged the same', async () => {
+  // 1Click answers half out and half the dollars (a fee taken on the wire): the unit price is unchanged.
+  const h = harness({ price: { amountOut: (amount) => (BigInt(amount) / 2n).toString() } });
+  const sim = await h.rail.simulate(draftOf());
+  assert.equal(sim.ok, true, String(sim.error));
+  assert.equal(sim.ask, undefined);
+  const lying = harness({ quotes: [quoteOf({ amountOut: '1000000' })], price: { amountOut: (amount) => (BigInt(amount) / 2n).toString() } });
+  const refused = await lying.rail.simulate(draftOf({ minAmountOut: 0.99 }));
+  assert.equal(refused.ok, false);
+  assert.match(refused.error ?? '', /gives up 50\.0 percent/);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs after every read and right before the key; one that throws leaves nothing signed", async () => {
+  const h = harness();
+  const asked: string[] = [];
+  const frozen = (): never => {
+    asked.push(`check after ${h.saltReads} salt reads, ${h.signed.length} signatures`);
+    throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+  };
+  await assert.rejects(() => h.rail.execute(draftOf(), 'p1', { ...h.hooks, lastCheck: frozen }), (err: Error) => reasonOf(err) === 'kill_switch');
+  assert.deepEqual(asked, ['check after 1 salt reads, 0 signatures']);
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+
+  const open = harness();
+  let checks = 0;
+  const result = await open.rail.execute(draftOf(), 'p1', { ...open.hooks, lastCheck: () => void (checks += 1) });
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(checks, 1);
+  assert.equal(open.signed.length, 1);
 });

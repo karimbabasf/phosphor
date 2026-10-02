@@ -6,12 +6,14 @@
 // approval gate is the last place to leave that shape lying around. The read tools had the same
 // break for a while (see the note in mcp.ts).
 //
-// Order still matters in exactly two places, and both are kept: the Host gate runs before any
-// route, and the static file server is the fallback only after every /api/ path has been tried.
+// Order still matters in exactly three places, and all are kept: the Host gate runs before any
+// route, the read gate runs before any GET under /api/ (src/http/read-gate.ts), and the static
+// file server is the fallback only after every /api/ path has been tried.
 
 import http from 'node:http';
 
-import { HOST, hostIsLocal } from './auth.ts';
+import { HOST, hostIsLocal, readAllowed } from './auth.ts';
+import { handleReadKey, readGate } from './read-gate.ts';
 import { isDraining } from '../draining.ts';
 import { capLabel, errText, fail, intParam, sendCachedJson, sendJson, serveStatic } from './respond.ts';
 import { buildStateCached, proposalPage, transactionsPayload } from './state.ts';
@@ -20,6 +22,8 @@ import { handleConnectionRead, handleMutation } from './mutation.ts';
 import { handleTradeAction, handleTradeWrite } from './trade.ts';
 import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
+import { handleInviteCheck, handleInviteClaim } from './invite.ts';
+import { handleAgentAnswer } from './agent-answer.ts';
 import {
   handleActivity,
   handleLock,
@@ -62,13 +66,14 @@ import type { Ctx } from './context.ts';
 
 type Route = (ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse, url: URL) => void | Promise<void>;
 
+// Every route here is behind the read gate in handle() but /api/health. READ_ROUTES is the list
+// the gate's test walks, so a route added here is tested shut without anyone adding it there.
 const GET: Record<string, Route> = {
   // The body and the tag are built by buildStateCached, which keeps them until something the
   // payload reads moves. See the note beside it: a 304 used to cost the server as much as a 200.
   '/api/state': (ctx, req, res) => sendCachedJson(req, res, buildStateCached(ctx)),
   /* The proposal history, paged, because it is the one list that grows for the life of a data
-     directory and /api/state may not carry it. Same gate as every other read here: the Host
-     check above, and nothing else, because this answers only on 127.0.0.1. */
+     directory and /api/state may not carry it. Same gate as every other read here. */
   '/api/proposals': (ctx, _req, res, url) => {
     const page = proposalPage(ctx, url);
     sendJson(res, page.status, page.body);
@@ -102,9 +107,9 @@ const GET: Record<string, Route> = {
   '/api/transactions': (ctx, _req, res) => sendJson(res, 200, transactionsPayload(ctx)),
   '/api/trade': (ctx, _req, res) => sendJson(res, 200, { ...ctx.trade.payload(), chart: chartOnScreen(ctx) }),
   '/api/driver': (ctx, _req, res) => sendJson(res, 200, ctx.chats.payload()),
-  // The connection line for one agent, for the shell's menu item: no token, nothing secret in
-  // it, the Host gate above in front of it. The window reads the same builder through the
-  // token-checked driver route. See connectionSpec in mutation.ts.
+  // The connection line for one agent, for the shell's menu item, which sends the window token
+  // like every read. The window reads the same builder through the token-checked driver route.
+  // See connectionSpec in mutation.ts.
   '/api/connection': (ctx, req, res, url) => handleConnectionRead(ctx, req, res, url),
   // Money arriving is the one thing nobody should have to unlock for, so this reads the
   // addresses out of the keystore's plaintext header and answers while locked.
@@ -119,16 +124,21 @@ const GET: Record<string, Route> = {
   '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
   // Whether one asset's address may be drawn right now: the per-asset route, read only.
   '/api/deposit/route': (ctx, _req, res, url) => handleDepositRoute(ctx, url, res),
-  // No token, no secret, and deliberately the only unauthenticated proof of life. See health.ts.
-  '/api/health': (ctx, _req, res) => sendHealth(ctx, res),
+  // The one read outside the gate: anyone learns that the app is alive and its version, and the
+  // wallet's facts in it need a credential. See health.ts.
+  '/api/health': (ctx, req, res, url) => sendHealth(ctx, res, readAllowed(req, url, ctx.token)),
   // One card per action that actually happened.
   '/api/receipts': (ctx, _req, res, url) => sendReceipts(ctx, url, res),
   // What quitting would interrupt, for the window's quit sheet. See quit.ts.
   '/api/quit': (ctx, _req, res) => sendQuitStatus(ctx, res),
 };
 
+export const READ_ROUTES: readonly string[] = Object.keys(GET);
+
 const POST: Record<string, Route> = {
   '/api/mcp': (ctx, req, res) => handleMcp(ctx, req, res),
+  // The window's token, traded once for the key its reads carry. See read-gate.ts.
+  '/api/read-key': (ctx, req, res) => handleReadKey(ctx, req, res),
   '/api/chart': (ctx, req, res) => handleChartWrite(ctx, req, res),
   // The window's answer to a snapshot frame. Same guard as every window write, plus a body cap
   // of its own, because an image is the one thing the window posts that could be large.
@@ -172,8 +182,13 @@ const POST: Record<string, Route> = {
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
+  // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).
+  '/api/agents/answer': (ctx, req, res) => handleAgentAnswer(ctx, req, res),
   '/api/deposit/show': (ctx, req, res) => handleDepositShow(ctx, req, res),
   '/api/deposit/stop': (ctx, req, res) => handleDepositStop(ctx, req, res),
+  // Invite codes. Window token like custody, never an op on /api/mcp. See src/http/invite.ts.
+  '/api/invite/check': (ctx, req, res) => handleInviteCheck(ctx, req, res),
+  '/api/invite/claim': (ctx, req, res) => handleInviteClaim(ctx, req, res),
 };
 
 // The one path with a variable in it. A table cannot hold it, and a second table of patterns
@@ -193,6 +208,7 @@ export async function handle(ctx: Ctx, req: http.IncomingMessage, res: http.Serv
       return;
     }
     if (req.method === 'GET' || req.method === 'HEAD') {
+      if (!readGate(ctx, req, res, url)) return;
       const handler = GET[route];
       if (handler !== undefined) return await handler(ctx, req, res, url);
       if (route.startsWith(REVEAL_PREFIX)) {

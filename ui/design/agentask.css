@@ -1,0 +1,145 @@
+/* The card that asks about an agent started outside Phosphor (ui/screens/agentask.js).
+
+   It sits in the conversation, in the slot under the roster it is about (ui/screens/agent.js,
+   .agent-asks), and takes its place in the column's flow: the thread moves down for it, and
+   nothing is covered, not the conversation, not the balances, not the freeze panel, which opens
+   over everything in the stage. So it is a card like the move cards around it (cards.css
+   .tcard: raised, the card's radius and measure, the raise shadow), not a floating panel. It
+   grows in and goes out on the window's pop (data-motion="pop", ui/design/motion.css); the slot
+   opens and closes under it (agentask.js). */
+.agent-asks {
+  flex: 0 0 auto;
+  width: min(100%, var(--thread-w));
+  margin: 0 auto;
+}
+
+.agent-ask {
+  width: 100%;
+  max-width: 560px;
+  padding: 18px;
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--raise);
+  transform-origin: top left;
+  color: var(--text);
+}
+
+/* Behind a full screen (the lock, the first run, the terms) the card waits: nothing is answered
+   before the person is in. */
+body[data-locked="true"] .agent-ask {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+/* Who is asking: the icon set's link on a key disc, the question, the name the agent gave itself
+   with the time it arrived, and how many more wait behind it. */
+.agent-ask-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.agent-ask-glyph {
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--bg-3);
+  box-shadow: var(--hi);
+  color: var(--text-2);
+}
+
+.agent-ask-glyph .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.agent-ask-who {
+  min-width: 0;
+}
+
+.agent-ask-title {
+  margin: 0;
+  font-size: var(--fs-16);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  line-height: 1.35;
+  color: var(--text);
+}
+
+.agent-ask-name,
+.agent-ask-more {
+  margin: 2px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  overflow-wrap: anywhere;
+}
+
+.agent-ask-more {
+  margin-top: 0;
+}
+
+/* What it can do now and after an Allow: label over line, the way a move card lays out facts. */
+.agent-ask-facts {
+  display: grid;
+  gap: var(--s-3);
+  margin: var(--s-4) 0 0;
+}
+
+.agent-ask-fact dt {
+  font-size: var(--fs-12);
+  font-weight: 500;
+  color: var(--text-3);
+}
+
+.agent-ask-fact dd {
+  margin: 2px 0 0;
+  font-size: var(--fs-14);
+  line-height: 1.5;
+  color: var(--text-2);
+  text-wrap: pretty;
+}
+
+.agent-ask-note {
+  margin: var(--s-4) 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+  text-wrap: pretty;
+}
+
+.agent-ask-error {
+  margin: var(--s-3) 0 0;
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--warn);
+  overflow-wrap: anywhere;
+}
+
+.agent-ask-error[hidden] {
+  display: none;
+}
+
+/* Ask each time first, so the harmless answer is the one the hand reaches; Allow at the right
+   edge. */
+.agent-ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+/* The harmless answer is a soft key of its own, as on the freeze panel, not a bare word. */
+.agent-ask-actions > .btn-quiet {
+  --btn-bg: var(--bg-3);
+  --btn-bg-hover: color-mix(in srgb, var(--bg-3), rgb(var(--hi-rgb)) 6%);
+}
+
+.agent-ask-actions > .btn:focus-visible {
+  outline: 2px solid var(--text-2);
+  outline-offset: 2px;
+}

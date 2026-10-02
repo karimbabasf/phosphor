@@ -1,6 +1,8 @@
 // The wallet reads: what an agent sees the moment it attaches, what the money is, what the
 // rules say, what has been asked for, and the log behind all of it.
 
+import { createHash } from 'node:crypto';
+
 import { classify } from '../../composition.ts';
 import { buildWallet } from '../../wallet.ts';
 import { buildGreeting } from '../../greeting.ts';
@@ -14,15 +16,44 @@ import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { depositRoute } from '../wallet.ts';
 import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
-import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
+import { baseUnitsToDecimal, oneLine, plainDecimal, venueReason } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
-import type { WalletRow } from '../../types.ts';
+import type { Proposal, ProposalView, WalletRow, WriteDraft } from '../../types.ts';
+import { markIfCarried, seatWordsStamp } from '../../web-read.ts';
+import type { Ctx } from '../context.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
    paste. The window shows the whole string, off a Touch ID open, and that is the only place
    a person should read it from. */
 export function fingerprint(address: string): string {
   return address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+}
+
+/* The address 1Click minted for one move, the quote's and the handle a rail names it by. On the
+   relay rail the handle is the intent's hash, and a hash is evidence, never a destination. */
+function mintedAddresses(p: Proposal): string[] {
+  const evidence = p.result?.evidence;
+  const handle = evidence?.handle;
+  const hashes = new Set([...(p.result?.txids ?? []), evidence?.quote?.correlationId]);
+  return [evidence?.quote?.depositAddress, handle !== undefined && !hashes.has(handle) ? handle : undefined].filter(
+    (a): a is string => typeof a === 'string' && a.length > 12,
+  );
+}
+
+function withoutMinted(text: string, minted: string[]): string {
+  return minted.reduce((out, address) => out.split(address).join(fingerprint(address)), text);
+}
+
+/* A row's view as an agent reads it: the move's minted address fingerprinted wherever the view
+   carries it, since a rail's sentence names its handle ("handle 0x..."), exactly as diagnose
+   fingerprints its own fields. The window's card keeps it whole. A second agent repeating a move
+   was handed the first one's deposit address (fix round 2, 2026-10-01), and an agent never needs
+   it whole: the app pays it, and support is asked by the correlation id. */
+export function agentView(ctx: Ctx, p: Proposal, now?: number): ProposalView {
+  const view = ctx.proposals.view(p, now);
+  const minted = mintedAddresses(p);
+  if (minted.length === 0) return view;
+  return JSON.parse(JSON.stringify(view), (_key, value: unknown) => (typeof value === 'string' ? withoutMinted(value, minted) : value)) as ProposalView;
 }
 
 /* The other spellings an agent reaches for: the chain's full name, the ticker it is known by
@@ -118,6 +149,54 @@ function withExactQuantities(rows: WalletRow[], intents: IntentsRead | undefined
   });
 }
 
+/* A COIN THE SWAP SERVICE DOES NOT LIST IS SHOWN BY ITS RAW ASSET ID (src/ledger/intents.ts
+   describe), and on NEAR that id is the token contract's account name, which whoever deployed it
+   chose. Anyone can send a token into the balance, so "nep141:swap.all.usdc.to.scam.now.near" would
+   reach the agent on every wallet read, with no mark, and the wallet read cannot be marked without
+   making every move wait for a click. So the agent is handed an opaque name instead: unlisted, a
+   short fingerprint of the id, and the amount, never the deployer's words. The window still shows
+   the person the id. Found beside audit finding 5 on 2026-10-01. */
+export function agentWallet<R extends WalletRow, V extends { rows: R[]; unpriced: string[] }>(view: V): V {
+  const tags = new Map<string, string>();
+  const rows = view.rows.map((row): R => {
+    if (row.kind !== 'intents' || row.intents === undefined || row.symbol !== row.intents.assetId) return row;
+    const tag = `unlisted-${createHash('sha256').update(row.intents.assetId).digest('hex').slice(0, 8)}`;
+    tags.set(row.symbol, tag);
+    return { ...row, symbol: tag, tokenId: tag, intents: { ...row.intents, assetId: tag } };
+  });
+  return { ...view, rows, unpriced: view.unpriced.map((s) => tags.get(s) ?? s) };
+}
+
+// Every coin this app knows looks like this; anything else in a symbol is the agent's own string.
+const TICKER = /^[A-Za-z0-9]{2,8}$/;
+
+// Whether a draft carries the asking agent's own words: a rule change's sentence, a plan's note,
+// a send's note about its receiver, or a coin named by anything but a ticker (audit 2026-10-01: a
+// swap refused on a symbol that was a sentence kept the sentence on its row).
+function hasWords(d: WriteDraft): boolean {
+  if (d.kind === 'policy_change') return true;
+  if (d.kind === 'trade') return d.op === 'open' && typeof d.plan.note === 'string' && d.plan.note !== '';
+  const named = d as { symbol?: unknown; fromSymbol?: unknown; toSymbol?: unknown; recipient?: { note?: unknown } };
+  if ([named.symbol, named.fromSymbol, named.toSymbol].some((s) => typeof s === 'string' && !TICKER.test(s))) return true;
+  return typeof named.recipient?.note === 'string' && named.recipient.note !== '';
+}
+
+/* A move asked for by a seat that had read a stranger's text (Proposal.webRead), or arming a plan
+   whose note was written that way, hands whoever reads it back those words, so the reader is
+   marked as if it had read the page itself (src/web-read.ts). A move with no words of the agent's
+   in it carries nothing and marks nobody. */
+export function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
+  let stampedPlans = new Set<string>();
+  try {
+    stampedPlans = new Set(ctx.trade.payload().plans.filter((p) => p.webRead === true).map((p) => p.id));
+  } catch {
+    /* no trading surface in this install */
+  }
+  return rows
+    .filter((p) => hasWords(p.draft) && (p.webRead === true || (p.draft.kind === 'trade' && p.draft.op === 'open' && stampedPlans.has(p.draft.plan.id))))
+    .map(() => ({ webRead: true as const }));
+}
+
 const DISCLAIMER =
   'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
 
@@ -126,7 +205,7 @@ export const walletReads: ReadTable = {
   // What an agent calls the moment it attaches. Everything in it is read live, because a
   // greeting that cannot say which network it is on is decoration, and an operator working
   // the wrong world is the failure this whole app exists to make impossible.
-  start: (ctx, _body, _args, res) => {
+  start: (ctx, body, _args, res) => {
     const snapshot = ctx.ledger.snapshot();
     const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
     const policy = ctx.getPolicy();
@@ -151,7 +230,17 @@ export const walletReads: ReadTable = {
         elapsedSec: view.elapsedSec,
         typicalSec: view.typicalSec,
       }));
+    // The decisions waiting come back with their sentences: a marked seat's words mark the reader.
+    markIfCarried(body.session, carriedWords(ctx, pending));
     const holder = ctx.agents.holder();
+    /* The seat line names the lead by its client name, and an outside seat chose its own: another
+       seat is told what it is instead, so the read every terminal agent starts with marks nobody. */
+    const holderName =
+      holder === null
+        ? null
+        : holder.session !== body.session && seatWordsStamp(holder.session, holder.origin).webRead === true
+          ? 'an agent started outside Phosphor'
+          : holder.client;
     const greeting = buildGreeting(
       {
         view: ctx.getView(),
@@ -164,7 +253,7 @@ export const walletReads: ReadTable = {
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
         tradingAllowed: true,
-        holder: holder?.client ?? null,
+        holder: holderName,
         emptyCount: wallet.emptyCount,
       },
       VERSION,
@@ -196,15 +285,15 @@ export const walletReads: ReadTable = {
     });
   },
   composition: (ctx, _body, _args, res) => {
-    const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
+    const wallet = agentWallet(buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid()));
     sendJson(res, 200, classify(wallet.rows, ctx.riskRows));
   },
   wallet: (ctx, _body, _args, res) => {
     const vault = vaultStatus(ctx);
     const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
+    // Exact quantities first, by the real ids; then the ids no list vouches for are made opaque.
     sendJson(res, 200, {
-      ...wallet,
-      rows: withExactQuantities(wallet.rows, ctx.ledger.intents()),
+      ...agentWallet({ ...wallet, rows: withExactQuantities(wallet.rows, ctx.ledger.intents()) }),
       custody: vault.custody,
       backedUp: vault.backedUp,
     });
@@ -313,7 +402,7 @@ export const walletReads: ReadTable = {
      clocks, the money and the hashes. A row still waiting on a venue is re-judged against the
      last balance read on the way through, so this read is also what moves a settled row
      forward. See src/proposals/view.ts. */
-  proposal_status: (ctx, _body, args, res) => {
+  proposal_status: (ctx, body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
@@ -323,13 +412,14 @@ export const walletReads: ReadTable = {
       fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
-    sendJson(res, 200, ctx.proposals.view(proposal));
+    markIfCarried(body.session, carriedWords(ctx, [proposal]));
+    sendJson(res, 200, agentView(ctx, proposal));
   },
   /* The list, because until now nothing enumerated and proposal_status needed an id. An agent
      asked "show me my last deposit" had to find one in the audit log or ask the person for it,
      and asking somebody for a uuid about their own money is the app failing to know its own
      state. Newest first, capped, and every row is the same view proposal_status hands back. */
-  proposals: (ctx, _body, args, res) => {
+  proposals: (ctx, body, args, res) => {
     const kind = typeof args.kind === 'string' ? args.kind.trim() : '';
     const limit = intParam(args.limit, PROPOSALS_DEFAULT, PROPOSALS_MAX);
     const now = Date.now();
@@ -338,7 +428,8 @@ export const walletReads: ReadTable = {
       .filter((p) => kind === '' || p.kind === kind)
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, limit);
-    sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
+    markIfCarried(body.session, carriedWords(ctx, rows));
+    sendJson(res, 200, { proposals: rows.map((p) => agentView(ctx, p, now)) });
   },
   /* Everything about ONE move in one call, for the question "why is my deposit not there yet".
      Four things an agent had no way to line up: the view, the audit lines for this row alone
@@ -350,45 +441,51 @@ export const walletReads: ReadTable = {
      never enough to paste. The quote's own signature and the deposit address 1Click minted stay
      on the row and off this answer; the correlation id is what a dispute is filed with, and it
      is not a destination. */
-  diagnose: (ctx, _body, args, res) => {
+  diagnose: (ctx, body, args, res) => {
     const id = typeof args.id === 'string' ? args.id : '';
     const proposal = ctx.proposals.get(id);
     if (proposal === undefined) {
       fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
       return;
     }
+    markIfCarried(body.session, carriedWords(ctx, [proposal]));
     const evidence = proposal.result?.evidence;
     const provider =
       evidence === undefined
         ? null
         : {
-            stage: evidence.providerStage ?? null,
+            // The venue's words, as one word or quoted (src/venue-words.ts): rows written before
+            // the relay's word was held to that are read the same way.
+            stage: evidence.providerStage === undefined ? null : venueReason('The swap service', evidence.providerStage),
             handleFingerprint: evidence.handle === undefined ? null : fingerprint(evidence.handle),
             correlationId: evidence.quote?.correlationId ?? null,
             deadline: evidence.deadline ?? null,
             settledAmountOut: evidence.settledAmountOut ?? null,
             refundedAmount: evidence.refundedAmount ?? null,
-            refundReason: evidence.refundReason ?? null,
+            refundReason: evidence.refundReason === undefined ? null : venueReason('1Click', evidence.refundReason),
           };
     // The far side of a Hyperliquid move, as the ledger last read it. Null for every other kind:
     // a swap and a send have no venue account, and answering with one anyway would be noise
     // somebody could mistake for evidence about their own move.
     const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
     const isCredential = credentialCheck(ctx);
+    const minted = mintedAddresses(proposal);
     sendJson(res, 200, {
-      view: ctx.proposals.view(proposal),
+      view: agentView(ctx, proposal),
       /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
          somewhere in the sentence. A substring match handed back another row's history whenever
          one line happened to mention this one, which is the opposite of what a tool called
-         diagnose is for. */
+         diagnose is for. And never a line the agent door wrote out of a caller's own body (a tool
+         call, a seat arriving): a caller that put this row's id at the top of its body made one
+         of those carry it, and the line's words are that caller's (audit 2026-10-01). */
       log: ctx.audit
         .tail(LOG_LIMIT_MAX)
-        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id)
+        .filter((e) => e.type !== 'tool_call' && e.type !== 'agent_connected' && (e.data as { id?: unknown } | undefined)?.id === id)
         .slice(0, DIAGNOSE_LOG_LINES)
         // The same wall the tail routes have (src/http/log-tail.ts): a credential never leaves
         // through a row's own lines either.
         .map((e) => redactEvent(e, isCredential))
-        .map((e) => withoutAddresses(`${e.ts} ${e.type}: ${e.msg}`)),
+        .map((e) => withoutAddresses(withoutMinted(`${e.ts} ${e.type}: ${e.msg}`, minted))),
       provider,
       venue,
     });

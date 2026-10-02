@@ -39,11 +39,13 @@
     window.PhosphorPro.boot();
     window.PhosphorTrade.boot();
     window.PhosphorDeposit.boot();
+    window.PhosphorInvite.boot();
     window.PhosphorVault.boot();
     window.PhosphorFirstRun.boot();
     window.PhosphorTerms.boot();
     window.PhosphorLock.boot();
     window.PhosphorShell.boot();
+    window.PhosphorAgentAsk.boot();
     window.PhosphorAgent.start();
   }
 

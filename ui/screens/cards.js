@@ -804,7 +804,14 @@
       var send = sendFacts || {};
       var sendSim = sim && isObject(sim.send) ? sim.send : null;
       var where = kind === 'intents_send' ? 'intents' : String(d.network || send.where || args.where || '');
-      move.from = { symbol: d.symbol || send.symbol || args.symbol, place: 'intents', amount: num(d.amount !== undefined ? d.amount : (send.amount !== undefined ? send.amount : args.amount)) };
+      /* Which chain's coin leaves, named only when the person holds the symbol from more than one
+         (draft.fromChain): "send 1 USDC" took a Base row with no sign of it here (2026-10-01). */
+      move.from = {
+        symbol: d.symbol || send.symbol || args.symbol,
+        place: 'intents',
+        amount: num(d.amount !== undefined ? d.amount : (send.amount !== undefined ? send.amount : args.amount)),
+        chain: String(d.fromChain || send.fromChain || '')
+      };
       move.to = {
         symbol: d.symbol || send.symbol || args.symbol,
         place: where,
@@ -1068,7 +1075,8 @@
       place: pocketId(money.fromPocket) || (fallback.from && fallback.from.place) || '',
       amount: num(money.amountIn),
       usd: fallback.from ? fallback.from.usd : undefined,
-      label: fallback.from ? fallback.from.label : undefined
+      label: fallback.from ? fallback.from.label : undefined,
+      chain: fallback.from ? fallback.from.chain : undefined
     };
     var base = fallback.to || {};
     var landed = view.stage === 'confirmed' || view.state === 'done';
@@ -1346,7 +1354,7 @@
     var toSymbol = coinWord((legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '');
     var inFact = null;
     if (from && from.amount !== null && from.amount !== undefined) {
-      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), coinWord(from.symbol)];
+      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), coinWord(from.symbol), fromPlace(from)];
     }
     var floorFact = move.floor !== null && move.floor !== undefined ? [floorText(move.floor), toSymbol] : null;
     var words;
@@ -1354,7 +1362,7 @@
     else if (kind === 'intents_send' || kind === 'intents_pay') words = ['You send', 'They get at least'];
     else if (kind === 'intents_withdraw' || kind === 'intents_deposit' || kind === 'hl_deposit' || kind === 'hl_withdraw') words = ['You move', 'Arrives at least'];
     else return out;
-    if (inFact) out.push([words[0], inFact[0], inFact[1]]);
+    if (inFact) out.push([words[0], inFact[0], inFact[1], '', inFact[2] || '']);
     if (floorFact) out.push([words[1], floorFact[0], floorFact[1]]);
     /* A fee of nothing is said in words, quietly, not as a bold $0.00. */
     var feeUsd = legs.feeUsd !== null && legs.feeUsd !== undefined ? num(legs.feeUsd) : null;
@@ -1364,7 +1372,7 @@
   }
 
   function paintFacts(host, facts, memo) {
-    var shape = facts.map(function (f) { return f[0] + ':' + f[2] + ':' + (f[3] || ''); }).join('|');
+    var shape = facts.map(function (f) { return f[0] + ':' + f[2] + ':' + (f[3] || '') + ':' + (f[4] || ''); }).join('|');
     if (memo.factShape !== shape) {
       memo.factShape = shape;
       dom.clear(host);
@@ -1377,6 +1385,7 @@
         var figure = dom.el('span', 'num');
         value.appendChild(figure);
         if (facts[i][2]) value.appendChild(dom.el('span', '', ' ' + facts[i][2]));
+        if (facts[i][4]) value.appendChild(dom.el('span', 'mcard-place', ' ' + facts[i][4]));
         part.appendChild(value);
         host.appendChild(part);
         memo.factValues.push(figure);
@@ -1445,6 +1454,11 @@
     return String(to.place || '').toLowerCase();
   }
 
+  // The chain a send's coin came in on, as the person reads it, or nothing when only one is held.
+  function fromPlace(from) {
+    return from && from.chain ? 'from ' + chainName(from.chain) : '';
+  }
+
   function destinationWord(move, legs) {
     var kind = move.kind;
     var to = legs.to || move.to || {};
@@ -1477,7 +1491,7 @@
       if (to && to.symbol) parts.push({ kind: 'word', value: 'to ' + coinWord(to.symbol) });
     } else if (twoLegs && from && from.symbol) {
       var fromAmount = from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '';
-      parts.push({ kind: 'amount', value: fromAmount, symbol: coinWord(from.symbol) });
+      parts.push({ kind: 'amount', value: fromAmount, symbol: coinWord(from.symbol), place: fromPlace(from) });
       parts.push({ kind: 'arrow' });
       var word = destinationWord(move, legs);
       if (move.kind === 'swap') {
@@ -1491,7 +1505,7 @@
       if (from && from.usd && from.amount !== null && from.amount !== undefined) parts.push({ kind: 'amount', value: dom.usd(from.amount), symbol: '', bare: true });
     }
     var shape = parts.map(function (p) {
-      return p.kind === 'amount' ? 'a:' + p.symbol + ':' + (p.value ? '1' : '0') : p.kind + ':' + (p.kind === 'arrow' ? '' : p.value);
+      return p.kind === 'amount' ? 'a:' + p.symbol + ':' + (p.value ? '1' : '0') + ':' + (p.place || '') : p.kind + ':' + (p.kind === 'arrow' ? '' : p.value);
     }).join('|');
     if (memo.moveShape !== shape) {
       memo.moveShape = shape;
@@ -1512,6 +1526,7 @@
         var figure = dom.el('span', 'num mcard-num');
         leg.appendChild(figure);
         if (p.symbol) leg.appendChild(dom.el('span', 'mcard-sym', (p.value ? ' ' : '') + p.symbol));
+        if (p.place) leg.appendChild(dom.el('span', 'mcard-place', ' ' + p.place));
         host.appendChild(leg);
         memo.moveNumbers.push(figure);
       }
@@ -1641,13 +1656,15 @@
       }, CLOSE_FADE_MS + 10);
     }
 
-    /* The line under the head: why it did not go through, what a held move waits on, what a
-       late one is doing. One sentence, never the venue's raw words. */
+    /* The line under the head: why it did not go through, why a small move waits when the
+       person's own would run alone, what a held move waits on, what a late one is doing. One
+       sentence, never the venue's raw words. */
     function lineFor(plain, view, row, stale) {
       var decision = window.PhosphorDecision;
       if (plain.state === 'didnt_go_through' || plain.state === 'coming_back') return plain.sentence;
       if (plain.state === 'done') return plain.note;
       if (stale) return 'This is no longer waiting on you.';
+      if (plain.state === 'needs_you') return decision && typeof decision.gateLine === 'function' ? decision.gateLine(row) : '';
       if (plain.state !== 'working') return '';
       if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
       if (plain.late) {
@@ -1829,7 +1846,9 @@
       for (var a = 0; a < ask.details.length; a += 1) fold.appendChild(ask.details[a]);
     }
     if (view) {
-      if (view.decidedAt && view.decidedBy === 'human') factLine(fold, 'You approved it at', clock(view.decidedAt));
+      /* A person's click either way: a Cancel is "You said no", never an approval. */
+      var saidNo = view.stage === 'declined' || (isObject(row) && row.status === 'refused');
+      if (view.decidedAt && view.decidedBy === 'human') factLine(fold, saidNo ? 'You said no at' : 'You approved it at', clock(view.decidedAt));
       else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(fold, 'Your rules allowed it at', clock(view.decidedAt));
       if (view.settledAt) {
         var done = view.stage === 'confirmed';

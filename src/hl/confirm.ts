@@ -12,6 +12,7 @@
 
 import type { InfoClient } from './info.ts';
 import { watchRise } from '../ledger/settle.ts';
+import { oneLine, venueReason } from '../venue-words.ts';
 import type { RiseSchedule } from '../ledger/settle.ts';
 
 export type OrderConfirmState = 'filled' | 'resting' | 'canceled' | 'rejected' | 'unconfirmed';
@@ -61,11 +62,12 @@ async function readOnce(info: InfoClient, user: string, oid: number | string): P
     return null;
   }
   if (reply === null || typeof reply !== 'object' || reply.status !== 'order') return null;
-  const venueStatus = typeof reply.order?.status === 'string' ? reply.order.status : '';
-  const state = classifyVenueStatus(venueStatus);
+  const said = typeof reply.order?.status === 'string' ? reply.order.status : '';
+  const state = classifyVenueStatus(said);
   if (state === null) return null;
   const rawOid = reply.order?.order?.oid;
-  return { state, venueStatus, oid: typeof rawOid === 'number' ? rawOid : null };
+  // The word lands in a plan's end reason, so a status that is more than one word is quoted.
+  return { state, venueStatus: venueReason('Hyperliquid', oneLine(said, 120)), oid: typeof rawOid === 'number' ? rawOid : null };
 }
 
 export async function confirmOrder(opts: {

@@ -20,6 +20,10 @@ import path from 'node:path';
 
 import { createAudit, hashLine, readTip, verifyChain, TIP_FILENAME } from '../../src/audit.ts';
 
+// What these boots pipe as the window token, which health wants before it says anything about the
+// audit chain (src/http/health.ts).
+const TOKEN = 'c'.repeat(64);
+
 function tmpDir(): string {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-audit-tip-'));
 }
@@ -139,7 +143,7 @@ test('verifyChain without a tip is unchanged, so the walk is still the walk', ()
 async function chainAnswer(port: number, deadlineMs = 20_000): Promise<{ auditChain: string; lastError: string | null }> {
   const until = Date.now() + deadlineMs;
   for (;;) {
-    const health = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as {
+    const health = (await (await fetch(`http://127.0.0.1:${port}/api/health`, { headers: { 'x-phosphor-token': TOKEN } })).json()) as {
       auditChain: string;
       lastError: string | null;
     };
@@ -177,7 +181,7 @@ test('a real boot on a truncated log says so through health rather than starting
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.end();
+  child.stdin.end(`${TOKEN}\n`);
 
   try {
     const up = await new Promise<boolean>((resolve) => {
@@ -222,7 +226,7 @@ test('an intact log boots reporting ok', async () => {
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
-  child.stdin.end();
+  child.stdin.end(`${TOKEN}\n`);
 
   try {
     const up = await new Promise<boolean>((resolve) => {
@@ -238,7 +242,7 @@ test('an intact log boots reporting ok', async () => {
     assert.ok(up);
     // Read once before the walk can have finished: the port is open and the answer is not in yet,
     // which is the whole point of moving the walk behind listen.
-    const early = (await (await fetch(`http://127.0.0.1:${port}/api/health`)).json()) as { auditChain: string };
+    const early = (await (await fetch(`http://127.0.0.1:${port}/api/health`, { headers: { 'x-phosphor-token': TOKEN } })).json()) as { auditChain: string };
     assert.equal(early.auditChain, 'checking', 'the port answered before the chain had been walked');
 
     assert.equal((await chainAnswer(port)).auditChain, 'ok');

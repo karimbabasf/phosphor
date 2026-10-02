@@ -149,7 +149,7 @@ function plainOf(sentence: string): string {
 function figurePositions(plain: string, value: number): number[] {
   const found = new Set<number>();
   for (const spelling of [String(value), value.toFixed(2)]) {
-    const pattern = new RegExp(`(?<![\\d.])${spelling.replace(/\./g, '\\.')}(?!\\d)`, 'g');
+    const pattern = new RegExp(`(?<![\\d.])${spelling.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?!\\d)`, 'g');
     for (const match of plain.matchAll(pattern)) found.add(match.index);
   }
   return [...found].sort((a, b) => a - b);

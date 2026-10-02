@@ -21,22 +21,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { PAYLOAD, payloadDigest } from './payload-digest.ts';
+
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const TAURI = path.join(ROOT, 'src-tauri');
 const STAGE = path.join(TAURI, 'payload', 'phosphor');
 const BINARIES = path.join(TAURI, 'binaries');
+// Beside the stage, not in it: src-tauri/build.rs compiles the digest into the shell, and the
+// manifest names each file's hash, for finding which file a copy differs in.
+const DIGEST_FILE = path.join(TAURI, 'payload', 'phosphor.sha256');
+const MANIFEST_FILE = path.join(TAURI, 'payload', 'phosphor.manifest');
 
 // Rust's target triple, which is what Tauri appends to every externalBin filename.
 const TRIPLE = process.arch === 'arm64' ? 'aarch64-apple-darwin' : 'x86_64-apple-darwin';
 
-// What the app reads at runtime. config.local.json is deliberately absent: it is the writable
-// half and lives in Application Support, not in a read-only bundle. So is state/, and so are
-// the keys, which have never been in the working copy at all.
-// `operator` carries the two lockdown files. Without it an installed app can still run, and the
-// driver would refuse to start rather than spawn an agent whose tool surface it cannot vouch for,
-// which is the correct failure and a useless one. It ships.
-// docs/changelog.md alone, not docs/ (37 MB of pictures): the agent's whats_new reads it.
-const PAYLOAD = ['src', 'ui', 'data', 'skills', 'operator', 'config.json', 'package.json', 'package-lock.json', 'docs/changelog.md'];
 
 // Removed after `npm ci`. The rule is deliberately narrow: only files Node can never load at
 // runtime. Sourcemaps and .d.ts declarations qualify, and nothing else does.
@@ -52,9 +50,14 @@ const DROP_DIRECTORIES = ['.github'];
 // Whole packages, by where they install at the top of node_modules rather than by a name matched
 // anywhere. typescript is a devDependency that --omit=dev keeps: viem, ox and abitype name it as an
 // optional peer, so npm files it as dev or optional. Nothing in the app runs the compiler, and
-// since 7.0 it is a native binary, one package per platform under @typescript. The link npm made
-// to it goes too, or the bundle would carry a link to nothing.
-const DROP_PACKAGES = ['typescript', '@typescript', '.bin/tsc'];
+// since 7.0 it is a native binary, one package per platform under @typescript.
+//
+// And two things npm writes beside the packages rather than unpacks from them: .bin, its links
+// to package commands (the app runs none, and a link is not something the payload digest
+// accepts), and .package-lock.json, its own record of the install, whose layout follows the npm
+// version rather than the lockfile. Without them node_modules is the lockfile's packages and
+// nothing else, which is what lets a rebuild on another Mac reach the same digest.
+const DROP_PACKAGES = ['typescript', '@typescript', '.bin', '.package-lock.json'];
 
 function bytes(dir: string): number {
   let total = 0;
@@ -111,17 +114,51 @@ function stagePayload(): void {
   console.log(`payload: node_modules ${mb(installed)} -> ${mb(pruned)}`);
 }
 
+/* The digest the shell is built to accept (scripts/payload-digest.ts). Taken once the stage is
+   final and again after the boot check below: the backend must write nothing into its own
+   payload, because the installed copy is read-only and the next launch would refuse it. */
+function sealPayload(): string {
+  const sealed = payloadDigest(STAGE);
+  if (sealed.problems.length > 0) throw new Error(`bundle-payload: the payload cannot ship as it stands:\n  ${sealed.problems.join('\n  ')}`);
+  fs.writeFileSync(DIGEST_FILE, `${sealed.digest}\n`);
+  fs.writeFileSync(MANIFEST_FILE, sealed.manifest);
+  console.log(`payload: digest ${sealed.digest} over ${sealed.files} files`);
+  return sealed.digest;
+}
+
+function unchangedSince(digest: string): void {
+  const after = payloadDigest(STAGE).digest;
+  if (after !== digest) throw new Error(`bundle-payload: the boot check changed the payload (${digest} -> ${after}); the backend must not write into it`);
+}
+
 // Copied rather than symlinked: an installed app cannot depend on the nvm directory this was
 // built from still existing, still holding 24.x, or existing on somebody else's machine at all.
+//
+// NODE 24 AND ONLY 24, because the runtime is whatever node runs this script and it is the process
+// that holds the keys. It was "24 or later", so a local build took the first node on PATH, and Node
+// 26 turns on node:ffi by default: dlopen and dlsym from JavaScript, which --no-addons does not
+// cover. CI ships 24 (.github/workflows/release.yml) and every test runs on it. Moving to 26 means
+// adding --no-experimental-ffi to NODE_FLAGS in src-tauri/src/backend.rs in the same change, a flag
+// Node 24 refuses to start with.
 function stageRuntime(): void {
+  const major = Number(process.versions.node.split('.')[0]);
+  if (major !== 24) throw new Error(`bundle-payload: the app ships Node 24, this is ${process.versions.node}. Run it with Node 24 (nvm use 24).`);
+
   fs.mkdirSync(BINARIES, { recursive: true });
   const target = path.join(BINARIES, `node-${TRIPLE}`);
   fs.copyFileSync(process.execPath, target);
   fs.chmodSync(target, 0o755);
-
-  const major = Number(process.versions.node.split('.')[0]);
-  if (major < 24) throw new Error(`bundle-payload: Node 24+ is required, this is ${process.versions.node}`);
   console.log(`runtime: node ${process.versions.node} -> binaries/node-${TRIPLE} (${mb(fs.statSync(target).size)})`);
+}
+
+/* The flags the shell starts the backend with, read out of src-tauri/src/backend.rs rather than
+   copied here, so the boot check below cannot drift from what ships. */
+function backendNodeFlags(): string[] {
+  const source = fs.readFileSync(path.join(TAURI, 'src', 'backend.rs'), 'utf8');
+  const list = /pub const NODE_FLAGS: \[&str; \d+\] = \[([^\]]*)\];/.exec(source)?.[1];
+  const flags = [...(list ?? '').matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  if (flags.length === 0) throw new Error('bundle-payload: could not read NODE_FLAGS from src-tauri/src/backend.rs');
+  return flags;
 }
 
 /* The Secure Enclave helper, built from src-tauri/se-helper/main.swift by the script that also
@@ -144,7 +181,9 @@ function stageEnclaveHelper(): void {
 //
 // It runs on a port the kernel just handed back as free, against throwaway directories, with the
 // key path pointed somewhere empty. Karim keeps real instances running on 4177 and 4188; this
-// must never collide with them and must never read a real key.
+// must never collide with them and must never read a real key. It starts the runtime with the
+// shell's own NODE_FLAGS, so a runtime that refuses one, or a dependency that needs eval or a
+// native addon at boot, fails here and not in somebody's Applications folder.
 async function freePort(): Promise<number> {
   return await new Promise((resolve, reject) => {
     const probe = net.createServer();
@@ -162,7 +201,7 @@ async function verifyBoots(): Promise<void> {
   const port = await freePort();
   const child = spawn(
     path.join(BINARIES, `node-${TRIPLE}`),
-    [path.join(STAGE, 'src', 'main.ts')],
+    [...backendNodeFlags(), path.join(STAGE, 'src', 'main.ts')],
     {
       env: {
         ...process.env,
@@ -204,7 +243,9 @@ async function verifyBoots(): Promise<void> {
 }
 
 stagePayload();
+const digest = sealPayload();
 stageRuntime();
 stageEnclaveHelper();
 await verifyBoots();
+unchangedSince(digest);
 console.log(`total: ${mb(bytes(path.join(TAURI, 'payload')) + bytes(BINARIES))} to bundle`);

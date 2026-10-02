@@ -97,9 +97,10 @@
 
     /* No token, and deliberately outside the busy contract: this is what the
        shell asks while the stream is down, and a spinner on the one call that
-       answers "is the app there" would be reporting on itself. */
+       answers "is the app there" would be reporting on itself. `open`: it never
+       waits for the read key, and carries it when the window has one. */
     health: function () {
-      return net.getJson('/api/health', { noCache: true });
+      return net.getJson('/api/health', { noCache: true, open: true });
     },
 
     quit: function () {
@@ -205,6 +206,13 @@
        vault writes; the answer is the terms slice the state will carry. */
     termsAccept: function () {
       return net.postJson('/api/terms/accept', {});
+    },
+
+    /* The person's answer to an agent started outside Phosphor: Allow lets its
+       moves run under the rules, Ask each time keeps each one waiting for a click.
+       Carries the window token like the vault writes (src/http/agent-answer.ts). */
+    agentAnswer: function (session, allow) {
+      return net.postJson('/api/agents/answer', { session: session, allow: allow === true });
     },
 
     /* ---------- money in ---------- */

@@ -29,16 +29,20 @@ import type { Ctx, ServerDeps, PhosphorServer, SseHub } from './http/context.ts'
 import { HOST, windowToken } from './http/auth.ts';
 import { createKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
+import { lockReasonFor } from './keystore/lock-reason.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { intentsReceiveReport } from './http/wallet.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
+import { createInviteService } from './invite/claim.ts';
+import { demoInviteNet } from './invite/demo.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
 import { credentialCheck, redactEvent } from './http/log-tail.ts';
 import { createCandlePush } from './market/push.ts';
 import { createChatRegistry } from './http/chats.ts';
+import { printsOf } from './http/read/web.ts';
 import { linesNamed } from './http/chart.ts';
 import { createEndedNotices } from './http/ended.ts';
 import type { EndedNotices } from './http/ended.ts';
@@ -182,6 +186,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         claudeBin: cfg.driver?.claudeBin,
         model: cfg.driver?.model,
         workerPrompt: (brief, label) => buildWorkerRole({ brief, label, root: PROJECT_DIR }),
+        // The query seal, as the chats have it: read when a worker searches, after ctx exists.
+        prints: () => printsOf(ctx),
         // The role, decided by the seat: this app spawned it, so it is an analyst whatever
         // its own process announces. See the note above createAgents in src/agents.ts.
         onSpawned: (session) => agents.markAnalyst(session),
@@ -212,6 +218,8 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     makeDriver: deps.makeDriver,
     onIdle: (chat) => ended?.flush(chat),
     onEvent: (chat, event) => ended?.event(chat, event),
+    // Read when a chat's agent searches the web, which is always after ctx below exists.
+    prints: () => printsOf(ctx),
   });
   ended = createEndedNotices({
     store,
@@ -268,18 +276,39 @@ export function createServer(deps: ServerDeps): PhosphorServer {
         sse.broadcastState();
       }),
   });
+  /* Invite codes. The deposit watch's hold keeps a claim from reading as a deposit, and the
+     refresh is the same seam the watch uses, so the ring shows the money the moment it is proven.
+     Demo mode moves nothing, so a claim there is refused before any read, unless the proof's
+     pretend world is named (src/invite/demo.ts), which reaches no network. */
+  const demoInvite = deps.invite === undefined ? demoInviteNet(cfg.mode) : null;
+  const invites = createInviteService({
+    dataDir: cfg.dataDir,
+    movesMoney: cfg.mode === 'live' || demoInvite !== null,
+    audit,
+    keystore,
+    broadcast: (frame) => sse.broadcast(frame),
+    broadcastState: () => sse.broadcastState(),
+    refreshLedger:
+      deps.refreshLedger ??
+      (async () => {
+        await deps.ledger.refresh();
+        sse.broadcastState();
+      }),
+    hold: (assetId) => deposits.holdForClaim(assetId),
+    ...(deps.invite ?? demoInvite ?? {}),
+  });
   const session =
     deps.session ??
     createSession({
       isUnlocked: () => keystore.isUnlocked(),
       idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
       lock: (reason) => {
-        keystore.lock();
+        if (keystore.lock()) lockReasonFor(keystore).note(reason);
         audit.append(
           'app_start',
           reason === 'sleep'
             ? 'the wallet locked: this machine was asleep'
-            : 'the wallet locked after fifteen minutes with nobody at the window',
+            : `the wallet locked after ${vaultPrefs.get().idleMinutes} minutes with nobody at the window`,
           { reason },
         );
         sse.broadcastLock(keystore.state());
@@ -317,6 +346,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     vaultPrefs,
     terms,
     deposits,
+    invites,
     releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
     setView,
@@ -399,5 +429,5 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     return closing;
   }) as typeof base.close;
 
-  return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade, charts });
+  return Object.assign(base, { broadcastState, broadcastCandles, broadcastCandle, broadcastTrade, charts, invites });
 }

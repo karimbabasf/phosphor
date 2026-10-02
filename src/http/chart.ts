@@ -16,7 +16,7 @@ import type { JsonBody } from './respond.ts';
 import { CANDLE_LIMIT_MAX } from './context.ts';
 import { feedFor, type FeedState } from '../market/push.ts';
 import { isBase64, SNAPSHOT_MAX_BYTES } from '../snapshot.ts';
-import { markIfCarried } from '../web-read.ts';
+import { markIfCarried, seatWordsStamp } from '../web-read.ts';
 import type { Ctx } from './context.ts';
 import type { Source } from '../trade/view.ts';
 
@@ -473,6 +473,16 @@ export function labelsOnScreen(slot: ChartSlot): { webRead?: true }[] {
   return [...state.levels, ...state.marks, ...slot.drawings.on(state.view.product)];
 }
 
+/* The full read names seats by id: who added each indicator and who moved the chart last. An
+   outside seat chose its own id, so one the person has not allowed names it in its own words.
+   Levels, marks and drawings carry their own stamp; these two do not. */
+function seatsNamed(ctx: Ctx, state: ChartState, reader: string | null | undefined): { webRead?: true }[] {
+  const named = new Set([state.lastDriverBy, ...state.indicators.map((i) => i.by)]);
+  return [...named]
+    .filter((s): s is string => typeof s === 'string' && s !== reader)
+    .map((s) => seatWordsStamp(s, ctx.agents.member(s)?.origin));
+}
+
 // The agent's view of the same thing: no arrays of pixels, every number in context.
 /* `by` is the session asking, and it is what makes the housekeeping block answer the question
    an agent actually has. "Nine agent objects are on this chart" is not actionable; "three are
@@ -496,7 +506,7 @@ export async function chartRead(ctx: Ctx, by?: string | null, opts: { slot?: Cha
       housekeeping: chart.housekeeping(by, slot.drawings.list()),
       drawings: slot.drawings.on(state.view.product),
     };
-    markIfCarried(by, labelsOnScreen(slot));
+    markIfCarried(by, [...labelsOnScreen(slot), ...(opts.full === true ? seatsNamed(ctx, state, by) : [])]);
     return opts.full === true ? buildRead(args) : buildCompactRead({ ...args, chart: slot.index });
   } catch (err) {
     return {

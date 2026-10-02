@@ -27,6 +27,8 @@
 
 use std::time::Duration;
 
+use crate::backend::Challenge;
+
 /// A helper call must answer inside this, and the unwrap is the one that waits on a person.
 /// Touch ID gives up on its own well before two minutes; this is the backstop for a hung helper.
 const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
@@ -176,10 +178,10 @@ pub struct Relay {
     pub transport: String,
 }
 
-/// The JSON body of a 2xx response whose x-phosphor header carries this boot's nonce. Anything
-/// else, including a squatter answering with a different nonce, is `None`.
-fn body_of_ours(response: &str, nonce: &str) -> Option<serde_json::Value> {
-    if !response.starts_with("HTTP/1.1 2") || !crate::backend::identity_matches(response, Some(nonce)) {
+/// The JSON body of a 2xx response whose x-phosphor header proves this boot's nonce for this
+/// request's challenge. Anything else, including a squatter replaying an answer it saw, is `None`.
+fn body_of_ours(response: &str, challenge: &Challenge) -> Option<serde_json::Value> {
+    if !response.starts_with("HTTP/1.1 2") || !crate::backend::identity_matches(response, Some(challenge)) {
         return None;
     }
     let (_, body) = response.split_once("\r\n\r\n")?;
@@ -187,15 +189,17 @@ fn body_of_ours(response: &str, nonce: &str) -> Option<serde_json::Value> {
 }
 
 fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Duration) -> Option<serde_json::Value> {
+    let challenge = Challenge::new(&relay.nonce).ok()?;
     let payload = body.to_string();
     let head = format!(
-        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n\
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nOrigin: http://127.0.0.1:{port}\r\n{asked}\
          Content-Type: application/json\r\nContent-Length: {len}\r\nConnection: close\r\n\r\n",
         port = relay.port,
+        asked = challenge.header(),
         len = payload.len()
     );
     let response = crate::backend::request_within(relay.port, &head, Some(&payload), read_timeout)?;
-    body_of_ours(&response, &relay.nonce)
+    body_of_ours(&response, &challenge)
 }
 
 /// One turn of the relay: ask, call, answer. Returns false when the hop failed and the caller
@@ -264,6 +268,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod relay_tests {
     use super::*;
+    use crate::backend::test_nonce;
 
     #[test]
     fn the_transport_key_crosses_as_base64_of_its_bytes() {
@@ -275,12 +280,17 @@ mod relay_tests {
 
     #[test]
     fn only_a_2xx_carrying_this_boots_nonce_is_read() {
-        let ok = "HTTP/1.1 200 OK\r\nX-Phosphor: abc\r\n\r\n{\"request\":null}";
-        assert_eq!(body_of_ours(ok, "abc"), Some(serde_json::json!({ "request": null })));
-        assert_eq!(body_of_ours(ok, "def"), None, "a squatter's answer is not read");
-        let forbidden = "HTTP/1.1 403 Forbidden\r\nX-Phosphor: abc\r\n\r\n{}";
-        assert_eq!(body_of_ours(forbidden, "abc"), None);
+        let nonce = test_nonce();
+        let challenge = Challenge::new(&nonce).unwrap();
+        let ok = format!("HTTP/1.1 200 OK\r\nX-Phosphor: {}\r\n\r\n{{\"request\":null}}", challenge.expected());
+        assert_eq!(body_of_ours(&ok, &challenge), Some(serde_json::json!({ "request": null })));
+        let other = Challenge::new(&test_nonce()).unwrap();
+        assert_eq!(body_of_ours(&ok, &other), None, "an answer under another nonce is not read");
+        let replayed = format!("HTTP/1.1 200 OK\r\nX-Phosphor: {nonce}\r\n\r\n{{\"request\":{{\"op\":\"unwrap\"}}}}");
+        assert_eq!(body_of_ours(&replayed, &challenge), None, "the nonce itself is no answer to a challenge");
+        let forbidden = format!("HTTP/1.1 403 Forbidden\r\nX-Phosphor: {}\r\n\r\n{{}}", challenge.expected());
+        assert_eq!(body_of_ours(&forbidden, &challenge), None);
         let bare = "HTTP/1.1 200 OK\r\n\r\n{}";
-        assert_eq!(body_of_ours(bare, "abc"), None, "no identity header, no read");
+        assert_eq!(body_of_ours(bare, &challenge), None, "no identity header, no read");
     }
 }

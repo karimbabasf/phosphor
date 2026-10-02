@@ -2527,13 +2527,16 @@ dependencies = [
 
 [[package]]
 name = "phosphor-desktop"
-version = "0.10.12"
+version = "0.10.13"
 dependencies = [
  "cc",
+ "core-foundation 0.10.1",
  "flate2",
  "libc",
+ "minisign-verify",
  "objc2-app-kit",
  "plist",
+ "security-framework",
  "serde_json",
  "tar",
  "tauri",

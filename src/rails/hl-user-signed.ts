@@ -57,7 +57,7 @@ import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../keystore/index.ts';
 import { readTimeout, venueWriteTimeout } from '../net.ts';
-import { venueSaid } from '../intents.ts';
+import { venueSaid } from '../venue-words.ts';
 
 // ---------- the venue table ----------
 
@@ -333,6 +333,8 @@ export type HlUserSignedDeps = {
   sign?: HlSignPort;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  // The executor's last check (RailHooks.lastCheck), run with nothing awaited before the key signs.
+  lastCheck?: () => void;
 };
 
 async function info<T>(deps: HlUserSignedDeps, body: Record<string, unknown>): Promise<T> {
@@ -343,7 +345,10 @@ async function info<T>(deps: HlUserSignedDeps, body: Record<string, unknown>): P
     body: JSON.stringify(body),
     signal: readTimeout(),
   });
-  if (!res.ok) throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const said = (await res.text().catch(() => '')).trim();
+    throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status}${said === '' ? '' : ` ${venueSaid('Hyperliquid', said, 200)}`}`);
+  }
   return (await res.json()) as T;
 }
 
@@ -556,6 +561,7 @@ export async function usdClassTransfer(
     nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
+  deps.lastCheck?.();
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
@@ -664,6 +670,7 @@ export async function sendAsset(
     nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
+  deps.lastCheck?.();
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };

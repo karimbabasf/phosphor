@@ -2,12 +2,36 @@
 #
 # Push a tag v<version> where <version> is what package.json, Cargo.toml and tauri.conf.json say
 # (tests/unit/version-agrees.test.ts keeps those three together). The runner is a clean Apple
-# silicon Mac; nothing is built on a laptop. What comes out, and what each secret does:
+# silicon Mac; nothing is built on a laptop.
+#
+# Four jobs, so that no job that can sign also runs code it did not write. The build pulls in a
+# few thousand packages (npm, cargo build scripts, the Tauri CLI) and holds no secret at all; the
+# job that signs runs Apple's tools and this repo's scripts and installs nothing; the job that
+# publishes to GitHub holds no secret; the job that talks to the site holds the site's token
+# alone. tests/unit/release-workflow.test.ts holds the file to that.
+#
+#   build     no secret. npm ci, npm run bundle (it stages the payload the shell compiles in, so
+#             it runs before the shell is built), the release guards, tauri build. Out of it
+#             comes the ad-hoc app and DMG.
+#   sign      environment `release`: the signing keychain, the APPLE_* secrets, then the update
+#             key. notarize-mac.sh signs, notarizes and staples; the keychain is deleted right
+#             after it; scripts/updater-sign.ts signs the updater bundle with Node alone; the
+#             release gate checks everything an installed copy and Gatekeeper will check.
+#   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry run.
+#   site      environment `release-site`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs
+#             its own lockfile and puts the DMG behind https://phosphor.money/download/mac.
+#
+# The secrets live in two environments, not in the repository: only a job that names one can read
+# its secrets. `release` holds the signing secrets, lets only v* tags in (and a branch Karim names
+# for a dry run), and the sign job waits there for Karim's approval. `release-site` holds
+# BLOB_READ_WRITE_TOKEN alone, lets only v* tags in and asks no approval: the site job needs the
+# sign and publish jobs, so it starts only after a signing Karim approved. A release asks once; a
+# dry run asks once and never reaches the site job.
 #
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #       Required. The minisign key every installed copy checks an update against. Without it
-#       the build fails on purpose: an unsigned updater bundle would be refused by every app
-#       anyway. The key lives at ~/.tauri/phosphor.key on the release machine and nowhere in git.
+#       the run fails on purpose: an unsigned updater bundle would be refused by every app
+#       anyway. Read by one step of the sign job, after the keychain is gone.
 #
 #   APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY
 #       Required. A Developer ID Application certificate (base64 .p12, exported with 3DES so
@@ -20,20 +44,27 @@
 #       An App Store Connect API key (issuer id, key id, base64 .p8) instead.
 #       One of the two is required; the Apple ID wins when both are set.
 #
+#   BLOB_READ_WRITE_TOKEN
+#       Required, in `release-site`. The Vercel Blob store behind https://phosphor.money/download/mac.
+#       The DMG is copied there once the release is published, so the site serves it from its
+#       own domain instead of bouncing the browser to release-assets.githubusercontent.com.
+#
 #   Every release is Developer ID signed and notarized, app and DMG both stapled, so Gatekeeper
 #   opens it on first launch without a dialog. There is no ad-hoc release any more: without the
-#   certificate or a way to notarize, the run fails before it builds anything.
+#   certificate or a way to notarize, the run fails before it signs anything.
 #
 #   No secret: build provenance. Every release asset gets a Sigstore-signed statement that it
 #   came out of this workflow at the tagged commit of karimbabasf/phosphor, logged in the public
-#   Rekor transparency log. `gh attestation verify <file> --repo karimbabasf/phosphor` checks it.
+#   Rekor transparency log. `gh attestation verify <file> --repo karimbabasf/phosphor
+#   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml --source-ref
+#   refs/tags/v<version>` checks it; with `--repo` alone it also passes for a file any other
+#   workflow in the repository attested, on any branch.
 #   This ties the checksum to the source, which a checksum alone cannot: whoever controls the
 #   release page could post a new file and a new checksum together, not a new attestation.
 #
-#   BLOB_READ_WRITE_TOKEN
-#       Required. The Vercel Blob store behind https://phosphor.money/download/mac.
-#       The DMG is copied there once the release is published, so the site serves it from its
-#       own domain instead of bouncing the browser to release-assets.githubusercontent.com.
+# A dry run (Actions, Release, Run workflow, on a branch the `release` environment lets in)
+# builds, signs, notarizes and runs the release gate, and publishes nothing: no attestation, no
+# GitHub Release, no site upload. Its signed files stay on the run for three days.
 #
 # Every third-party action is pinned to a commit, not a tag: a tag can be moved.
 
@@ -42,25 +73,33 @@ name: Release
 on:
   push:
     tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Build, sign and notarize, and publish nothing
+        type: boolean
+        default: true
 
-permissions:
-  contents: write
-  # For the build provenance attestation: a short-lived OIDC token proves to Sigstore that this
-  # workflow, at this commit, is the one asking, and the signed record is stored on the repo.
-  id-token: write
-  attestations: write
+# Nothing by default; each job asks for what it uses.
+permissions: {}
 
 concurrency:
   group: release-${{ github.ref }}
   cancel-in-progress: false
 
 jobs:
-  mac:
-    name: macOS (Apple silicon)
+  build:
+    name: Build (no secrets)
     runs-on: macos-15
     timeout-minutes: 60
+    permissions:
+      contents: read
     env:
       TARGET: aarch64-apple-darwin
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      publish: ${{ steps.version.outputs.publish }}
     steps:
       - name: Check out the tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -84,28 +123,127 @@ jobs:
         with:
           workspaces: src-tauri
 
+      # On a tag the tag must name the version; a dispatched run on a branch builds what the
+      # branch carries. Only a v* tag that is not a dry run publishes.
       - name: The tag names the version the tree carries
+        id: version
+        env:
+          DRY_RUN: ${{ inputs.dry_run }}
         run: |
           VERSION="$(node -p "require('./package.json').version")"
-          TAG="${GITHUB_REF_NAME}"
-          if [ "$TAG" != "v$VERSION" ]; then
-            echo "tag $TAG does not match package.json version $VERSION" >&2
-            exit 1
+          publish=false
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            if [ "$GITHUB_REF_NAME" != "v$VERSION" ]; then
+              echo "tag $GITHUB_REF_NAME does not match package.json version $VERSION" >&2
+              exit 1
+            fi
+            if [ "$DRY_RUN" != true ]; then publish=true; fi
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          { echo "version=$VERSION"; echo "tag=v$VERSION"; echo "publish=$publish"; } >> "$GITHUB_OUTPUT"
+          echo "version $VERSION, publish $publish"
 
       - name: Install
         # The committed .npmrc already says ignore-scripts; the flag says it again where a reader
         # of this file looks, and holds if the file is ever dropped from the checkout.
         run: npm ci --ignore-scripts
 
-      # The certificate goes into a keychain this job owns, before anything is built. Before the
-      # bundle step, because scripts/build-se-helper.sh signs the Secure Enclave XPC service there
-      # with the same identity. Not Tauri's keychain: Tauri makes its own from APPLE_CERTIFICATE
-      # and deletes it the moment its bundle step ends (the Drop impl of Keychain in
-      # tauri-macos-sign, src/keychain.rs), so nothing after `tauri build` could sign the DMG with
-      # it. This one lives until the last step of the job deletes it.
+      # The Secure Enclave service comes out ad-hoc here (no identity in this job), and
+      # notarize-mac.sh signs it with everything else in the sign job.
+      - name: Stage the payload and prove it boots on the bundled runtime
+        run: npm run bundle
+
+      # The full suite is the development gate and runs on the machine that develops; four of its
+      # tests depend on that machine (three seat-capacity injection tests want the claude CLI on
+      # the path, one asserts a p95 latency a shared runner cannot promise). The release gate is
+      # the part of the tree that decides what ships: the version files agree, the manifest and
+      # this workflow are shaped right, the updater signer matches Tauri's, and the shell's own
+      # tests pass (the update check among them). After the bundle step, because the shell's
+      # build script wants the staged Node sidecar to exist.
+      - name: Release guards
+        run: |
+          node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts tests/unit/enclave-sidecar.test.ts tests/unit/release-workflow.test.ts tests/unit/updater-sign.test.ts
+          (cd src-tauri && cargo test)
+
+      # Tauri builds ad-hoc and makes no updater bundle (createUpdaterArtifacts is false): nothing
+      # Apple and no update key is in this job. The sign job makes both signatures.
+      - name: Build and bundle
+        env:
+          # Actions sets CI=true, and tauri-bundler then skips the Finder step that lays the
+          # DMG out (background, icon positions, window size). Every CI DMG shipped plain.
+          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
+        run: npx tauri build --target "$TARGET" --bundles app,dmg
+
+      # A tar keeps the executable bits and links that an artifact's zip would drop.
+      - name: Pack the unsigned build
+        run: tar -czf "$RUNNER_TEMP/unsigned.tar.gz" -C "src-tauri/target/$TARGET/release/bundle" macos/Phosphor.app "dmg/Phosphor_${VERSION}_aarch64.dmg"
+
+      - name: Hand the unsigned build to the sign job
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: unsigned
+          path: ${{ runner.temp }}/unsigned.tar.gz
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  sign:
+    name: Sign and notarize
+    needs: build
+    runs-on: macos-15
+    timeout-minutes: 120
+    environment: release
+    permissions:
+      contents: read
+      # For the build provenance attestation: a short-lived OIDC token proves to Sigstore that
+      # this workflow, at this commit, is the one asking, and the signed record is stored on the
+      # repo.
+      id-token: write
+      attestations: write
+    env:
+      TARGET: aarch64-apple-darwin
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ needs.build.outputs.tag }}
+      PUBLISH: ${{ needs.build.outputs.publish }}
+    outputs:
+      sums: ${{ steps.sums.outputs.sums }}
+    steps:
+      # The scripts this job runs come from this checkout, never from the build job's files.
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Node runs scripts/updater-sign.ts and scripts/release-manifest.ts, which import nothing
+      # but Node's own modules. No npm install happens in this job.
+      - name: Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Take the unsigned build
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: unsigned
+          path: ${{ runner.temp }}/unsigned
+
+      - name: Unpack the unsigned build
+        run: |
+          mkdir -p "src-tauri/target/$TARGET/release/bundle"
+          tar -xzf "$RUNNER_TEMP/unsigned/unsigned.tar.gz" -C "src-tauri/target/$TARGET/release/bundle"
+
+      # Before any key is in this job: the build job's app against this checkout. The build job
+      # holds no secret, and this is what keeps it from choosing what gets signed: its first-party
+      # payload files must be this checkout's byte for byte, its shell must carry the digest of
+      # the payload beside it, and no binary may carry an entitlement the committed plist does not
+      # grant, because notarize-mac.sh keeps a nested binary's entitlements as it found them.
+      # Node's own modules and codesign, nothing installed (scripts/release-check.ts).
+      - name: The unsigned build is this checkout, with the committed entitlements
+        run: node scripts/release-check.ts --app "src-tauri/target/$TARGET/release/bundle/macos/Phosphor.app" --checkout . --stage built
+
+      # The certificate goes into a keychain this job owns. Not Tauri's keychain: Tauri never sees
+      # an Apple secret, and notarize-mac.sh signs everything, the Secure Enclave service and the
+      # DMG included. The keychain is deleted by the step right after notarize-mac.sh.
       - name: The signing keychain and the notarization credentials
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -152,46 +290,11 @@ jobs:
           echo "signing with $APPLE_SIGNING_IDENTITY"
           echo "SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
-      - name: Stage the payload and prove it boots on the bundled runtime
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: npm run bundle
-
-      # The full suite is the development gate and runs on the machine that develops; four of its
-      # tests depend on that machine (three seat-capacity injection tests want the claude CLI on
-      # the path, one asserts a p95 latency a shared runner cannot promise). The release gate is
-      # the part of the tree that decides what ships: the version files agree, the manifest is
-      # shaped right, and the shell's own tests pass. After the bundle step, because the shell's
-      # build script wants the staged Node sidecar to exist.
-      - name: Release guards
-        run: |
-          node --test tests/unit/version-agrees.test.ts tests/unit/release-manifest.test.ts tests/unit/enclave-sidecar.test.ts
-          (cd src-tauri && cargo test)
-
-      # Tauri builds ad-hoc here: nothing Apple is in its environment. scripts/notarize-mac.sh
-      # below signs what Tauri would not (anything nested in Contents/XPCServices) and notarizes
-      # and staples the DMG as well as the app.
-      - name: Build and bundle
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # Actions sets CI=true, and tauri-bundler then skips the Finder step that lays the
-          # DMG out (background, icon positions, window size). Every CI DMG shipped plain.
-          TAURI_BUNDLER_DMG_IGNORE_CI: "true"
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "TAURI_SIGNING_PRIVATE_KEY is not set; refusing to build an update nobody can install" >&2
-            exit 1
-          fi
-          npx tauri build --target "$TARGET" --bundles app,dmg
-
       # Developer ID over everything inside out, the app notarized and stapled, the updater
-      # bundle rebuilt from the stapled app and signed again, the stapled app put into the DMG,
-      # the DMG signed, notarized and stapled. Before the checksums, because it changes all three.
+      # bundle rebuilt from the stapled app, the stapled app put into the DMG, the DMG signed,
+      # notarized and stapled. Before the checksums, because it changes all three.
       - name: Sign, notarize and staple the app and the DMG
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -200,11 +303,28 @@ jobs:
           NOTARY_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
         run: bash scripts/notarize-mac.sh "src-tauri/target/$TARGET/release/bundle" "$VERSION"
 
+      # The keychain and the API key are gone the moment notarizing ends, whatever happened
+      # above. The certificate itself was deleted from disk the moment it was imported.
+      - name: Delete the signing keychain
+        if: always()
+        run: |
+          if [ -n "${SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$SIGN_KEYCHAIN" || true; fi
+          rm -f "$RUNNER_TEMP/AuthKey.p8"
+
+      # The update key, in this step only, with Node and this repo's script and nothing else. The
+      # script checks the signature against the public key in tauri.conf.json before it writes it.
+      - name: Sign the updater bundle
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: node scripts/updater-sign.ts "src-tauri/target/$TARGET/release/bundle/macos/Phosphor.app.tar.gz"
+
       - name: Stage the release assets and write latest.json and SHA256SUMS
         run: |
           # The tag message, subject and body, trimmed. Not %(contents): on a signed tag that
           # carries the SSH signature block, and 0.9.0 and 0.9.1 shipped it in their notes and
           # in latest.json. Not %(contents:body) alone either: that shipped 0.4.1 with no notes.
+          # A dry run on a branch has no tag, and its notes are empty.
           node -e "process.stdout.write(require('child_process').execFileSync('git', ['tag', '-l', '--format=%(contents:subject)%0a%0a%(contents:body)', process.argv[1]]).toString().trim() + '\\n')" "$TAG" > "$RUNNER_TEMP/tag-body.md"
           node scripts/release-manifest.ts \
             --version "$VERSION" --tag "$TAG" \
@@ -213,14 +333,13 @@ jobs:
             --notes-file "$RUNNER_TEMP/tag-body.md"
           echo "RELEASE_DIR=$RUNNER_TEMP/release" >> "$GITHUB_ENV"
 
-      - name: Attest where the release assets came from
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            ${{ env.RELEASE_DIR }}/Phosphor-macOS-arm64.dmg
-            ${{ env.RELEASE_DIR }}/Phosphor_${{ env.VERSION }}_aarch64.app.tar.gz
-
-      - name: The app and the DMG pass Gatekeeper
+      # What Gatekeeper asks on first open, answered offline from the stapled tickets; and what an
+      # installed copy asks before it installs the update: the minisign signature against the key
+      # it holds, then the code signature against the requirement in src-tauri/src/update.rs
+      # (`requirement`, held equal to the line below by a test there). Both apps that ship, the one
+      # in the DMG and the one in the update, are held to the checkout again once signed: the
+      # payload, the entitlements, the hardened runtime and one team on every binary.
+      - name: The app and the DMG pass Gatekeeper, and the update passes the installed app's check
         run: |
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
           codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/dmg/Phosphor.app"
@@ -235,18 +354,34 @@ jobs:
           ls -la "$RUNNER_TEMP/dmg/.background"
           # The Finder layout lives in .DS_Store; without it the image opens as a plain folder.
           test -f "$RUNNER_TEMP/dmg/.DS_Store" || { echo "DMG has no Finder layout (.DS_Store missing)"; hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
-          # What Gatekeeper asks on first open, answered offline from the stapled tickets.
           spctl -a -vv -t exec "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           xcrun stapler validate "$RUNNER_TEMP/dmg/Phosphor.app" || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
+          node scripts/release-check.ts --app "$RUNNER_TEMP/dmg/Phosphor.app" --checkout . --stage signed || { hdiutil detach "$RUNNER_TEMP/dmg"; exit 1; }
           hdiutil detach "$RUNNER_TEMP/dmg"
           codesign --verify --strict --verbose=2 "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
           spctl -a -vv -t open --context context:primary-signature "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
           xcrun stapler validate "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
+          tarball="$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz"
+          node scripts/updater-sign.ts "$tarball" --check --manifest "$RELEASE_DIR/latest.json"
+          mkdir "$RUNNER_TEMP/update"
+          tar -xzf "$tarball" -C "$RUNNER_TEMP/update"
+          node scripts/release-check.ts --app "$RUNNER_TEMP/update/Phosphor.app" --checkout . --stage signed
+          codesign --verify --deep --strict --verbose=2 --test-requirement='=identifier "com.karimbabasf.phosphor" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and (certificate leaf[subject.OU] = "35Z6P26CBD")' "$RUNNER_TEMP/update/Phosphor.app"
 
-      - name: Publish the release
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Attest where the release assets came from
+        if: env.PUBLISH == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            ${{ env.RELEASE_DIR }}/Phosphor-macOS-arm64.dmg
+            ${{ env.RELEASE_DIR }}/Phosphor_${{ env.VERSION }}_aarch64.app.tar.gz
+
+      # The release page's text, written here so the publish job needs no checkout. Each command
+      # hashes one file by its bare name, so what it prints is that file's SHA256SUMS line exactly.
+      - name: Write the release notes
         run: |
+          sum() { awk -v name="$1" '$2 == name { print; found = 1 } END { exit !found }' "$RELEASE_DIR/SHA256SUMS"; }
+          tarball="Phosphor_${VERSION}_aarch64.app.tar.gz"
           {
             echo "## Phosphor $VERSION for Mac (Apple silicon)"
             echo
@@ -256,67 +391,140 @@ jobs:
             echo "**Verify the download** before opening it. In Terminal:"
             echo
             echo '```'
-            echo "shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg"
+            echo "cd ~/Downloads && shasum -a 256 Phosphor-macOS-arm64.dmg"
             echo '```'
             echo
             echo "It must print exactly:"
             echo
             echo '```'
-            cat "$RELEASE_DIR/SHA256SUMS"
+            sum Phosphor-macOS-arm64.dmg
+            echo '```'
+            echo
+            echo "The update archive, the file installed copies download, has its own line. To check it, download it from this page too, then:"
+            echo
+            echo '```'
+            echo "cd ~/Downloads && shasum -a 256 $tarball"
+            echo '```'
+            echo
+            echo "It must print exactly:"
+            echo
+            echo '```'
+            sum "$tarball"
             echo '```'
             echo
             echo "**Check where it was built.** With the GitHub CLI (\`brew install gh\`):"
             echo
             echo '```'
-            echo "gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor"
+            echo "gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \\"
+            echo "  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \\"
+            echo "  --source-ref refs/tags/v$VERSION"
             echo '```'
             echo
-            echo "It passes only for a file this repository's release workflow built, and it prints the commit it was built from, so you can read the exact code in the file you hold."
+            echo "It passes only for a file this repository's release workflow built from the tag v$VERSION, and it prints the commit it was built from, so you can read the exact code in the file you hold."
             echo
             echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.money."
-          } > "$RUNNER_TEMP/notes.md"
+          } > "$RELEASE_DIR/notes.md"
+
+      # The digest of every file this job hands on, as a job output: the jobs after this one
+      # check what they download against it, so an artifact swapped after this job ran is caught.
+      - name: Fingerprint the signed files
+        id: sums
+        run: |
+          {
+            echo 'sums<<SUMS'
+            (cd "$RELEASE_DIR" && shasum -a 256 ./*)
+            echo 'SUMS'
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Hand the signed files on
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: signed
+          path: ${{ env.RELEASE_DIR }}
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  publish:
+    name: Publish the release
+    needs: [build, sign]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+      TAG: ${{ needs.build.outputs.tag }}
+    steps:
+      - name: Take the signed files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed
+          path: ${{ runner.temp }}/release
+
+      - name: They are the files the sign job made
+        env:
+          SUMS: ${{ needs.sign.outputs.sums }}
+        run: cd "$RUNNER_TEMP/release" && printf '%s\n' "$SUMS" | sha256sum --check --strict
+
+      - name: Publish the GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          dir="$RUNNER_TEMP/release"
           gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
             --title "Phosphor $VERSION" \
-            --notes-file "$RUNNER_TEMP/notes.md" \
-            "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" \
-            "$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz" \
-            "$RELEASE_DIR/Phosphor_${VERSION}_aarch64.app.tar.gz.sig" \
-            "$RELEASE_DIR/latest.json" \
-            "$RELEASE_DIR/SHA256SUMS"
+            --notes-file "$dir/notes.md" \
+            "$dir/Phosphor-macOS-arm64.dmg" \
+            "$dir/Phosphor_${VERSION}_aarch64.app.tar.gz" \
+            "$dir/Phosphor_${VERSION}_aarch64.app.tar.gz.sig" \
+            "$dir/latest.json" \
+            "$dir/SHA256SUMS"
 
-      - name: Put the DMG behind the site's own download link
+  site:
+    name: Put the DMG behind the site's own download link
+    needs: [build, sign, publish]
+    if: needs.build.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    # Its own environment, with no reviewer: the sign job it needs is the one approval.
+    environment: release-site
+    permissions:
+      contents: read
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node 24
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Take the signed files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed
+          path: ${{ runner.temp }}/release
+
+      - name: They are the files the sign job made
+        env:
+          SUMS: ${{ needs.sign.outputs.sums }}
+        run: cd "$RUNNER_TEMP/release" && printf '%s\n' "$SUMS" | sha256sum --check --strict
+
+      # The Blob SDK from scripts/site-upload's own lockfile, every package pinned by its
+      # integrity hash, and no install scripts. This job holds the site's token and nothing else.
+      - name: Install the uploader
+        working-directory: scripts/site-upload
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # This runs after the release exists, so a failure here leaves GitHub on the new version
+      # and the site on the old one: that is why the token is required and the step is loud.
+      - name: Upload the DMG to the site
         env:
           BLOB_READ_WRITE_TOKEN: ${{ secrets.BLOB_READ_WRITE_TOKEN }}
-        run: |
-          # Same fixed name every release, overwritten in place, cached for 60 seconds so the
-          # site hands out the new version within a minute. This runs after the release exists,
-          # so a failure here leaves GitHub on the new version and the site on the old one:
-          # that is why the token is required and the step is loud.
-          : "${BLOB_READ_WRITE_TOKEN:?BLOB_READ_WRITE_TOKEN secret is not set, the site download still serves the previous version}"
-          # Through the Blob SDK, which needs the store token alone. The Vercel CLI (`vercel blob
-          # put`) refuses to start without a Vercel account login even when handed the token,
-          # which is where the v0.5.1 run died, and on a runner there is no account to log in.
-          npm install --no-save --ignore-scripts --no-audit --no-fund @vercel/blob@2.8.0
-          node --input-type=module -e '
-            import { put } from "@vercel/blob";
-            import { createReadStream } from "node:fs";
-            const out = await put("Phosphor-macOS-arm64.dmg", createReadStream(process.argv[1]), {
-              access: "public",
-              addRandomSuffix: false,
-              allowOverwrite: true,
-              cacheControlMaxAge: 60,
-              contentType: "application/x-apple-diskimage",
-              multipart: true,
-              token: process.env.BLOB_READ_WRITE_TOKEN,
-            });
-            console.log("site download now serves", out.url);
-          ' "$RELEASE_DIR/Phosphor-macOS-arm64.dmg"
-
-      # The keychain and the API key are gone whatever happened above. The certificate itself was
-      # deleted from disk the moment it was imported.
-      - name: Delete the signing keychain
-        if: always()
-        run: |
-          if [ -n "${SIGN_KEYCHAIN:-}" ]; then security delete-keychain "$SIGN_KEYCHAIN" || true; fi
-          rm -f "$RUNNER_TEMP/AuthKey.p8"
+        run: node scripts/site-upload/upload.mjs "$RUNNER_TEMP/release/Phosphor-macOS-arm64.dmg"

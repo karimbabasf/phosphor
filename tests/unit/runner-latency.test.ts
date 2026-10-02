@@ -91,6 +91,7 @@ test('twenty fires: frame to venue post and fire command to venue post, p95 unde
     baseUrl: url,
     user: USER,
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: (e) => {
       if (e.type === 'fired') firedAt.set(e.id, performance.now());
       if (e.type === 'placed') placed.get(e.id)?.(e);

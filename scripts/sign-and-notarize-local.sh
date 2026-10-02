@@ -127,28 +127,39 @@ cd "$root"
 version="$(node -p "require('./package.json').version")"
 bundle="$root/src-tauri/target/$target/release/bundle"
 
+updater_pub=""
 if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
   npx --no-install tauri signer generate --ci -p "" -w "$tmp/updater.key" >/dev/null
   TAURI_SIGNING_PRIVATE_KEY="$(cat "$tmp/updater.key")"
   export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD=""
   updater_key="throwaway (not shippable)"
+  updater_pub="$tmp/updater.key.pub"
 else
   updater_key="TAURI_SIGNING_PRIVATE_KEY"
 fi
 
 if [ "${SKIP_BUILD:-0}" != 1 ]; then
-  # The bundle step signs the Secure Enclave XPC service with this identity, as on the runner.
-  APPLE_SIGNING_IDENTITY="$identity_hash" npm run bundle
-  # Nothing Apple reaches Tauri: it builds ad-hoc, as the release workflow's does, and
-  # notarize-mac.sh does the rest.
+  # Built with no key and no identity, as the release workflow's build job builds: the Secure
+  # Enclave service comes out ad-hoc, and notarize-mac.sh signs it with everything else.
+  env -u APPLE_SIGNING_IDENTITY -u TAURI_SIGNING_PRIVATE_KEY -u TAURI_SIGNING_PRIVATE_KEY_PASSWORD npm run bundle
   env -u APPLE_CERTIFICATE -u APPLE_CERTIFICATE_PASSWORD -u APPLE_SIGNING_IDENTITY \
     -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID \
     -u APPLE_API_ISSUER -u APPLE_API_KEY -u APPLE_API_KEY_PATH \
+    -u TAURI_SIGNING_PRIVATE_KEY -u TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
     npx --no-install tauri build --target "$target" --bundles app,dmg
 fi
 
+# What gets signed is the checkout with the committed entitlements, as the release workflow's sign
+# job holds it before any key is used (scripts/release-check.ts).
+node "$root/scripts/release-check.ts" --app "$bundle/macos/Phosphor.app" --checkout "$root" --stage built
+
 env SIGN_IDENTITY="$identity_hash" SIGN_KEYCHAIN="$keychain" ${notary_env[@]+"${notary_env[@]}"} \
   bash "$root/scripts/notarize-mac.sh" "$bundle" "$version"
+
+# The updater bundle's signature, made the way the release makes it: Node's crypto and the key.
+# A throwaway key is checked against its own public half, the real one against the key every
+# installed copy holds.
+node "$root/scripts/updater-sign.ts" "$bundle/macos/Phosphor.app.tar.gz" ${updater_pub:+--public-key "$updater_pub"}
 
 # The same checks the release workflow runs, and a few more, as a table.
 app="$bundle/macos/Phosphor.app"
@@ -183,6 +194,8 @@ check "app: signed by Developer ID Application" signed_by_developer_id "$app"
 check "app: hardened runtime" has_runtime "$app"
 check "app: secure timestamp" has_timestamp "$app"
 check "app: no get-task-allow entitlement" no_debugger_allowed "$app"
+check "app: payload is the checkout, entitlements are the committed ones, one team" \
+  node "$root/scripts/release-check.ts" --app "$app" --checkout "$root" --stage signed
 for code in "$app"/Contents/MacOS/* "$app"/Contents/XPCServices/*.xpc; do
   [ -e "$code" ] || continue
   [ "$code" = "$app/Contents/MacOS/$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")" ] && continue

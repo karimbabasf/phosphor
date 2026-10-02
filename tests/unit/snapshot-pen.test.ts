@@ -11,6 +11,7 @@ import http from 'node:http';
 
 import { bootChartServer } from '../fixtures/chart-server.ts';
 import { contentFor } from '../../src/mcp-content.ts';
+import { readKeyFor } from '../../src/http/auth.ts';
 
 function jpegOf(body: Buffer): string {
   return Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), body]).toString('base64');
@@ -43,9 +44,9 @@ function raw(
 }
 
 // Opens the window's own stream and hands back the next snapshot frame the server sends.
-async function nextSnapshotFrame(url: string): Promise<{ frame: Promise<{ slot: number; reqId: string }>; close: () => void }> {
+async function nextSnapshotFrame(url: string, headers: Record<string, string>): Promise<{ frame: Promise<{ slot: number; reqId: string }>; close: () => void }> {
   const controller = new AbortController();
-  const res = await fetch(`${url}/api/events`, { signal: controller.signal });
+  const res = await fetch(`${url}/api/events`, { headers, signal: controller.signal });
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const frame = (async () => {
     let buffered = '';
@@ -81,7 +82,7 @@ test('snapshot: no token, a wrong token, no Origin, a null Origin, a foreign Ori
     const forged = await raw(h.url, '/api/chart/snapshot', { method: 'POST', headers: { ...json, origin: `http://${host}`, host: 'evil.com' }, body });
     assert.equal(forged.status, 403);
     assert.match(forged.body, /127\.0\.0\.1/);
-    const get = await raw(h.url, '/api/chart/snapshot');
+    const get = await raw(h.url, '/api/chart/snapshot', { headers: { 'x-phosphor-token': h.token } });
     assert.equal(get.status, 404, 'the route answers POST only');
   } finally {
     await h.close();
@@ -146,7 +147,7 @@ test('snapshot: a PNG, an HTML document, an SVG, an empty field, a number, junk 
 
 test('snapshot: a JPEG header followed by a script is accepted as bytes and reaches the tool as an image block, never as text', async () => {
   const h = await bootChartServer();
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     const asking = h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} });
     const frame = await stream.frame;
@@ -167,7 +168,7 @@ test('snapshot: a JPEG header followed by a script is accepted as bytes and reac
 
 test('snapshot: two windows racing one request id, the first picture wins and the second is a 409 that does not replace it', async () => {
   const h = await bootChartServer();
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     const asking = h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} });
     const frame = await stream.frame;
@@ -188,8 +189,9 @@ test('snapshot: two windows racing one request id, the first picture wins and th
 
 test('snapshot: two tool calls racing on one chart, one gets the picture and the other is told it is being taken; a stream reader without the token cannot answer', async () => {
   const h = await bootChartServer();
-  const window = await nextSnapshotFrame(h.url);
-  const rogue = await nextSnapshotFrame(h.url);
+  const window = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
+  // The rogue holds the read key, which reads the stream, and not the window token, which answers it.
+  const rogue = await nextSnapshotFrame(h.url, { 'x-phosphor-read': readKeyFor(h.token) });
   try {
     const calls = Promise.all([
       h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} }),
@@ -240,7 +242,7 @@ test('snapshot: a 600 KB announced body is refused before it is read, and a deli
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: h.url, 'content-length': String(600 * 1024) },
   });
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     const answered = new Promise<number>((resolve, reject) => {
       req.on('response', (res) => {

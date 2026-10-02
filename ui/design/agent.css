@@ -158,6 +158,12 @@
   color: var(--text-3);
 }
 
+/* A put-off agent's Change (ui/screens/agent.js paintAllow): a small soft key at the row's end
+   that brings its card back. */
+.agent-client-change {
+  flex: none;
+}
+
 /* ---------- the centre: the card, or the sheet ---------- */
 
 .agent-centre {

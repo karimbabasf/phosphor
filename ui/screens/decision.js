@@ -457,6 +457,34 @@
     return 'Your limits say this one needs a click.';
   }
 
+  /* Why it asks, one line each. A move the app held itself carries `why`: the policy's rule first
+     when it asked anyway, then every reason the app added, so a second never hides the first
+     (src/proposals/draft.ts heldFor). Any other move gives the rule that fired. */
+  function whyLines(proposal) {
+    var verdict = proposal.verdict || {};
+    var why = Array.isArray(verdict.why) ? verdict.why : [];
+    var lines = [];
+    for (var i = 0; i < why.length; i += 1) {
+      var line = String(why[i]).trim();
+      if (line) lines.push(line.charAt(0).toUpperCase() + line.slice(1));
+    }
+    return lines.length ? lines : [whyLine(proposal)];
+  }
+
+  /* A move under the person's own limit that waits anyway, because of where it came from: its
+     chat read text from outside Phosphor, its agent was started outside Phosphor, or the app
+     started the turn it was asked in (src/proposals/execute.ts, land). The same size from their
+     own chat runs alone, so the card says why on its face (cards.js lineFor), in the app's own
+     sentence: the verdict's last reason, as written. '' for any other row. */
+  function gateLine(proposal) {
+    var p = proposal && typeof proposal === 'object' ? proposal : {};
+    if (p.webRead !== true && p.outside !== true && p.appTurn !== true) return '';
+    var verdict = p.verdict || {};
+    if (!Array.isArray(verdict.reasons) || !verdict.reasons.length) return '';
+    var last = String(verdict.reasons[verdict.reasons.length - 1]).trim();
+    return last.charAt(0).toUpperCase() + last.slice(1);
+  }
+
   /* Where the money actually lands, every address in full, labelled by who chose it. The
      venue mints a fresh deposit address per quote, which is why it can never sit on an
      allowlist, and it is the address the funds are signed over to: showing the allowlisted
@@ -531,21 +559,26 @@
     return id.replace(/[-_]+/g, ' ');
   }
 
-  /* A sentence stands under its label and breaks between words; a figure or a name sits at the
-     line's end. */
+  /* A sentence stands under its label and breaks between words, several of them one under
+     another; a figure or a name sits at the line's end. */
   function detailLine(label, value, sentence) {
     var row = dom.el('div', sentence ? 'tcard-line tcard-sentence' : 'tcard-line');
     row.setAttribute('data-wrap', 'true');
     row.appendChild(dom.el('span', 'tcard-line-label', label));
-    row.appendChild(dom.el('span', 'tcard-line-value', value));
+    var values = Array.isArray(value) ? value : [value];
+    for (var v = 0; v < values.length; v += 1) row.appendChild(dom.el('span', 'tcard-line-value', values[v]));
     return row;
   }
 
   /* The secondary lines, for the card's Details: why it asks, where the money goes, how long
-     the price holds, the route, and the rail's own summary. True, and one click away. */
+     the price holds, the route, and the rail's own summary. True, and one click away. Each line
+     of why it asks is said once: the one a card says on its face (gateLine) is left out here, and
+     any other stays. */
   function askDetails(proposal) {
     var draft = proposal.draft || {};
-    var out = [detailLine('Why it asks', whyLine(proposal), true)];
+    var face = gateLine(proposal);
+    var why = whyLines(proposal).filter(function (line) { return line !== face; });
+    var out = why.length ? [detailLine('Why it asks', why, true)] : [];
     var destinations = destinationsOf(proposal);
     for (var d = 0; d < destinations.length; d += 1) {
       var where = dom.el('div', 'destination');
@@ -709,11 +742,24 @@
     return again;
   }
 
+  /* The line goes to the assistant as the person's own message, so it holds only words this card
+     can vouch for. A symbol is the agent's string until a rail takes it: it is repeated only when
+     it is ticker-shaped (the rule src/vault/reason.ts holds the Touch ID sentence to), and an
+     amount only as a plain number. Anything else is "Try that again.", because an address in the
+     agent's symbol was recorded as one the person gave (src/web-gate.ts, audit 2026-10-01). */
+  var TICKER = /^[A-Za-z0-9]{2,8}$/;
+  var PLAIN_AMOUNT = /^(\d+(\.\d+)?|all)$/;
+
+  function ticker(s) {
+    return typeof s === 'string' && TICKER.test(s);
+  }
+
   function retryWords(proposal) {
     var draft = (proposal && proposal.draft) || {};
-    if (draft.kind === 'swap' && draft.fromSymbol && draft.toSymbol) {
-      var amount = draft.amountInExact !== undefined ? draft.amountInExact : draft.amountIn;
-      return 'Try that again: swap ' + (amount !== undefined ? amount + ' ' : '') + draft.fromSymbol + ' into ' + draft.toSymbol + '.';
+    if (draft.kind === 'swap' && ticker(draft.fromSymbol) && ticker(draft.toSymbol)) {
+      var raw = draft.amountInExact !== undefined ? draft.amountInExact : draft.amountIn;
+      var amount = (typeof raw === 'string' || typeof raw === 'number') && PLAIN_AMOUNT.test(String(raw)) ? String(raw) + ' ' : '';
+      return 'Try that again: swap ' + amount + draft.fromSymbol + ' into ' + draft.toSymbol + '.';
     }
     return 'Try that again.';
   }
@@ -775,6 +821,7 @@
     askKey: askKey,
     retryButton: retryButton,
     heldLine: heldLine,
+    gateLine: gateLine,
     preflightOf: preflightOf,
     showCard: showCard,
     diffOf: diffOf,

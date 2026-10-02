@@ -39,6 +39,7 @@ import type { EndReason, PlanRow, PlanStore } from '../trade/plans.ts';
 import { DEFAULT_TAKER_FEE_BPS, planRisk, sameCoinRefusal } from '../trade/risk.ts';
 import { evaluate } from '../trade/watch.ts';
 import type { Bar, MarketView } from '../trade/watch.ts';
+import { webReadBy } from '../web-read.ts';
 import { isFromChild } from './protocol.ts';
 import type { AssetMeta, Command, FromChild, ToChild } from './protocol.ts';
 
@@ -95,6 +96,9 @@ export type HostDeps = {
   user: string | (() => string);
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
+  // Whether the wallet is open: reconcile re-arms a waiting plan only then. Anything but true
+  // reads as shut, so a host nobody wired arms nothing on a reconcile.
+  walletOpen: () => boolean;
   store: PlanStore;
   meta: (coin: string) => AssetMeta | null;
   mark: (coin: string) => number | null;
@@ -167,6 +171,9 @@ export function createRunnerHost(deps: HostDeps) {
      because the process had not started yet is not a kill switch. */
   let generation = 0;
   let killed = false;
+  // Freeze as it stands: the flag kill.ts sets before it writes the file, then the file itself.
+  // Read as the last step before a command the child signs a new order for.
+  const frozen = (): boolean => killed || deps.killSwitch();
 
   const rows = new Map<string, PlanRow>();
   for (const row of deps.store.list()) rows.set(row.id, row);
@@ -266,6 +273,10 @@ export function createRunnerHost(deps: HostDeps) {
 
   function liveRows(): PlanRow[] {
     return [...rows.values()].filter(live);
+  }
+
+  function openOnVenue(): boolean {
+    return liveRows().some((r) => r.status !== 'waiting') || (account?.positions ?? []).some((p) => p.szi !== 0);
   }
 
   function childNeeded(): boolean {
@@ -505,6 +516,9 @@ export function createRunnerHost(deps: HostDeps) {
         finish(row, 'failed:the API wallet is no longer approved on the venue');
         return;
       }
+      // Freeze pressed while the wallet's approval was read stops the fire here, before the
+      // child signs: tick checked the flag before that wait, and nothing is awaited after this.
+      if (frozen()) return;
       record({ type: 'fired', id: row.id, symbol: row.symbol });
       const reply = await request({ cmd: 'fire', id: row.id, mark });
       if (reply.ev === 'placed') {
@@ -793,6 +807,8 @@ export function createRunnerHost(deps: HostDeps) {
     if (meta === null) return { ok: false, reason: `no venue metadata for ${row.symbol} yet: the trading account has not answered` };
     try {
       await ensureChild();
+      // Asked again after the child started, which takes a moment: a plan never arms frozen.
+      if (frozen()) return { ok: false, reason: 'kill switch is on; nothing can arm' };
       const reply = await request({ cmd: 'arm', plan: planOf(row), cloids: row.cloids, gen: row.gen, meta });
       if (reply.ev !== 'armed') {
         return { ok: false, reason: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
@@ -963,15 +979,19 @@ export function createRunnerHost(deps: HostDeps) {
   const api = {
     // ---------- ideas: drawn, no authority ----------
 
+    // A note written while the drawing seat is marked carries the mark (PlanRow.webRead).
     draw(input: PlanInput, by: string | null): PlanRow {
       const at = nowIso(now());
       const plan: Plan = { id: nextId(), ...input };
-      const row: PlanRow = { ...plan, status: 'idea', hash: planHash(plan), cloids: {}, gen: 0, by, createdAt: at, updatedAt: at };
+      const stamp = input.note !== undefined && by !== null && webReadBy(by) ? { webRead: true as const } : {};
+      const row: PlanRow = { ...plan, status: 'idea', hash: planHash(plan), cloids: {}, gen: 0, by, ...stamp, createdAt: at, updatedAt: at };
       persist(row);
       return row;
     },
 
-    redraw(id: string, changes: Record<string, unknown>): { ok: true; row: PlanRow } | { ok: false; reason: string } {
+    // `by` is the seat making the change: a note it writes while marked is stamped, and a stamp
+    // already on the row stays with it until the note is gone.
+    redraw(id: string, changes: Record<string, unknown>, by: string | null = null): { ok: true; row: PlanRow } | { ok: false; reason: string } {
       const row = rows.get(id);
       if (row === undefined) return { ok: false, reason: `no plan ${id}` };
       if (row.status !== 'idea') return { ok: false, reason: `${id} is ${row.status}: an armed plan changes through propose_trade_change` };
@@ -985,6 +1005,8 @@ export function createRunnerHost(deps: HostDeps) {
       if (!parsed.ok) return { ok: false, reason: parsed.errors.join('; ') };
       const plan: Plan = { id, ...parsed.plan };
       const next: PlanRow = { ...bookkeepingOf(row), ...plan, hash: planHash(plan) };
+      if (typeof changes.note === 'string' && by !== null && webReadBy(by)) next.webRead = true;
+      if (next.note === undefined) delete next.webRead;
       persist(next);
       return { ok: true, row: next };
     },
@@ -1052,6 +1074,8 @@ export function createRunnerHost(deps: HostDeps) {
       if (mark === null) return { ok: false, detail: `no mark price for ${row.symbol}` };
       const armed = await ensureArmed(row);
       if (!armed.ok) return { ok: false, detail: armed.reason };
+      // The new exits are signed by the child, so Freeze is read here, last.
+      if (frozen()) return { ok: false, detail: 'kill switch is on; nothing is changed' };
       const reply = await request({ cmd: 'modify', id, stop: c.stop, target: c.target, cloids: row.cloids, gen: row.gen, mark });
       if (reply.ev !== 'modified') {
         return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
@@ -1128,6 +1152,10 @@ export function createRunnerHost(deps: HostDeps) {
       };
     },
 
+    // Whether the account is known to hold something a freeze has to close: a position, or a
+    // plan with an order on the book. The same test stopAll makes.
+    openOnVenue,
+
     onMarket,
     onAccount,
     onLines(fn: (id: string, t: number) => number | null): void {
@@ -1175,7 +1203,11 @@ export function createRunnerHost(deps: HostDeps) {
         rearm.push(row);
       }
       for (const row of rearm) {
-        const out = await armRow(row);
+        /* A SHUT WALLET ARMS NOTHING HERE. While a touch's lease or a shut when idle holds the key
+           for the move it shuts behind, the trading key still reads, and a reconcile landing then
+           armed every waiting plan with it (re-audit R-L2). Such a row waits, locked, for the
+           unlock that re-runs this. */
+        const out = deps.walletOpen?.() !== true ? { ok: false as const, reason: 'the wallet is locked' } : await armRow(row);
         if (!out.ok) {
           row.locked = true;
           persist(row);
@@ -1237,9 +1269,8 @@ export function createRunnerHost(deps: HostDeps) {
       /* Anything on the venue is closed, whether or not a runner is up and whether or not a
          plan made it: a position opened by hand, or one a finished plan left behind, is still
          the account's money at risk. A runner is started for it if none is running. */
-      const onVenue = liveRows().some((r) => r.status !== 'waiting') || (account?.positions ?? []).some((p) => p.szi !== 0);
       let stillOpen: string[] = [];
-      if (onVenue || (doomed !== null && doomed.connected && liveRows().length > 0)) {
+      if (openOnVenue() || (doomed !== null && doomed.connected && liveRows().length > 0)) {
         const out = await flattenAll();
         stillOpen = out.stillOpen;
         if (!out.ok) record({ type: 'error', id: null, message: `${reason}: ${out.detail}` });

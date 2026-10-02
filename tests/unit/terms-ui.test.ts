@@ -187,7 +187,7 @@ test('the first run draws the terms through content() and accepts them through a
   const world = build(noWallet(termsSlice(false)));
   const body = makeNode('div');
   const note = world.sandbox.PhosphorTerms.content(body);
-  assert.equal(find(body, '.terms-fact').length, 4, 'four facts');
+  assert.equal(find(body, '.terms-fact').length, 5, 'five facts');
   assert.deepEqual(find(body, 'a').map((a) => [a.textContent, a.href ?? null, a.getAttribute('target')]), [
     ['Terms of use', 'https://phosphor.money/terms/', '_blank'],
     ['Privacy page', 'https://phosphor.money/privacy/', '_blank'],
@@ -228,7 +228,7 @@ test('over a wallet that exists, the card is up before anything else, with the m
   assert.equal(find(screen, '.terms-mark').length, 1, 'no mark over the card');
   assert.equal(find(screen, 'h1')[0].id, 'terms-title');
   assert.equal(find(screen, 'h1')[0].textContent, 'Before you start');
-  assert.equal(find(screen, '.terms-fact').length, 4, 'four facts');
+  assert.equal(find(screen, '.terms-fact').length, 5, 'five facts');
 
   const links = find(screen, 'a');
   // The href is written by ui/core/links.js, as a property, the way the rest of the window's

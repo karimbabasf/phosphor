@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { RELAY_API_KEY_ENV, RELAY_URL, relayClient } from '../../src/relay/client.ts';
 import { INTENTS_API_KEY_ENV } from '../../src/rails/intents-native.ts';
 import { READ_TIMEOUT_MS, VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
+import { venueSaid } from '../../src/venue-words.ts';
 
 const USDC = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const USDT = 'nep141:usdt.tether-token.near';
@@ -103,8 +104,10 @@ test('publishIntent sends the signed bytes untouched under a write deadline and 
   assert.ok(t.calls[0].signal instanceof AbortSignal);
   assert.equal(VENUE_WRITE_TIMEOUT_MS, 30_000);
 
-  assert.deepEqual(await client.publishIntent(req), { status: 'FAILED', reason: 'error simulating intents: insufficient balance' });
-  await assert.rejects(() => client.publishIntent(req), /status MAYBE, which this app does not know/);
+  // The relay's sentence is its own words, quoted as data: the rail repeats it to the agent.
+  assert.deepEqual(await client.publishIntent(req), { status: 'FAILED', reason: venueSaid('The solver relay', 'error simulating intents: insufficient balance', 300) });
+  // A status word the app does not know is the relay's to choose, so it is quoted too.
+  await assert.rejects(() => client.publishIntent(req), (err: Error) => err.message.includes(`status ${venueSaid('The solver relay', 'MAYBE', 40)}, which this app does not know`));
 });
 
 test('status carries the word as spelled, the NEAR hash when there is one, and the filled amounts', async () => {
@@ -124,7 +127,7 @@ test('status carries the word as spelled, the NEAR hash when there is one, and t
     filledAmounts: ['2000000', '1961996'],
   });
   const unknown = await client.status('h1');
-  assert.equal(unknown.status, 'SOMETHING_NEW', 'a word this app does not know is passed up as itself');
+  assert.equal(unknown.status, venueSaid('The solver relay', 'SOMETHING_NEW', 120), 'a word this app does not know is passed up quoted, since the relay chose it');
   await assert.rejects(() => client.status('h1'), /no status word/);
   assert.deepEqual((t.calls[0].body['params'] as unknown[])[0], { intent_hash: 'h1' });
 });

@@ -33,7 +33,12 @@ import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
+import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
+import { CLOSE_GRACE_MS } from '../keystore/store.ts';
+import { wipe } from '../keystore/envelope.ts';
+import { mayStillSign } from '../proposals.ts';
+import { rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
@@ -47,8 +52,29 @@ const MIN_PASSWORD = 8;
 // enough that a nonce left in a page's memory is not a standing key.
 const REVEAL_TTL_MS = 30_000;
 
-type Pending = { what: 'mnemonic' | 'keys'; expires: number };
+// The material rides in the slot as bytes, read under the password at the POST, so the GET needs
+// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for.
+type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null; prove: number[] };
 const pending = new Map<string, Pending>();
+
+/* A LOCK ENDS EVERY REVEAL THE WINDOW HAS NOT SPENT. A slot holds the key or the words, read under
+   the password, and a lock that dropped the wallet's key left them here, redeemable for the rest
+   of the window (re-audit R-L5). Every lock wipes every slot: the person's Lock and a shut when
+   idle (handleLock), and the idle lock, the screen lock and a touch's lease ending, which turn the
+   keystore's state (wipeOnLock). */
+function wipeReveals(): void {
+  for (const held of pending.values()) wipe(held.secret);
+  pending.clear();
+}
+
+const watched = new WeakSet<object>();
+function wipeOnLock(keystore: Ctx['keystore']): void {
+  if (watched.has(keystore)) return;
+  watched.add(keystore);
+  keystore.onChange((state) => {
+    if (state !== 'unlocked') wipeReveals();
+  });
+}
 
 /* Every route here carries the window token, the same way approve does, and answers the same
    403. It is written once because the failure mode of writing it five times is that the fifth
@@ -113,7 +139,7 @@ const REFUSALS: Record<string, string> = {
   no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
   damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
   locked_out: 'Too many tries. Wait a moment and try again.',
-  busy: 'A move is being sent, so the wallet stays open until it has finished.',
+  busy: 'A move is being signed, so the wallet locks the moment its signature is made.',
 };
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -176,17 +202,23 @@ export async function handleUnlock(ctx: Ctx, req: http.IncomingMessage, res: htt
   }
 }
 
-/* WHEN IDLE: the lock the shell takes on its way out (a quit, an update's relaunch, the window
-   closing). Every signer reads the key through keystore.keys(), which throws once it is locked,
-   so a lock landing under a move being sent cuts it partway, which is what the drain in
-   src/shutdown.ts exists to prevent. The shell used to read /api/health and then lock, two
-   requests with room between them for a move to start. The check and the lock are one
-   synchronous step here, and a refused lock is the stop's: the unlocked key lives only in this
-   process and goes with it. A store that cannot be read cannot say nothing is being sent, so it
-   refuses too. The person's own Lock never asks this and is never refused. */
-function sending(ctx: Ctx): number {
+/* WHEN IDLE: the lock the shell takes when the person steps away (the screen locks, the Mac
+   switches to another user) and on its way out (a quit, an update's relaunch, the window
+   closing). Every signer reads its key from the keystore, which refuses once it is locked, so a
+   lock landing under a move that has not signed yet cuts it partway, which is what the drain in
+   src/shutdown.ts exists to prevent. The check and the lock are one synchronous step here.
+   ONLY A MOVE THAT MAY STILL SIGN HOLDS IT, and not by refusing. This used to refuse while any
+   move was `executing`, and a move stays executing through its whole delivery watch, minutes of
+   polling that need no key: the shell asked for forty seconds and gave up, and the wallet stayed
+   open until the idle timer with nobody at the desk, while an agent could keep one move after
+   another executing. Now the wallet is shut at once (locked to everything new) and the key goes
+   the moment those signatures are made, or after CLOSE_GRACE_MS (Keystore.lockWhen). The answer
+   stays `busy` while it closes, so a quit still waits on its drain. A store that cannot be read
+   cannot say nothing is signing, so it closes on the grace alone. The person's own Lock never
+   asks this and is never refused. */
+function signing(ctx: Ctx): number {
   try {
-    return ctx.proposals.list().filter((p) => p.status === 'executing').length;
+    return ctx.proposals.list().filter(mayStillSign).length;
   } catch {
     return -1;
   }
@@ -195,12 +227,27 @@ function sending(ctx: Ctx): number {
 export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/lock', req, res);
   if (body === null) return;
+  wipeReveals();
   if (body.whenIdle === true) {
-    const executing = sending(ctx);
-    if (executing !== 0) return sendJson(res, 200, { ...refusal('busy'), executing: executing < 0 ? null : executing });
+    const count = signing(ctx);
+    const wasOpen = ctx.keystore.isUnlocked();
+    if (count !== 0 && ctx.keystore.lockWhen('when-idle', () => signing(ctx) === 0, CLOSE_GRACE_MS)) {
+      if (wasOpen) {
+        // Shut is locked to the window, so the lock screen says why from now, not when the key goes.
+        lockReasonFor(ctx.keystore).note(lockCodeOf(body.reason));
+        const moves = count < 0 ? 'the moves already signing have' : count === 1 ? 'the move already signing has' : `the ${count} moves already signing have`;
+        ctx.audit.append('app_start', `the wallet was shut (${String(body.reason ?? 'on demand')}); its key goes as soon as ${moves} a signature, at most ${CLOSE_GRACE_MS / 60_000} minutes`, { reason: body.reason ?? 'on_demand', signing: count < 0 ? null : count });
+        announce(ctx);
+      }
+      return sendJson(res, 200, { ...refusal('busy'), executing: count < 0 ? null : count });
+    }
   }
   const was = ctx.keystore.lock();
-  if (was) ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  // Only a lock that happened gets a code; a second request while locked keeps the first one's.
+  if (was) {
+    lockReasonFor(ctx.keystore).note(lockCodeOf(body.reason));
+    ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  }
   announce(ctx);
   sendJson(res, 200, { ok: true });
 }
@@ -227,12 +274,15 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     // The words are audited by their absence: the line says a wallet exists and names the
     // address, which is the fact a log is for. The phrase is returned once, here, and never
     // written anywhere this process controls.
+    // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
+    // run's next step.
+    const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
     ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
     ctx.session.touch();
     announce(ctx);
-    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses });
+    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -259,7 +309,7 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, addresses: out.addresses });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -293,7 +343,7 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
       note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
     });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -323,7 +373,7 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
     ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
     sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -346,40 +396,44 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   // Re-entering the password is the control, so it is checked against the file rather than
   // against the fact that the wallet happens to be open.
   //
-  // This one DOES unlock, unlike the backup above, and it has to: the second half of the
-  // handshake reads material off an open wallet, thirty seconds later, with no password in
-  // hand. What was missing is that the app never noticed. So the unlock is announced below,
-  // exactly as pressing Unlock would be.
-  const wasShut = ctx.keystore.state() === 'locked';
-  const opened = await ctx.keystore.unlock(password);
-  if (!opened.ok && opened.error !== 'no_wallet') {
-    ctx.audit.append('approve_attempt_rejected', `reveal refused: ${opened.error}`, { error: opened.error, what });
-    return sendJson(res, 200, refusal(opened.error, opened.retryInSec));
+  // IT OPENS NOTHING. The material is read under the password into this nonce's slot, for the GET
+  // to spend once, and the wallet stays exactly as it was (Keystore.readWithPassword). This used to
+  // be a full unlock, announced and releasing the queue, on a password typed to see the words: the
+  // wallet then stayed open for signing until the idle lock, and every plan waiting on an unlock
+  // re-armed.
+  const read = await ctx.keystore.readWithPassword(password, (payload) => (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null);
+  if (!read.ok) {
+    if (read.error === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
+    ctx.audit.append('approve_attempt_rejected', `reveal refused: ${read.error}`, { error: read.error, what });
+    return sendJson(res, 200, refusal(read.error, read.retryInSec));
   }
-  if (ctx.keystore.state() !== 'unlocked') return sendJson(res, 200, refusal('no_wallet'));
-
-  if (wasShut) {
-    /* The wallet is open now and everything that watches it has to be told: the window draws a
-       whole screen off the lock frame, and the queue behind the lock is waiting on exactly this.
-       The queue is released in the BACKGROUND rather than awaited, because this response carries
-       a nonce that dies in thirty seconds and releasing a queue means sending a rail apiece. */
-    ctx.audit.append('app_start', 'the wallet was unlocked by the reveal handshake');
-    announce(ctx);
-    void ctx.releaseQueued().catch((err: unknown) => {
-      ctx.audit.append('error', `releasing the queue after a reveal failed: ${errText(err)}`);
-    });
-  }
-  if (what === 'mnemonic' && ctx.keystore.header()?.hasMnemonic !== true) {
+  if (what === 'mnemonic' && (typeof read.value !== 'string' || read.value === '')) {
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
+  let prove: number[] = [];
+  if (what === 'mnemonic' && typeof read.value === 'string') {
+    const wallet = ctx.keystore.addresses().evm;
+    if (wallet !== null) prove = rememberPhrase(read.value.split(' '), wallet, ctx.keystore.kdfParams());
+  }
 
-  // Nonces that were issued and never spent are dropped here rather than by a timer, because
-  // the only thing that can add one is this line, so this is the only place the map can grow.
+  // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
+  // timer at its expiry as well: a window that never spends one leaves no key behind past it.
   const at = Date.now();
-  for (const [key, held] of [...pending]) if (at > held.expires) pending.delete(key);
+  for (const [key, held] of [...pending]) {
+    if (at <= held.expires) continue;
+    wipe(held.secret);
+    pending.delete(key);
+  }
 
+  wipeOnLock(ctx.keystore);
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null, prove });
+  setTimeout(() => {
+    const held = pending.get(nonce);
+    if (held === undefined) return;
+    wipe(held.secret);
+    pending.delete(nonce);
+  }, REVEAL_TTL_MS).unref();
   // The log records that somebody asked to see the key, which is exactly the event an owner
   // reading this file later wants to find. It records nothing about what they saw.
   ctx.audit.append('app_start', `the window asked to reveal the ${what === 'keys' ? 'private keys' : 'recovery phrase'}`, { what });
@@ -409,20 +463,21 @@ function revealSameOrigin(req: http.IncomingMessage): boolean {
   return mode !== 'navigate';
 }
 
-export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMessage, res: http.ServerResponse): void {
+export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMessage, res: http.ServerResponse): void {
   if (!revealSameOrigin(req)) return fail(res, 403, 'cross-origin request');
   const held = pending.get(nonce);
   // Spent on sight, before anything can go wrong further down: a nonce that survives a failed
   // read is a nonce that can be retried.
   pending.delete(nonce);
   if (held === undefined) return fail(res, 404, 'that reveal has already been used, or was never issued');
+  // Read out of the slot and wiped before any answer, so no path leaves it behind.
+  const secret = held.secret === null ? null : held.secret.toString('utf8');
+  wipe(held.secret);
   if (Date.now() > held.expires) return fail(res, 410, 'that reveal expired. Ask again.');
-  if (!ctx.keystore.isUnlocked()) return fail(res, 409, 'the wallet locked before the reveal was read');
 
-  const secret = ctx.keystore.reveal();
   if (held.what === 'mnemonic') {
-    if (secret.mnemonic === null) return fail(res, 404, 'this wallet has no recovery phrase');
-    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.mnemonic.split(' ') });
+    if (secret === null) return fail(res, 404, 'this wallet has no recovery phrase');
+    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.split(' '), prove: held.prove });
   }
   sendJson(res, 200, {
     ok: true,
@@ -430,7 +485,7 @@ export function handleRevealFetch(ctx: Ctx, nonce: string, req: http.IncomingMes
     // The EVM key alone: it is the intents account and the Hyperliquid signer. The Solana and
     // NEAR keys the file still seals sign nothing in this app, so they are not shown.
     keys: {
-      evm: secret.keys.evm?.privateKey ?? null,
+      evm: secret,
     },
   });
 }
@@ -619,7 +674,7 @@ async function askAddress(account: string, net: ReceiveNetwork): Promise<BridgeA
     return { net, got: { address: first.address, memo: first.memo }, why: null };
   } catch (err) {
     // One network refusing is not the others failing. The row says why and the rest draw.
-    return { net, got: null, why: err instanceof Error ? err.message : String(err) };
+    return { net, got: null, why: errText(err) };
   }
 }
 

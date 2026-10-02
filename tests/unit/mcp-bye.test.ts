@@ -22,7 +22,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
-type Seen = { op: string; session: string };
+type Seen = { op: string; session: string; secret?: unknown; key?: unknown };
 
 function stubApp(holdHelloMs: number): Promise<{ port: number; seen: Seen[]; close: () => void }> {
   const seen: Seen[] = [];
@@ -33,7 +33,7 @@ function stubApp(holdHelloMs: number): Promise<{ port: number; seen: Seen[]; clo
     });
     req.on('end', () => {
       const body = JSON.parse(raw) as Seen;
-      seen.push({ op: body.op, session: body.session });
+      seen.push({ op: body.op, session: body.session, secret: body.secret, key: body.key });
       const answer = () => {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end(JSON.stringify({ ok: true, seat: 'held' }));
@@ -69,6 +69,7 @@ test('closing the client sends the bye after the hello, even while the hello is 
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') env[k] = v;
   env.ACC_PORT = String(app.port);
   env.PHOSPHOR_SESSION = 'bye-under-test';
+  env.PHOSPHOR_SEAT = 'seat-secret-under-test';
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, 'src', 'mcp.ts')],
@@ -84,6 +85,13 @@ test('closing the client sends the bye after the hello, even while the hello is 
     assert.ok(said, `the proxy exited without saying bye; the app saw ${JSON.stringify(app.seen)}`);
     const ops = app.seen.filter((s) => s.session === 'bye-under-test').map((s) => s.op);
     assert.equal(ops.indexOf('hello') < ops.indexOf('bye'), true, `the bye overtook the hello: ${ops.join(', ')}`);
+    // The door refuses any op without this boot's secret, the bye included, and binds a seat to the
+    // key its proxy sent; a bye with neither was refused and the seat lapsed only on its TTL.
+    const hello = app.seen.find((s) => s.op === 'hello' && s.session === 'bye-under-test');
+    const bye = app.seen.find((s) => s.op === 'bye' && s.session === 'bye-under-test');
+    assert.equal(bye?.secret, 'seat-secret-under-test', 'the bye carries the seat secret');
+    assert.ok(typeof hello?.key === 'string' && hello.key.length >= 32, 'the hello binds a key');
+    assert.equal(bye?.key, hello?.key, 'the bye carries the key the hello bound');
   } finally {
     await client.close().catch(() => {});
     app.close();

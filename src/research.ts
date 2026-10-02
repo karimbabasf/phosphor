@@ -194,7 +194,7 @@ const ENTITIES: Record<string, string> = { amp: '&', lt: '<', gt: '>', quot: '"'
 // The order is the trick. Tags come out FIRST, then entities are decoded, then any angle bracket
 // the decode produced is deleted outright. Decoding first would let &#60;script walk back in as
 // markup; deleting brackets last means it cannot, whatever the encoding depth.
-function toText(raw: string): string {
+export function toText(raw: string): string {
   let s = unwrapCdata(raw);
   s = s.replace(/<(script|style)\b[\s\S]*?<\/\1>/gi, ' '); // payload lives between these tags
   s = s.replace(/<[^>]*>/g, ' ');
@@ -236,7 +236,7 @@ function oneLine(raw: string): string {
   return raw.replace(CONTROL_CHARS, ' ').replace(INVISIBLE_CHARS, '').replace(/\s+/g, ' ').trim();
 }
 
-function cap(s: string, max: number): string {
+export function cap(s: string, max: number): string {
   return s.length <= max ? s : `${s.slice(0, max - 3).trimEnd()}...`;
 }
 

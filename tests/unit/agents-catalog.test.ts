@@ -19,6 +19,7 @@ import {
   checkAgent,
   connectionLine,
   findAgentBin,
+  ownsAgentSettings,
   readPick,
   registerAgent,
   registrationArgs,
@@ -252,6 +253,11 @@ test('a checkout line names node on PATH and the repo, and quoting touches only 
 
 /* ---------- the registration ---------- */
 
+// The installed app's own environment: the shell started it on the folder SPEC names (ownsAgentSettings).
+function own(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  return { ...env, PHOSPHOR_APP_DATA: '1', PHOSPHOR_DATA_DIR: SPEC.dataDir };
+}
+
 function recorder(answers: Array<{ code: number; stdout?: string; stderr?: string }> = [{ code: 0 }]): { run: Run; calls: string[][] } {
   const calls: string[][] = [];
   let at = 0;
@@ -269,7 +275,7 @@ test('the registration runs the vendor\'s own mcp add with the same arguments th
   for (const agent of ['claude', 'codex', 'grok'] as const) {
     const { run, calls } = recorder();
     const bin = fixture(`fake-${agent}-logged-in.sh`);
-    const done = await registerAgent(agent, SPEC, { env, home, bin, run });
+    const done = await registerAgent(agent, SPEC, { env: own(env), home, bin, run });
     assert.equal(done.ok, true, agent);
     assert.equal(done.wrote, true, agent);
     assert.equal(calls.length, 1, agent);
@@ -280,6 +286,31 @@ test('the registration runs the vendor\'s own mcp add with the same arguments th
   }
 });
 
+/* REGRESSION, 2026-10-01: a check run on a throwaway data folder, its pick Grok, rewrote the real
+   ~/.grok/config.toml to point at itself. Only the app on its own data folder writes into an agent's
+   settings now; every other copy runs nothing and says why. */
+test('a copy on any other data folder writes into no agent\'s settings, for every vendor that registers', async () => {
+  const { home, env } = bareHome();
+  for (const agent of ['claude', 'codex', 'grok', 'hermes'] as const) {
+    const bin = fixture(`fake-${agent}-logged-in.sh`);
+    for (const [why, e] of [
+      ['a test or a dev run (no shell)', env],
+      ['the shell, another folder', { ...env, PHOSPHOR_APP_DATA: '1', PHOSPHOR_DATA_DIR: '/tmp/phosphor-throwaway/state' }],
+      ['the shell, no folder named', { ...env, PHOSPHOR_APP_DATA: '1' }],
+      ['a folder named, no shell', { ...env, PHOSPHOR_DATA_DIR: SPEC.dataDir }],
+    ] as const) {
+      const { run, calls } = recorder();
+      const done = await registerAgent(agent, SPEC, { env: e, home, bin, run });
+      assert.deepEqual([done.ok, done.wrote, done.skipped], [true, false, true], `${agent}: ${why}`);
+      assert.match(String(done.detail), /not run on the app's own data folder/);
+      assert.equal(calls.length, 0, `${agent}: ${why} ran ${JSON.stringify(calls)}`);
+    }
+  }
+  // The same folder spelled with a trailing slash is the same folder.
+  assert.equal(ownsAgentSettings(SPEC.dataDir, { PHOSPHOR_APP_DATA: '1', PHOSPHOR_DATA_DIR: `${SPEC.dataDir}/` }), true);
+  assert.equal(ownsAgentSettings(SPEC.dataDir, { PHOSPHOR_APP_DATA: 'true', PHOSPHOR_DATA_DIR: SPEC.dataDir }), false);
+});
+
 test('Hermes is removed before it is written, and its "Enable all tools?" question is answered down stdin', async () => {
   const { home, env } = bareHome();
   const calls: Array<{ args: string[]; input?: string }> = [];
@@ -287,7 +318,7 @@ test('Hermes is removed before it is written, and its "Enable all tools?" questi
     calls.push({ args, input });
     return { code: 0, stdout: '', stderr: '', timedOut: false };
   };
-  const done = await registerAgent('hermes', SPEC, { env, home, bin: fixture('fake-hermes-logged-in.sh'), run });
+  const done = await registerAgent('hermes', SPEC, { env: own(env), home, bin: fixture('fake-hermes-logged-in.sh'), run });
   assert.equal(done.ok, true);
   assert.equal(done.wrote, true);
   assert.deepEqual(calls.map((c) => c.args.slice(0, 2)), [['mcp', 'remove'], ['mcp', 'add']]);
@@ -308,7 +339,7 @@ test('a probe gets no stdin: a command that stops to ask a question is not waite
 test('an entry that already exists is removed and written again, so it names this installation', async () => {
   const { home, env } = bareHome();
   const { run, calls } = recorder([{ code: 1, stderr: 'MCP server phosphor already exists in user config' }, { code: 0 }, { code: 0 }]);
-  const done = await registerAgent('claude', SPEC, { env, home, bin: fixture('fake-claude-logged-in.sh'), run });
+  const done = await registerAgent('claude', SPEC, { env: own(env), home, bin: fixture('fake-claude-logged-in.sh'), run });
   assert.equal(done.ok, true);
   assert.deepEqual(calls.map((c) => c.slice(1, 3)), [['mcp', 'add'], ['mcp', 'remove'], ['mcp', 'add']]);
 });
@@ -316,7 +347,7 @@ test('an entry that already exists is removed and written again, so it names thi
 test('a registration that fails says so in a detail line and never claims a write', async () => {
   const { home, env } = bareHome();
   const { run } = recorder([{ code: 2, stderr: 'permission denied: /Users/x/.codex/config.toml' }]);
-  const done = await registerAgent('codex', SPEC, { env, home, bin: fixture('fake-codex-logged-in.sh'), run });
+  const done = await registerAgent('codex', SPEC, { env: own(env), home, bin: fixture('fake-codex-logged-in.sh'), run });
   assert.equal(done.ok, false);
   assert.equal(done.wrote, false);
   assert.match(String(done.detail), /permission denied/);

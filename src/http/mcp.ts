@@ -12,7 +12,7 @@ import type http from 'node:http';
 import { SEAT_SECRET_FILE, seatSecretPath } from '../agents.ts';
 import { oneLine } from '../intents.ts';
 import { sameOrigin } from './auth.ts';
-import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, sendJson } from './respond.ts';
+import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, rewordAnswer, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 
 // The longest string any op on this door takes, and the longest one the audit line keeps. The
@@ -27,17 +27,45 @@ import { marketReads } from './read/market.ts';
 import { swapReads } from './read/swap.ts';
 import { tradeReads } from './read/trade.ts';
 import { walletReads } from './read/wallet.ts';
+import { webReads } from './read/web.ts';
 import { handlePropose } from './propose.ts';
 import { handleView } from './view.ts';
 import { handleSetViewMode } from './mutation.ts';
-import { LEAD_ONLY_READ_TOOLS, READ_TOOLS } from './context.ts';
+import { LEAD_ONLY_READ_TOOLS, READ_TOOLS, STRANGER_TEXT_READS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
+import { markWebRead } from '../web-read.ts';
+import { carriesVenueWords, inAppWords } from '../venue-words.ts';
 
-/* Every read tool, in one table assembled from the seven domain files under http/read. A table
+/* A stranger's text marks the seat it is handed to (STRANGER_TEXT_READS, audit finding 5). The
+   mark is set inside writeHead, so it is in place before the first byte of the answer leaves: a
+   swap the agent asks for the instant it has read a token name is already judged marked. Only a
+   200 marks. A 400 is a lookup refused at its shape, before any host was asked, and carries no
+   stranger's word. */
+export function markStrangerReads(table: ReadTable): ReadTable {
+  const out: ReadTable = { ...table };
+  for (const tool of STRANGER_TEXT_READS) {
+    const handler = table[tool];
+    if (handler === undefined) continue;
+    out[tool] = (ctx, body, args, res) => {
+      const seat = typeof body.session === 'string' ? body.session : '';
+      if (seat !== '') {
+        const writeHead = res.writeHead.bind(res);
+        res.writeHead = ((...head: Parameters<typeof writeHead>) => {
+          if (head[0] === 200) markWebRead(seat);
+          return writeHead(...head);
+        }) as typeof res.writeHead;
+      }
+      return handler(ctx, body, args, res);
+    };
+  }
+  return out;
+}
+
+/* Every read tool, in one table assembled from the eight domain files under http/read. A table
    rather than the if-chain it replaces: a chain answers "unknown read tool" for a tool it then
    lists as known the moment a branch above it falls through, which is exactly the break the
    view chain carried for a while (see the note in view.ts). */
-const READS: ReadTable = {
+const READS: ReadTable = markStrangerReads({
   ...walletReads,
   ...marketReads,
   ...chartReads,
@@ -45,7 +73,45 @@ const READS: ReadTable = {
   ...tradeReads,
   ...chainReads,
   ...swapReads,
-};
+  ...webReads,
+});
+
+/* A VENUE'S OWN WORDS MARK THE SEAT THEY REACH, through any op on this door (fix round 2,
+   2026-10-01). An error body, a refund reason, the status page's title: text 1Click, the solver
+   relay, Hyperliquid, an RPC node or the status page wrote, which a read, a reply or a refusal can
+   carry (a move's details, the wallet's stale reason, a plan's end, a refused quote). Every quote
+   of one carries VENUE_WORDS_LABEL (src/venue-words.ts).
+   A REFUSAL THE APP KNOWS IS NOT A STRANGER'S WORDS (2026-10-02): a quote of one is put in the
+   app's own sentence before the answer's length is taken, so an agent that met an ordinary
+   refusal (margin, a price band, a minimum) keeps its no-click moves. Whatever still carries the
+   label is read for it as the answer goes out, and the seat is marked before a byte of it leaves,
+   as a stranger's read marks it above. The window reads its own routes and keeps the venue's
+   exact words. */
+function venueWordsFor(res: http.ServerResponse, seat: string): void {
+  rewordAnswer(res, (body) => (carriesVenueWords(body) ? inAppAnswer(body) : body));
+  const end = res.end.bind(res);
+  res.end = ((...args: Parameters<typeof end>) => {
+    const chunk: unknown = args[0];
+    if ((typeof chunk === 'string' || chunk instanceof Uint8Array) && carriesVenueWords(chunk)) markWebRead(seat);
+    return end(...args);
+  }) as typeof res.end;
+}
+
+// A JSON answer with every string in it put through inAppWords. Rebuilt with fromEntries, so a key
+// such as __proto__ stays a key; a body that is not JSON goes out as it was, and marks.
+function inAppAnswer(body: string): string {
+  const walk = (value: unknown): unknown => {
+    if (typeof value === 'string') return inAppWords(value);
+    if (Array.isArray(value)) return value.map(walk);
+    if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, walk(inner)]));
+    return value;
+  };
+  try {
+    return JSON.stringify(walk(JSON.parse(body)));
+  } catch {
+    return body;
+  }
+}
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
 // the refusal message and missing from the table is a tool an agent is told it has and cannot
@@ -86,8 +152,21 @@ function firstRefusal(seen: Set<string>, key: string): boolean {
   return true;
 }
 
-function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false): void {
+function rejectSeat(ctx: Ctx, error: string, body: JsonBody, res: http.ServerResponse, revoked = false, foreign = false): void {
   const session = oneLine(body.session ?? 'unnamed-session', 80);
+  if (foreign) {
+    // A call with the file secret on a seat it does not hold: the app's own agent's, or another
+    // hand-started proxy's. One line per session, like a full roster.
+    if (firstRefusal(ctx.seats, `foreign:${session}`)) {
+      ctx.audit.append('agent_rejected', 'a call posted as a seat it does not hold and was refused', {
+        op: String(body.op ?? ''),
+        session,
+        client: body.client === undefined ? undefined : oneLine(body.client, 80),
+      });
+    }
+    fail(res, 403, error, { seat: 'foreign' });
+    return;
+  }
   if (revoked) {
     // A replaced agent is not a second agent that showed up: the human took the seat off it
     // on purpose. It gets its own marker so the proxy exits instead of reporting a busy
@@ -186,8 +265,9 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      which log_tail hands to every agent, a worker included, and GET /api/log hands to any local
      process, so the credential the door checks below was open to anyone who read the log. The
      arguments, the session and the client name are the record; the secret was never part of it.
-     A token is stripped for the same reason, in case a caller ever sends one here. */
-  const { secret: _secret, token: _token, ...logged } = body;
+     A token is stripped for the same reason, in case a caller ever sends one here, and so is the
+     key a hand-started proxy binds its seat with (src/agents.ts). */
+  const { secret: _secret, token: _token, key: _key, ...logged } = body;
 
   /* THE SEAT SECRET, ON EVERY OP, FROM EVERY SESSION. Origin above is a header any local process
      sets, and this door is where a propose at or under the click threshold executes with no human
@@ -241,10 +321,10 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     const shown = rosterShown(ctx);
     const claim = ctx.agents.claim(body);
     if (!claim.ok) {
-      rejectSeat(ctx, claim.error, body, res, claim.revoked === true);
+      rejectSeat(ctx, claim.error, body, res, claim.revoked === true, claim.foreign === true);
       return;
     }
-    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
+    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', { ...logged, session: claim.member.session });
     /* A heartbeat arrives every five seconds per agent and used to push a whole state frame to
        the window each time, which rebuilt the state for nothing (R5). It pushes one now only when
        the roster the window draws changed: an agent arrived, or renamed itself on its handshake.
@@ -265,11 +345,16 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   }
 
   // A clean shutdown, which is what makes the light go out the moment an agent is
-  // terminated rather than one TTL later. Only the holder can free its own seat.
+  // terminated rather than one TTL later. Only the holder can free its own seat: a bye takes
+  // the person's Allow with it, so it is bound to the seat's key like every other op.
   if (op === 'bye') {
-    const freed = ctx.agents.release(body.session);
-    if (freed !== null) {
-      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.client, since: freed.since });
+    const freed = ctx.agents.release(body);
+    if (!freed.ok) {
+      rejectSeat(ctx, freed.error, body, res, false, true);
+      return;
+    }
+    if (freed.member !== null) {
+      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.member.client, since: freed.member.since });
       ctx.sse.broadcastState();
     }
     sendJson(res, 200, { ok: true });
@@ -281,9 +366,19 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   // connected, and something has to be attached for a tool call to exist.
   const seat = ctx.agents.check(body);
   if (!seat.ok) {
-    rejectSeat(ctx, seat.error, body, res, seat.revoked === true);
+    rejectSeat(ctx, seat.error, body, res, seat.revoked === true, seat.foreign === true);
     return;
   }
+  /* ONE SEAT, ONE ID, from here to every handler and every log line. The roster keys a seat on the
+     session cleaned (control characters out, trimmed, cut to 64) and marks an outside seat under
+     that id; this door used to hand the raw string on. A caller holding the file secret sent
+     "seat " or 70 characters, was seated and marked as one id, and proposed as another: the row's
+     `by` named no marked seat and its small swap ran with no click (audit 2026-10-01). So every
+     read of body.session below, the propose door's `by`, the stranger-read mark and every
+     markIfCarried, is the id the roster checked. A call with no session is the seat it was given. */
+  body.session = seat.member.session;
+  logged.session = seat.member.session;
+  venueWordsFor(res, seat.member.session);
   if (seat.edge) {
     ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     // An agent that joined on its first op (no hello) is connected NOW. Push state so

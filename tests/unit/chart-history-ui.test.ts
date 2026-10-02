@@ -158,9 +158,10 @@ test('the left edge nearing the oldest bar held asks for the bars before it, onc
   assert.ok(L.start <= s.CHART_FETCH_MARGIN, `the left edge is inside the margin at ${L.start}`);
   s.maybeBackfill(L);
   s.maybeBackfill(L);
+  // The request goes out after the read key is in hand (a microtask once the window holds it).
+  await settle();
   assert.equal(asked.length, 1, 'one request in flight at a time');
   assert.match(asked[0] as string, /^\/api\/candles\?product=BTC-USD&granularity=60&before=1760000000&limit=2000&provider=auto$/);
-  await settle();
   assert.equal(s.CHART.candles.length, 2200);
   assert.equal(s.CHART.view.panOffset, 60);
   assert.equal(s.CHART_BACKFILL.inflight, false);

@@ -166,7 +166,7 @@ export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
 
 /* Who is proposing: the idempotency key they chose and the seat they hold. Every propose door
    passes its params object as this, so a rail never has to know either field by name. */
-export type Origin = { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean };
+export type Origin = { clientKey?: ClientKey; by?: string | null; webRead?: boolean; appTurn?: boolean; outside?: boolean };
 
 /* A draft the app itself will not file. The rule stays `invalid_draft`, the app's own wall and
    never the person's; `code` is the cause the card and the agent read (src/rails/reasons.ts):
@@ -190,6 +190,19 @@ function liftableByQuote(ctx: PCtx, verdict: Verdict, draft: RailDraft, snapshot
   );
 }
 
+/* A REASON THE APP HOLDS A MOVE FOR, BEYOND THE POLICY'S OWN. An allow becomes a click; a click
+   keeps its rule. Every such sentence joins `reasons` and the card's `why`, one line each, so the
+   card says it at every size and a second reason never hides the first. */
+function heldFor(verdict: Verdict, said: readonly string[]): Verdict {
+  if (said.length === 0) return verdict;
+  if (verdict.outcome === 'allow') return { outcome: 'needs_approval', reasons: [...verdict.reasons, ...said], why: [...said] };
+  if (verdict.outcome === 'needs_approval') {
+    const rule = verdict.why ?? verdict.reasons.slice(-1);
+    return { ...verdict, reasons: [...verdict.reasons, ...said], why: [...rule, ...said] };
+  }
+  return verdict;
+}
+
 /* THE SIMULATION, TAKEN BEFORE THE QUEUE. It is a network read, and a read inside the spend queue
    holds every approve and refuse behind it (R5 B2). Skipped where the engine refuses the draft as
    it stands and no quote could change that (a kill switch, a cap), so a refused move still costs
@@ -208,8 +221,16 @@ export async function presimulate(ctx: PCtx, kind: RailKind, draft: RailDraft): 
 // Shared tail for every rail: evaluate, simulate, persist, and execute only if the policy said
 // allow. Nothing here knows which rail it is holding. `presimulated` is the simulation a caller
 // took before the queue (presimulate), used instead of asking again.
-// `ask` is a reason the caller already holds for a person to look first: an allow becomes a click.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin, presimulated?: SimulationResult | null, ask?: string | null): Promise<Proposal> {
+// `asks` are reasons the caller already holds for a person to look first (heldFor): an allow
+// becomes a click, and each is its own line on the card.
+export async function proposeRail(
+  ctx: PCtx,
+  kind: RailKind,
+  draft: RailDraft,
+  origin?: Origin,
+  presimulated?: SimulationResult | null,
+  asks: readonly (string | null | undefined)[] = [],
+): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
@@ -254,16 +275,14 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     }
     draft = repriced;
     verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
-    if (verdict.outcome === 'allow') {
-      verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, `${unpriced} A move the app cannot measure waits for your click, whatever the size.`] };
-    } else if (verdict.outcome === 'needs_approval') {
-      verdict = { ...verdict, reasons: [...verdict.reasons, unpriced] };
-    }
+    verdict = heldFor(verdict, [verdict.outcome === 'allow' ? `${unpriced} A move the app cannot measure waits for your click, whatever the size.` : unpriced]);
   }
 
-  if (ask !== undefined && ask !== null && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
+  // The builder's own reasons to wait (a price only 1Click's list gives, an earlier swap of the coin
+  // that may still go through), each said on the card at every size, as the rail's ask is below.
+  verdict = heldFor(verdict, asks.filter((a): a is string => typeof a === 'string' && a !== ''));
 
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 
   if (rail === null) {
     return land(ctx, 
@@ -304,7 +323,29 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     );
   }
 
-  return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
+  /* A rail that priced the move and could not check that price says so, and the move waits for a
+     click. Said at every size: over the click threshold the card would otherwise give the
+     threshold alone, and the moves where an unchecked price costs most would read like any other. */
+  if (simulation.ask !== undefined) verdict = heldFor(verdict, [simulation.ask]);
+
+  return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
+}
+
+/* THE COINS THE CARD WAS PRICED WITH, pinned into the draft that lands. The rail reads 1Click's
+   token list again at execute, and that list is signed by nobody: execute signs for the coins
+   pinned here and refuses a list that names anything else for them (src/rails/asset-pin.ts). */
+function pinned(draft: RailDraft, simulation: SimulationResult | null): RailDraft {
+  const assets = simulation?.ok === true ? simulation.assets : undefined;
+  if (assets === undefined) return draft;
+  switch (draft.kind) {
+    case 'swap':
+    case 'intents_send':
+    case 'intents_pay':
+    case 'hl_deposit':
+      return { ...draft, assets };
+    default:
+      return draft;
+  }
 }
 
 /* Why a simulation did not pass, as the rail named it: the price moved, nobody quoted, the

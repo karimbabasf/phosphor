@@ -141,6 +141,8 @@ const draft: SwapDraft = {
   to: OWNER,
   counterparty: INTENTS_NATIVE_COUNTERPARTY,
   quote: null,
+  // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+  assets: { origin: { assetId: ORIGIN, decimals: 6 }, destination: { assetId: DEST, decimals: 6 } },
 };
 
 test('PoC case 1: FAILED with the balance unchanged is not "nothing moved" while the signed transfer can still run', async () => {
@@ -254,6 +256,22 @@ test('an unconfirmed swap whose signed transfer can still run holds a changed-am
   later.store.put({ ...first, result: { ...first.result!, evidence: signed(new Date(Date.now() - GRACE_AND_A_MINUTE).toISOString()) } });
   const after = await landed(later, later.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 21, minAmountOut: 20.8 }));
   assert.equal(after.status, 'executed', 'past its deadline the first can no longer run');
+});
+
+/* SAID ON THE CARD AT EVERY SIZE. The card's why is the last reason, which over the click threshold
+   was the threshold alone, so the big swap a duplicate costs most read like any other click. */
+test('the card says an earlier swap of the coin may still go through at $20 and at $5,000', async () => {
+  for (const amountIn of [20, 5000]) {
+    const evidence = { handle: 'dep-1', nonce: LIVE_NONCE, deadline: new Date(Date.now() + 3 * 60_000).toISOString(), providerStage: 'FAILED' };
+    const answers = [{ ok: false, reason: 'venue_failed_watching', detail: '1click reported FAILED and the transfer has not run', txids: ['intent-h'], evidence }];
+    const h = makeCtx({ rails: [railThat('swap', async () => answers.shift() ?? { ok: true, detail: 'swapped', txids: ['intent-2'] })] });
+    const first = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn: 10, minAmountOut: 9.9 }));
+    assert.equal(first.status, 'needs_reconciliation');
+
+    const again = await landed(h, h.svc.proposeSwap({ chain: 'arb', fromSymbol: 'USDT', toSymbol: 'USDC', amountIn, minAmountOut: amountIn * 0.99 }));
+    assert.equal(again.status, 'pending', `$${amountIn}`);
+    assert.equal(again.verdict.reasons.at(-1), 'An earlier swap of this coin may still go through, so this one waits for your OK.', `$${amountIn}`);
+  }
 });
 
 // ---------- reconcile ----------
