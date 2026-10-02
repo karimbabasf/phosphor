@@ -7,7 +7,10 @@
 // on screen. It unlocks through the card, checks the first run is back on the same step with the
 // same words, types three of them back on Prove it and waits for Your addresses. Before
 // ui/design/lock.css put the card in front, the first run painted over it: the words stayed up
-// with nobody at the desk and the unlock field sat under them, holding the keyboard.
+// with nobody at the desk and the unlock field sat under them, holding the keyboard. Along the
+// way it counts the frames the field behind the first run draws: about 30 a second while it
+// shows, none while the window is hidden (the page's visibility set the way WebKit sets it) or
+// the lock card is up, and 30 again after.
 //
 // One line per check, then a summary line; exit 1 on any failure. The three moments are shot into
 // PROOF_OUT (a temp directory by default, so docs/ is never written).
@@ -126,6 +129,19 @@ const FRONT = `(function () {
   };
 })()`;
 
+/* Frames the field behind the first run has drawn so far, from its handle on the motion loop. */
+const FIELD_FRAMES = `(function () {
+  var handle = window.PhosphorMotion.handles().filter(function (h) { return h.node && h.node.id === 'field'; })[0];
+  return handle ? handle.stats().frames : -1;
+})()`;
+
+/* The page's visibility set the way WebKit sets it when the window is minimized or hidden. */
+const setHidden = (hidden: boolean): string => `(function () {
+  Object.defineProperty(document, 'hidden', { configurable: true, get: function () { return ${hidden}; } });
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: function () { return ${hidden ? "'hidden'" : "'visible'"}; } });
+  document.dispatchEvent(new Event('visibilitychange'));
+})()`;
+
 const failures: string[] = [];
 function check(ok: boolean, line: string): void {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${line}`);
@@ -167,6 +183,20 @@ async function main(): Promise<void> {
     await onStep('Save your recovery words');
     const words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .word-text")).map(function (n) { return n.textContent; })')) as string[];
     await page.screenshot({ path: path.join(SHOTS, 'firstrun-lock-1-words.png') });
+    /* The field's frames over two seconds, as frames a second. */
+    const fieldRate = async (): Promise<number> => {
+      const from = Number(await page.evaluate(FIELD_FRAMES));
+      await sleep(2_000);
+      return (Number(await page.evaluate(FIELD_FRAMES)) - from) / 2;
+    };
+    const open = await fieldRate();
+    check(open >= 20, `the field draws on the first run (${open} frames a second)`);
+    await page.evaluate(setHidden(true));
+    const hidden = await fieldRate();
+    check(hidden === 0, `the field draws nothing while the window is hidden (${hidden} frames a second)`);
+    await page.evaluate(setHidden(false));
+    const shown = await fieldRate();
+    check(shown >= 20, `the field draws again when the window shows (${shown} frames a second)`);
 
     // The screen locks, as the shell reports it.
     const locked = await fetch(`${base}/api/lock`, {
@@ -185,6 +215,8 @@ async function main(): Promise<void> {
     check(front.keyboard === 'the lock field', `the keyboard is in the lock field (found: ${front.keyboard})`);
     const why = String(await page.evaluate('(document.querySelector("#screen-lock .lock-why") || {}).textContent || ""'));
     check(why.includes('Locked when your screen locked.'), `the card says why: "${why}"`);
+    const covered = await fieldRate();
+    check(covered === 0, `the field draws nothing behind the lock card (${covered} frames a second)`);
 
     // Unlock through the card, as a person types it.
     await page.fill('#screen-lock input[type="password"]', PASSWORD);
@@ -196,6 +228,8 @@ async function main(): Promise<void> {
     await page.screenshot({ path: path.join(SHOTS, 'firstrun-lock-3-unlocked.png') });
     check(back.title === 'Save your recovery words' && back.middle === 'the first run', `unlocking is back on the same step, in front (on "${back.title}", middle: ${back.middle})`);
     check(back.wordsDrawn === 12 && JSON.stringify(again) === JSON.stringify(words), `the same twelve words are back (${back.wordsDrawn} drawn)`);
+    const unlocked = await fieldRate();
+    check(unlocked >= 20, `the field draws again after the unlock (${unlocked} frames a second)`);
 
     // Written down: Prove it, and the addresses step.
     await page.click('#screen-firstrun .screen-body input[type="checkbox"]');

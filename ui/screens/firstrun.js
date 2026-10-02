@@ -61,6 +61,8 @@
   var progress = null;
   var ghost = null;
   var fieldCanvas = null;
+  var fieldHandle = null;
+  var lockWatch = null;
   var runs = { field: null, welcome: null, body: null, ghost: null };
   var stepHandle = null;
   var step = 0;
@@ -192,7 +194,8 @@
     fieldCanvas.className = 'field-layer';
     fieldCanvas.setAttribute('aria-hidden', 'true');
     host.insertBefore(fieldCanvas, shell);
-    Field.mount(fieldCanvas, { clear: shell, fps: 30 });
+    fieldHandle = Field.mount(fieldCanvas, { clear: shell, fps: 30 });
+    watchLock();
     var Motion = window.Motion;
     if (!Motion || typeof Motion.animate !== 'function') return;
     runs.field = Motion.animate(fieldCanvas, { opacity: [0, 1] }, { duration: reduced() ? 0.3 : 0.6, ease: EASE });
@@ -204,10 +207,31 @@
   }
 
   function unmountField() {
+    if (lockWatch) lockWatch.disconnect();
+    lockWatch = null;
+    fieldHandle = null;
     var Field = window.PhosphorField;
     if (Field && typeof Field.unmount === 'function') Field.unmount();
     if (fieldCanvas && fieldCanvas.parentNode) fieldCanvas.parentNode.removeChild(fieldCanvas);
     fieldCanvas = null;
+  }
+
+  /* While the lock card is up the first run is hidden behind it (lock.css,
+     keyed on the lock screen's hidden attribute), so the field stops drawing
+     on that same attribute and starts again as the card goes, rather than
+     drawing 30 frames a second nobody can see. A hidden window needs nothing
+     here: the motion loop idles the whole page then. */
+  function watchLock() {
+    var lock = document.getElementById('screen-lock');
+    if (!lock || !fieldHandle || typeof MutationObserver !== 'function') return;
+    var follow = function () {
+      if (!fieldHandle) return;
+      if (lock.hidden) fieldHandle.start();
+      else fieldHandle.stop();
+    };
+    lockWatch = new MutationObserver(follow);
+    lockWatch.observe(lock, { attributes: true, attributeFilter: ['hidden'] });
+    if (!lock.hidden) fieldHandle.stop();
   }
 
   function refitField() {

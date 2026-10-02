@@ -200,15 +200,26 @@ type World = {
   calls: Any[];
   frames: Array<(now: number) => void>;
   animations: Any[];
+  /* The document's own events (motion.js listens for visibilitychange), fired by the test. */
+  fireDocument: (type: string) => void;
+  /* The lock screen's hidden attribute set the way dom.setHidden sets it, and every observer
+     watching it told, as the browser tells a MutationObserver. */
+  setLockHidden: (hidden: boolean) => void;
 };
 
-type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean };
+type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean; lockScreen?: boolean };
 
 const MNEMONIC = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 
 function build(state: Any, opts: Options = {}): World {
   const nodes: Record<string, Any> = {};
   for (const id of ['screen-firstrun', 'screen-terms', 'page']) nodes[id] = makeNode('div');
+  if (opts.lockScreen) {
+    nodes['screen-lock'] = makeNode('div');
+    nodes['screen-lock'].hidden = true;
+  }
+  const docListeners: Record<string, Array<() => void>> = {};
+  const watchers: Array<{ owner: Any; target: Any; filter: string[]; fn: () => void; live: boolean }> = [];
   const body = makeNode('body');
   const root = makeNode('html');
   const calls: Any[] = [];
@@ -222,7 +233,8 @@ function build(state: Any, opts: Options = {}): World {
     createElement: makeNode,
     getElementById: (id: string) => nodes[id] ?? null,
     querySelectorAll: () => [],
-    addEventListener() {},
+    addEventListener(type: string, fn: () => void) { (docListeners[type] ||= []).push(fn); },
+    hidden: false,
   };
   let rafId = 0;
   const sandbox: Any = {
@@ -243,6 +255,14 @@ function build(state: Any, opts: Options = {}): World {
     print() { calls.push({ route: 'print', sheet: body.childNodes.find((n: Any) => n.className === 'print-sheet') ?? null }); },
   };
   sandbox.window = sandbox;
+  if (opts.lockScreen) {
+    sandbox.MutationObserver = class {
+      fn: () => void;
+      constructor(fn: () => void) { this.fn = fn; }
+      observe(target: Any, options: Any) { watchers.push({ owner: this, target, filter: options?.attributeFilter ?? [], fn: this.fn, live: true }); }
+      disconnect() { for (const w of watchers) if (w.owner === this) w.live = false; }
+    };
+  }
   sandbox.PhosphorNet = { readable: (e: Any) => String(e && e.message ? e.message : e) };
   if (opts.motion !== 'real') sandbox.PhosphorMotion = { reduced: () => opts.reduced === true };
   if (opts.fakeMotion) sandbox.Motion = fakeMotion(animations);
@@ -299,7 +319,16 @@ function build(state: Any, opts: Options = {}): World {
   sandbox.PhosphorState.put(state);
   if (opts.terms) sandbox.PhosphorTerms.boot();
   sandbox.PhosphorFirstRun.boot();
-  return { sandbox, nodes, calls, frames, animations };
+  const fireDocument = (type: string): void => {
+    for (const fn of docListeners[type] ?? []) fn();
+  };
+  const setLockHidden = (hidden: boolean): void => {
+    const lock = nodes['screen-lock'];
+    if (!lock || lock.hidden === hidden) return;
+    lock.hidden = hidden;
+    for (const w of watchers.slice()) if (w.live && w.target === lock && w.filter.includes('hidden')) w.fn();
+  };
+  return { sandbox, nodes, calls, frames, animations, fireDocument, setLockHidden };
 }
 
 const firstRun = (vault: Any, opts: Options = {}): World =>
@@ -471,6 +500,45 @@ test('opening registers the field with the motion loop, and close() leaves no lo
   assert.equal(motion.handles().length, 1);
   world.sandbox.PhosphorFirstRun.close();
   assert.equal(motion.handles().length, 0);
+});
+
+test('the field draws nothing while the lock card covers the first run or the window is hidden, and draws again after', async () => {
+  const world = firstRun({}, { motion: 'real', field: true, lockScreen: true });
+  const motion = world.sandbox.PhosphorMotion;
+  world.sandbox.PhosphorFirstRun.open();
+  const field = motion.handles()[0];
+  let now = performance.now();
+  /* Every frame the loop asks for, each 40 ms after the last (the field's cap is 30 a second),
+     until it asks for no more or ten have run. */
+  const frames = async (): Promise<number> => {
+    const before = field.stats().frames;
+    for (let i = 0; i < 10; i += 1) {
+      await flush();
+      const tick = world.frames.shift();
+      if (!tick) break;
+      now += 40;
+      tick(now);
+    }
+    return field.stats().frames - before;
+  };
+  assert.ok((await frames()) >= 5, 'the field is not drawing on the first run');
+
+  world.setLockHidden(false);
+  assert.equal(await frames(), 0, 'the field drew behind the lock card');
+  world.setLockHidden(true);
+  assert.ok((await frames()) >= 5, 'the field did not draw again once the lock card went');
+
+  world.sandbox.document.hidden = true;
+  world.fireDocument('visibilitychange');
+  assert.equal(await frames(), 0, 'the field drew in a hidden window');
+  world.sandbox.document.hidden = false;
+  world.fireDocument('visibilitychange');
+  assert.ok((await frames()) >= 5, 'the field did not draw again when the window showed');
+
+  world.sandbox.PhosphorFirstRun.close();
+  world.setLockHidden(false);
+  world.setLockHidden(true);
+  assert.equal(motion.handles().length, 0, 'closing left the field registered');
 });
 
 /* ---------- the moments ---------- */
