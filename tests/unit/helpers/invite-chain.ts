@@ -12,7 +12,7 @@ import { bytesToHex, recoverMessageAddress } from 'viem';
 import { base58Decode } from '../../../src/chain/near.ts';
 import type { OneClickQuote, OneClickStatus } from '../../../src/intents.ts';
 import { INVITE_ASSET_ID, intentHashOf } from '../../../src/invite/payload.ts';
-import { asInviteBase, variantOf } from '../../../scripts/invite/convert.ts';
+import { asInviteBase, variantOf } from '../../../scripts/invite/usdc.ts';
 import type { MoneyNet } from '../../../scripts/invite/money.ts';
 import type { IntentsApiPort } from '../../../src/rails/intents-native.ts';
 import type { RelayClient, RelayPublishRequest } from '../../../src/relay/client.ts';

@@ -55,6 +55,8 @@ import type { RelayClient } from '../src/relay/client.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
 import { newBook, pendingMoves, readBook, unfinishedBatch } from './invite/book.ts';
 import { convertSummary, convertTreasury } from './invite/convert.ts';
+import { heldList, otherUsdc } from './invite/usdc.ts';
+import type { OtherUsdc } from './invite/usdc.ts';
 import { takeLock } from './invite/file.ts';
 import type { FileLock } from './invite/file.ts';
 import type { InviteBook } from './invite/book.ts';
@@ -217,17 +219,26 @@ function reportOf(proof: ProofFile): string {
   return text;
 }
 
-async function waitForTreasury(net: ProofNet, address: string, needed: bigint, waitMs: number, deps: ProofDeps): Promise<bigint | null> {
+type Funding = { kind: 'enough'; held: bigint } | { kind: 'other'; other: OtherUsdc[] } | { kind: 'short' };
+
+/* T's NEAR USDC until it holds `needed` or the wait ends. With `otherToo`, money that arrived as
+   another USDC ends the wait too, for the caller to convert or name: the app's Send can land a $1
+   as USDC on Base, and a wait for NEAR USDC alone would then never end. */
+async function waitForTreasury(net: ProofNet, address: string, needed: bigint, waitMs: number, deps: ProofDeps, otherToo: boolean): Promise<Funding> {
   const started = net.now();
   let said = false;
   for (;;) {
     const held = await net.verifier.balance(address, INVITE_ASSET_ID).catch(() => null);
-    if (held !== null && held >= needed) return held;
+    if (held !== null && held >= needed) return { kind: 'enough', held };
+    if (otherToo) {
+      const other = (await otherUsdc(net, address)).held;
+      if (other.length > 0) return { kind: 'other', other };
+    }
     if (!said) {
       deps.out(`Waiting for T, ${address}, to hold at least $${formatUsdc(needed)}. It holds ${held === null ? 'an amount this run could not read' : `$${formatUsdc(held)}`} now.`);
       said = true;
     }
-    if (net.now() - started >= waitMs) return null;
+    if (net.now() - started >= waitMs) return { kind: 'short' };
     await net.sleep(FUNDING_POLL_MS);
   }
 }
@@ -403,15 +414,29 @@ async function run(file: string, net: ProofNet, deps: ProofDeps, waitMs: number,
     return 1;
   }
   const needed = codeBase * BigInt(PROOF_CODES);
-  if (proof.results.funding === undefined) {
-    const held = await waitForTreasury(net, t, needed, waitMs, deps);
-    if (held === null) {
+  // Other USDC is converted once per run; what that convert could not take, `convert` says why.
+  let otherToo = true;
+  while (proof.results.funding === undefined) {
+    const funding = await waitForTreasury(net, t, needed, waitMs, deps, otherToo);
+    if (funding.kind === 'short') {
       deps.err(`T still holds less than $${formatUsdc(needed)}. Send $1 (or enough for two codes) to ${t} with the app's Send, then run this again.`);
       return 1;
     }
-    proof.results.funding = { treasuryBefore: held.toString(), seenAt: new Date(net.now()).toISOString() };
+    if (funding.kind === 'other') {
+      otherToo = false;
+      deps.out(
+        `T holds ${heldList(funding.other)} inside NEAR Intents and not enough NEAR USDC, the USDC a code holds, so this run converts it ` +
+          `through 1Click first, as \`node scripts/invite-proof.ts convert --file ${file}\` does.`,
+      );
+      if ((await convertStep(proof, file, net, deps)) !== 0) {
+        deps.err('The convert did not finish, so nothing was issued. Run this again: it finishes the convert first.');
+        return 1;
+      }
+      continue;
+    }
+    proof.results.funding = { treasuryBefore: funding.held.toString(), seenAt: new Date(net.now()).toISOString() };
     saveProof(file, proof);
-    deps.out(`T holds $${formatUsdc(held)}.`);
+    deps.out(`T holds $${formatUsdc(funding.held)}.`);
   }
 
   if (proof.results.issue?.pass === undefined) {
@@ -547,6 +572,12 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
       signer.drop();
     }
   }
+  // Sweep moves NEAR USDC; another USDC left on T is said, for convert to turn first.
+  const left = (await otherUsdc(net, proof.book.treasury.address)).held;
+  if (left.length > 0) {
+    deps.out(`T still holds ${heldList(left)} inside NEAR Intents, which sweep does not move. Run \`node scripts/invite-proof.ts convert --file ${file}\`, then sweep again.`);
+    failures += 1;
+  }
   deps.out(failures === 0 ? `Swept. Every proof account is empty; ${to} holds the rest. Delete ${file} when you no longer need its report.` : 'Some accounts were not swept. Run sweep again.');
   return failures === 0 ? 0 : 1;
 }
@@ -574,8 +605,15 @@ async function releaseCode(file: string, net: ProofNet, deps: ProofDeps, amountT
     // An earlier release code that stopped part way: finished, and its link shown, here.
     code = await resumeBatch(ledger, net, io);
   } else {
-    const held = await waitForTreasury(net, proof.book.treasury.address, amountBase, waitMs, deps);
-    if (held === null) {
+    const funding = await waitForTreasury(net, proof.book.treasury.address, amountBase, waitMs, deps, true);
+    if (funding.kind === 'other') {
+      deps.err(
+        `T holds ${heldList(funding.other)} inside NEAR Intents and less than $${formatUsdc(amountBase)} of NEAR USDC, the USDC a code holds. ` +
+          `Run \`node scripts/invite-proof.ts convert --file ${file}\` to turn it into NEAR USDC, then run this again.`,
+      );
+      return 1;
+    }
+    if (funding.kind === 'short') {
       deps.err(`T holds less than $${formatUsdc(amountBase)}. Send it to ${proof.book.treasury.address} with the app's Send, then run this again.`);
       return 1;
     }

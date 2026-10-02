@@ -17,8 +17,9 @@ import type { KeySigner } from '../../src/invite/signer.ts';
 import { intentsApi } from '../../src/rails/intents-native.ts';
 import { readBook } from '../../scripts/invite/book.ts';
 import type { InviteBook, Move } from '../../scripts/invite/book.ts';
-import { USDC_VARIANTS } from '../../scripts/invite/convert.ts';
+import { USDC_VARIANTS } from '../../scripts/invite/usdc.ts';
 import { openInviteFile } from '../../scripts/invite/file.ts';
+import { fundingFor } from '../../scripts/invite/money.ts';
 import type { MoneyNet } from '../../scripts/invite/money.ts';
 import { main } from '../../scripts/invite.ts';
 import { balanceOf, freshChain, netOn, oneclickFetchOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
@@ -480,4 +481,41 @@ test('the book holds a convert only whole: its asset, handle and nonce, one leg 
     edit(copy);
     assert.throws(() => readBook(copy), /does not hold together/, name);
   }
+});
+
+test('issue names other USDC in T exactly and says to run convert, and never calls 1Click itself', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const r = await b.run(['issue', '--count', '2', '--amount', '0.10', '--label', 'proof'], [PASS]);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.out, [
+    'T holds $0.00 of NEAR USDC and this batch needs $0.20. Nothing was written or signed.',
+    'T also holds $1.00 USDC on Base inside NEAR Intents, and a code holds NEAR USDC only. Run `npm run invite -- convert` to turn it into NEAR USDC through 1Click, then run this again.',
+  ]);
+  assert.equal(b.chain.oneclick.quotes, 0, 'issue never asks 1Click anything');
+  assert.equal(b.signed.length, 0);
+  assert.deepEqual(b.book().moves, []);
+
+  // Short even after a convert: what to send on top, counted past what the other USDC brings.
+  setBalance(b.chain, b.t, INVITE_ASSET_ID, 50_000n);
+  setBalance(b.chain, b.t, BASE_USDC, 100_000n);
+  const short = await b.run(['issue', '--count', '1', '--amount', '5', '--label', 'SF builders'], [PASS]);
+  assert.equal(short.code, 1);
+  assert.equal(short.out[0], 'T holds $0.05 of NEAR USDC and this batch needs $5.00. Nothing was written or signed.');
+  assert.match(short.out[1]!, /^T also holds \$0\.10 USDC on Base inside NEAR Intents/);
+  assert.equal(short.out[2], `Send at least $${fundingFor(4_850_000n)} more to T, ${b.t}, with the app's Send, then run this again.`);
+  assert.equal(b.chain.oneclick.quotes, 0);
+});
+
+test('status says what other USDC T holds and that convert turns it into NEAR USDC', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  setBalance(b.chain, b.t, BSC_USDC, 2_000_000_000_000_000_000n);
+  const r = await b.run(['status'], [PASS]);
+  assert.equal(r.code, 0, text(r));
+  assert.deepEqual(r.out.slice(0, 2), [
+    `Treasury T  ${b.t}  $0.00`,
+    'T also holds $1.00 USDC on Base and $2.00 USDC on BNB Chain inside NEAR Intents. `npm run invite -- convert` turns it into NEAR USDC, which codes hold.',
+  ]);
+  assert.equal(b.chain.oneclick.quotes, 0);
 });

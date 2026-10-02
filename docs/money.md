@@ -156,8 +156,10 @@ the same bytes, never a second signature, and converts nothing new while they ca
 
     npm run invite -- issue --count 10 --amount 5 --label "SF builders"
 
-checks that T holds enough and asks you to type yes. Then it writes the codes to the file,
-marked pending, before anything is signed, so a crash from that moment loses nothing. It builds
+checks that T holds enough and asks you to type yes. If T is short and holds another USDC, it
+says exactly how much of which and to run `convert` first; it never converts anything itself.
+Then it writes the codes to the file, marked pending, before anything is signed, so a crash from
+that moment loses nothing. It builds
 one payload from T with one transfer per code (ten at most) and rehearses it: the same transfers,
 signed so the signature expires one millisecond after a recent NEAR block, and simulated at that
 block. The NEAR RPC that answers the simulation is someone else's computer. No later block can
@@ -186,8 +188,9 @@ not answer, a command stops before it signs anything and says so. A batch then w
 
     npm run invite -- status
 
-shows what T holds and every batch: each code's address, amount and state (pending, open,
-claimed, reclaimed, or void for a batch that never ran or a dry run). It never shows a code.
+shows what T holds, any other USDC in it that `convert` would turn into NEAR USDC, and every
+batch: each code's address, amount and state (pending, open, claimed, reclaimed, or void for a
+batch that never ran or a dry run). It never shows a code.
 
     npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
 
@@ -221,15 +224,17 @@ both claim routes before trusting them:
 `init` makes a throwaway treasury and a throwaway receiver and prints both addresses. Send $1 to
 the treasury. If it lands as USDC on another chain, `convert` turns it into NEAR USDC the way
 `npm run invite -- convert` does, without asking, and writes each convert into the report. `run`
-waits for the $1 (30 minutes; `--wait-minutes` changes that), issues two $0.10 codes in one
-payload, and claims both into the receiver with the app's own claim code: the first
+waits for the $1 (30 minutes; `--wait-minutes` changes that); if it arrives as another USDC, `run`
+says so and converts it first, the same way. Then it issues two $0.10 codes in one payload, and claims both into the receiver with the app's own claim code: the first
 through the solver relay with no quote, the second through 1Click. To reach 1Click it turns the
 relay away itself, before anything is sent, the way the relay would if it began to enforce its
 key, and the claim falls back on its own. It writes down what NEAR Intents says about each step:
 the intent hashes, `is_nonce_used`, every balance before and after, and the relay's
 `get_status` answer, then prints that report (`report` prints it again). It never prints a key
-or a code. `sweep` sends every cent left on the throwaway accounts to your address, and
-`release-code` issues one $5 code and prints it once, to try a real claim in the app.
+or a code. `sweep` sends every cent of NEAR USDC left on the throwaway accounts to your address
+and names any other USDC still on the treasury, for `convert` first. `release-code` issues one $5
+code and prints it once, to try a real claim in the app; if its money arrived as another USDC, it
+says so and stops, for `convert` first.
 
 If a route turns $0.10 away as too small, start a new proof file and pass `run --amount 0.50`.
 1Click gets the partner key in `PHOSPHOR_1CLICK_API_KEY` when one is set, as the app does;

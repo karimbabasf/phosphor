@@ -334,3 +334,59 @@ test('convert turns USDC on Base in the proof treasury into NEAR USDC and writes
   assert.match(report.out.join('\n'), /"convert": \[/);
   assertNothingSpendable([...r.out, ...report.out].join('\n'), b.proof());
 });
+
+test('run with the $1 landed as USDC on Base converts it first and says so, then issues and claims as always', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  let polls = 0;
+  const net: ProofNet = {
+    ...b.net,
+    sleep: async (ms) => {
+      b.chain.mac += ms;
+      b.chain.chain += ms;
+      polls += 1;
+      if (polls === 3) setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+    },
+  };
+  const r = await b.run(['run', '--file', b.file, '--wait-minutes', '5'], {}, net);
+  assert.equal(r.code, 0, [...r.out, ...r.err].join('\n'));
+  assert.ok(
+    r.out.includes(
+      `T holds $1.00 USDC on Base inside NEAR Intents and not enough NEAR USDC, the USDC a code holds, so this run converts it through 1Click first, as \`node scripts/invite-proof.ts convert --file ${b.file}\` does.`,
+    ),
+    r.out.join('\n'),
+  );
+  const proof = b.proof();
+  assert.equal(proof.results.convert?.[0]?.['state'], 'done');
+  assert.equal(proof.results.funding?.treasuryBefore, '999800');
+  assert.equal(proof.results.issue?.pass, true);
+  assert.equal(proof.results.relayClaim?.pass, true);
+  assert.equal(proof.results.planBClaim?.pass, true);
+  assert.equal(balanceOf(b.chain, t, BASE_USDC), 0n);
+});
+
+test('release-code with the money landed as another USDC says what arrived and to run convert, without waiting or converting', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 5_030_000n);
+  const r = await b.run(['release-code', '--file', b.file]);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.err, [
+    `T holds $5.03 USDC on Base inside NEAR Intents and less than $5.00 of NEAR USDC, the USDC a code holds. Run \`node scripts/invite-proof.ts convert --file ${b.file}\` to turn it into NEAR USDC, then run this again.`,
+  ]);
+  assert.equal(b.chain.oneclick.quotes, 0);
+  assert.equal(b.proof().book.moves.length, 0);
+});
+
+test('sweep says what other USDC it leaves on T, and does not call that swept', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 250_000n);
+  const r = await b.run(['sweep', '--file', b.file, '--to', SINK]);
+  assert.equal(r.code, 1);
+  assert.ok(r.out.includes(`T still holds $0.25 USDC on Base inside NEAR Intents, which sweep does not move. Run \`node scripts/invite-proof.ts convert --file ${b.file}\`, then sweep again.`), r.out.join('\n'));
+  assert.equal(r.out.at(-1), 'Some accounts were not swept. Run sweep again.');
+});

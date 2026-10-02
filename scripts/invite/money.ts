@@ -68,6 +68,7 @@ import { simulationOf, simulationRefusal } from '../../src/relay/verifier.ts';
 import type { FinalBlock, SignedIntent, Simulation, VerifierPort } from '../../src/relay/verifier.ts';
 import { codesOf, pendingMoves, unfinishedBatch } from './book.ts';
 import type { InviteBook, InviteCode, Move, SignedMove, Treasury } from './book.ts';
+import { asInviteBase, heldList, otherUsdc } from './usdc.ts';
 
 export type MoneyNet = {
   verifier: VerifierPort;
@@ -485,8 +486,17 @@ export async function issueBatch(ledger: Ledger, net: MoneyNet, req: IssueReques
       return 1;
     }
     if (held < total) {
-      io.say(`T holds $${formatUsdc(held)} and this batch needs $${formatUsdc(total)}. Nothing was written or signed.`);
-      io.say(`Send at least $${fundingFor(total - held)} to T, ${book.treasury.address}, with the app's Send, then run this again.`);
+      /* Money that came as another USDC is said exactly, and where it goes from here. Never
+         converted here: issue does not talk to 1Click, `convert` does, after its own yes. */
+      const other = (await otherUsdc(net, book.treasury.address)).held;
+      const otherBase = other.reduce((sum, h) => sum + asInviteBase(h.base, h.variant.decimals), 0n);
+      io.say(`T holds $${formatUsdc(held)}${other.length > 0 ? ' of NEAR USDC' : ''} and this batch needs $${formatUsdc(total)}. Nothing was written or signed.`);
+      if (other.length > 0) {
+        io.say(`T also holds ${heldList(other)} inside NEAR Intents, and a code holds NEAR USDC only. Run \`npm run invite -- convert\` to turn it into NEAR USDC through 1Click, then run this again.`);
+      }
+      if (held + otherBase < total) {
+        io.say(`Send at least $${fundingFor(total - held - otherBase)}${other.length > 0 ? ' more' : ''} to T, ${book.treasury.address}, with the app's Send, then run this again.`);
+      }
       return 1;
     }
     const ok = await io.confirm(`Issue ${req.count} code${plural} of $${formatUsdc(req.amountBase)} for "${label}", $${formatUsdc(total)} in all, from T (holds $${formatUsdc(held)})?`);
@@ -960,6 +970,8 @@ export async function statusLines(book: InviteBook, net: MoneyNet): Promise<stri
   const out: string[] = [];
   const held = await net.verifier.balance(book.treasury.address, INVITE_ASSET_ID).catch(() => null);
   out.push(`Treasury T  ${book.treasury.address}  ${held === null ? 'balance unread' : `$${formatUsdc(held)}`}`);
+  const other = (await otherUsdc(net, book.treasury.address)).held;
+  if (other.length > 0) out.push(`T also holds ${heldList(other)} inside NEAR Intents. \`npm run invite -- convert\` turns it into NEAR USDC, which codes hold.`);
   const batches = book.moves.filter((m) => m.kind === 'batch');
   if (batches.length === 0) out.push('No codes issued yet.');
   for (const batch of batches) {
