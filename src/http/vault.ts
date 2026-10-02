@@ -13,7 +13,7 @@
 
 import http from 'node:http';
 
-import { fail, readBody, sendJson } from './respond.ts';
+import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
@@ -172,7 +172,7 @@ export async function handleVaultCreate(ctx: Ctx, req: http.IncomingMessage, res
   try {
     made = ctx.keystore.createWithEnclave(fresh.key);
   } catch (err) {
-    return fail(res, 409, err instanceof Error ? err.message : String(err));
+    return fail(res, 409, errText(err));
   }
   ctx.keystore.lock();
   const proven = await openThroughEnclave(ctx, CREATE_REASON);
@@ -305,7 +305,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
   try {
     restored = ctx.keystore.importWithEnclave(fresh.key, { mnemonic: phrase });
   } catch (err) {
-    return fail(res, 409, err instanceof Error ? err.message : String(err));
+    return fail(res, 409, errText(err));
   }
   ctx.keystore.lock();
   const proven = await openThroughEnclave(ctx, RESTORE_REASON);
@@ -369,7 +369,7 @@ export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res
   try {
     gone = ctx.keystore.forget();
   } catch (err) {
-    return fail(res, 409, err instanceof Error ? err.message : String(err));
+    return fail(res, 409, errText(err));
   }
   foreign = false;
   ctx.vaultPrefs.clearBackedUp();
@@ -384,7 +384,7 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
   try {
     if (typeof body.idleMinutes === 'number') ctx.vaultPrefs.setIdleMinutes(body.idleMinutes);
   } catch (err) {
-    return fail(res, 400, err instanceof Error ? err.message : String(err));
+    return fail(res, 400, errText(err));
   }
   ctx.sse.broadcastState();
   sendJson(res, 200, { ok: true, ...ctx.vaultPrefs.get() });

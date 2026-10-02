@@ -14,6 +14,10 @@ import crypto from 'node:crypto';
 import http from 'node:http';
 import { fileURLToPath } from 'node:url';
 
+import { errText } from '../err-text.ts';
+
+export { errText };
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UI_DIR = path.join(__dirname, '..', '..', 'ui');
 
@@ -35,10 +39,6 @@ export type JsonBody = Record<string, unknown>;
 // `status` is on the failure because the two refusals are different answers: a body this
 // surface will not read at all is 415, a body it read and could not parse is 400.
 type BodyResult = { ok: true; value: JsonBody } | { ok: false; error: string; status: number };
-
-export function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 export function asRecord(value: unknown): JsonBody {
   return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as JsonBody) : {};

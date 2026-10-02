@@ -22,7 +22,7 @@ import { findPreset, PRESETS } from '../presets.ts';
 import { isConcept, loadProfile, normalizeConcept, recordLearned } from '../profile/index.ts';
 import type { Outcome } from '../chart.ts';
 import type { ChartSlot } from '../charts.ts';
-import { asRecord, fail, sendJson } from './respond.ts';
+import { asRecord, errText, fail, sendJson } from './respond.ts';
 import { CHAIN_NETWORKS, isChainNetwork, transaction, validateHash } from '../chainscan/index.ts';
 // Flattened and capped before a caller's own string reaches an agent transcript or a terminal:
 // an error message is not somewhere control characters or escape codes belong.
@@ -244,7 +244,7 @@ async function chartDraw({ ctx, args, res, by: session }: ViewArgs): Promise<voi
     try {
       slot.drawings.add(d);
     } catch (err) {
-      refused.push(err instanceof Error ? err.message : String(err));
+      refused.push(errText(err));
     }
   };
   for (const line of rows(args.lines)) {

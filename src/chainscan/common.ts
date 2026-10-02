@@ -11,6 +11,7 @@ import type { ChainFetchDeps } from './fetch.ts';
 import { NETWORKS } from './networks.ts';
 import type { ChainNetwork } from './networks.ts';
 import { venueReason } from '../venue-words.ts';
+import { errText } from '../err-text.ts';
 
 // ---------- results ----------
 
@@ -154,7 +155,7 @@ export function idText(v: unknown): string | null {
 }
 
 export function failure(err: unknown): string {
-  return dataText(err instanceof Error ? err.message : String(err), 160) || 'failed';
+  return dataText(errText(err), 160) || 'failed';
 }
 
 export function withDeadline(deps: ChainDeps): ChainDeps {

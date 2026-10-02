@@ -16,7 +16,7 @@
 import type http from 'node:http';
 
 import { VERSION } from '../version.ts';
-import { sendJson } from './respond.ts';
+import { errText, sendJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 
 const startedAtMs = Date.now();
@@ -61,7 +61,7 @@ function buildHealth(ctx: Ctx): Health {
     pending = all.filter((p) => p.status === 'pending').length;
     executing = all.filter((p) => p.status === 'executing').length;
   } catch (err) {
-    storeError = err instanceof Error ? err.message : String(err);
+    storeError = errText(err);
   }
 
   let killSwitch = true; // fail closed: an unreadable policy reads as the switch being ON
@@ -71,7 +71,7 @@ function buildHealth(ctx: Ctx): Health {
     if (policy === null) policyError = 'the policy file cannot be read, so every write is refused';
     else killSwitch = policy.killSwitch;
   } catch (err) {
-    policyError = err instanceof Error ? err.message : String(err);
+    policyError = errText(err);
   }
 
   const recorded = ctx.audit.lastError();

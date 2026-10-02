@@ -13,6 +13,7 @@
 
 import { isTimeout, READ_TIMEOUT_MS, withTimeout } from '../net.ts';
 import { HOSTS, NEARBLOCKS_HOST } from './networks.ts';
+import { errText } from '../err-text.ts';
 
 export type ChainKeys = { blockscoutApiKey?: string; nearblocksApiKey?: string };
 
@@ -306,7 +307,7 @@ export async function chainFetch(url: string, opts: ChainFetchOptions, deps: Cha
       });
     } catch (err) {
       if (isTimeout(err)) throw new Error(`timed out after ${Math.min(READ_TIMEOUT_MS, remaining)}ms`);
-      throw new Error(scrub(err instanceof Error ? err.message : String(err)));
+      throw new Error(scrub(errText(err)));
     }
 
     if (res.status >= 300 && res.status < 400) {

@@ -282,7 +282,7 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -309,7 +309,7 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, addresses: out.addresses });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -343,7 +343,7 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
       note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
     });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -373,7 +373,7 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
     ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
     sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
-    fail(res, 400, err instanceof Error ? err.message : String(err));
+    fail(res, 400, errText(err));
   }
 }
 
@@ -674,7 +674,7 @@ async function askAddress(account: string, net: ReceiveNetwork): Promise<BridgeA
     return { net, got: { address: first.address, memo: first.memo }, why: null };
   } catch (err) {
     // One network refusing is not the others failing. The row says why and the rest draw.
-    return { net, got: null, why: err instanceof Error ? err.message : String(err) };
+    return { net, got: null, why: errText(err) };
   }
 }
 

@@ -21,6 +21,7 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 
 import { cap, toText } from './research.ts';
+import { errText } from './err-text.ts';
 import { parsePageUrl } from './web-gate.ts';
 
 export const PAGE_BUDGET_MS = 8_000;
@@ -234,7 +235,7 @@ export async function readPage(start: URL, opts: { transport?: Transport; lookFo
     } catch (err) {
       const code = (err as NodeJS.ErrnoException | null)?.code;
       if (code === 'EPRIVATE') return { ok: false, failed: `${url.hostname} points at a private or local address, so it was not read` };
-      return { ok: false, failed: cap(toText(err instanceof Error ? err.message : String(err)), 160) || 'the page could not be read' };
+      return { ok: false, failed: cap(toText(errText(err)), 160) || 'the page could not be read' };
     }
     if (got.status >= 300 && got.status < 400) {
       if (got.location === null) return { ok: false, failed: `the site answered ${got.status} with nowhere to go` };

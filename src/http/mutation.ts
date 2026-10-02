@@ -112,7 +112,7 @@ export async function refreshRegistration(
     registration = await registerAgent(pick.agent, spec, { run: opts.run });
     if (registration.ok && registration.wrote) writeRegistered(cfg.dataDir, spec);
   } catch (error) {
-    registration = { ok: false, wrote: false, detail: error instanceof Error ? error.message : String(error) };
+    registration = { ok: false, wrote: false, detail: errText(error) };
   }
   audit.append(
     'app_start',

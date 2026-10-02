@@ -28,6 +28,7 @@ import type { EngineCtx } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { isLocked } from '../keystore/index.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
+import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
@@ -95,9 +96,7 @@ export function pct(share: number): string {
   return (share * 100).toFixed(2) + '%';
 }
 
-export function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+export { errText };
 
 export function totalUsdOf(draft: WriteDraft): number {
   if (draft.kind === 'policy_change') return 0;
