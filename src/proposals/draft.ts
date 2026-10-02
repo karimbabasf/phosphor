@@ -261,7 +261,12 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     }
   }
 
-  if (ask !== undefined && ask !== null && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
+  // The builder's own reason to wait (an earlier swap of the coin may still go through, a price only
+  // 1Click's list gives), said on the card at every size, as the rail's ask is below.
+  if (ask !== undefined && ask !== null) {
+    if (verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
+    else if (verdict.outcome === 'needs_approval') verdict = { ...verdict, reasons: [...verdict.reasons, ask] };
+  }
 
   if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 

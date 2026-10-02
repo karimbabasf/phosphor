@@ -217,3 +217,30 @@ test('a swap between two coins priced only by the list waits for a click, howeve
   assert.match(p.verdict.reasons.at(-1) ?? '', /nothing in its quote can check that price/);
   assert.equal(ran.length, 0, 'nothing ran on the list checked against itself');
 });
+
+/* Said on the card at every size: the card's why is the last reason, which over the click threshold
+   was the threshold alone. */
+test('the card says the list cannot check its own price at $20 and at $5,000', async () => {
+  for (const usd of [20, 5000]) {
+    const ran: SwapDraft[] = [];
+    const base = railThat('swap', async (draft) => {
+      ran.push(draft as SwapDraft);
+      return { ok: true, detail: 'swapped', txids: ['intent-h'] };
+    });
+    const rail: Rail = {
+      ...base,
+      spend: async () => ({ assetId: WBTC, decimals: 8, heldBase: 100_000_000n }),
+      simulate: async () => ({ ok: true, summary: 'About 0.9995 cbBTC.', swap: { receives: '0.9995', receivesAtLeast: '0.9895', feeUsd: 1, etaSeconds: 12 } }),
+    };
+    const h = makeCtx({ intents: readOf([holding(WBTC, 'WBTC', '100000000', 8, usd), holding(CBBTC, 'cbBTC', '100000000', 8, usd)]), rails: [rail] });
+    const p = await landed(h, h.svc.proposeSwap({ chain: 'eth', fromSymbol: 'WBTC', toChain: 'base', toSymbol: 'cbBTC', amountIn: 'all', minAmountOut: 0.9895 }));
+    assert.equal(p.status, 'pending', `$${usd}: ${p.status} ${p.decidedBy ?? ''}`);
+    assert.equal((p.draft as SwapDraft).amountUsd, usd);
+    assert.equal(
+      p.verdict.reasons.at(-1),
+      "This swap spends WBTC at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.",
+      `$${usd}`,
+    );
+    assert.equal(ran.length, 0, `$${usd}: nothing ran`);
+  }
+});
