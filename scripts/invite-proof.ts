@@ -54,7 +54,7 @@ import { RELAY_URL, relayClient } from '../src/relay/client.ts';
 import type { RelayClient } from '../src/relay/client.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
 import { newBook, pendingMoves, readBook, unfinishedBatch } from './invite/book.ts';
-import { convertSummary, convertTreasury } from './invite/convert.ts';
+import { convertSummary, convertTreasury, moveWords } from './invite/convert.ts';
 import { heldList, otherUsdc } from './invite/usdc.ts';
 import type { OtherUsdc } from './invite/usdc.ts';
 import { takeLock } from './invite/file.ts';
@@ -572,10 +572,20 @@ async function sweep(file: string, net: ProofNet, deps: ProofDeps, rawTo: unknow
       signer.drop();
     }
   }
-  // Sweep moves NEAR USDC; another USDC left on T is said, for convert to turn first.
-  const left = (await otherUsdc(net, proof.book.treasury.address)).held;
+  /* Sweep moves NEAR USDC. The file is never called done to delete while money can still reach T or
+     sit on it unread: another USDC on T, a convert 1Click has not finished, or a read that failed. */
+  const convert = `node scripts/invite-proof.ts convert --file ${file}`;
+  for (const move of pendingMoves(proof.book, 'convert')) {
+    deps.out(`The convert of ${moveWords(move)} is not finished, so NEAR USDC may still reach T. Run \`${convert}\` to finish it, then sweep again.`);
+    failures += 1;
+  }
+  const { held: left, unread } = await otherUsdc(net, proof.book.treasury.address);
   if (left.length > 0) {
-    deps.out(`T still holds ${heldList(left)} inside NEAR Intents, which sweep does not move. Run \`node scripts/invite-proof.ts convert --file ${file}\`, then sweep again.`);
+    deps.out(`T still holds ${heldList(left)} inside NEAR Intents, which sweep does not move. Run \`${convert}\`, then sweep again.`);
+    failures += 1;
+  }
+  if (unread.length > 0) {
+    deps.out(`Couldn't read what T holds of USDC on ${unread.map((v) => v.chain).join(', ')}, so T may not be empty. Run sweep again.`);
     failures += 1;
   }
   deps.out(failures === 0 ? `Swept. Every proof account is empty; ${to} holds the rest. Delete ${file} when you no longer need its report.` : 'Some accounts were not swept. Run sweep again.');

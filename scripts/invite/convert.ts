@@ -52,7 +52,8 @@ import type { IntentPayloadExpectation, IntentsApiPort } from '../../src/rails/i
 import { spendFromIntents } from '../../src/rails/intents-spend.ts';
 import type { IntentsSpendOutcome } from '../../src/rails/intents-spend.ts';
 import { submitSignedIntent } from '../../src/rails/intents-submit.ts';
-import { RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
+import { FATE_FLOOR_MS, RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
+import { decodeNonce } from '../../src/relay/payload.ts';
 import { pendingMoves } from './book.ts';
 import type { Move } from './book.ts';
 import { REFUSALS, REHEARSAL_AHEAD_MS, chainClock, fateReads, idOf, nowIso, treasurySigner } from './money.ts';
@@ -71,12 +72,15 @@ const CONVERT_SLIPPAGE_BPS = QUOTE_SLIPPAGE_BPS;
 export const CONVERT_WATCH_CAP_MS = SIGNED_DEADLINE_MS + RELAY_DEADLINE_GRACE_MS + 60_000;
 const FIRST_POLL_MS = 1_000;
 const POLL_MS = 3_000;
+/* How far this Mac's clock may run ahead of NEAR's before a convert is refused: a minute, so the
+   signed transfer lives at most four minutes on NEAR, inside 1Click's ten-minute quote. */
+const CLOCK_AHEAD_MAX_MS = 60_000;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-function moveWords(move: Move): string {
+export function moveWords(move: Move): string {
   const variant = variantOf(move.assetId);
   const base = BigInt(move.legs[0]?.amountBase ?? '0');
   return variant === undefined ? `${base} base units of ${oneLine(move.assetId, 80)}` : heldWords({ variant, base });
@@ -190,32 +194,43 @@ type Verdict =
   | { kind: 'done'; credited: bigint | null }
   | { kind: 'refunded' }
   | { kind: 'dead' }
+  | { kind: 'lapsed' } // can never run now, and nothing can say whether it did
   | { kind: 'running'; said: string } // T's transfer ran; 1Click has not finished
   | { kind: 'open' }; // the signed bytes can still run
 
-function creditedOf(status: OneClickStatus): bigint | null {
+/* What 1Click says it credited, never more than went in: its status is unsigned, and a convert of
+   USDC cannot bring more NEAR USDC than the USDC it sent (the claim's Plan B caps the same way). */
+function creditedOf(status: OneClickStatus, move: Move): bigint | null {
   try {
-    return status.settledAmountOut === undefined ? null : decimalToBaseUnits(status.settledAmountOut, INVITE_ASSET_DECIMALS);
+    if (status.settledAmountOut === undefined) return null;
+    const credited = decimalToBaseUnits(status.settledAmountOut, INVITE_ASSET_DECIMALS);
+    const sent = asInviteBase(BigInt(move.legs[0]?.amountBase ?? '0'), variantOf(move.assetId)?.decimals ?? INVITE_ASSET_DECIMALS);
+    return credited > sent ? sent : credited;
   } catch {
     return null;
   }
 }
 
-/* One look: the nonce first, then 1Click. A nonce that is not V1 (1Click chooses its own) can be
-   asked whether it was spent, as the claim's Plan B asks it, but its death cannot be proved, so such
-   a convert stays open until it reads spent. */
+async function oneclickSays(move: Move, api: IntentsApiPort): Promise<Verdict | null> {
+  const status = await api.status(move.handle ?? '').catch(() => null);
+  if (status?.status === 'SUCCESS') return { kind: 'done', credited: creditedOf(status, move) };
+  if (status?.status === 'REFUNDED') return { kind: 'refunded' };
+  return status === null ? null : { kind: 'running', said: status.status };
+}
+
+/* One look: the nonce first, then 1Click. A spent nonce is T's transfer done, and 1Click says how
+   the far side ended. A nonce NEAR Intents can no longer answer for (its life over, its salt
+   retired, the RPC silent) is no proof either way: then 1Click's SUCCESS or REFUNDED closes the
+   convert, and once its latest deadline is RELAY_DEADLINE_GRACE_MS behind this Mac's clock (the
+   rule src/relay/fate.ts falls back on) it can never run, so it lapses rather than wait forever. */
 async function judge(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
   const deadline = move.signed?.deadline ?? move.rehearsalDeadline;
   const fate = await transferFate(fateReads(net), { account: move.signer, nonce: move.nonce ?? '', deadline }, net.now()).catch(() => null);
-  let ran = fate?.ran === true;
-  if (!ran && fate?.ran === null && fate.why === 'not_the_verifiers') ran = (await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null)) === true;
-  if (ran) {
-    const status = await api.status(move.handle ?? '').catch(() => null);
-    if (status?.status === 'SUCCESS') return { kind: 'done', credited: creditedOf(status) };
-    if (status?.status === 'REFUNDED') return { kind: 'refunded' };
-    return { kind: 'running', said: status === null ? 'nothing' : status.status };
-  }
-  return fate?.ran === false && fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
+  if (fate?.ran === true) return (await oneclickSays(move, api)) ?? { kind: 'running', said: 'nothing' };
+  if (fate?.ran === false) return fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
+  const said = await oneclickSays(move, api);
+  if (said !== null && said.kind !== 'running') return said;
+  return net.now() > Date.parse(deadline ?? '') + RELAY_DEADLINE_GRACE_MS ? { kind: 'lapsed' } : { kind: 'open' };
 }
 
 async function watch(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
@@ -223,7 +238,7 @@ async function watch(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Ve
   let delay = net.firstPollMs ?? FIRST_POLL_MS;
   for (;;) {
     const verdict = await judge(move, net, api);
-    if (verdict.kind === 'done' || verdict.kind === 'refunded' || verdict.kind === 'dead') return verdict;
+    if (verdict.kind !== 'open' && verdict.kind !== 'running') return verdict;
     if (net.now() - started >= CONVERT_WATCH_CAP_MS) return verdict;
     await net.sleep(delay);
     delay = Math.min(delay * 2, net.pollMs ?? POLL_MS);
@@ -250,14 +265,17 @@ function close(ledger: Ledger, move: Move, verdict: Verdict, net: MoneyNet, io: 
     trySave(ledger);
     const credited = verdict.credited === null ? '' : `, $${exactDollars(verdict.credited)} of NEAR USDC credited to T`;
     io.say(`${what}: converted. 1Click says SUCCESS${credited} (intent ${move.signed?.intentHash ?? 'unknown'}).`);
-  } else if (verdict.kind === 'refunded' || verdict.kind === 'dead') {
+  } else if (verdict.kind === 'refunded' || verdict.kind === 'dead' || verdict.kind === 'lapsed') {
     move.state = 'failed';
     move.settledAt = nowIso(net);
     if (verdict.kind === 'refunded') move.oneclickSaid = 'REFUNDED';
+    const signed = move.signed === undefined ? 'Only its rehearsal was signed, and that' : 'The signed convert';
     move.detail =
       verdict.kind === 'refunded'
         ? '1Click refunded it to T as the same USDC. Run convert again to try once more.'
-        : 'The signed convert passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.';
+        : verdict.kind === 'dead'
+          ? `${signed} passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.`
+          : `${signed} can never run now: its deadline passed long ago. NEAR Intents can no longer say whether its nonce was spent and 1Click did not say, so T's balances show what happened; convert reads them again.`;
     trySave(ledger);
     io.say(`${what}: not converted. ${move.detail}`);
   } else if (verdict.kind === 'running') {
@@ -271,18 +289,26 @@ function close(ledger: Ledger, move: Move, verdict: Verdict, net: MoneyNet, io: 
   return verdict.kind;
 }
 
-/* A convert an earlier run left pending. Never signed (a run stopped between writing it down and
-   signing it): nothing that can run exists. Signed and not proven: the same bytes go to 1Click
-   again while they can still run, then the watch. */
+/* A convert an earlier run left pending. Nothing signed at all (a run stopped between writing it
+   down and its rehearsal): nothing that can run exists. Only rehearsals signed: they share the
+   convert's nonce and die a millisecond past their block, so they are judged once, never resent and
+   never hold up a new convert. Signed and not proven: the same bytes go to 1Click again while
+   they can still run, then the watch. 'open' only when signed bytes may still run. */
 async function finish(ledger: Ledger, move: Move, net: MoneyNet, api: IntentsApiPort, io: Io): Promise<Verdict['kind']> {
   const signed = move.signed;
-  if (signed === undefined) {
+  if (signed === undefined && move.rehearsalDeadline === undefined) {
     move.state = 'failed';
     move.settledAt = nowIso(net);
-    move.detail = 'Never signed: the run stopped before its one signature. Nothing moved.';
+    move.detail = 'Never signed: the run stopped before anything was signed. Nothing moved.';
     trySave(ledger);
     io.say(`${moveWords(move)}: ${move.detail}`);
     return 'dead';
+  }
+  if (signed === undefined) {
+    const verdict = await judge(move, net, api);
+    if (verdict.kind !== 'open' && verdict.kind !== 'running') return close(ledger, move, verdict, net, io);
+    io.say(`${moveWords(move)}: only its rehearsal was signed, and NEAR Intents cannot show yet that it never ran. It is asked again at the next convert.`);
+    return 'running';
   }
   let verdict = await judge(move, net, api);
   if (verdict.kind === 'open' && Date.parse(signed.deadline) > net.now()) {
@@ -357,6 +383,12 @@ async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: Int
     const g = generated;
     const nonce = g === null ? undefined : intentNonce(g.payload);
     if (g === null || nonce === undefined) return "1Click's payload carries no nonce to prove the convert by, so nothing was signed";
+    /* A nonce NEAR Intents keeps (V1), living past the signed deadline and the proof's floor: only
+       then can a later run prove the convert ran or never can, instead of waiting on it for good. */
+    const parts = decodeNonce(nonce);
+    if (parts === null || parts.deadlineMs <= net.now() + SIGNED_DEADLINE_MS + FATE_FLOOR_MS) {
+      return "1Click's payload carries a nonce NEAR Intents could not prove spent or dead after the convert's deadline, so nothing was signed";
+    }
     const fresh: Move = {
       id: idOf(net),
       kind: 'convert',
@@ -386,7 +418,14 @@ async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: Int
     signer,
     (payload) => {
       const m: Move | null = move;
-      if (m === null || intentNonce(payload) !== m.nonce || intentDeadline(payload) === undefined) throw new Error('the payload to sign is not the one written down and rehearsed');
+      const deadline = Date.parse(intentDeadline(payload) ?? '');
+      if (m === null || intentNonce(payload) !== m.nonce || !Number.isFinite(deadline)) throw new Error('the payload to sign is not the one written down and rehearsed');
+      /* The deadline was cut on this Mac's clock (src/rails/intents-spend.ts), the rehearsal's on
+         NEAR's: a Mac running fast would sign bytes that live past 1Click's ten-minute quote. */
+      const ahead = deadline - Date.parse(m.rehearsalDeadline ?? '') - SIGNED_DEADLINE_MS;
+      if (!(ahead <= CLOCK_AHEAD_MAX_MS)) {
+        throw new Error(`this Mac's clock is ${Math.round(ahead / 1000)} s ahead of NEAR's final block, so three minutes on it is longer on NEAR; set the clock to automatic. Nothing that can run was signed`);
+      }
     },
     (payload, signature) => {
       const m = move as Move;
@@ -444,14 +483,29 @@ async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: Int
   if (m === null || m.signed === undefined) {
     // Nothing that can run left this Mac: a rehearsal at most, which dies a millisecond past its block.
     const why = stop ?? '1Click held it before anything was signed';
-    if (m !== null) {
-      m.state = 'failed';
-      m.settledAt = nowIso(net);
-      m.detail = `Nothing that can run was sent: ${oneLine(why, 300)}`;
-      trySave(ledger);
+    const nothing = `${heldWords(held)}: not converted, and nothing that can run left this Mac: ${why}.`;
+    if (m === null || m.rehearsalDeadline === undefined) {
+      if (m !== null) {
+        m.state = 'failed';
+        m.settledAt = nowIso(net);
+        m.detail = `Nothing that can run was sent: ${oneLine(why, 300)}`;
+        trySave(ledger);
+      }
+      io.say(nothing);
+      return false;
     }
-    io.say(`${heldWords(held)}: not converted, and nothing that can run left this Mac: ${why}.`);
-    return false;
+    /* A rehearsal shares the convert's nonce, and an RPC that lies on a fast Mac could have run one:
+       asked once now, and again at the next convert while it cannot be told. */
+    m.detail = `Nothing that can run was sent: ${oneLine(why, 300)}`;
+    const verdict = await judge(m, net, api);
+    if (verdict.kind === 'open') {
+      trySave(ledger);
+      io.say(nothing);
+      return false;
+    }
+    const ran = verdict.kind === 'done' || verdict.kind === 'running';
+    io.say(ran ? `${heldWords(held)}: the convert itself was never signed (${why}), but NEAR Intents ran its rehearsal, which pays the same quote.` : nothing);
+    return close(ledger, m, verdict, net, io) === 'done';
   }
   if (outcome?.signed === true && outcome.submitted) {
     io.say(`${heldWords(held)}: signed once and handed to 1Click (intent ${m.signed.intentHash}). Waiting for NEAR Intents and 1Click.`);

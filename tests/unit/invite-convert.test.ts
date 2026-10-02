@@ -22,7 +22,8 @@ import { openInviteFile } from '../../scripts/invite/file.ts';
 import { fundingFor } from '../../scripts/invite/money.ts';
 import type { MoneyNet } from '../../scripts/invite/money.ts';
 import { main } from '../../scripts/invite.ts';
-import { balanceOf, freshChain, netOn, oneclickFetchOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
+import { buildNonce } from '../../src/relay/payload.ts';
+import { CHAIN_SALT, balanceOf, freshChain, netOn, oneclickFetchOn, oneclickOn, setBalance, settle, verdict } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
 
@@ -247,23 +248,29 @@ test('while a convert signed earlier can still run, nothing new is signed; once 
   };
   assert.equal((await b.run(['convert'], [PASS, 'yes'], dying)).code, 1);
 
-  // NEAR stops answering: the first convert cannot be proven either way, so nothing new is signed.
-  b.chain.offline = true;
-  const blind = await b.run(['convert'], [PASS]);
+  // NEAR answers that the nonce is unspent, its clock stuck short of the deadline, and 1Click turns
+  // the same bytes away again: the first convert can still run, so nothing new is signed.
+  b.chain.oneclick.submitAnswer = 'error';
+  setBalance(b.chain, b.t, BASE_USDC, balanceOf(b.chain, b.t, BASE_USDC) + 500_000n);
+  const stuck: MoneyNet = { ...b.net, sleep: async (ms) => void (b.chain.mac += ms) };
+  const blind = await b.run(['convert'], [PASS, 'yes'], stuck);
   assert.equal(blind.code, 1);
   assert.ok(blind.out.includes('A convert signed in an earlier run can still run, so nothing new was signed. Run convert again in a few minutes.'), text(blind));
+  assert.ok(!blind.prompts.some((p) => /Type yes/.test(p)), 'nothing new was priced or asked');
   assert.equal(runnable(b).length, 1);
 
-  b.chain.offline = false;
-  setBalance(b.chain, b.t, BASE_USDC, balanceOf(b.chain, b.t, BASE_USDC) + 500_000n);
+  // NEAR's clock moves on: the first is proven never to run, and the USDC on T converts once.
+  b.chain.chain = b.chain.mac - 2_500;
+  b.chain.oneclick.submitAnswer = 'ok';
   const later = await b.run(['convert'], [PASS, 'yes']);
   assert.equal(later.code, 0, text(later));
   assert.deepEqual(converts(b).map((m) => [m.state, m.legs[0]!.amountBase]), [
-    ['done', '1000000'],
-    ['done', '500000'],
+    ['failed', '1000000'],
+    ['done', '1500000'],
   ]);
+  assert.match(converts(b)[0]!.detail ?? '', /^The signed convert passed its deadline with its nonce unspent, on the chain clock: it never ran and never can/);
   assert.equal(runnable(b).length, 2, 'one signature per convert');
-  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n + 499_900n);
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 1_499_700n);
 });
 
 test('through the real client: a fee line for someone else, or a recipient or refund changed on the wire, is refused after the yes with nothing signed', async () => {
@@ -360,7 +367,7 @@ test("a payload 1Click generates that pays anyone but the quote's handle, more, 
   }
 });
 
-test('a rehearsal the verifier refuses stops the convert: only the rehearsal was signed, and the move is closed as never sent', async () => {
+test('a rehearsal the verifier refuses stops the convert with only the rehearsal signed; the next run proves it never ran and is not held up by it', async () => {
   const b = await bench();
   setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
   b.chain.locked.add(b.t);
@@ -371,8 +378,18 @@ test('a rehearsal the verifier refuses stops the convert: only the rehearsal was
   assert.equal(runnable(b).length, 0);
   assert.equal(b.chain.oneclick.submitted.length, 0);
   const [move] = converts(b);
-  assert.equal(move?.state, 'failed');
+  // The rehearsal shares the convert's nonce: kept until NEAR Intents shows it never ran.
+  assert.equal(move?.state, 'pending');
   assert.match(move?.detail ?? '', /^Nothing that can run was sent:/);
+
+  b.chain.locked.delete(b.t);
+  b.chain.mac += 60_000;
+  b.chain.chain += 60_000;
+  const next = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(next.code, 0, text(next));
+  assert.ok(next.out.includes('$1.00 USDC on Base: not converted. Only its rehearsal was signed, and that passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.'), text(next));
+  assert.deepEqual(converts(b).map((m) => m.state), ['failed', 'done']);
+  assert.equal(runnable(b).length, 1);
 });
 
 test("a Mac clock running slow stops the convert before anything is signed, and says to set the clock", async () => {
@@ -532,4 +549,113 @@ test('treasury says what T holds of NEAR USDC and of any other USDC, and that an
     'Any USDC sent inside NEAR Intents works. The Send pays out of whichever USDC the wallet holds, so it may land as USDC on Base or another chain; `npm run invite -- convert` turns that into NEAR USDC first, through 1Click.',
   ]);
   assert.equal(b.chain.oneclick.quotes, 0);
+});
+
+test('a convert is refused before anything is signed when 1Click\'s nonce is one NEAR Intents could not prove spent or dead later', async () => {
+  for (const [name, nonce] of [
+    ['not a V1 nonce', Buffer.alloc(32, 7).toString('base64')],
+    ['a V1 nonce whose life ends inside the deadline', null],
+  ] as const) {
+    const b = await bench();
+    setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+    b.chain.oneclick.payloadAs = (p) => {
+      p['nonce'] = nonce ?? buildNonce({ salt: CHAIN_SALT, deadlineMs: b.chain.mac + 60_000, random: new Uint8Array(15).fill(4) });
+    };
+    const r = await b.run(['convert'], [PASS, 'yes']);
+    assert.equal(r.code, 1, name);
+    assert.match(text(r), /1Click's payload carries a nonce NEAR Intents could not prove spent or dead after the convert's deadline, so nothing was signed/, name);
+    assert.equal(b.signed.length, 0, `${name}: nothing signed`);
+  }
+});
+
+test('a convert whose nonce NEAR Intents can no longer answer for closes on 1Click\'s word, and with no word at all it lapses: it never holds up the next one for good', async () => {
+  // Landed, then the run died before proving it; days later the salt is retired and the nonce pruned.
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const inner = oneclickOn(b.chain);
+  const v = b.net.verifier;
+  let sent = false;
+  const dying: MoneyNet = {
+    ...b.net,
+    verifier: { ...v, finalBlock: async () => (sent ? null : v.finalBlock!()), nonceUsed: async (a, n, at) => (sent ? null : v.nonceUsed(a, n, at)) },
+    oneclick: {
+      ...inner,
+      async submitIntent(signed) {
+        sent = true;
+        const answer = await inner.submitIntent(signed);
+        await settle(b.chain); // 1Click publishes it at once: the convert lands
+        return answer;
+      },
+      status: async (h) => (sent ? Promise.reject(new Error('1click status failed: 503')) : inner.status(h)),
+    },
+    sleep: async () => Promise.reject(new Error('killed')),
+  };
+  assert.equal((await b.run(['convert'], [PASS, 'yes'], dying)).code, 1);
+  assert.equal(converts(b)[0]?.state, 'pending');
+  assert.ok(converts(b)[0]?.signed !== undefined);
+  b.chain.mac += 2 * 86_400_000;
+  b.chain.chain += 2 * 86_400_000;
+  const pruned: MoneyNet = { ...b.net, verifier: { ...b.net.verifier, isValidSalt: async () => false, nonceUsed: async () => false } };
+  setBalance(b.chain, b.t, BASE_USDC, 500_000n);
+  const r = await b.run(['convert'], [PASS, 'yes'], pruned);
+  assert.equal(r.code, 0, text(r));
+  assert.deepEqual(converts(b).map((m) => m.state), ['done', 'done']);
+
+  // Nothing can tell: NEAR silent and 1Click silent. Past the deadline and the grace it lapses.
+  const c = await bench();
+  setBalance(c.chain, c.t, BASE_USDC, 1_000_000n);
+  c.chain.oneclick.submitAnswer = 'error';
+  const deaf: MoneyNet = { ...c.net, sleep: async () => Promise.reject(new Error('killed')) };
+  assert.equal((await c.run(['convert'], [PASS, 'yes'], deaf)).code, 1);
+  c.chain.offline = true;
+  const mute = oneclickOn(c.chain);
+  const silent: MoneyNet = { ...c.net, oneclick: { ...mute, status: async () => Promise.reject(new Error('1click status failed: 503')), submitIntent: async () => Promise.reject(new Error('503')) } };
+  const lapsed = await c.run(['convert'], [PASS], silent);
+  assert.equal(converts(c)[0]?.state, 'failed');
+  assert.match(converts(c)[0]?.detail ?? '', /^The signed convert can never run now: its deadline passed long ago/);
+  assert.ok(!lapsed.out.some((l) => /can still run, so nothing new was signed/.test(l)), text(lapsed));
+});
+
+test('an RPC that runs the rehearsal it was handed and goes silent: the book follows the shared nonce and says converted, not nothing moved', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const lying: MoneyNet = {
+    ...b.net,
+    simulateAt: async (signed, block) => {
+      b.chain.simulated.push(signed);
+      for (const s of signed) await verdict(b.chain, s.payload, s.signature, true, Number(block.slice('block'.length)));
+      return null;
+    },
+  };
+  const r = await b.run(['convert'], [PASS, 'yes'], lying);
+  assert.equal(runnable(b).length, 0, 'the convert itself was never signed');
+  assert.ok(r.out.includes('$1.00 USDC on Base: the convert itself was never signed (the verifier did not answer the rehearsal at three blocks in a row, so only rehearsals were signed), but NEAR Intents ran its rehearsal, which pays the same quote.'), text(r));
+  assert.equal(r.code, 0, text(r));
+  assert.equal(converts(b)[0]?.state, 'done');
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
+  const next = await b.run(['convert'], [PASS]);
+  assert.equal(next.code, 0, text(next));
+  assert.ok(next.out.includes('T holds no USDC but NEAR USDC. Nothing to convert.'));
+});
+
+test('a Mac clock running more than a minute fast stops the convert before its real signature: a three-minute signature would live past 1Click\'s quote', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.mac = b.chain.chain + 3_600_000;
+  const r = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(r.code, 1);
+  assert.match(text(r), /this Mac's clock is 3\d{3} s ahead of NEAR's final block, so three minutes on it is longer on NEAR; set the clock to automatic\. Nothing that can run was signed/);
+  assert.equal(runnable(b).length, 0, 'only the rehearsal was signed');
+  assert.equal(b.chain.oneclick.submitted.length, 0);
+});
+
+test("1Click's word for what it credited never exceeds what went in", async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const inner = oneclickOn(b.chain);
+  const boasting: MoneyNet = { ...b.net, oneclick: { ...inner, status: async (h) => ({ ...(await inner.status(h)), settledAmountOut: '5000.00' }) } };
+  const r = await b.run(['convert'], [PASS, 'yes'], boasting);
+  assert.equal(r.code, 0, text(r));
+  assert.equal(converts(b)[0]?.creditedOut, '1000000');
+  assert.ok(r.out.some((l) => l.includes('$1.00 of NEAR USDC credited to T')), text(r));
 });

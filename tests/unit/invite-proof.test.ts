@@ -396,3 +396,23 @@ test('sweep says what other USDC it leaves on T, and does not call that swept', 
   assert.ok(r.out.includes(`T still holds $0.25 USDC on Base inside NEAR Intents, which sweep does not move. Run \`node scripts/invite-proof.ts convert --file ${b.file}\`, then sweep again.`), r.out.join('\n'));
   assert.equal(r.out.at(-1), 'Some accounts were not swept. Run sweep again.');
 });
+
+test('sweep never calls the proof file done while a convert is unfinished or a balance of T did not read', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING'; // T's transfer runs, and 1Click is still working
+  assert.equal((await b.run(['convert', '--file', b.file])).code, 1);
+  const r = await b.run(['sweep', '--file', b.file, '--to', SINK]);
+  assert.equal(r.code, 1);
+  assert.ok(r.out.includes(`The convert of $1.00 USDC on Base is not finished, so NEAR USDC may still reach T. Run \`node scripts/invite-proof.ts convert --file ${b.file}\` to finish it, then sweep again.`), r.out.join('\n'));
+  assert.ok(!r.out.some((l) => /Every proof account is empty/.test(l)));
+
+  const c = bench();
+  assert.equal((await c.run(['init', '--file', c.file])).code, 0);
+  const verifier = { ...c.net.verifier, balance: async (account: string, asset: string) => (asset === BASE_USDC ? null : c.net.verifier.balance(account, asset)) };
+  const blind = await c.run(['sweep', '--file', c.file, '--to', SINK], {}, { ...c.net, verifier });
+  assert.equal(blind.code, 1);
+  assert.ok(blind.out.includes("Couldn't read what T holds of USDC on Base, so T may not be empty. Run sweep again."), blind.out.join('\n'));
+});
