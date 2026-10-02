@@ -1,0 +1,483 @@
+// `npm run invite -- convert`: other USDC in the treasury T turned into NEAR USDC through 1Click,
+// signed by T, against the fake intents.near and 1Click of tests/unit/helpers/invite-chain.ts. The
+// rules are scripts/invite/convert.ts's header, one test each. The live convert is the lead's.
+// Throwaway keys only, made at run time.
+
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+import type { Hex } from 'viem';
+
+import { INVITE_ASSET_ID } from '../../src/invite/payload.ts';
+import { keySigner } from '../../src/invite/signer.ts';
+import type { KeySigner } from '../../src/invite/signer.ts';
+import { intentsApi } from '../../src/rails/intents-native.ts';
+import { readBook } from '../../scripts/invite/book.ts';
+import type { InviteBook, Move } from '../../scripts/invite/book.ts';
+import { USDC_VARIANTS } from '../../scripts/invite/convert.ts';
+import { openInviteFile } from '../../scripts/invite/file.ts';
+import type { MoneyNet } from '../../scripts/invite/money.ts';
+import { main } from '../../scripts/invite.ts';
+import { balanceOf, freshChain, netOn, oneclickFetchOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
+import type { Chain } from './helpers/invite-chain.ts';
+import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+
+const REPO = path.resolve(import.meta.dirname, '..', '..');
+const PASS = 'a long passphrase for the invite file';
+const BASE_USDC = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
+const BSC_USDC = 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r';
+const ATTACKER = 'attacker.near';
+
+type Run = { code: number; out: string[]; err: string[]; prompts: string[]; signedAtConfirm: number | null; outAtConfirm: string[] };
+
+type Bench = {
+  chain: Chain;
+  net: MoneyNet;
+  signed: string[]; // every payload T's key signed, rehearsals included, in order
+  t: string;
+  run(argv: string[], answers?: string[], net?: MoneyNet): Promise<Run>;
+  book(): InviteBook;
+};
+
+async function bench(): Promise<Bench> {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-convert-'));
+  const file = path.join(home, '.phosphor-invites', 'invites.enc.json');
+  const chain = freshChain();
+  const signed: string[] = [];
+  const signerOf = (key: Hex): KeySigner => {
+    const inner = keySigner(key);
+    return {
+      address: inner.address,
+      async sign(payload) {
+        signed.push(payload);
+        return inner.sign(payload);
+      },
+      drop: () => inner.drop(),
+    };
+  };
+  const net = netOn(chain, { signerOf, oneclick: oneclickOn(chain), quoteKey: TEST_QUOTE_KEY });
+  const b: Bench = {
+    chain,
+    net,
+    signed,
+    t: '',
+    async run(argv, answers = [], over) {
+      const r: Run = { code: -1, out: [], err: [], prompts: [], signedAtConfirm: null, outAtConfirm: [] };
+      const queue = [...answers];
+      r.code = await main(argv, {
+        stdinIsTTY: true,
+        terminal: {
+          async ask(prompt) {
+            r.prompts.push(prompt);
+            if (/Type yes/.test(prompt)) {
+              r.signedAtConfirm = signed.length;
+              r.outAtConfirm = [...r.out];
+            }
+            const next = queue.shift();
+            return next === undefined ? null : Buffer.from(next, 'utf8');
+          },
+          write: () => {},
+        },
+        out: (line) => r.out.push(line),
+        err: (line) => r.err.push(line),
+        env: {},
+        home,
+        repoRoot: REPO,
+        net: () => over ?? net,
+      });
+      return r;
+    },
+    book() {
+      const opened = openInviteFile(file, Buffer.from(PASS, 'utf8'));
+      opened.close();
+      return opened.book;
+    },
+  };
+  const made = await b.run(['treasury'], [PASS, PASS]);
+  assert.equal(made.code, 0, made.err.join('\n'));
+  b.t = b.book().treasury.address;
+  return b;
+}
+
+function text(r: Run): string {
+  return [...r.out, ...r.err].join('\n');
+}
+
+/* The signatures that can run: every one but the rehearsals, the only payloads ever simulated. */
+function runnable(b: Bench): string[] {
+  const rehearsed = new Set(b.chain.simulated.flat().map((s) => s.payload));
+  return b.signed.filter((p) => !rehearsed.has(p));
+}
+
+function converts(b: Bench): Move[] {
+  return b.book().moves.filter((m) => m.kind === 'convert');
+}
+
+type Body = { signer_id: string; deadline: string; nonce: string; intents: Array<{ intent: string; receiver_id: string; tokens: Record<string, string> }> };
+
+// 1Click as the app reaches it, over the wire: the real client and its request check.
+function wired(b: Bench, wire: Parameters<typeof oneclickFetchOn>[1] = {}): MoneyNet {
+  return { ...b.net, oneclick: intentsApi({ apiKey: '', fetchImpl: oneclickFetchOn(b.chain, wire) }) };
+}
+
+test('convert turns the USDC on Base in T into NEAR USDC: listed with its NEAR USDC before anything is signed, one signature that can run, credited to T', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const blocks: number[] = [];
+  const simulate = b.net.simulateAt!;
+  const net: MoneyNet = { ...b.net, simulateAt: (signed, block) => (blocks.push(Number(block.slice('block'.length))), simulate(signed, block)) };
+
+  const r = await b.run(['convert'], [PASS, 'yes'], net);
+  assert.equal(r.code, 0, text(r));
+
+  // The list and what it should bring, then the question, with nothing signed yet.
+  assert.equal(r.signedAtConfirm, 0, 'nothing is signed before the yes');
+  assert.ok(r.outAtConfirm.includes('T holds $1.00 USDC on Base inside NEAR Intents. A code holds NEAR USDC only, so 1Click converts each:'), r.outAtConfirm.join('\n'));
+  assert.ok(r.outAtConfirm.includes('  $1.00 USDC on Base to about $0.9998 of NEAR USDC, at least $0.99'), r.outAtConfirm.join('\n'));
+  assert.match(r.prompts.at(-1)!, /^Convert it into about \$0\.9998 of NEAR USDC for T, with one signature from T for each\? Type yes to go on: $/);
+
+  // Exact in, T's whole balance, credited to T and refunded to T.
+  const order = [...b.chain.oneclick.orders.values()].at(-1)!;
+  assert.deepEqual([order.origin, order.destination, order.amount, order.recipient, order.refundTo], [BASE_USDC, INVITE_ASSET_ID, 1_000_000n, b.t, b.t]);
+
+  // One signature that can run, the one 1Click got; the rehearsal shares its nonce and died 1 ms past its block.
+  const real = runnable(b);
+  assert.equal(real.length, 1, 'one signature that can run');
+  assert.deepEqual(b.chain.oneclick.submitted.map((s) => s.payload), real);
+  const rehearsals = b.chain.simulated.flat().map((s) => JSON.parse(s.payload) as Body);
+  const signed = JSON.parse(real[0]!) as Body;
+  assert.equal(rehearsals.length, 1);
+  assert.equal(rehearsals[0]!.nonce, signed.nonce, 'the rehearsal and the convert share one nonce');
+  assert.equal(Date.parse(rehearsals[0]!.deadline), blocks[0]! + 1, 'the rehearsal dies a millisecond past the block it was simulated at');
+  assert.ok(!b.chain.simulated.flat().some((s) => s.payload === real[0]), 'the real bytes are never simulated');
+  const handle = [...b.chain.oneclick.orders.keys()].at(-1)!;
+  assert.deepEqual(signed.intents, [{ intent: 'transfer', receiver_id: handle, tokens: { [BASE_USDC]: '1000000' } }]);
+  assert.deepEqual(rehearsals[0]!.intents, signed.intents, 'the same transfer');
+  assert.ok(Date.parse(signed.deadline) - b.chain.mac <= 3 * 60_000, 'signed for three minutes at most');
+
+  // T now holds NEAR USDC and no USDC on Base; the book holds the convert, done.
+  assert.equal(balanceOf(b.chain, b.t, BASE_USDC), 0n);
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
+  const [move] = converts(b);
+  assert.equal(move?.state, 'done');
+  assert.equal(move?.creditedOut, '999800');
+  assert.equal(move?.signed?.payload, real[0]);
+  assert.ok(r.out.some((l) => /^\$1\.00 USDC on Base: converted\. 1Click says SUCCESS, \$0\.9998 of NEAR USDC credited to T \(intent \w+\)\.$/.test(l)), text(r));
+  assert.ok(r.out.includes('T holds $0.9998 of NEAR USDC now, the USDC a batch pays codes with.'), text(r));
+});
+
+test('the move and its nonce are on disk before the rehearsal is signed, and the signed bytes before 1Click sees them', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 2_000_000n);
+  const seen: string[] = [];
+  const inner = oneclickOn(b.chain);
+  const simulate = b.net.simulateAt!;
+  const net: MoneyNet = {
+    ...b.net,
+    simulateAt: async (signed, block) => {
+      const move = converts(b).at(-1);
+      assert.equal(move?.state, 'pending');
+      assert.equal(move?.signed, undefined, 'no real signature yet');
+      assert.equal(move?.nonce, (JSON.parse(signed[0]!.payload) as Body).nonce, 'the rehearsal nonce is written down first');
+      assert.equal(move?.rehearsalDeadline, (JSON.parse(signed[0]!.payload) as Body).deadline);
+      seen.push('rehearsal');
+      return simulate(signed, block);
+    },
+    oneclick: {
+      ...inner,
+      async submitIntent(signed) {
+        assert.equal(converts(b).at(-1)?.signed?.payload, signed.payload, 'the bytes 1Click gets are the bytes in the file');
+        assert.equal(converts(b).at(-1)?.signed?.signature, signed.signature);
+        seen.push('submit');
+        return inner.submitIntent(signed);
+      },
+    },
+  };
+  const r = await b.run(['convert'], [PASS, 'yes'], net);
+  assert.equal(r.code, 0, text(r));
+  assert.deepEqual(seen, ['rehearsal', 'submit']);
+});
+
+test('a run that dies with the signed bytes on disk is finished by the next run with the same bytes, never a second signature', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const inner = oneclickOn(b.chain);
+  const dying: MoneyNet = {
+    ...b.net,
+    oneclick: {
+      ...inner,
+      submitIntent: async () => {
+        throw new Error('the Mac went to sleep');
+      },
+    },
+    sleep: async () => {
+      throw new Error('killed');
+    },
+  };
+  const first = await b.run(['convert'], [PASS, 'yes'], dying);
+  assert.equal(first.code, 1);
+  const pending = converts(b)[0]!;
+  assert.equal(pending.state, 'pending');
+  assert.ok(pending.signed !== undefined, 'the signed bytes are in the file');
+  assert.equal(b.chain.oneclick.submitted.length, 0, 'and never reached 1Click');
+
+  const second = await b.run(['convert'], [PASS]);
+  assert.equal(second.code, 0, text(second));
+  assert.ok(second.out.includes('Signed in an earlier run and not proven either way yet: sending the same bytes to 1Click again. It is never signed twice.'));
+  assert.deepEqual(b.chain.oneclick.submitted.map((s) => s.payload), [pending.signed.payload], 'the same bytes, once');
+  assert.equal(runnable(b).length, 1, 'never a second signature');
+  assert.equal(converts(b)[0]!.state, 'done');
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
+  assert.ok(second.out.includes('T holds no USDC but NEAR USDC. Nothing to convert.'), 'and the next read of T finds nothing left');
+  assert.ok(!second.prompts.some((p) => /Type yes/.test(p)));
+});
+
+test('while a convert signed earlier can still run, nothing new is signed; once it ends, what arrived since converts with a signature of its own', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const inner = oneclickOn(b.chain);
+  const dying: MoneyNet = {
+    ...b.net,
+    oneclick: { ...inner, submitIntent: async () => Promise.reject(new Error('the Mac went to sleep')) },
+    sleep: async () => Promise.reject(new Error('killed')),
+  };
+  assert.equal((await b.run(['convert'], [PASS, 'yes'], dying)).code, 1);
+
+  // NEAR stops answering: the first convert cannot be proven either way, so nothing new is signed.
+  b.chain.offline = true;
+  const blind = await b.run(['convert'], [PASS]);
+  assert.equal(blind.code, 1);
+  assert.ok(blind.out.includes('A convert signed in an earlier run can still run, so nothing new was signed. Run convert again in a few minutes.'), text(blind));
+  assert.equal(runnable(b).length, 1);
+
+  b.chain.offline = false;
+  setBalance(b.chain, b.t, BASE_USDC, balanceOf(b.chain, b.t, BASE_USDC) + 500_000n);
+  const later = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(later.code, 0, text(later));
+  assert.deepEqual(converts(b).map((m) => [m.state, m.legs[0]!.amountBase]), [
+    ['done', '1000000'],
+    ['done', '500000'],
+  ]);
+  assert.equal(runnable(b).length, 2, 'one signature per convert');
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n + 499_900n);
+});
+
+test('through the real client: a fee line for someone else, or a recipient or refund changed on the wire, is refused after the yes with nothing signed', async () => {
+  for (const [name, rewrite, words] of [
+    ['a fee line', (body: Record<string, any>) => (body['appFees'] = [{ recipient: ATTACKER, fee: 3000 }]), /the quote pays a fee of 3000 bp to attacker\.near, and only 1Click's own fee account may be paid/],
+    ['the recipient', (body: Record<string, any>) => (body['recipient'] = ATTACKER), /priced with recipient attacker\.near/],
+    ['the refund', (body: Record<string, any>) => (body['refundTo'] = ATTACKER), /priced with refundTo attacker\.near/],
+  ] as const) {
+    const b = await bench();
+    setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+    // Only the live quote is changed, so the list a person says yes to was honest.
+    const r = await b.run(['convert'], [PASS, 'yes'], wired(b, { rewrite: (body) => body['dry'] === false && rewrite(body) }));
+    assert.equal(r.code, 1, name);
+    assert.ok(r.prompts.some((p) => /Type yes/.test(p)), `${name}: the list was shown and agreed to`);
+    assert.match(text(r), /1click priced a request this app did not send, so the quote is refused and nothing was signed/, name);
+    assert.match(text(r), words, name);
+    assert.equal(b.signed.length, 0, `${name}: nothing signed, not even a rehearsal`);
+    assert.equal(b.chain.oneclick.submitted.length, 0, name);
+    assert.equal(balanceOf(b.chain, b.t, BASE_USDC), 1_000_000n, `${name}: T keeps its USDC`);
+  }
+});
+
+test('through the real client: an honest quote converts, exact in, credited to T and refunded to T inside NEAR Intents', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const asked: Array<Record<string, any>> = [];
+  const r = await b.run(['convert'], [PASS, 'yes'], wired(b, { rewrite: (body) => asked.push({ ...body }) }));
+  assert.equal(r.code, 0, text(r));
+  assert.equal(asked.length, 2, 'the dry price for the list, then the live quote');
+  for (const body of asked) {
+    assert.deepEqual(
+      [body['swapType'], body['originAsset'], body['destinationAsset'], body['amount'], body['depositType'], body['recipient'], body['recipientType'], body['refundTo'], body['refundType']],
+      ['EXACT_INPUT', BASE_USDC, INVITE_ASSET_ID, '1000000', 'INTENTS', b.t, 'INTENTS', b.t, 'INTENTS'],
+    );
+  }
+  assert.equal(runnable(b).length, 1);
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_700n, "1Click's own 1 bp fee line and its price");
+});
+
+test('a quote that gives up more than one percent is refused: by its floor, by 1Click\'s own dollar figures, and with a fee hidden from the echo', async () => {
+  const lossy = await bench();
+  setBalance(lossy.chain, lossy.t, BASE_USDC, 1_000_000n);
+  lossy.chain.oneclick.lossBps = 150;
+  const r1 = await lossy.run(['convert'], [PASS, 'yes']);
+  assert.equal(r1.code, 1);
+  assert.match(text(r1), /the quote could deliver as little as \$0\.98 of NEAR USDC, under the \$0\.99 floor 1 percent under what T sends/);
+  assert.match(text(r1), /the quote gives up 1\.5 percent of its value \(\$1\.00 in, \$0\.9\d out by 1Click's own prices\), more than the 1 percent a convert may lose/);
+  assert.equal(lossy.signed.length, 0);
+  assert.ok(!r1.prompts.some((p) => /Type yes/.test(p)), 'nothing to agree to');
+
+  // The dollars alone: amounts that pass the floor, priced 10 percent apart by 1Click itself.
+  const priced = await bench();
+  setBalance(priced.chain, priced.t, BASE_USDC, 1_000_000n);
+  priced.chain.oneclick.tamper = (quote) => (quote['amountOutUsd'] = '0.900000');
+  const r2 = await priced.run(['convert'], [PASS, 'yes']);
+  assert.equal(r2.code, 1);
+  assert.match(text(r2), /gives up 10\.0 percent of its value \(\$1\.00 in, \$0\.90 out by 1Click's own prices\)/);
+  assert.equal(priced.signed.length, 0);
+
+  // A fee added on the wire to the live quote and its line taken back out of the echo: the echo and
+  // the signature both pass, and the value checks still refuse it after the yes.
+  const hidden = await bench();
+  setBalance(hidden.chain, hidden.t, BASE_USDC, 1_000_000n);
+  const r3 = await hidden.run(
+    ['convert'],
+    [PASS, 'yes'],
+    wired(hidden, {
+      rewrite: (body) => body['dry'] === false && (body['appFees'] = [{ recipient: ATTACKER, fee: 200 }]),
+      hide: (echo) => (echo['appFees'] = (echo['appFees'] as Array<{ recipient: string }>).filter((f) => f.recipient !== ATTACKER)),
+    }),
+  );
+  assert.equal(r3.code, 1);
+  assert.match(text(r3), /live quote does not match the approved draft/);
+  assert.match(text(r3), /gives up 2\.0 percent of its value/);
+  assert.equal(hidden.signed.length, 0);
+  assert.equal(hidden.chain.oneclick.submitted.length, 0);
+});
+
+test("a payload 1Click generates that pays anyone but the quote's handle, more, or another asset, is refused before even the rehearsal is signed", async () => {
+  for (const [name, edit] of [
+    ['receiver', (p: Record<string, any>) => (p['intents'][0]['receiver_id'] = ATTACKER)],
+    ['amount', (p: Record<string, any>) => (p['intents'][0]['tokens'][BASE_USDC] = '1000001')],
+    ['asset', (p: Record<string, any>) => (p['intents'][0]['tokens'] = { [INVITE_ASSET_ID]: '1000000' })],
+    ['signer', (p: Record<string, any>) => (p['signer_id'] = ATTACKER)],
+  ] as const) {
+    const b = await bench();
+    setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+    b.chain.oneclick.payloadAs = edit;
+    const r = await b.run(['convert'], [PASS, 'yes']);
+    assert.equal(r.code, 1, name);
+    assert.match(text(r), /refusing to sign the intent 1click generated/, name);
+    assert.equal(b.signed.length, 0, `${name}: nothing signed`);
+    assert.equal(converts(b).length, 0, `${name}: nothing written down`);
+  }
+});
+
+test('a rehearsal the verifier refuses stops the convert: only the rehearsal was signed, and the move is closed as never sent', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.locked.add(b.t);
+  const r = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(r.code, 1);
+  assert.match(text(r), /not converted, and nothing that can run left this Mac: NEAR Intents has locked the paying account/);
+  assert.equal(b.signed.length, 1, 'the rehearsal');
+  assert.equal(runnable(b).length, 0);
+  assert.equal(b.chain.oneclick.submitted.length, 0);
+  const [move] = converts(b);
+  assert.equal(move?.state, 'failed');
+  assert.match(move?.detail ?? '', /^Nothing that can run was sent:/);
+});
+
+test("a Mac clock running slow stops the convert before anything is signed, and says to set the clock", async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.chain = b.chain.mac; // a final block stamped at this Mac's time: this clock is behind
+  const r = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(r.code, 1);
+  assert.match(text(r), /NEAR's final block is stamped only 0\.0 s behind this Mac's clock, where an honest one trails by about 2\.6 s \(if this Mac's clock is behind, set it/);
+  assert.equal(b.signed.length, 0);
+});
+
+test('1Click refunding a convert puts the USDC back on T and closes the move; the next run converts it again', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'REFUNDED';
+  const refunded = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(refunded.code, 1);
+  assert.ok(refunded.out.includes('$1.00 USDC on Base: not converted. 1Click refunded it to T as the same USDC. Run convert again to try once more.'), text(refunded));
+  assert.equal(balanceOf(b.chain, b.t, BASE_USDC), 1_000_000n);
+  assert.equal(converts(b)[0]?.state, 'failed');
+
+  b.chain.oneclick.outcome = 'SUCCESS';
+  const again = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(again.code, 0, text(again));
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
+  assert.equal(runnable(b).length, 2);
+});
+
+test('two USDC at once, one at 18 decimals: each its own convert and signature, amounts read at their own decimals', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  setBalance(b.chain, b.t, BSC_USDC, 2_500_000_000_000_000_000n);
+  const r = await b.run(['convert'], [PASS, 'yes']);
+  assert.equal(r.code, 0, text(r));
+  assert.ok(r.outAtConfirm.includes('T holds $1.00 USDC on Base and $2.50 USDC on BNB Chain inside NEAR Intents. A code holds NEAR USDC only, so 1Click converts each:'), r.outAtConfirm.join('\n'));
+  assert.equal(runnable(b).length, 2);
+  assert.deepEqual(converts(b).map((m) => [m.assetId, m.state]), [
+    [BASE_USDC, 'done'],
+    [BSC_USDC, 'done'],
+  ]);
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n + 2_499_500n);
+});
+
+test('nothing to convert: T with NEAR USDC and dust under a cent is told so, and nothing is asked, priced or signed; a no is nothing signed', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, INVITE_ASSET_ID, 5_000_000n);
+  setBalance(b.chain, b.t, BASE_USDC, 9_999n);
+  const r = await b.run(['convert'], [PASS]);
+  assert.equal(r.code, 0, text(r));
+  assert.deepEqual(r.out, ['T holds no USDC but NEAR USDC. Nothing to convert.', 'T holds $5.00 of NEAR USDC now, the USDC a batch pays codes with.']);
+  assert.equal(b.chain.oneclick.quotes, 0);
+
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  const no = await b.run(['convert'], [PASS, 'no']);
+  assert.equal(no.code, 1);
+  assert.ok(no.out.includes('Stopped. Nothing was signed.'));
+  assert.equal(b.signed.length, 0);
+  assert.equal(converts(b).length, 0);
+});
+
+test('convert runs only in a real terminal, takes no flag but --file, and holds the file lock', async () => {
+  const b = await bench();
+  const piped = await main(['convert'], {
+    stdinIsTTY: false,
+    terminal: { ask: async () => null, write: () => {} },
+    out: () => {},
+    err: () => {},
+    env: {},
+    repoRoot: REPO,
+    net: () => b.net,
+  });
+  assert.equal(piped, 1);
+  const flag = await b.run(['convert', '--to', ATTACKER], [PASS]);
+  assert.equal(flag.code, 2);
+  assert.match(text(flag), /convert does not take --to/);
+});
+
+test('the variant table: the four USDC the app can hold match data/tokens.json, ids are unique, and NEAR USDC is not one of them', () => {
+  const tokens = JSON.parse(fs.readFileSync(path.join(REPO, 'data', 'tokens.json'), 'utf8')) as Record<string, Record<string, { assetId?: string; decimals: number }>>;
+  for (const chain of ['eth', 'base', 'arb', 'sol']) {
+    const row = tokens[chain]!['USDC']!;
+    const pinned = USDC_VARIANTS.find((v) => v.assetId === row.assetId);
+    assert.ok(pinned !== undefined, `${chain} USDC is a variant`);
+    assert.equal(pinned.decimals, row.decimals, `${chain} USDC decimals`);
+  }
+  assert.equal(new Set(USDC_VARIANTS.map((v) => v.assetId)).size, USDC_VARIANTS.length);
+  assert.ok(!USDC_VARIANTS.some((v) => v.assetId === INVITE_ASSET_ID));
+});
+
+test('the book holds a convert only whole: its asset, handle and nonce, one leg to its handle, and its signature under its nonce', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  assert.equal((await b.run(['convert'], [PASS, 'yes'])).code, 0);
+  const good = JSON.parse(JSON.stringify(b.book())) as Record<string, any>;
+  assert.doesNotThrow(() => readBook(good));
+  const broken: Array<[string, (book: Record<string, any>) => void]> = [
+    ['no nonce', (book) => delete book['moves'][0]['nonce']],
+    ['no handle', (book) => delete book['moves'][0]['handle']],
+    ['a leg elsewhere', (book) => (book['moves'][0]['legs'][0]['receiverId'] = ATTACKER)],
+    ['another nonce signed', (book) => (book['moves'][0]['signed']['nonce'] = 'AAAA')],
+    ['a batch with an asset', (book) => book['moves'].push({ id: 'x', kind: 'batch', signer: b.t, legs: [{ receiverId: ATTACKER, amountBase: '1' }], state: 'failed', createdAt: 'now', assetId: BASE_USDC })],
+  ];
+  for (const [name, edit] of broken) {
+    const copy = JSON.parse(JSON.stringify(good)) as Record<string, any>;
+    edit(copy);
+    assert.throws(() => readBook(copy), /does not hold together/, name);
+  }
+});

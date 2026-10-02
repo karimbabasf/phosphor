@@ -2,6 +2,7 @@
 // T, reclaim open codes back to T, withdraw T to a typed address, and say where every code stands.
 // Spec: docs/superpowers/specs/2026-10-01-invite-codes-design.md, "The money path". The terminal
 // side is scripts/invite.ts; the proof script (scripts/invite-proof.ts) drives the same moves.
+// Turning other USDC that reached T into NEAR USDC is scripts/invite/convert.ts, through 1Click.
 //
 // ONE SIGNATURE THAT CAN RUN. A move is one transfer payload out of one account
 // (src/invite/payload.ts), rehearsed (below), signed only after everything it pays is on disk, and
@@ -58,6 +59,7 @@ import {
 } from '../../src/invite/payload.ts';
 import { keySigner } from '../../src/invite/signer.ts';
 import type { KeySigner } from '../../src/invite/signer.ts';
+import type { IntentsApiPort } from '../../src/rails/intents-native.ts';
 import { intentsAccountProblem } from '../../src/rails/intents-send.ts';
 import type { RelayClient, RelayStatus } from '../../src/relay/client.ts';
 import { FATE_AHEAD_MAX_MS, RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
@@ -79,6 +81,10 @@ export type MoneyNet = {
   /* simulate_intents run at one block, by its hash, for a dry run. Null when it did not answer.
      Without it no dry run is signed at all. */
   simulateAt?: (signed: SignedIntent[], blockHash: string) => Promise<Simulation | null>;
+  // 1Click, for convert alone (scripts/invite/convert.ts): the partner key when one is set. A test
+  // hands in its own, with the key its quotes are signed by.
+  oneclick?: IntentsApiPort;
+  quoteKey?: string;
   firstPollMs?: number;
   pollMs?: number;
 };
@@ -156,11 +162,11 @@ export function shortAddress(address: string): string {
   return address.length > 14 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 }
 
-function nowIso(net: MoneyNet): string {
+export function nowIso(net: MoneyNet): string {
   return new Date(net.now()).toISOString();
 }
 
-function idOf(net: MoneyNet): string {
+export function idOf(net: MoneyNet): string {
   return Buffer.from(net.random(8)).toString('hex');
 }
 
@@ -193,7 +199,7 @@ export function newTreasury(net: Pick<MoneyNet, 'random' | 'now'>): Treasury {
   }
 }
 
-function treasurySigner(book: InviteBook, net: MoneyNet): KeySigner {
+export function treasurySigner(book: InviteBook, net: MoneyNet): KeySigner {
   const signer = (net.signerOf ?? keySigner)(book.treasury.key);
   if (signer.address !== book.treasury.address) {
     signer.drop();
@@ -218,7 +224,7 @@ function signerForCode(code: InviteCode, net: MoneyNet): KeySigner {
   return signer;
 }
 
-function fateReads(net: MoneyNet): FateReads {
+export function fateReads(net: MoneyNet): FateReads {
   const v = net.verifier;
   return {
     nonceUsed: (account, nonce, at) => v.nonceUsed(account, nonce, at),
@@ -227,7 +233,7 @@ function fateReads(net: MoneyNet): FateReads {
   };
 }
 
-const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
+export const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
   empty: 'The paying account holds less than the move pays.',
   locked: 'NEAR Intents has locked the paying account, so nothing can be signed out of it.',
   expired: 'The signed move would reach the verifier after its deadline.',
@@ -236,7 +242,7 @@ const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
 
 type Built = { ok: true; signed: SignedMove; block: FinalBlock } | { ok: false; detail: string };
 
-async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8Array; block: FinalBlock } | string> {
+export async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8Array; block: FinalBlock } | string> {
   const [salt, block] = await Promise.all([
     net.verifier.currentSalt().catch(() => null),
     net.verifier.finalBlock === undefined ? Promise.resolve(null) : net.verifier.finalBlock().catch(() => null),

@@ -140,6 +140,20 @@ Fund T with the app's normal Send, so you read the receiver on the card before y
 send pays 1Click about 0.25 percent, so send count x amount / 0.9975 plus a cent: $50.14 for
 ten $5 codes.
 
+    npm run invite -- convert
+
+turns any other USDC in T into NEAR USDC, the one USDC a code holds. The app's Send pays out of
+the USDC your wallet holds, so a send to T can land as USDC on Base or another chain inside NEAR
+Intents. `convert` reads what T holds, lists each other USDC with the NEAR USDC it should bring,
+and asks you to type yes. Each one is then a swap through 1Click with one signature from T:
+everything T holds of that USDC in, the NEAR USDC credited to T, and a refund, if 1Click cannot
+fill it, back to T. The quote is checked the way the app checks its own swaps: the request 1Click
+priced must be the one sent, with a fee to 1Click's own account and nobody else, and a convert may
+give up at most 1 percent of its value (honest quotes gave up about 0.02 percent on 2026-10-01).
+It is rehearsed and written to the file before it is signed, like every move here, and the signed
+bytes are written down before 1Click gets them. If a run stops, the next `convert` finishes it with
+the same bytes, never a second signature, and converts nothing new while they can still run.
+
     npm run invite -- issue --count 10 --amount 5 --label "SF builders"
 
 checks that T holds enough and asks you to type yes. Then it writes the codes to the file,
@@ -200,12 +214,15 @@ relay refuses one, it stops and says so.
 both claim routes before trusting them:
 
     node scripts/invite-proof.ts init --file ~/invite-proof.json
+    node scripts/invite-proof.ts convert --file ~/invite-proof.json
     node scripts/invite-proof.ts run --file ~/invite-proof.json
     node scripts/invite-proof.ts sweep --file ~/invite-proof.json --to <your address>
 
 `init` makes a throwaway treasury and a throwaway receiver and prints both addresses. Send $1 to
-the treasury. `run` waits for it (30 minutes; `--wait-minutes` changes that), issues two $0.10
-codes in one payload, and claims both into the receiver with the app's own claim code: the first
+the treasury. If it lands as USDC on another chain, `convert` turns it into NEAR USDC the way
+`npm run invite -- convert` does, without asking, and writes each convert into the report. `run`
+waits for the $1 (30 minutes; `--wait-minutes` changes that), issues two $0.10 codes in one
+payload, and claims both into the receiver with the app's own claim code: the first
 through the solver relay with no quote, the second through 1Click. To reach 1Click it turns the
 relay away itself, before anything is sent, the way the relay would if it began to enforce its
 key, and the claim falls back on its own. It writes down what NEAR Intents says about each step:

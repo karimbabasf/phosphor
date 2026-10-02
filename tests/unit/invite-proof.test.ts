@@ -13,12 +13,13 @@ import { INVITE_ASSET_ID } from '../../src/invite/payload.ts';
 import { takeLock } from '../../scripts/invite/file.ts';
 import { proofMain } from '../../scripts/invite-proof.ts';
 import type { ProofFile, ProofNet } from '../../scripts/invite-proof.ts';
-import { freshChain, netOn, oneclickOn } from './helpers/invite-chain.ts';
+import { balanceOf, freshChain, netOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const SINK = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
+const BASE_USDC = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 
 type Run = { code: number; out: string[]; err: string[] };
 
@@ -307,4 +308,29 @@ test('a sweep left unproven is resent as the same bytes to where it was signed t
   ]);
   const fromT = b.chain.published.filter((p) => (JSON.parse(p.payload) as Body).signer_id === t);
   assert.equal(new Set(fromT.map((p) => p.signature)).size, 1, 'one signature out of T');
+});
+
+test('convert turns USDC on Base in the proof treasury into NEAR USDC and writes it into the report, with no key and no code', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+
+  const r = await b.run(['convert', '--file', b.file]);
+  assert.equal(r.code, 0, [...r.out, ...r.err].join('\n'));
+  assert.ok(r.out.includes('  $1.00 USDC on Base to about $0.9998 of NEAR USDC, at least $0.99'), r.out.join('\n'));
+  assert.ok(r.out.includes(`Next: node scripts/invite-proof.ts run --file ${b.file}`));
+  assert.equal(balanceOf(b.chain, t, BASE_USDC), 0n);
+  assert.equal(balanceOf(b.chain, t, INVITE_ASSET_ID), 999_800n);
+  assert.equal(b.chain.oneclick.submitted.length, 1);
+
+  const [convert] = b.proof().results.convert ?? [];
+  assert.equal(convert?.['state'], 'done');
+  assert.equal(convert?.['asset'], BASE_USDC);
+  assert.equal(convert?.['amountBase'], '1000000');
+  assert.equal(convert?.['creditedOut'], '999800');
+  assert.equal(convert?.['oneclick'], 'SUCCESS');
+  const report = await b.run(['report', '--file', b.file]);
+  assert.match(report.out.join('\n'), /"convert": \[/);
+  assertNothingSpendable([...r.out, ...report.out].join('\n'), b.proof());
 });

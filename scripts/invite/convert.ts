@@ -1,0 +1,610 @@
+// Other USDC that reached the treasury T, turned into NEAR USDC, the one asset a code holds
+// (src/invite/payload.ts). The app's Send pays out of whichever USDC the wallet holds, so funding T
+// with it can land USDC on Base inside NEAR Intents, which a batch cannot pay with: the proof's
+// first funding did exactly that (1.00 USDC on Base, no NEAR USDC). `npm run invite -- convert` and
+// `node scripts/invite-proof.ts convert` swap every other USDC T holds into NEAR USDC through
+// 1Click, signed by T's own key, one move per USDC.
+//
+// THE QUOTE IS HELD TO WHAT T ASKED FOR, the way the swap rail holds its own: exact in, T's whole
+// balance of that USDC, the NEAR USDC credited to T and a refund back to T, both inside NEAR
+// Intents. Inside the client (src/intents.ts requestEchoProblems) the request 1Click priced must be
+// the request sent, with a fee to 1Click's own account and nobody else; the echo must name T and
+// the two assets (quoteEchoProblems), 1Click must have signed the quote, and it may give up at
+// most CONVERT_MAX_LOSS_BPS of its value, in base units and by 1Click's own dollar figures. The
+// payload 1Click generates is then read back as a stranger would (checkIntentPayload): one
+// transfer of exactly that amount of that USDC from T, to the handle of that quote, for three
+// minutes.
+//
+// ONE SIGNATURE THAT CAN RUN, ON DISK BEFORE IT GOES. The steps are the shared spend path
+// (src/rails/intents-spend.ts), signed once. Before that signature the move is in the invite file
+// with 1Click's handle and the payload's nonce, and the payload is rehearsed (below); after it, the
+// signed bytes are in the file before submit-intent sees them. A run that stops anywhere is
+// finished by the next one: the same bytes resent while they can still run, never a second
+// signature, and nothing new converted while they can.
+//
+// REHEARSED, NEVER SIMULATED AS ITSELF (scripts/invite/money.ts says why). The rehearsal is
+// 1Click's own payload with its deadline cut to one millisecond past a final block, signed and
+// simulated at that block. It carries the real payload's nonce, so at most one of the two can ever
+// run: a rehearsal a lying RPC ran on a fast Mac is the convert itself, paid to the handle of a
+// quote that credits T, and the real signature then dies on the spent nonce.
+//
+// PROOF IS THE NONCE, THEN 1CLICK'S WORD. A spent nonce is T's transfer to the handle done.
+// 1Click's SUCCESS is the NEAR USDC delivered and REFUNDED the USDC back on T, and the next read of
+// T shows either. A nonce proven dead on the chain's clock (src/relay/fate.ts) never ran.
+
+import { baseUnits, baseUnitsToDecimal, decimalToBaseUnits, oneLine, quoteEchoProblems } from '../../src/intents.ts';
+import type { OneClickQuote, OneClickStatus, QuoteEcho } from '../../src/intents.ts';
+import { ERC191_STANDARD } from '../../src/intents-sign.ts';
+import { INVITE_ASSET_DECIMALS, INVITE_ASSET_ID, REHEARSAL_LIFE_MS, formatUsdc, intentHashOf, signingDeadline, simulationVerdict } from '../../src/invite/payload.ts';
+import { signerPort } from '../../src/invite/signer.ts';
+import type { KeySigner } from '../../src/invite/signer.ts';
+import {
+  INTENTS_API_KEY_ENV,
+  QUOTE_SLIPPAGE_BPS,
+  SIGNED_DEADLINE_MS,
+  checkIntentPayload,
+  intentDeadline,
+  intentNonce,
+  intentsApi,
+  shortenDeadline,
+} from '../../src/rails/intents-native.ts';
+import type { IntentPayloadExpectation, IntentsApiPort } from '../../src/rails/intents-native.ts';
+import { spendFromIntents } from '../../src/rails/intents-spend.ts';
+import type { IntentsSpendOutcome } from '../../src/rails/intents-spend.ts';
+import { submitSignedIntent } from '../../src/rails/intents-submit.ts';
+import { RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
+import { pendingMoves } from './book.ts';
+import type { Move } from './book.ts';
+import { REFUSALS, REHEARSAL_AHEAD_MS, chainClock, fateReads, idOf, nowIso, treasurySigner } from './money.ts';
+import type { Io, Ledger, MoneyNet } from './money.ts';
+
+export type UsdcVariant = { assetId: string; chain: string; decimals: number };
+
+/* Every USDC inside NEAR Intents but NEAR's own: 1Click's list on 2026-10-01 (GET /v0/tokens,
+   symbol exactly USDC and a NEAR Intents token id), the four the app's Send can hold matching
+   data/tokens.json. Pinned here, ids and decimals both: the list is unsigned (src/rails/asset-pin.ts
+   says why that matters), and the decimals scale the floor every convert is held to. */
+export const USDC_VARIANTS: readonly UsdcVariant[] = [
+  { assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near', chain: 'Base', decimals: 6 },
+  { assetId: 'nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near', chain: 'Ethereum', decimals: 6 },
+  { assetId: 'nep141:arb-0xaf88d065e77c8cc2239327c5edb3a432268e5831.omft.near', chain: 'Arbitrum', decimals: 6 },
+  { assetId: 'nep141:sol-5ce3bf3a31af18be40ba30f721101b4341690186.omft.near', chain: 'Solana', decimals: 6 },
+  { assetId: 'nep141:gnosis-0x2a22f9c3b484c3629090feed35f17ff8f88f76f0.omft.near', chain: 'Gnosis', decimals: 6 },
+  { assetId: 'nep141:aptos-34ee497f210c5a511e8d5b53bc56d75b63612bb5.omft.near', chain: 'Aptos', decimals: 6 },
+  { assetId: 'nep141:sui-c1b81ecaf27933252d31a963bc5e9458f13c18ce.omft.near', chain: 'Sui', decimals: 6 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:137_qiStmoQJDQPTebaPjgx5VBxZv6L', chain: 'Polygon', decimals: 6 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:10_A2ewyUyDp6qsue1jqZsGypkCxRJ', chain: 'Optimism', decimals: 6 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:43114_3atVJH3r5c4GqiSYmg9fECvjc47o', chain: 'Avalanche', decimals: 6 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r', chain: 'BNB Chain', decimals: 18 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:1100_111bzQBB65GxAPAVoxqmMcgYo5oS3txhqs1Uh1cgahKQUeTUq1TJu', chain: 'Stellar', decimals: 7 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:143_2dmLwYWkCQKyTjeUPAsGJuiVLbFx', chain: 'Monad', decimals: 6 },
+  { assetId: 'nep245:v2_1.omni.hot.tg:196_2dK9kLNR7Ekq7su8FxNGiUW3djTw', chain: 'X Layer', decimals: 6 },
+];
+
+/* How much of its value a convert may give up, fee and price together: one percent, the send
+   rail's cap (SEND_MAX_LOSS_BPS). Live dry quotes of USDC on Base to NEAR USDC on 2026-10-01 gave
+   up 0.8 to 2.2 basis points ($0.10 to $100), so this refuses only a quote someone changed. */
+export const CONVERT_MAX_LOSS_BPS = 100;
+// What 1Click is asked to keep its own floor within: the swap rail's half percent.
+const CONVERT_SLIPPAGE_BPS = QUOTE_SLIPPAGE_BPS;
+/* How long one convert is watched on this Mac's clock: its signed three minutes, the grace
+   src/relay/fate.ts gives this clock when the chain's does not answer, and a minute. */
+export const CONVERT_WATCH_CAP_MS = SIGNED_DEADLINE_MS + RELAY_DEADLINE_GRACE_MS + 60_000;
+const FIRST_POLL_MS = 1_000;
+const POLL_MS = 3_000;
+
+export type OtherUsdc = { variant: UsdcVariant; base: bigint };
+
+function errText(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+export function variantOf(assetId: string | undefined): UsdcVariant | undefined {
+  return USDC_VARIANTS.find((v) => v.assetId === assetId);
+}
+
+// A variant's base units as NEAR USDC's six places, rounded down.
+export function asInviteBase(base: bigint, decimals: number): bigint {
+  const shift = decimals - INVITE_ASSET_DECIMALS;
+  return shift >= 0 ? base / 10n ** BigInt(shift) : base * 10n ** BigInt(-shift);
+}
+
+// One cent of a variant: anything less is left where it is.
+function centOf(variant: UsdcVariant): bigint {
+  return variant.decimals > 2 ? 10n ** BigInt(variant.decimals - 2) : 1n;
+}
+
+/* NEAR USDC base units as dollars, exact past the cent when there is more: 1.00, 0.9998, 2.50.
+   formatUsdc rounds down to the cent, which would show a convert that gave up two hundredths of a
+   percent as one that gave up one. */
+export function exactDollars(base: bigint): string {
+  const [whole, fraction = ''] = baseUnitsToDecimal(base, INVITE_ASSET_DECIMALS).split('.');
+  return `${whole}.${fraction.padEnd(2, '0')}`;
+}
+
+// "$1.00 USDC on Base".
+export function heldWords(held: OtherUsdc): string {
+  return `$${exactDollars(asInviteBase(held.base, held.variant.decimals))} USDC on ${held.variant.chain}`;
+}
+
+export function heldList(held: OtherUsdc[]): string {
+  const words = held.map(heldWords);
+  return words.length <= 1 ? (words[0] ?? 'nothing') : `${words.slice(0, -1).join(', ')} and ${words.at(-1)}`;
+}
+
+function moveWords(move: Move): string {
+  const variant = variantOf(move.assetId);
+  const base = BigInt(move.legs[0]?.amountBase ?? '0');
+  return variant === undefined ? `${base} base units of ${oneLine(move.assetId, 80)}` : heldWords({ variant, base });
+}
+
+/* What `account` holds of each USDC but NEAR's, read live: the ones at a cent or more, and the
+   ones whose read did not answer. */
+export async function otherUsdc(net: Pick<MoneyNet, 'verifier'>, account: string): Promise<{ held: OtherUsdc[]; unread: UsdcVariant[] }> {
+  const reads = await Promise.all(USDC_VARIANTS.map((v) => net.verifier.balance(account, v.assetId).catch(() => null)));
+  const held: OtherUsdc[] = [];
+  const unread: UsdcVariant[] = [];
+  USDC_VARIANTS.forEach((variant, i) => {
+    const base = reads[i] ?? null;
+    if (base === null) unread.push(variant);
+    else if (base >= centOf(variant)) held.push({ variant, base });
+  });
+  return { held, unread };
+}
+
+// The least NEAR USDC a convert of `held` may deliver: CONVERT_MAX_LOSS_BPS under what it sends.
+export function convertFloor(held: OtherUsdc): bigint {
+  return (asInviteBase(held.base, held.variant.decimals) * BigInt(10_000 - CONVERT_MAX_LOSS_BPS)) / 10_000n;
+}
+
+/* The convert's own checks on a quote, beside the request echo, the quote echo and the signature:
+   T's whole balance in, and at most CONVERT_MAX_LOSS_BPS given up, by the quote's own floor in base
+   units and by 1Click's dollar figures, which sit inside its signature where the fee shows even when
+   an echo was rewritten to hide its line (src/rails/intents-native.ts swapLossProblem). A side
+   1Click prices at nothing is held to the floor alone. */
+export function convertQuoteProblems(quote: OneClickQuote, held: OtherUsdc): string[] {
+  const problems: string[] = [];
+  try {
+    if (baseUnits(quote.amountIn, 'amountIn') !== held.base) {
+      problems.push(`the quote spends ${oneLine(quote.amountIn, 40)} base units, not the ${held.base} T holds`);
+    }
+    const floor = convertFloor(held);
+    const least = baseUnits(quote.minAmountOut, 'minAmountOut');
+    if (least < floor) {
+      problems.push(
+        `the quote could deliver as little as $${formatUsdc(least)} of NEAR USDC, under the $${formatUsdc(floor)} floor ` +
+          `${CONVERT_MAX_LOSS_BPS / 100} percent under what T sends`,
+      );
+    }
+  } catch (err) {
+    problems.push(errText(err));
+  }
+  const inUsd = Number(quote.amountInUsd);
+  const outUsd = Number(quote.amountOutUsd);
+  if (inUsd > 0 && outUsd > 0 && Number.isFinite(inUsd) && Number.isFinite(outUsd)) {
+    const lostBps = ((inUsd - outUsd) / inUsd) * 10_000;
+    if (lostBps > CONVERT_MAX_LOSS_BPS) {
+      problems.push(
+        `the quote gives up ${(lostBps / 100).toFixed(1)} percent of its value ($${inUsd.toFixed(2)} in, $${outUsd.toFixed(2)} out ` +
+          `by 1Click's own prices), more than the ${CONVERT_MAX_LOSS_BPS / 100} percent a convert may lose`,
+      );
+    }
+  }
+  return problems;
+}
+
+function echoFor(t: string, held: OtherUsdc): QuoteEcho {
+  return {
+    recipient: t,
+    recipientVerb: 'credit',
+    recipientNoun: 'treasury',
+    recipientType: 'INTENTS',
+    recipientTypeWhy: 'a convert credits T inside NEAR Intents, never a chain address',
+    depositType: 'INTENTS',
+    refundType: 'INTENTS',
+    refundTypeWhy: 'back to T inside NEAR Intents',
+    refundTo: t,
+    originAsset: held.variant.assetId,
+    destinationAsset: INVITE_ASSET_ID,
+    amount: held.base.toString(),
+    noEcho:
+      "nothing ties T's transfer to T. T signs a transfer to a 1Click handle that does not name T, so without the echo " +
+      'the convert cannot be checked and nothing is signed.',
+  };
+}
+
+function quoteParams(t: string, held: OtherUsdc, dry: boolean) {
+  return {
+    dry,
+    originAsset: held.variant.assetId,
+    destinationAsset: INVITE_ASSET_ID,
+    amount: held.base.toString(),
+    account: t,
+    recipient: t,
+    recipientType: 'INTENTS' as const,
+    slippageToleranceBps: CONVERT_SLIPPAGE_BPS,
+  };
+}
+
+type Planned = { held: OtherUsdc; quotedOut: bigint; minOut: bigint };
+
+/* A dry quote for each, held to every check the live one will be, so the list shown before
+   anything is signed is a list 1Click would honour. */
+async function priceAll(t: string, held: OtherUsdc[], api: IntentsApiPort, io: Io): Promise<Planned[]> {
+  const plan: Planned[] = [];
+  for (const h of held) {
+    let answer: { quote: OneClickQuote; raw: unknown };
+    try {
+      answer = await api.quote(quoteParams(t, h, true));
+    } catch (err) {
+      io.say(`${heldWords(h)}: 1Click would not price it, so it stays as it is. ${errText(err)}`);
+      continue;
+    }
+    const problems = [...convertQuoteProblems(answer.quote, h), ...quoteEchoProblems(answer.raw, echoFor(t, h))];
+    let quotedOut = 0n;
+    try {
+      quotedOut = baseUnits(answer.quote.amountOut, 'amountOut');
+    } catch (err) {
+      problems.push(errText(err));
+    }
+    if (problems.length > 0) {
+      io.say(`${heldWords(h)}: 1Click's price is refused, so it stays as it is: ${problems.join('; ')}.`);
+      continue;
+    }
+    plan.push({ held: h, quotedOut, minOut: baseUnits(answer.quote.minAmountOut, 'minAmountOut') });
+  }
+  return plan;
+}
+
+type Verdict =
+  | { kind: 'done'; credited: bigint | null }
+  | { kind: 'refunded' }
+  | { kind: 'dead' }
+  | { kind: 'running'; said: string } // T's transfer ran; 1Click has not finished
+  | { kind: 'open' }; // the signed bytes can still run
+
+function creditedOf(status: OneClickStatus): bigint | null {
+  try {
+    return status.settledAmountOut === undefined ? null : decimalToBaseUnits(status.settledAmountOut, INVITE_ASSET_DECIMALS);
+  } catch {
+    return null;
+  }
+}
+
+/* One look: the nonce first, then 1Click. A nonce that is not V1 (1Click chooses its own) can be
+   asked whether it was spent, as the claim's Plan B asks it, but its death cannot be proved, so such
+   a convert stays open until it reads spent. */
+async function judge(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
+  const deadline = move.signed?.deadline ?? move.rehearsalDeadline;
+  const fate = await transferFate(fateReads(net), { account: move.signer, nonce: move.nonce ?? '', deadline }, net.now()).catch(() => null);
+  let ran = fate?.ran === true;
+  if (!ran && fate?.ran === null && fate.why === 'not_the_verifiers') ran = (await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null)) === true;
+  if (ran) {
+    const status = await api.status(move.handle ?? '').catch(() => null);
+    if (status?.status === 'SUCCESS') return { kind: 'done', credited: creditedOf(status) };
+    if (status?.status === 'REFUNDED') return { kind: 'refunded' };
+    return { kind: 'running', said: status === null ? 'nothing' : status.status };
+  }
+  return fate?.ran === false && fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
+}
+
+async function watch(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
+  const started = net.now();
+  let delay = net.firstPollMs ?? FIRST_POLL_MS;
+  for (;;) {
+    const verdict = await judge(move, net, api);
+    if (verdict.kind === 'done' || verdict.kind === 'refunded' || verdict.kind === 'dead') return verdict;
+    if (net.now() - started >= CONVERT_WATCH_CAP_MS) return verdict;
+    await net.sleep(delay);
+    delay = Math.min(delay * 2, net.pollMs ?? POLL_MS);
+  }
+}
+
+function trySave(ledger: Ledger): void {
+  try {
+    ledger.save();
+  } catch {
+    // The bytes are out already; the next run reads the chain, not this write.
+  }
+}
+
+/* The verdict into the book and one line. `open` keeps every new convert waiting; `running` (T's
+   side ran, 1Click is still working) does not, since those bytes can never run again. */
+function close(ledger: Ledger, move: Move, verdict: Verdict, net: MoneyNet, io: Io): Verdict['kind'] {
+  const what = moveWords(move);
+  if (verdict.kind === 'done') {
+    move.state = 'done';
+    move.settledAt = nowIso(net);
+    move.oneclickSaid = 'SUCCESS';
+    if (verdict.credited !== null) move.creditedOut = verdict.credited.toString();
+    trySave(ledger);
+    const credited = verdict.credited === null ? '' : `, $${exactDollars(verdict.credited)} of NEAR USDC credited to T`;
+    io.say(`${what}: converted. 1Click says SUCCESS${credited} (intent ${move.signed?.intentHash ?? 'unknown'}).`);
+  } else if (verdict.kind === 'refunded' || verdict.kind === 'dead') {
+    move.state = 'failed';
+    move.settledAt = nowIso(net);
+    if (verdict.kind === 'refunded') move.oneclickSaid = 'REFUNDED';
+    move.detail =
+      verdict.kind === 'refunded'
+        ? '1Click refunded it to T as the same USDC. Run convert again to try once more.'
+        : 'The signed convert passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.';
+    trySave(ledger);
+    io.say(`${what}: not converted. ${move.detail}`);
+  } else if (verdict.kind === 'running') {
+    move.oneclickSaid = verdict.said;
+    trySave(ledger);
+    io.say(`${what}: T's transfer to 1Click ran, and 1Click says ${verdict.said}, not done yet. Run convert again in a few minutes to see it land.`);
+  } else {
+    trySave(ledger);
+    io.say(`${what}: NEAR Intents has not answered either way yet, so the signed convert may still run. Run convert again in a few minutes; nothing new is converted until it ends.`);
+  }
+  return verdict.kind;
+}
+
+/* A convert an earlier run left pending. Never signed (a run stopped between writing it down and
+   signing it): nothing that can run exists. Signed and not proven: the same bytes go to 1Click
+   again while they can still run, then the watch. */
+async function finish(ledger: Ledger, move: Move, net: MoneyNet, api: IntentsApiPort, io: Io): Promise<Verdict['kind']> {
+  const signed = move.signed;
+  if (signed === undefined) {
+    move.state = 'failed';
+    move.settledAt = nowIso(net);
+    move.detail = 'Never signed: the run stopped before its one signature. Nothing moved.';
+    trySave(ledger);
+    io.say(`${moveWords(move)}: ${move.detail}`);
+    return 'dead';
+  }
+  let verdict = await judge(move, net, api);
+  if (verdict.kind === 'open' && Date.parse(signed.deadline) > net.now()) {
+    io.say('Signed in an earlier run and not proven either way yet: sending the same bytes to 1Click again. It is never signed twice.');
+    const sent = await submitSignedIntent(api, { payload: signed.payload, signature: signed.signature });
+    if (!sent.submitted) io.say(`1Click did not take them: ${oneLine(sent.error, 160)}. Waiting for NEAR Intents to say whether they ran.`);
+  }
+  if (verdict.kind === 'open' || verdict.kind === 'running') verdict = await watch(move, net, api);
+  return close(ledger, move, verdict, net, io);
+}
+
+/* The rehearsal (see the header): 1Click's payload with its deadline cut to one millisecond past a
+   final block, read back, written down, signed, and simulated at that block. A node a block behind
+   cannot answer for a block it has not seen, so up to three blocks are tried. Null when NEAR
+   Intents would run it; else the sentence that stops the convert before its real signature. */
+async function rehearse(
+  ledger: Ledger,
+  move: Move,
+  raw: string,
+  signer: KeySigner,
+  net: MoneyNet,
+  expect: Omit<IntentPayloadExpectation, 'now'>,
+): Promise<string | null> {
+  const simulateAt = net.simulateAt;
+  if (simulateAt === undefined) return 'this network cannot simulate at a fixed block, so nothing was signed';
+  for (let tries = 0; tries < 3; tries += 1) {
+    if (tries > 0) await net.sleep(1_000);
+    const clock = await chainClock(net, REHEARSAL_AHEAD_MS);
+    if (typeof clock === 'string') return `${clock}, so nothing was signed`;
+    const deadline = signingDeadline(clock.block.atMs, REHEARSAL_LIFE_MS);
+    const bytes = shortenDeadline(raw, Date.parse(deadline));
+    if (intentDeadline(bytes) !== deadline) return "1Click's payload carries no one deadline to cut, so it was not rehearsed and nothing was signed";
+    const problems = checkIntentPayload(bytes, { ...expect, now: clock.block.atMs });
+    if (problems.length > 0) return `the rehearsal failed its own check, so nothing was signed: ${problems[0]}`;
+    move.rehearsalDeadline = deadline;
+    try {
+      ledger.save();
+    } catch (err) {
+      return `the invite file could not be written (${errText(err)}), so nothing was signed`;
+    }
+    const sim = await simulateAt([{ standard: ERC191_STANDARD, payload: bytes, signature: await signer.sign(bytes) }], clock.block.hash).catch(() => null);
+    if (sim === null) continue;
+    if (!sim.ok) return `${REFUSALS[simulationVerdict(sim.refusal)]} The verifier said: ${oneLine(sim.refusal, 160)}. Only a rehearsal was signed`;
+    return null;
+  }
+  return 'the verifier did not answer the rehearsal at three blocks in a row, so only rehearsals were signed';
+}
+
+/* One USDC to NEAR USDC: the shared spend path with the move written down and rehearsed before its
+   one signature, and the signed bytes written down before submit-intent. True once it landed. */
+async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: IntentsApiPort, io: Io): Promise<boolean> {
+  const book = ledger.book;
+  const t = book.treasury.address;
+  const held = plan.held;
+  const floor = convertFloor(held);
+  const expect = { signerId: t, originAsset: held.variant.assetId, destinationAsset: INVITE_ASSET_ID, amountBase: held.base, minOutBase: floor, maxDeadlineMs: SIGNED_DEADLINE_MS };
+  const signer = treasurySigner(book, net);
+  let move: Move | null = null;
+  let generated: { handle: string; payload: string } | null = null;
+  let quoted: OneClickQuote | null = null;
+
+  const tracked: IntentsApiPort = {
+    ...api,
+    async generateIntent(params) {
+      const answer = await api.generateIntent(params);
+      generated = typeof answer.payload === 'string' ? { handle: params.depositAddress, payload: answer.payload } : null;
+      return answer;
+    },
+  };
+
+  const beforeSign = async (): Promise<string | null> => {
+    const g = generated;
+    const nonce = g === null ? undefined : intentNonce(g.payload);
+    if (g === null || nonce === undefined) return "1Click's payload carries no nonce to prove the convert by, so nothing was signed";
+    const fresh: Move = {
+      id: idOf(net),
+      kind: 'convert',
+      signer: t,
+      legs: [{ receiverId: g.handle, amountBase: held.base.toString() }],
+      state: 'pending',
+      createdAt: nowIso(net),
+      assetId: held.variant.assetId,
+      handle: g.handle,
+      nonce,
+    };
+    const q: OneClickQuote | null = quoted;
+    if (q !== null) Object.assign(fresh, { quotedOut: baseUnits(q.amountOut, 'amountOut').toString(), minOut: baseUnits(q.minAmountOut, 'minAmountOut').toString() });
+    book.moves.push(fresh);
+    try {
+      ledger.save();
+    } catch (err) {
+      book.moves.pop();
+      return `the invite file could not be written (${errText(err)}), so nothing was signed`;
+    }
+    move = fresh;
+    return rehearse(ledger, fresh, g.payload, signer, net, { ...expect, depositAddress: g.handle });
+  };
+
+  // The one signature: of the payload written down and rehearsed, and in the file before it is sent.
+  const port = signerPort(
+    signer,
+    (payload) => {
+      const m: Move | null = move;
+      if (m === null || intentNonce(payload) !== m.nonce || intentDeadline(payload) === undefined) throw new Error('the payload to sign is not the one written down and rehearsed');
+    },
+    (payload, signature) => {
+      const m = move as Move;
+      m.signed = { payload, signature, nonce: m.nonce!, deadline: intentDeadline(payload)!, intentHash: intentHashOf(payload) };
+      try {
+        ledger.save();
+      } catch (err) {
+        delete m.signed;
+        throw new Error(`the invite file could not be written (${errText(err)}), so the signed convert was never sent`);
+      }
+    },
+  );
+
+  let outcome: IntentsSpendOutcome | null = null;
+  let stop: string | null = null;
+  try {
+    outcome = await spendFromIntents(
+      {
+        api: tracked,
+        signer: port,
+        now: net.now,
+        sleep: net.sleep,
+        pollIntervalMs: net.pollMs ?? POLL_MS,
+        pollTimeoutMs: SIGNED_DEADLINE_MS,
+        firstPollMs: net.firstPollMs ?? FIRST_POLL_MS,
+        maxDeadlineMs: SIGNED_DEADLINE_MS,
+        signedDeadlineMs: SIGNED_DEADLINE_MS,
+        beforeSign,
+        ...(net.quoteKey === undefined ? {} : { quoteKey: net.quoteKey }),
+      },
+      {
+        owner: t,
+        originAsset: held.variant.assetId,
+        destinationAsset: INVITE_ASSET_ID,
+        amountBase: held.base,
+        minOutBase: floor,
+        recipient: t,
+        recipientType: 'INTENTS',
+        slippageToleranceBps: CONVERT_SLIPPAGE_BPS,
+        echo: echoFor(t, held),
+        checkQuote: (quote) => {
+          quoted = quote;
+          return convertQuoteProblems(quote, held);
+        },
+      },
+    );
+  } catch (err) {
+    stop = errText(err);
+  } finally {
+    signer.drop();
+  }
+
+  // Assigned inside the hooks above, so read through a cast: TypeScript does not follow callbacks.
+  const m = move as Move | null;
+  if (m === null || m.signed === undefined) {
+    // Nothing that can run left this Mac: a rehearsal at most, which dies a millisecond past its block.
+    const why = stop ?? '1Click held it before anything was signed';
+    if (m !== null) {
+      m.state = 'failed';
+      m.settledAt = nowIso(net);
+      m.detail = `Nothing that can run was sent: ${oneLine(why, 300)}`;
+      trySave(ledger);
+    }
+    io.say(`${heldWords(held)}: not converted, and nothing that can run left this Mac: ${why}.`);
+    return false;
+  }
+  if (outcome?.signed === true && outcome.submitted) {
+    io.say(`${heldWords(held)}: signed once and handed to 1Click (intent ${m.signed.intentHash}). Waiting for NEAR Intents and 1Click.`);
+  } else {
+    const said = outcome?.signed === true && !outcome.submitted ? outcome.error : (stop ?? 'no answer');
+    io.say(`${heldWords(held)}: signed once, and 1Click did not take it: ${oneLine(said, 160)}. The signed bytes are in the invite file; waiting for NEAR Intents to say whether they ran.`);
+  }
+  return close(ledger, m, await watch(m, net, api), net, io) === 'done';
+}
+
+async function sayNearUsdc(net: MoneyNet, t: string, io: Io): Promise<void> {
+  const now = await net.verifier.balance(t, INVITE_ASSET_ID).catch(() => null);
+  io.say(now === null ? "Couldn't read T's NEAR USDC just now; `npm run invite -- status` shows it." : `T holds $${exactDollars(now)} of NEAR USDC now, the USDC a batch pays codes with.`);
+}
+
+/* Every other USDC T holds, to NEAR USDC. Converts an earlier run left are finished first, and
+   while one of them can still run nothing new is signed. Then T is read live, each USDC holding a
+   cent or more is priced, the list and what it should bring are shown, and after a yes each is
+   converted in turn. 0 when nothing is left to convert or wait for. */
+export async function convertTreasury(ledger: Ledger, net: MoneyNet, io: Io): Promise<number> {
+  const book = ledger.book;
+  const t = book.treasury.address;
+  const api = net.oneclick ?? intentsApi({ apiKey: process.env[INTENTS_API_KEY_ENV] ?? '' });
+
+  let open = false;
+  for (const move of pendingMoves(book, 'convert')) {
+    io.say(`Finishing the convert of ${moveWords(move)} from an earlier run.`);
+    if ((await finish(ledger, move, net, api, io)) === 'open') open = true;
+  }
+  if (open) {
+    io.say('A convert signed in an earlier run can still run, so nothing new was signed. Run convert again in a few minutes.');
+    return 1;
+  }
+
+  const { held, unread } = await otherUsdc(net, t);
+  for (const v of unread) io.say(`Couldn't read what T holds of USDC on ${v.chain}, so it is left for the next run.`);
+  if (held.length === 0) {
+    io.say(unread.length === 0 ? 'T holds no USDC but NEAR USDC. Nothing to convert.' : 'Nothing else to convert.');
+    await sayNearUsdc(net, t, io);
+    return unread.length === 0 && pendingMoves(book, 'convert').length === 0 ? 0 : 1;
+  }
+
+  io.say(`T holds ${heldList(held)} inside NEAR Intents. A code holds NEAR USDC only, so 1Click converts each:`);
+  const plan = await priceAll(t, held, api, io);
+  for (const p of plan) io.say(`  ${heldWords(p.held)} to about $${exactDollars(p.quotedOut)} of NEAR USDC, at least $${formatUsdc(p.minOut)}`);
+  if (plan.length === 0) {
+    io.say('Nothing was signed.');
+    return 1;
+  }
+  const expected = plan.reduce((sum, p) => sum + p.quotedOut, 0n);
+  const ok = await io.confirm(
+    `Convert ${plan.length === 1 ? 'it' : `these ${plan.length}`} into about $${exactDollars(expected)} of NEAR USDC for T, with one signature from T for each?`,
+  );
+  if (!ok) {
+    io.say('Stopped. Nothing was signed.');
+    return 1;
+  }
+
+  let failures = unread.length;
+  for (const p of plan) {
+    if (!(await convertOne(ledger, p, net, api, io))) failures += 1;
+  }
+  await sayNearUsdc(net, t, io);
+  return failures === 0 && plan.length === held.length && pendingMoves(book, 'convert').length === 0 ? 0 : 1;
+}
+
+/* A convert for a report: what went in and came out, and how it ended. No key, no payload. */
+export function convertSummary(move: Move): Record<string, unknown> {
+  return {
+    asset: move.assetId,
+    sent: moveWords(move),
+    amountBase: move.legs[0]?.amountBase ?? null,
+    quotedOut: move.quotedOut ?? null,
+    minOut: move.minOut ?? null,
+    creditedOut: move.creditedOut ?? null,
+    handle: move.handle ?? null,
+    nonce: move.nonce ?? null,
+    intentHash: move.signed?.intentHash ?? null,
+    deadline: move.signed?.deadline ?? null,
+    state: move.state,
+    oneclick: move.oneclickSaid ?? null,
+    detail: move.detail ?? null,
+    createdAt: move.createdAt,
+    settledAt: move.settledAt ?? null,
+  };
+}

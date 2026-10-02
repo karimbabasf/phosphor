@@ -54,14 +54,21 @@ export function codeSigner(secret: Uint8Array): KeySigner | null {
 }
 
 /* The same signer in the shape the 1Click spend path takes (src/rails/intents-spend.ts), for
-   Plan B. The keys path that port carries names the wallet's key file, and this signer never
-   reads one: the key is already in hand. */
-export function signerPort(signer: KeySigner, beforeSign?: (payload: string) => void): IntentsSignerPort {
+   Plan B and the operator's convert. The keys path that port carries names the wallet's key file,
+   and this signer never reads one: the key is already in hand. `beforeSign` and `afterSign` may
+   throw to stop the spend before anything is sent: a record that could not be written. */
+export function signerPort(
+  signer: KeySigner,
+  beforeSign?: (payload: string) => void,
+  afterSign?: (payload: string, signature: string) => void,
+): IntentsSignerPort {
   return {
     address: () => signer.address as Address,
     async signErc191(_keysPath, payload) {
       beforeSign?.(payload);
-      return signer.sign(payload);
+      const signature = await signer.sign(payload);
+      afterSign?.(payload, signature);
+      return signature;
     },
   };
 }

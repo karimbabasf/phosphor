@@ -644,7 +644,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
     scripts/invite.ts  invite codes for whoever hands them out: treasury, issue, reclaim, withdraw,
-                       status, over an encrypted file outside the working copy (scripts/invite/)
+                       convert, status, over an encrypted file outside the working copy
+                       (scripts/invite/)
     scripts/invite-proof.ts  both claim routes run with real money on throwaway accounts, the
                        invite spec's Proof step 0
     ui/                one window, four screens, no framework, no build

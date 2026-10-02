@@ -4,9 +4,11 @@
 // solver relay with no quote and the second through Plan B, 1Click, to a throwaway receiver, and
 // write down what NEAR Intents says about each: the intent hashes, is_nonce_used, every balance
 // before and after, and get_status. Then sweep every leftover cent to an address of your choice.
-// It can also issue one $5 code for the release proof and print it once.
+// It can also issue one $5 code for the release proof and print it once, and convert other USDC
+// that reached the treasury into NEAR USDC first (scripts/invite/convert.ts).
 //
 //   node scripts/invite-proof.ts init --file <path>
+//   node scripts/invite-proof.ts convert --file <path>
 //   node scripts/invite-proof.ts run --file <path> [--amount 0.10] [--wait-minutes 30]
 //   node scripts/invite-proof.ts report --file <path>
 //   node scripts/invite-proof.ts sweep --file <path> --to <address>
@@ -52,6 +54,7 @@ import { RELAY_URL, relayClient } from '../src/relay/client.ts';
 import type { RelayClient } from '../src/relay/client.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
 import { newBook, pendingMoves, readBook, unfinishedBatch } from './invite/book.ts';
+import { convertSummary, convertTreasury } from './invite/convert.ts';
 import { takeLock } from './invite/file.ts';
 import type { FileLock } from './invite/file.ts';
 import type { InviteBook } from './invite/book.ts';
@@ -68,10 +71,9 @@ const PROOF_CODES = 2;
 const FUNDING_POLL_MS = 10_000;
 const DEFAULT_WAIT_MINUTES = 30;
 
-export type ProofNet = MoneyNet & {
-  oneclick?: IntentsApiPort; // a test's 1Click; live, one is built with the partner key
-  quoteKey?: string; // a test's 1Click quote key; live, the app's own
-};
+// A test's 1Click and quote key ride on the net (MoneyNet.oneclick, quoteKey); live, 1Click is
+// built with the partner key and the quote key is the app's own.
+export type ProofNet = MoneyNet;
 
 type Amount = string | null; // base units, or null when the read did not answer
 
@@ -96,6 +98,7 @@ export type ClaimProof = {
 
 export type ProofResults = {
   funding?: { treasuryBefore: string; seenAt: string };
+  convert?: Array<Record<string, unknown>>; // every convert of other USDC in T, how it ended
   issue?: {
     treasuryBefore: Amount;
     startedAt: string;
@@ -138,6 +141,7 @@ export type ProofDeps = {
 export const USAGE = [
   'Usage:',
   '  node scripts/invite-proof.ts init --file <path outside the repo>',
+  '  node scripts/invite-proof.ts convert --file <path>',
   '  node scripts/invite-proof.ts run --file <path> [--amount 0.10] [--wait-minutes 30]',
   '  node scripts/invite-proof.ts report --file <path>',
   '  node scripts/invite-proof.ts sweep --file <path> --to <address>',
@@ -458,6 +462,22 @@ async function run(file: string, net: ProofNet, deps: ProofDeps, waitMs: number,
   return relayPass && planBPass ? 0 : 1;
 }
 
+/* Other USDC in T to NEAR USDC, through 1Click (scripts/invite/convert.ts), with every convert the
+   book holds written into the results for the report. */
+async function convertStep(proof: ProofFile, file: string, net: ProofNet, deps: ProofDeps): Promise<number> {
+  const ledger: Ledger = { book: proof.book, save: () => saveProof(file, proof) };
+  const code = await convertTreasury(ledger, { ...net, oneclick: oneclickFor(net, deps) }, quietIo(deps));
+  proof.results.convert = proof.book.moves.filter((m) => m.kind === 'convert').map(convertSummary);
+  saveProof(file, proof);
+  return code;
+}
+
+async function convert(file: string, net: ProofNet, deps: ProofDeps): Promise<number> {
+  const code = await convertStep(loadProof(file), file, net, deps);
+  if (code === 0) deps.out(`Next: node scripts/invite-proof.ts run --file ${file}`);
+  return code;
+}
+
 function signerFor(proof: ProofFile, account: string): KeySigner | null {
   if (account === proof.book.treasury.address) return keySigner(proof.book.treasury.key);
   if (account === proof.receiver.address) return keySigner(proof.receiver.key);
@@ -631,6 +651,8 @@ export async function proofMain(argv: string[], deps: ProofDeps): Promise<number
     switch (command) {
       case 'init':
         return await init(file, net, deps);
+      case 'convert':
+        return await convert(file, net, deps);
       case 'run':
         return await run(file, net, deps, waitMinutes * 60_000, values['amount']);
       case 'report':
