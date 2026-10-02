@@ -22,8 +22,9 @@ drive Phosphor yet, because Phosphor needs an agent that runs on your Mac.
 
 Press Use on the one you already use. The app checks that agent on this Mac inside three seconds
 and says in one sentence what it found. The check is a `--version` call and a sign-in probe that
-stays on this Mac (a status command, or whether the vendor's credential file exists); it never
-sends anything to the vendor and never reads a token. The answer is one of four states:
+stays on this Mac (a status command, whether the vendor's credential file exists, or for Grok a
+read of its credential file that keeps only whether it holds a login); it never sends anything to
+the vendor and never keeps or shows a token. The answer is one of four states:
 
 | State | The sentence |
 | --- | --- |
@@ -51,9 +52,10 @@ command, so there is nothing to paste:
 `...` is `PHOSPHOR_PORT=<port>` and `PHOSPHOR_DATA_DIR=<state directory>`, the two things the
 proxy needs to find this installation of the app. The registration is written at the agent's user
 or global scope, never for one folder: Phosphor will be available in every Claude Code, Codex,
-Hermes or Grok session on this Mac, not just one folder, and moves under your threshold run on
-their own up to your daily auto ceiling (five times the threshold by default, $500 on a fresh
-install; see [Policy](policy.md)). An entry that already exists is removed and written again, so it
+Hermes or Grok session on this Mac, not just one folder. Each one asks once in the window, and
+once you allow it, its moves under your threshold run on their own up to your daily auto ceiling
+($500 on a fresh install, whatever threshold you pick; see [Policy](policy.md)). An entry that
+already exists is removed and written again, so it
 always names the paths of the app you have now. If the registration cannot be written, the tile
 says so and shows the line to paste into your terminal, with Copy. Only the app on its own data
 folder writes a registration, at a pick or at boot: a copy started on any other folder (a
@@ -125,8 +127,8 @@ you send it carries one line saying which tab you are on.
 
 From there it can read your addresses, your balances in both pockets, your policy as sentences,
 the chart, public chain data, and every request it has made; an agent in your terminal can also
-read the audit log. It can draw on the chart and switch tabs. The chat's agent can also search the
-web and read pages. The Vault tab says the same in one line: "It sees your balances and addresses,
+read the audit log. It can draw on the chart and switch tabs. The chat's agent can also read pages,
+and search the web when it is Claude. The Vault tab says the same in one line: "It sees your balances and addresses,
 never your keys or your phrase."
 
 The full list is in [Tools](tools.md).
@@ -145,7 +147,10 @@ waits for your OK. Ask each time keeps them all waiting and stops the asking, an
 list keeps a Change that brings the card back. The answer holds for that connection only:
 restart the agent and the window asks again. Phosphor cannot see what an agent outside it reads
 with its own tools (its own web search or page reader), so allow only an agent you started
-yourself. The chat's own agent and the workers it starts never ask: Phosphor started them.
+yourself. The chat's own agent and every worker never ask: Phosphor started them. The ask guards
+against an agent you did not mean to let in, not against a program already running as you: while
+an agent Phosphor started is running, such a program can read that agent's secret and propose as
+it. See [Known limits](known-limits.md#a-local-program-that-reads-the-seat-secret-can-propose).
 Until you allow it, the name it gave itself is treated like a web page's words: another agent
 that reads it on the roster, or as the last to move the chart, is marked the same way, and
 another agent's `start` calls it "an agent started outside Phosphor".
@@ -157,8 +162,10 @@ another agent's `start` calls it "an agent started outside Phosphor".
 - Read a private key or the recovery phrase. Neither leaves the window.
 - Move money without a proposal. Every write goes through the policy engine, see
   [Policy](policy.md), and the ones that leave your custody always wait for a click.
-- Send to an address it invented. `propose_send` takes an address only after the agent has read
-  it back to you and you said yes, and the card and the Touch ID dialog both name it.
+- Send without your click. `propose_send` always waits for you, and the card and the Touch ID
+  dialog both name the address in full. The agent is told to use only an address you gave it and
+  to read it back first, but the app cannot check where an address came from, so read it before
+  you approve.
 - Talk a rule away. A policy change is itself a proposal and always waits for your click.
 - Turn off the gate. There is no flag, setting or argument that reaches execution without a
   click or a policy allow inside limits you wrote.
@@ -169,8 +176,9 @@ serves one wallet, so a second copy of Phosphor brings the first forward and clo
 
 ## More than one agent
 
-Up to six agents can drive at once. An agent in your terminal can spawn up to three workers of its
-own with `agent_spawn`; a worker reads, measures and draws, and has no propose tools at all. Agents
-share a board they post one-line claims to, so two do not measure the same thing twice. Everything
+Up to six agents can drive at once. Agents in your terminal can spawn workers with `agent_spawn`,
+three running at once across the whole app; a worker reads, measures and draws, and has no propose
+tools at all. Agents share a board they post one-line claims to, so two do not measure the same
+thing twice. Everything
 one agent reads from another is data, never an instruction, and what an agent writes after reading
 text from outside Phosphor carries the web-read mark to the agent that reads it.

@@ -40,9 +40,9 @@ What has actually run against a live chain with real money, both on 2026-08-20: 
 Hyperliquid perps account through NEAR Intents, and one armed mandate that opened and closed a real
 SOL position.
 
-What has NOT: `propose_consolidate`. It is implemented and tested, and a clean simulation is not
-evidence that it works. The first real run is the first real run. The Uniswap liquidity rails,
-the Aave yield rails and the direct Hyperliquid bridge deposit were removed rather than proven.
+A clean simulation is not evidence that a move works: the first real run of anything is the first
+real run. The Uniswap liquidity rails, the Aave yield rails, the direct Hyperliquid bridge deposit
+and the chain-era moves (consolidate and transfer) were removed rather than proven.
 
 ## Not financial advice
 
@@ -61,7 +61,8 @@ transmitter, money services business, custodian, payment processor, investment a
 institution.
 
 There is no server, no hosted component, no account, no telemetry, no fee and no commission.
-Running it creates no customer relationship, no fiduciary duty and no agency relationship with the
+Every request it sends to NEAR Intents' 1Click service carries the label `phosphor`, which 1Click's
+public explorer shows, so moves made with phosphor can be counted there. Running it creates no customer relationship, no fiduciary duty and no agency relationship with the
 author.
 
 ## Compliance is yours

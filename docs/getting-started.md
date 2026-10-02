@@ -128,8 +128,9 @@ behind the enclave. Nothing moves and the addresses stay the same.
 
 ## The five minute lock
 
-The wallet locks after five minutes with nobody at the window, when the Mac sleeps, when the
-screen locks or the Mac switches to another user, and when you close the window. A move waiting
+The wallet locks after five minutes with nobody at the window, when the Mac wakes from a sleep of
+more than a minute, when the screen locks or the Mac switches to another user, and when you close
+the window. A move waiting
 for your click stays on its card through a lock. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
 15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked,
 with a line under it that says why: the screen locked, the Mac switched users or slept, or the
@@ -150,11 +151,12 @@ positions at the market price and stops every plan. Nothing can move your money 
 unfreeze."
 
 Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
-proposal is refused until you unfreeze, whatever its size. The app also cancels resting orders,
-ends every plan, and closes every open position on your Hyperliquid account when it can reach the
-venue, including one you opened somewhere else. Closing a position takes the trading key; when
-the app has none in reach, the positions stay open and the window says so. Money does not leave
-the app. Check the Trade tab afterwards, see [Trading](trading.md).
+proposal is refused until you unfreeze, whatever its size. The app also cancels the orders its own
+plans have resting, closes every open position on your Hyperliquid account when it can reach the
+venue, including one you opened somewhere else, and ends every plan whose position closed. An
+order you placed on Hyperliquid yourself stays on the book: cancel it there. Closing a position
+takes the trading key; when the app has none in reach, the positions stay open and the window
+says so. Money does not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).
 
 If the policy file cannot be read, Freeze still stops every plan, and every move is refused anyway
 while the file is unreadable; the window says the switch itself was not saved. Unfreeze is refused
