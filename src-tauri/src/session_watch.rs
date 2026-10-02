@@ -5,9 +5,9 @@
 // idle time behind a session nobody was looking at.
 //
 // The lock is the backend's when-idle lock, the one every lock this shell sends goes through
-// (post_lock_when_idle): a move being sent finishes first, and a move waiting for a click stays
-// on its card, which says Unlock to decide when the person is back. The notifications arrive in
-// session_watch.m.
+// (post_lock_when_idle): a move already signing gets its signature first, and a move waiting for
+// a click stays on its card, which says Unlock to decide when the person is back. The
+// notifications arrive in session_watch.m.
 
 use std::ffi::c_int;
 use std::sync::Mutex;
@@ -18,8 +18,10 @@ use crate::backend::{post_lock_when_idle, LockAnswer};
 /// What macOS posts to every app when the screen locks.
 pub const SCREEN_LOCKED: &str = "com.apple.screenIsLocked";
 
-/// How long a move being sent may hold the lock off: the backend's own drain cap for a venue write
-/// in flight (32 s, src/shutdown.ts), and a little room. Past it the idle lock still stands.
+/// How long the shell keeps asking while the backend answers busy. The first ask already shuts the
+/// wallet: locked to anything new at once, and the backend wipes the key itself the moment the
+/// moves already signing have their signatures, or at its own cap (CLOSE_GRACE_MS in
+/// src/keystore/store.ts). Past this the shell only stops asking; the wallet stays shut.
 const SENDING_GRACE: Duration = Duration::from_secs(40);
 const ASK_AGAIN: Duration = Duration::from_secs(1);
 
@@ -84,9 +86,8 @@ extern "C" fn on_event(kind: c_int) {
     });
 }
 
-/// The when-idle lock, asked again while a move is being sent, so the key goes the moment the
-/// move lands rather than at the end of the idle time: the person has walked away and there is
-/// nobody left to ask.
+/// The when-idle lock, asked again while the backend answers busy, until it says the key is gone.
+/// The first ask did the locking; the ones after it only wait for that answer for the log.
 fn lock_when_idle(port: u16, token: &str, reason: &str, grace: Duration) -> LockAnswer {
     let deadline = Instant::now() + grace;
     loop {
@@ -148,7 +149,7 @@ mod tests {
         assert!(asks.iter().all(|ask| ask.contains("\"whenIdle\":true") && ask.contains("\"reason\":\"the screen locked\"")), "{asks:?}");
 
         let (port, _) = stub(vec![BUSY, BUSY, BUSY, BUSY]);
-        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", ASK_AGAIN), LockAnswer::Busy, "past the grace the idle lock stands");
+        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", ASK_AGAIN), LockAnswer::Busy, "past the grace the shell stops asking");
     }
 
     fn post(port: u16, path: &str, body: serde_json::Value) -> serde_json::Value {
