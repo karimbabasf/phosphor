@@ -209,11 +209,14 @@ your money.
   the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
   installed packages, and the release build does not repeat CI's check of each package's registry
   signature. What closes it: a build anyone can reproduce byte for byte.
-- **The release keys are not behind an approval yet.** The release workflow names a `release`
-  environment, but at 0.10.13 that environment asks no approval and lets any branch in, and the
-  signing secrets sit at repository level. Any workflow pushed to this repository can read both
-  signing keys, the Developer ID and the update key. Only the maintainer can push. What closes it:
-  the secrets moved into the environment, with a required approval and only `v*` tags let in.
+- **A release rests on one GitHub account.** The signing keys, the Developer ID and the update
+  key, are read only in the `release` environment, which lets only `v*` tags in and waits for the
+  maintainer's approval; the site upload's `release-site` environment holds the Blob token alone
+  and starts only after that approved job. These are repository settings, not code, so the
+  source cannot show them; the GitHub API can (`gh api repos/karimbabasf/phosphor/environments`,
+  and each environment's `deployment-branch-policies`). The
+  maintainer's account, the only one that can push, approves each release and can change those
+  rules. What closes it: a second approver, or signing that needs a device outside GitHub.
 - **An armed trading plan outlives a lock.** Its trading key can place and cancel orders until the
   plan expires, seven days at most, and can never withdraw or transfer. Freeze stops every plan
   from placing anything new.

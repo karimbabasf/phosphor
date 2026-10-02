@@ -18,13 +18,15 @@
 #             after it; scripts/updater-sign.ts signs the updater bundle with Node alone; the
 #             release gate checks everything an installed copy and Gatekeeper will check.
 #   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry run.
-#   site      environment `release`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs its
-#             own lockfile and puts the DMG behind https://phosphor.money/download/mac.
+#   site      environment `release-site`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs
+#             its own lockfile and puts the DMG behind https://phosphor.money/download/mac.
 #
-# The secrets live in the `release` environment, not in the repository: only a job that names it
-# can read them, it lets only v* tags in (and a branch Karim names for a dry run), and each job
-# that names it waits for Karim's approval. A release asks twice, once to sign and once to put
-# the DMG on the site; a dry run asks once.
+# The secrets live in two environments, not in the repository: only a job that names one can read
+# its secrets. `release` holds the signing secrets, lets only v* tags in (and a branch Karim names
+# for a dry run), and the sign job waits there for Karim's approval. `release-site` holds
+# BLOB_READ_WRITE_TOKEN alone, lets only v* tags in and asks no approval: the site job needs the
+# sign and publish jobs, so it starts only after a signing Karim approved. A release asks once; a
+# dry run asks once and never reaches the site job.
 #
 #   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
 #       Required. The minisign key every installed copy checks an update against. Without it
@@ -43,7 +45,7 @@
 #       One of the two is required; the Apple ID wins when both are set.
 #
 #   BLOB_READ_WRITE_TOKEN
-#       Required. The Vercel Blob store behind https://phosphor.money/download/mac.
+#       Required, in `release-site`. The Vercel Blob store behind https://phosphor.money/download/mac.
 #       The DMG is copied there once the release is published, so the site serves it from its
 #       own domain instead of bouncing the browser to release-assets.githubusercontent.com.
 #
@@ -488,7 +490,8 @@ jobs:
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    environment: release
+    # Its own environment, with no reviewer: the sign job it needs is the one approval.
+    environment: release-site
     permissions:
       contents: read
     steps:

@@ -152,18 +152,20 @@ files, not those programs.
 
 What closes it: a build anyone can reproduce byte for byte.
 
-## The release keys are not behind an approval yet
+## A release rests on one GitHub account
 
-The release workflow names a `release` environment that is meant to hold the signing secrets and
-wait for the maintainer's approval. At 0.10.13 it asks no approval and lets any branch in, and the
-secrets (the Developer ID and the update key among them) sit at repository level.
+The signing keys (the Developer ID and the update key) are read only in the release workflow's
+`release` environment, which lets only `v*` tags in and waits for the maintainer's approval. The
+job that puts the disk image on phosphor.money reads the Blob token alone, in a `release-site`
+environment that starts only after that approved job, so a release asks for one approval. Both
+are settings on the repository, not code in it; the GitHub API shows them
+(`gh api repos/karimbabasf/phosphor/environments`, and each environment's
+`deployment-branch-policies`).
 
-What it means: any workflow pushed to this repository can read both signing keys, not only a
-tagged release that the maintainer approved. Only the maintainer can push to it, so this rests
-on that one GitHub account.
+What it means: the maintainer's GitHub account, the only one that can push, approves every
+release and can change those settings. Someone who takes that account can ship a signed release.
 
-What closes it: the secrets moved into the environment, with a required approval and only `v*`
-tags let in.
+What closes it: a second person who must approve, or signing that needs a device outside GitHub.
 
 ## An armed plan keeps trading after a lock
 

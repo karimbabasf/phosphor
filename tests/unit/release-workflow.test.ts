@@ -7,7 +7,8 @@
 //     no npm install, no npx, no cargo and no build, and only the actions it needs;
 //   - the jobs that publish hold no Apple secret, no update key and no keychain;
 //   - the keychain is deleted by the step right after notarize-mac.sh, whatever happened;
-//   - every job that reads a release secret declares the `release` environment, and only those;
+//   - the sign job reads the signing secrets in the `release` environment and the site job the
+//     Blob token alone in `release-site`, after the sign job, so a release asks for one approval;
 //   - a dry run builds, signs and notarizes, and publishes nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -146,11 +147,17 @@ test('the update key is read by one step, after the keychain is gone, and that s
   assert.equal(jobs.sign.env?.TAURI_SIGNING_PRIVATE_KEY, undefined, 'never at job level');
 });
 
-test('every job that reads a release secret declares the release environment, and only those', () => {
+test('the signing secrets are read in `release` and the Blob token alone in `release-site`, after the sign job: one approval per release', () => {
+  const named = Object.fromEntries(Object.entries(jobs).flatMap(([name, job]) => (job.environment === undefined ? [] : [[name, job.environment]])));
+  assert.deepEqual(named, { sign: 'release', site: 'release-site' });
   for (const [name, job] of Object.entries(jobs)) {
-    assert.equal(job.environment === 'release', secretsOf(job).size > 0, name);
+    assert.equal(job.environment !== undefined, secretsOf(job).size > 0, `${name} reads a secret exactly when it names an environment`);
   }
-  assert.deepEqual(Object.keys(jobs).filter((name) => jobs[name].environment === 'release'), ['sign', 'site']);
+  assert.ok([...secretsOf(jobs.sign)].every((secret) => SIGNING_SECRET.test(secret)), 'the sign job reads signing secrets only');
+  assert.deepEqual([...secretsOf(jobs.site)], ['BLOB_READ_WRITE_TOKEN']);
+  // `release-site` asks for no approval, so its job may start only after the approved sign job.
+  const needs = [jobs.site.needs ?? []].flat();
+  assert.ok(needs.includes('sign') && needs.includes('publish'), 'the site job needs the sign and publish jobs');
   assert.equal(workflow.env, undefined, 'no workflow-level env for a secret to hide in');
 });
 

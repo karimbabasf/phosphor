@@ -262,10 +262,9 @@ Gatekeeper step.
 
 The release runs as four jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
-secret. The sign job installs nothing. It names the `release` environment, which is meant to hold
-every release secret and wait for the maintainer's approval; at 0.10.13 the secrets still sit at
-repository level and the environment asks no approval (see
-[Known limits](known-limits.md#the-release-keys-are-not-behind-an-approval-yet)). Before any key
+secret. The sign job installs nothing. It reads the signing secrets in the `release` environment,
+which lets only `v*` tags in and waits for the maintainer's approval (see
+[Known limits](known-limits.md#a-release-rests-on-one-github-account)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
 first-party payload file byte for byte (it skips only files named `.DS_Store`), the payload digest the
 shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
@@ -283,7 +282,9 @@ or for `node_modules`, which the build job made and the sign job signs as handed
 reproducible build could. The release build also does not run `npm audit signatures` or the
 key-process package test again: CI runs both on pushes to main and on pull requests, so a release
 is only as checked as the CI run on its commit. The publish
-job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone
-and installs its uploader from `scripts/site-upload`'s own lockfile.
+job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone,
+in its own `release-site` environment, which lets only `v*` tags in and asks no approval. It
+starts only after the sign job the maintainer approved, so a release asks for one approval, and
+it installs its uploader from `scripts/site-upload`'s own lockfile.
 `tests/unit/release-workflow.test.ts` holds the workflow to that. A dispatched run with `dry_run`
 builds, signs, notarizes and checks, and publishes nothing.
