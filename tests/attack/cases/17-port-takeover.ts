@@ -12,13 +12,26 @@
 // Shell half (with a built bundle): the real shell on a throwaway HOME, its backend killed and its
 // port taken by a squatter that replays what it read and serves a page that would hand it the window
 // token. The shell refuses to restart onto it, and no request carrying a credential reaches it.
+// Reads half (round 2): the shell's own reads (Copy MCP line, Copy Log, the update's health gate)
+// leave before their answer's challenge is checked, so a squatter reads their heads. They carry the
+// read key, which opens only reads, and never the token: the read key opens each read the shell
+// makes on the real backend, and the shell's own read code, run against a squatter on a real socket
+// (its port-takeover tests in src-tauri), hands it no token. Menu clicks cannot be scripted here,
+// so that half runs the shell's code through cargo.
 
+import { spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import http from 'node:http';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { bootBackend, launchShell, sleep } from '../harness.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const proof = (nonce: string, challenge: string): string => crypto.createHmac('sha256', nonce).update(`phosphor identity\n${challenge}`).digest('hex');
+// What the shell sends on every read instead of the token (src-tauri/src/backend.rs read_key).
+const readKey = (token: string): string => crypto.createHmac('sha256', token).update('phosphor read key').digest('hex');
 const fresh = (): string => crypto.randomBytes(32).toString('hex');
 
 type Seen = { method: string; url: string; headers: http.IncomingHttpHeaders; body: string };
@@ -81,6 +94,18 @@ async function backendHalf(problems: string[], rows: string[]): Promise<void> {
     rows.push(`challenge proofs match the shell's HMAC=${proves}`);
     if (!proves) problems.push('the backend does not answer each challenge with its own proof');
 
+    // 2b. The read key opens every read the shell makes, with no token on the request.
+    const key = readKey(app.token);
+    const opened: string[] = [];
+    for (const route of ['/api/health', '/api/log?limit=5&for=report', '/api/connection']) {
+      const res = await fetch(`${app.base}${route}`, { headers: { 'x-phosphor-read': key, 'x-phosphor-challenge': fresh() } });
+      const body = await res.text();
+      const ok = route === '/api/health' ? res.status === 200 && /"locked":/.test(body) : res.status !== 401;
+      opened.push(`${route.split('?')[0]} ${res.status}${ok ? '' : ' REFUSED'}`);
+      if (!ok) problems.push(`the read key does not open the shell's read of ${route.split('?')[0]}`);
+    }
+    rows.push(`the shell's reads with the read key alone: ${opened.join(', ')}`);
+
     // 3. The attacker ends the backend and takes the port. Nothing it captured answers the next
     //    challenge the shell would send.
     app.proc.kill('SIGKILL');
@@ -127,19 +152,38 @@ async function shellHalf(bundle: string, problems: string[], rows: string[]): Pr
   }
 }
 
+function readsHalf(problems: string[], rows: string[]): void {
+  if (!fs.existsSync(path.join(ROOT, 'src-tauri', 'payload', 'phosphor.sha256'))) {
+    rows.push('shell reads half skipped: no staged payload for the shell to build against (npm run bundle)');
+    return;
+  }
+  const run = spawnSync('cargo', ['test', '--manifest-path', path.join(ROOT, 'src-tauri', 'Cargo.toml'), 'squatter'], { encoding: 'utf8', timeout: 600_000 });
+  if (run.error !== undefined) {
+    rows.push(`shell reads half skipped: ${run.error.message}`);
+    return;
+  }
+  const results = [...(run.stdout ?? '').matchAll(/test result: (ok|FAILED)\. (\d+) passed; (\d+) failed/g)];
+  const passed = results.reduce((n, r) => n + Number(r[2]), 0);
+  const failed = results.reduce((n, r) => n + Number(r[3]), 0);
+  const names = [...(run.stdout ?? '').matchAll(/^test (\S+) \.\.\. (ok|FAILED)$/gm)].map((m) => `${m[1].split('::').at(-1)} ${m[2]}`);
+  rows.push(`shell reads against a squatter (cargo test squatter): ${passed} passed, ${failed} failed [${names.join(', ')}]`);
+  if (run.status !== 0 || failed > 0 || passed < 4) problems.push(`the shell's reads against a squatter did not hold: cargo exited ${run.status}, ${passed} passed, ${failed} failed`);
+}
+
 export const attack: AttackCase = {
   id: '17-port-takeover',
   title: 'a process that kills the backend and takes its port learns no nonce, answers no challenge, and gets no token',
-  timeoutMs: 150_000,
+  timeoutMs: 600_000,
   async run(ctx: AttackCtx): Promise<AttackResult> {
     const problems: string[] = [];
     const rows: string[] = [];
     await backendHalf(problems, rows);
+    readsHalf(problems, rows);
     const bundle = ctx.signedApp ?? ctx.builtApp;
     if (bundle) await shellHalf(bundle, problems, rows);
     else rows.push('shell half skipped: no built bundle (npm run app:build)');
     return {
-      expected: 'no nonce on any token-free answer; each challenge gets its own HMAC proof; nothing captured answers a fresh challenge; the real shell refuses a taken port and no token reaches the squatter',
+      expected: 'no nonce on any token-free answer; each challenge gets its own HMAC proof; nothing captured answers a fresh challenge; the shell reads with the read key, which opens its reads, and hands a squatter no token; the real shell refuses a taken port and no token reaches the squatter',
       observed: problems.length === 0 ? 'the takeover gets nothing it can use' : problems.join('; '),
       pass: problems.length === 0,
       evidence: rows.join(' | '),

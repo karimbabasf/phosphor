@@ -361,6 +361,9 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // backend to the same MAC. Neither keys anything.
   ['5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843', 'RFC 4231 HMAC-SHA256 test case 2, src-tauri/src/backend.rs'],
   ['a12aa33231a6d44541d89e7db2589e4bc49d9c5d92fc4faa2208ab845a607375', 'identity proof test vector, src-tauri/src/backend.rs and tests/unit/boot-nonce.test.ts'],
+  // The read key of the made-up token "f00d" x 16, which pins the shell's read key to the one
+  // src/http/auth.ts derives. Keys nothing.
+  ['6c06cb123fcf6903ddd78df2a8ab62b9b5a4cfb58bb031186751a07701b97eb1', 'read key test vector, src-tauri/src/backend.rs'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the
