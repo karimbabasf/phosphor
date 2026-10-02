@@ -99,7 +99,7 @@ function namesTheBackendReads(): Map<string, Set<string>> {
       const name = constants.get(m[1]);
       if (name !== undefined) add(name, file);
     }
-    for (const m of source.matchAll(/\benv\(\s*((?:'[A-Z0-9_]+'\s*,?\s*)+)\)/g)) for (const n of m[1].matchAll(/'([A-Z0-9_]+)'/g)) add(n[1], file);
+    for (const m of source.matchAll(/\benv\(\s*((?:'[A-Z0-9_]+'\s*(?:,\s*)?)+)\)/g)) for (const n of m[1].matchAll(/'([A-Z0-9_]+)'/g)) add(n[1], file);
     for (const m of source.matchAll(/const\s+[A-Z0-9_]*_ENV\s*=\s*\[([^\]]*)\]/g)) for (const n of m[1].matchAll(/'([A-Z0-9_]+)'/g)) add(n[1], file);
     for (const m of source.matchAll(/homeEnv:\s*'([A-Z0-9_]+)'/g)) add(m[1], file);
   }
