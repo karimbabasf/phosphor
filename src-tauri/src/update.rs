@@ -616,15 +616,29 @@ pub fn update_retry(app: AppHandle, window: tauri::Window) -> Result<(), String>
 /// fail with a filesystem error that says nothing a person can act on. Say the fix instead.
 fn cannot_update_from_here() -> Option<String> {
     let exe = std::env::current_exe().ok()?;
-    runs_from_a_volume(&exe).then(|| {
-        "Phosphor is running from the disk image or an external disk, where it cannot replace \
-         itself. Drag Phosphor into Applications and open it from there."
+    if runs_from_a_volume(&exe) {
+        return Some(
+            "Phosphor is running from the disk image or an external disk, where it cannot replace \
+             itself. Drag Phosphor into Applications and open it from there."
+                .to_string(),
+        );
+    }
+    path_breaks_quoting(&exe).then(|| {
+        "Phosphor is in a folder whose name holds a quote mark or a backslash, where the update \
+         cannot replace it safely. Drag Phosphor into Applications and open it from there."
             .to_string()
     })
 }
 
 fn runs_from_a_volume(exe: &Path) -> bool {
     exe.starts_with("/Volumes")
+}
+
+/// The updater plugin's admin fallback (tauri-plugin-updater 2.11.0, install_inner) writes the
+/// app's path into a shell line run as root, and a quote mark or a backslash in that path breaks
+/// out of it (re-audit R-L12). Such a path is never offered an update.
+fn path_breaks_quoting(exe: &Path) -> bool {
+    exe.to_string_lossy().chars().any(|c| matches!(c, '\'' | '"' | '\\'))
 }
 
 fn is_dismissed(dismissed: Option<&str>, version: &str) -> bool {
@@ -644,7 +658,7 @@ fn clip(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bundled_version, check_failed, clip, executing_gate, expected_url, failed, init_literal, is_dismissed, newer, refused, requirement, runs_from_a_volume, unpack, vet,
+        bundled_version, check_failed, clip, executing_gate, expected_url, failed, init_literal, is_dismissed, newer, path_breaks_quoting, refused, requirement, runs_from_a_volume, unpack, vet,
         Scratch, Stop, IDENTIFIER, NOTES_LIMIT, TEAMS,
     };
     use std::io::Write;
@@ -710,6 +724,20 @@ mod tests {
         assert!(runs_from_a_volume(Path::new("/Volumes/Phosphor/Phosphor.app/Contents/MacOS/phosphor-desktop")));
         assert!(!runs_from_a_volume(Path::new("/Applications/Phosphor.app/Contents/MacOS/phosphor-desktop")));
         assert!(!runs_from_a_volume(Path::new("/Users/k/Volumes/Phosphor.app/Contents/MacOS/phosphor-desktop")));
+    }
+
+    #[test]
+    fn a_path_that_would_break_the_admin_install_line_is_never_offered_an_update() {
+        for path in [
+            "/Applications/x'; touch \"/tmp/owned\"; '/Phosphor.app/Contents/MacOS/phosphor-desktop",
+            "/Users/k/Karim's Apps/Phosphor.app/Contents/MacOS/phosphor-desktop",
+            "/Users/k/a\"b/Phosphor.app/Contents/MacOS/phosphor-desktop",
+            "/Users/k/a\\b/Phosphor.app/Contents/MacOS/phosphor-desktop",
+        ] {
+            assert!(path_breaks_quoting(Path::new(path)), "{path}");
+        }
+        assert!(!path_breaks_quoting(Path::new("/Applications/Phosphor.app/Contents/MacOS/phosphor-desktop")));
+        assert!(!path_breaks_quoting(Path::new("/Users/k/My Apps (old)/Phosphor.app/Contents/MacOS/phosphor-desktop")));
     }
 
     #[test]
