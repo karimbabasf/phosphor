@@ -86,6 +86,8 @@ export type JoinOk = { ok: true; member: AgentMember; edge: boolean };
 // to another process: the caller holds the file secret and posted as a seat it is not.
 export type JoinBusy = { ok: false; member: AgentMember | null; error: string; revoked?: boolean; full?: boolean; foreign?: boolean };
 export type JoinResult = JoinOk | JoinBusy;
+// A bye: the seat it freed (null when there was none to free), or `foreign` for a call that does not hold it.
+export type LeaveResult = { ok: true; member: AgentMember | null } | JoinBusy;
 
 export type AgentPresence = {
   /* No `role`. It used to be read off the body and it is decided by the seat now; a client may
@@ -117,7 +119,10 @@ export type AgentPresence = {
      key the seat's proxy holds, so it is refused for a seat that sent none. */
   allow(session: unknown): { ok: true; member: AgentMember } | { ok: false; reason: string };
   later(session: unknown): AgentMember | null;
-  release(session: unknown): AgentMember | null;
+  /* A bye ends a seat, and the person's Allow with it, so only the seat's holder may send one: a
+     call with the file secret only for a seat its own proxy took, and a seat bound to a proxy's key
+     (or an Allow given to that key) only with that key, whatever the secret. */
+  release(params: { session?: unknown; secret?: unknown; key?: unknown }): LeaveResult;
   // The human replacing the agents, from the window. Frees the roster AND revokes every
   // session on it, which are two different things and both are needed: freeing alone would let
   // an evicted proxy simply rejoin on its next heartbeat, five seconds later.
@@ -332,6 +337,22 @@ export function createAgents(
     return { ok: false, member: null, foreign: true, error };
   }
 
+  /* A call with the file secret posts only as the seat its own proxy took. Session ids are no
+     secret (the window shows them, the log names them), so without this any process that read
+     agent.secret could post as the app's own agent, or as an outside agent the person allowed. */
+  function notHeld(session: string, origin: AgentOrigin, key: unknown): JoinBusy | null {
+    if (origin !== 'outside') return null;
+    // A seat that lapsed binds nothing: it is dropped, and its id is free to take.
+    const held = liveOne(session);
+    if ((held !== null && held.origin === 'app') || (held === null && (analysts.has(session) || own.has(session)))) {
+      return foreign('that seat belongs to an agent Phosphor started, and this call is not from it. Start your own session.');
+    }
+    if (held !== null && keys.get(session) !== keyOf(key)) {
+      return foreign('that seat belongs to another process. Start your own session.');
+    }
+    return null;
+  }
+
   function allowedNow(session: string): boolean {
     const bound = keys.get(session) ?? '';
     return bound !== '' && allowances.get(session) === bound;
@@ -377,19 +398,8 @@ export function createAgents(
       revoked.delete(session);
     }
 
-    /* A call with the file secret posts only as the seat its own proxy took. Session ids are no
-       secret (the window shows them, the log names them), so without this any process that read
-       agent.secret could post as the app's own agent, or as an outside agent the person allowed. */
-    if (origin === 'outside') {
-      // A seat that lapsed binds nothing: it is dropped below, and its id is free to take.
-      const held = liveOne(session);
-      if ((held !== null && held.origin === 'app') || (held === null && (analysts.has(session) || own.has(session)))) {
-        return foreign('that seat belongs to an agent Phosphor started, and this call is not from it. Start your own session.');
-      }
-      if (held !== null && keys.get(session) !== keyOf(params.key)) {
-        return foreign('that seat belongs to another process. Start your own session.');
-      }
-    }
+    const refused = notHeld(session, origin, params.key);
+    if (refused !== null) return refused;
 
     const existing = liveOne(session);
     if (existing !== null) {
@@ -497,11 +507,16 @@ export function createAgents(
       if (result.ok) lastActivity = now();
       return result;
     },
-    release(session: unknown) {
-      const id = clean(session, 'unnamed-session', 64);
+    release(params) {
+      const id = clean(params.session, 'unnamed-session', 64);
+      const refused = notHeld(id, originOf(params.secret), params.key);
+      if (refused !== null) return refused;
+      // The key its proxy bound, or the one the person's Allow went to, which outlives a lapsed seat.
+      const bound = keys.get(id) || allowances.get(id) || '';
+      if (bound !== '' && keyOf(params.key) !== bound) return foreign('that seat belongs to another process. Start your own session.');
       const m = liveOne(id);
       end(id);
-      return m;
+      return { ok: true, member: m };
     },
     evict(session?: unknown) {
       const at = now();

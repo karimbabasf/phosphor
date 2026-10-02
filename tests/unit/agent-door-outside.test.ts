@@ -133,7 +133,7 @@ test('a seat that says bye, or that the person ends, forgets its Allow', () => {
   const s = seat('bye');
   agents.claim({ session: s, client: 'claude-code', secret: HAND, key: KEY });
   assert.ok(agents.allow(s).ok);
-  agents.release(s);
+  assert.ok(agents.release({ session: s, secret: HAND, key: KEY }).ok);
   const again = agents.claim({ session: s, client: 'claude-code', secret: HAND, key: KEY });
   assert.ok(again.ok);
   assert.equal(again.member.allowed, false);

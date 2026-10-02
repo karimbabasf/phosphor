@@ -307,11 +307,16 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   }
 
   // A clean shutdown, which is what makes the light go out the moment an agent is
-  // terminated rather than one TTL later. Only the holder can free its own seat.
+  // terminated rather than one TTL later. Only the holder can free its own seat: a bye takes
+  // the person's Allow with it, so it is bound to the seat's key like every other op.
   if (op === 'bye') {
-    const freed = ctx.agents.release(body.session);
-    if (freed !== null) {
-      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.client, since: freed.since });
+    const freed = ctx.agents.release(body);
+    if (!freed.ok) {
+      rejectSeat(ctx, freed.error, body, res, false, true);
+      return;
+    }
+    if (freed.member !== null) {
+      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.member.client, since: freed.member.since });
       ctx.sse.broadcastState();
     }
     sendJson(res, 200, { ok: true });

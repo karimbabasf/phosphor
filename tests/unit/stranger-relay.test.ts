@@ -251,7 +251,7 @@ async function withOutside(name: string, opts: { holder?: boolean } = {}) {
   const asLead = (b: Record<string, unknown>) => h.mcp({ session: lead, client: 'phosphor-mcp', ...b });
   const asOutside = (b: Record<string, unknown>, session = outside) => h.post('/api/mcp', { session, client: NAME, label: NAME, secret: HAND, key: KEY, ...b });
   // The lead seat goes to whoever attached first; the fixture seats one of the app's at boot.
-  if (opts.holder === true) h.agents.release('unnamed-session');
+  if (opts.holder === true) h.agents.release({ session: 'unnamed-session' });
   assert.equal((await asOutside({ op: 'hello', intervalMs: 5000 })).status, 200);
   assert.equal((await asLead({ op: 'hello', intervalMs: 5000 })).status, 200);
   const swap = async () => {

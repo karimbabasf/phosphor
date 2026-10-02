@@ -146,8 +146,8 @@ test('a bye removes only the member that sent it', () => {
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
   agents.claim({ session: 'b', client: 'codex', intervalMs: 5000 });
 
-  const freed = agents.release('a');
-  assert.equal(freed?.client, 'claude-code');
+  const freed = agents.release({ session: 'a' });
+  assert.equal(freed.ok && freed.member?.client, 'claude-code');
   assert.equal(agents.connected(), 1);
   assert.equal(agents.lead()?.client, 'codex');
 });
@@ -156,7 +156,7 @@ test('a bye from a session nobody knows changes nothing', () => {
   const { agents } = clockFrom(1_000_000);
   agents.claim({ session: 'a', client: 'claude-code', intervalMs: 5000 });
 
-  assert.equal(agents.release('b'), null);
+  assert.deepEqual(agents.release({ session: 'b' }), { ok: true, member: null });
   assert.equal(agents.connected(), 1);
 });
 
