@@ -1020,6 +1020,9 @@
       proveWords(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            /* The app's sentence for a check it let go names the Vault's Back it up, which this
+               card does not have; it only gets here when the read again did not take. */
+            if (answer.code === 'reveal_again') return fail(error, 'Your words could not be checked just now. Press Continue to try again.');
             if (answer.code !== 'wrong_words') return fail(error, answer.error || 'That did not work.');
             tries += 1;
             if (tries >= 2) {

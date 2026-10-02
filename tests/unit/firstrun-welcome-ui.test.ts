@@ -866,6 +866,20 @@ test('a read again whose words a lock wiped before they were fetched still asks 
   assert.ok(textOf(screen).includes('Your addresses'));
 });
 
+test('a check the app still lets go after the read again is said in the card\'s own words, never as a Back it up', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.vaultBackupProven = () => Promise.resolve({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice() });
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Your words could not be checked just now. Press Continue to try again.'));
+  assert.ok(!textOf(screen).some((t) => t.includes('Back it up')), 'the card sent the person to a Back it up it does not have');
+  assert.ok(textOf(screen).includes('Prove it'));
+});
+
 test('a read again that the app refuses says why and stays on Prove it', async () => {
   const world = firstRun(SOFTWARE);
   const api = world.sandbox.PhosphorApi;
