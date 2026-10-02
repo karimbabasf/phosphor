@@ -66,7 +66,8 @@ export type PreparedSwap = {
 export function decideSwap(ctx: PCtx, prepared: PreparedSwap): Promise<Proposal> {
   const { params, draft, refusal } = prepared;
   if (refusal !== null) return refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code);
-  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, prepared.ask ?? earlierSwapMayRun(ctx, draft));
+  // Both, when both hold: a listed price never hides an earlier swap that may still go through.
+  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, [prepared.ask, earlierSwapMayRun(ctx, draft)]);
 }
 
 /* AN EARLIER SWAP OF THE SAME COIN THAT MAY STILL GO THROUGH. An open swap that signed a transfer (a

@@ -116,15 +116,30 @@ swap; and what a move gives up is held to a floor. Inside that floor a fee hidde
 not caught.
 
 What it means: someone who can change a quote between your Mac and the venue, which takes
-breaking HTTPS or being the venue, can take up to 3 percent of a swap on either route, 1 percent
-of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent
-of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap of a
-coin 1Click puts no dollar figure on has no cap at all, so it waits for your click on either
-route. The same strict check cuts the other way:
+breaking HTTPS, can take up to 3 percent of a swap on either route, 1 percent of a send, 3 percent
+of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent of a Hyperliquid
+withdrawal, or 1 percent of an invite claim that goes through 1Click. The relay itself can price a
+swap on its route up to 3 percent worse. The 3 percent is measured by dollar figures 1Click signs,
+on either route, so it trusts 1Click's prices: a 1Click that signs false figures is not held to it.
+A swap of a coin 1Click puts no dollar figure on has no cap at all, so it waits for your click on
+either route. The same strict check cuts the other way:
 if 1Click starts sending back a field the app does not know, every quote is refused until
 Phosphor is updated, and nothing moves.
 
 What closes it: the venues signing what they quote, the fee included.
+
+## A relay swap with no signed price
+
+A relay price is checked against a quote 1Click signed for the same swap. When that quote does not
+come back, because 1Click did not answer in time or someone who breaks HTTPS dropped its answer,
+the swap waits for your click whatever its size, and its card says Phosphor could not check the
+price.
+
+What it means: once you click such a swap, it runs at the relay's price, held only to what its card
+says you get at least. Nothing measures it against 1Click's prices, so read that number before you
+click.
+
+What closes it: the relay signing what it quotes.
 
 ## Names a venue lists do not mark the agent
 

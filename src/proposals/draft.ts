@@ -190,6 +190,19 @@ function liftableByQuote(ctx: PCtx, verdict: Verdict, draft: RailDraft, snapshot
   );
 }
 
+/* A REASON THE APP HOLDS A MOVE FOR, BEYOND THE POLICY'S OWN. An allow becomes a click; a click
+   keeps its rule. Every such sentence joins `reasons` and the card's `why`, one line each, so the
+   card says it at every size and a second reason never hides the first. */
+function heldFor(verdict: Verdict, said: readonly string[]): Verdict {
+  if (said.length === 0) return verdict;
+  if (verdict.outcome === 'allow') return { outcome: 'needs_approval', reasons: [...verdict.reasons, ...said], why: [...said] };
+  if (verdict.outcome === 'needs_approval') {
+    const rule = verdict.why ?? verdict.reasons.slice(-1);
+    return { ...verdict, reasons: [...verdict.reasons, ...said], why: [...rule, ...said] };
+  }
+  return verdict;
+}
+
 /* THE SIMULATION, TAKEN BEFORE THE QUEUE. It is a network read, and a read inside the spend queue
    holds every approve and refuse behind it (R5 B2). Skipped where the engine refuses the draft as
    it stands and no quote could change that (a kill switch, a cap), so a refused move still costs
@@ -208,8 +221,16 @@ export async function presimulate(ctx: PCtx, kind: RailKind, draft: RailDraft): 
 // Shared tail for every rail: evaluate, simulate, persist, and execute only if the policy said
 // allow. Nothing here knows which rail it is holding. `presimulated` is the simulation a caller
 // took before the queue (presimulate), used instead of asking again.
-// `ask` is a reason the caller already holds for a person to look first: an allow becomes a click.
-export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, origin?: Origin, presimulated?: SimulationResult | null, ask?: string | null): Promise<Proposal> {
+// `asks` are reasons the caller already holds for a person to look first (heldFor): an allow
+// becomes a click, and each is its own line on the card.
+export async function proposeRail(
+  ctx: PCtx,
+  kind: RailKind,
+  draft: RailDraft,
+  origin?: Origin,
+  presimulated?: SimulationResult | null,
+  asks: readonly (string | null | undefined)[] = [],
+): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
   const rail = ctx.rails.for(draft);
@@ -254,14 +275,12 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     }
     draft = repriced;
     verdict = evaluate(draft, buildCtx(ctx, snapshot, policy));
-    if (verdict.outcome === 'allow') {
-      verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, `${unpriced} A move the app cannot measure waits for your click, whatever the size.`] };
-    } else if (verdict.outcome === 'needs_approval') {
-      verdict = { ...verdict, reasons: [...verdict.reasons, unpriced] };
-    }
+    verdict = heldFor(verdict, [verdict.outcome === 'allow' ? `${unpriced} A move the app cannot measure waits for your click, whatever the size.` : unpriced]);
   }
 
-  if (ask !== undefined && ask !== null && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
+  // The builder's own reasons to wait (a price only 1Click's list gives, an earlier swap of the coin
+  // that may still go through), each said on the card at every size, as the rail's ask is below.
+  verdict = heldFor(verdict, asks.filter((a): a is string => typeof a === 'string' && a !== ''));
 
   if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 
@@ -304,8 +323,10 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     );
   }
 
-  // A rail that priced the move and could not check that price says so, and the move waits for a click.
-  if (simulation.ask !== undefined && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, simulation.ask] };
+  /* A rail that priced the move and could not check that price says so, and the move waits for a
+     click. Said at every size: over the click threshold the card would otherwise give the
+     threshold alone, and the moves where an unchecked price costs most would read like any other. */
+  if (simulation.ask !== undefined) verdict = heldFor(verdict, [simulation.ask]);
 
   return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 }

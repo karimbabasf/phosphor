@@ -5,13 +5,16 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
 import type { Hex } from 'viem';
 
+import { base58Encode } from '../../src/chain/near.ts';
 import { INVITE_ASSET_ID } from '../../src/invite/payload.ts';
+import { quoteHash } from '../../src/quote-signature.ts';
 import { keySigner } from '../../src/invite/signer.ts';
 import type { KeySigner } from '../../src/invite/signer.ts';
 import { intentsApi } from '../../src/rails/intents-native.ts';
@@ -290,6 +293,46 @@ test('through the real client: a fee line for someone else, or a recipient or re
     assert.match(text(r), words, name);
     assert.equal(b.signed.length, 0, `${name}: nothing signed, not even a rehearsal`);
     assert.equal(b.chain.oneclick.submitted.length, 0, name);
+    assert.equal(balanceOf(b.chain, b.t, BASE_USDC), 1_000_000n, `${name}: T keeps its USDC`);
+  }
+});
+
+test("through the real client: a live quote 1Click did not sign is refused after the yes with nothing signed, a handle swapped under another key's signature included", async () => {
+  // A key that is not 1Click's, the only kind someone who breaks HTTPS to 1Click can sign with.
+  const theirs = crypto.generateKeyPairSync('ed25519');
+  const signedByThem = (answer: Record<string, any>): string => {
+    const unsigned = { ...answer };
+    delete unsigned['signature'];
+    return `ed25519:${base58Encode(new Uint8Array(crypto.sign(null, Buffer.from(quoteHash(unsigned), 'utf8'), theirs.privateKey)))}`;
+  };
+  const THEIR_HANDLE = 'f'.repeat(64);
+  for (const [name, forge, words] of [
+    // The signature taken off; every figure and the echo are still 1Click's own.
+    ['no signature', (answer: Record<string, any>) => delete answer['signature'], /the quote carries no signature, so nothing proves 1Click chose its deposit address/],
+    // The deposit handle swapped for theirs and the answer signed again with their key.
+    [
+      'another key',
+      (answer: Record<string, any>) => {
+        answer['quote']['depositAddress'] = THEIR_HANDLE;
+        answer['signature'] = signedByThem(answer);
+      },
+      /the quote signature does not verify against 1Click's key/,
+    ],
+  ] as const) {
+    const b = await bench();
+    setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+    // generate-intent sits on the same host, so it answers with a payload paying their handle
+    // exactly what T sends: past the quote, every check the convert makes would pass.
+    b.chain.oneclick.payloadAs = (p) => (p['intents'] = [{ intent: 'transfer', receiver_id: THEIR_HANDLE, tokens: { [BASE_USDC]: '1000000' } }]);
+    // Only the live quote is forged, so the list a person says yes to was honest.
+    const r = await b.run(['convert'], [PASS, 'yes'], wired(b, { forge: (answer) => answer['quoteRequest']['dry'] === false && forge(answer) }));
+    assert.equal(r.code, 1, name);
+    assert.ok(r.prompts.some((p) => /Type yes/.test(p)), `${name}: the list was shown and agreed to`);
+    assert.match(text(r), /live quote does not match the approved draft/, name);
+    assert.match(text(r), words, name);
+    assert.equal(b.signed.length, 0, `${name}: nothing signed, not even a rehearsal`);
+    assert.equal(b.chain.oneclick.submitted.length, 0, name);
+    assert.equal(converts(b).length, 0, `${name}: nothing written down`);
     assert.equal(balanceOf(b.chain, b.t, BASE_USDC), 1_000_000n, `${name}: T keeps its USDC`);
   }
 });

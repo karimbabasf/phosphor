@@ -694,6 +694,28 @@ test('why it asks is a sentence under its label, and the figures stay at the lin
   assert.ok(figures.every((line) => find(line, 'tcard-line-label').length === 1));
 });
 
+// Two reasons the app held a move for (a price only 1Click's list gives, an earlier swap of the coin
+// that may still go through) are two lines under one label, in order, and over the click threshold
+// the policy's own rule comes first. A card that says one on its face keeps the other in Details.
+test('why it asks says each reason the app held a move for on its own line, and drops none', () => {
+  const LISTED = "This swap spends WBTC at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.";
+  const EARLIER = 'An earlier swap of this coin may still go through, so this one waits for your OK.';
+  const RULE = '$5,000.00 is above the $1.00 click threshold.';
+  const lines = (row: Node): string[] => find(row, 'tcard-line-value').map((v) => textOf(v, true).join(''));
+  for (const why of [[LISTED, EARLIER], [RULE, LISTED, EARLIER]]) {
+    const card = cardFor(swapProposal({ verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', ...why], why } }));
+    const rows = find(card, 'tcard-sentence');
+    assert.equal(rows.length, 1, 'one why it asks');
+    assert.equal(textOf(find(rows[0], 'tcard-line-label')[0], true).join(''), 'Why it asks');
+    assert.deepEqual(lines(rows[0]), why, 'each its own line, in order');
+  }
+  const marked = cardFor(swapProposal({ webRead: true, verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', LISTED, EARLIER], why: [LISTED, EARLIER] } }));
+  assert.ok(faceOf(marked).includes(EARLIER), faceOf(marked));
+  const kept = find(marked, 'tcard-sentence');
+  assert.equal(kept.length, 1, 'the line the face does not say is still on the card');
+  assert.deepEqual(lines(kept[0]), [LISTED]);
+});
+
 // The held line lives in decision.js now the send card is gone: the newest preflight's reason
 // and the whole minutes since the hold began.
 test('the held line says what the checks wait on and for how long, on its own clock', () => {

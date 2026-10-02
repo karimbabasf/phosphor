@@ -457,6 +457,20 @@
     return 'Your limits say this one needs a click.';
   }
 
+  /* Why it asks, one line each. A move the app held itself carries `why`: the policy's rule first
+     when it asked anyway, then every reason the app added, so a second never hides the first
+     (src/proposals/draft.ts heldFor). Any other move gives the rule that fired. */
+  function whyLines(proposal) {
+    var verdict = proposal.verdict || {};
+    var why = Array.isArray(verdict.why) ? verdict.why : [];
+    var lines = [];
+    for (var i = 0; i < why.length; i += 1) {
+      var line = String(why[i]).trim();
+      if (line) lines.push(line.charAt(0).toUpperCase() + line.slice(1));
+    }
+    return lines.length ? lines : [whyLine(proposal)];
+  }
+
   /* A move under the person's own limit that waits anyway, because of where it came from: its
      chat read text from outside Phosphor, its agent was started outside Phosphor, or the app
      started the turn it was asked in (src/proposals/execute.ts, land). The same size from their
@@ -545,22 +559,26 @@
     return id.replace(/[-_]+/g, ' ');
   }
 
-  /* A sentence stands under its label and breaks between words; a figure or a name sits at the
-     line's end. */
+  /* A sentence stands under its label and breaks between words, several of them one under
+     another; a figure or a name sits at the line's end. */
   function detailLine(label, value, sentence) {
     var row = dom.el('div', sentence ? 'tcard-line tcard-sentence' : 'tcard-line');
     row.setAttribute('data-wrap', 'true');
     row.appendChild(dom.el('span', 'tcard-line-label', label));
-    row.appendChild(dom.el('span', 'tcard-line-value', value));
+    var values = Array.isArray(value) ? value : [value];
+    for (var v = 0; v < values.length; v += 1) row.appendChild(dom.el('span', 'tcard-line-value', values[v]));
     return row;
   }
 
   /* The secondary lines, for the card's Details: why it asks, where the money goes, how long
-     the price holds, the route, and the rail's own summary. True, and one click away. Why it
-     asks is said once: a card that says it on its face (gateLine) leaves it out here. */
+     the price holds, the route, and the rail's own summary. True, and one click away. Each line
+     of why it asks is said once: the one a card says on its face (gateLine) is left out here, and
+     any other stays. */
   function askDetails(proposal) {
     var draft = proposal.draft || {};
-    var out = gateLine(proposal) ? [] : [detailLine('Why it asks', whyLine(proposal), true)];
+    var face = gateLine(proposal);
+    var why = whyLines(proposal).filter(function (line) { return line !== face; });
+    var out = why.length ? [detailLine('Why it asks', why, true)] : [];
     var destinations = destinationsOf(proposal);
     for (var d = 0; d < destinations.length; d += 1) {
       var where = dom.el('div', 'destination');

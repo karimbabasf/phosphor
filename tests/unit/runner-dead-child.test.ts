@@ -89,6 +89,7 @@ function host(): { runner: ReturnType<typeof createRunnerHost>; child: FakeChild
     baseUrl: 'http://127.0.0.1:1',
     user: '0x0000000000000000000000000000000000000001',
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: (e) => events.push(e),
     store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-dead-child-'))),
     meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),
