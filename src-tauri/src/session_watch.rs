@@ -26,13 +26,21 @@ const ASK_AGAIN: Duration = Duration::from_secs(1);
 const SCREEN: c_int = 1;
 const SESSION: c_int = 2;
 
-/// The port and window token of this boot's backend, from the moment it answered with this
-/// boot's nonce. A respawn reuses both, so this is set once.
+/// The port and window token of the running backend, from the moment it answered its spawn's
+/// challenge until it is seen gone. A respawn has a token of its own and sets it again.
 static BACKEND: Mutex<Option<(u16, String)>> = Mutex::new(None);
 
 pub fn backend_up(port: u16, token: &str) {
     if let Ok(mut held) = BACKEND.lock() {
         *held = Some((port, token.to_string()));
+    }
+}
+
+/// The backend died. A screen lock from now on posts nothing: the port may be held by whoever
+/// killed it, and the lock carries the token in its body.
+pub fn backend_down() {
+    if let Ok(mut held) = BACKEND.lock() {
+        *held = None;
     }
 }
 

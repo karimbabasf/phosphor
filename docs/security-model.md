@@ -403,7 +403,11 @@ carries a fresh 32-byte challenge in `x-phosphor-challenge`, and only an answer 
 HMAC-SHA256(nonce, `phosphor identity` + challenge) is taken (`src/http/respond.ts`,
 `identityValue`; `src-tauri/src/backend.rs`, `Challenge`). An answer seen once proves nothing for
 the next challenge. A request without a challenge, and a bare `npm run app` with no shell above it,
-get the fixed word, and nothing is waiting on them.
+get the fixed word, and nothing is waiting on them. When the backend dies, the shell takes its
+window down at once and sends that backend's token nowhere after it: the window's closing lock and
+the screen-lock watch post only to a backend still running (`src-tauri/src/main.rs`, `watch`), so a
+process that killed the backend and took the port gets no token (`npm run attack`,
+17-port-takeover).
 
 **The seat secret is the agent door's credential.** `src/http/mcp.ts` refuses every op on
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster

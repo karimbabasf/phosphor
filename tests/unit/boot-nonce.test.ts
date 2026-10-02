@@ -111,6 +111,25 @@ test('a dead backend takes its window and its secrets with it, and the respawn g
   assert.ok(!/\bstruct Secrets\b/.test(main), 'there is no app-wide boot handshake to outlive a backend');
 });
 
+test('a window torn down after its backend died posts its token nowhere', () => {
+  // Found by attack case 17-port-takeover at integration: the window's close handler posted its
+  // when-idle lock, token in the body, to whatever held the port, so a process that killed the
+  // backend and took the port got that spawn's token when watch tore the window down.
+  const main = shell('main.rs');
+  const from = main.indexOf('let lock_token = token.to_string();');
+  const handler = main.slice(from, main.indexOf('"the control window was closed"', from));
+  assert.ok(from > 0 && handler.length > 0, 'the close handler is where it was');
+  assert.match(handler, /exited\(\) != Some\(false\)[^]*?return;/, 'the lock goes only while a backend is running');
+  assert.match(handler, /handshake\(\)\.is_some_and\(\|h\| h\.token == lock_token\)/, 'and only to the backend this window was opened onto');
+
+  // The screen-lock watch holds the same token: watch takes it back before the window goes.
+  const watchFrom = main.indexOf('fn watch(');
+  const watch = main.slice(watchFrom, main.indexOf('\nfn ', watchFrom + 1));
+  const down = watch.indexOf('session_watch::backend_down();');
+  assert.ok(down > 0 && down < watch.indexOf('show_reconnecting(&gone)'), 'a dead backend leaves the screen-lock watch nothing to post');
+  assert.match(shell('session_watch.rs'), /pub fn backend_down\(\) \{\s*if let Ok\(mut held\) = BACKEND\.lock\(\) \{\s*\*held = None;/);
+});
+
 test('the control window is pinned to its own origin, and the enclave relay follows the respawn', () => {
   const main = shell('main.rs');
   // L3: the token init script runs on any page the window loads, so the window is pinned to its

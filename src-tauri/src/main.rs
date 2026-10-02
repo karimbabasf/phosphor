@@ -1031,6 +1031,13 @@ fn open_control_window(app: &tauri::AppHandle, port: u16, token: &str, boot_noti
             }
         }
         if matches!(event, WindowEvent::CloseRequested { .. } | WindowEvent::Destroyed) {
+            /* Only to the running backend this window was opened onto. watch tears the window down
+               because its backend died, and by then the port may be held by whoever killed it: the
+               lock, token in its body, would go to that process. A dead backend has no wallet open. */
+            let backend = quit_app.state::<Backend>();
+            if backend.exited() != Some(false) || !backend.handshake().is_some_and(|h| h.token == lock_token) {
+                return;
+            }
             let token = lock_token.clone();
             std::thread::spawn(move || {
                 let _ = post_lock_when_idle(port, &token, "the control window was closed");
@@ -1260,9 +1267,11 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
            instant the child is seen gone, before the backoff, and the splash comes back in its
            place: from here there is no page carrying a token to anything. A fresh window onto the
            respawned backend, with the respawn's own token, is built once that backend answers its
-           nonce challenge below. Destroying the window posts a when-idle lock to the dead port,
-           which simply fails; the respawned backend boots locked regardless, so a wallet that was
-           open is closed across the gap and the person unlocks the fresh window once. */
+           nonce challenge below. Destroying the window posts no lock (its close handler sends one
+           only to a backend still running, since the port may be someone else's by now); the
+           respawned backend boots locked regardless, so a wallet that was open is closed across
+           the gap and the person unlocks the fresh window once. */
+        session_watch::backend_down();
         let gone = app.clone();
         let _ = gone.clone().run_on_main_thread(move || show_reconnecting(&gone));
 
