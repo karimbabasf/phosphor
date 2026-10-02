@@ -266,7 +266,7 @@ secret. The sign job installs nothing. It reads the signing secrets in the `rele
 which lets only `v*` tags in and waits for the maintainer's approval (see
 [Known limits](known-limits.md#a-release-rests-on-one-github-account)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
-first-party payload file byte for byte (it skips only files named `.DS_Store`), the payload digest the
+first-party payload file byte for byte, the payload digest the
 shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
 on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
 entitlements as it found them. Then it runs

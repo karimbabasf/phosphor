@@ -41,7 +41,7 @@ key never exists as bytes, or a hardware signer. Neither ships here.
 
 If a program running as you stops the app's backend and takes its port, the app needs up to two
 seconds to notice. In that time what the window sends goes to that program: a click, or a
-password typed into Unlock, with the window token, which no longer opens anything.
+password typed into Unlock. The window token those carry no longer opens anything.
 
 What it means: the program would have to time this to the second, and a password wallet's
 password is what it would be after. If the window suddenly shows the splash, or Phosphor says
@@ -118,9 +118,9 @@ not caught.
 What it means: someone who can change a quote between your Mac and the venue, which takes
 breaking HTTPS or being the venue, can take up to 3 percent of a swap on either route, 1 percent
 of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent
-of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap
-1Click puts no dollar figure on has no cap, so it waits for your click on either route. The same
-strict check cuts the other way:
+of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap of a
+coin 1Click puts no dollar figure on has no cap at all, so it waits for your click on either
+route. The same strict check cuts the other way:
 if 1Click starts sending back a field the app does not know, every quote is refused until
 Phosphor is updated, and nothing moves.
 
@@ -140,15 +140,15 @@ your daily limit.
 
 Releases are built in a job that holds no secret, and signed in another job that installs and
 builds nothing. Before signing, the release checks that the payload's own files match the tagged
-source and that every program inside carries only the committed entitlements. That check skips
-only files named `.DS_Store`, and nothing checks what else the build put on the disk image beside
-the app. It cannot vouch for the compiled
+source and that every program inside carries only the committed entitlements. Nothing checks
+what else the build put on the disk image beside the app. It cannot vouch for the compiled
 programs (the shell, the bundled Node, the Secure Enclave service) or for the installed packages,
 and the release build does not repeat CI's check of each package's registry signature.
 
-What it means: a build job someone tampered with could hand the signing job a changed program or
-an extra file beside the app on the disk image, and it would be signed. [Check a release yourself](security.md#check-a-release-yourself) covers the payload's
-files, not those programs.
+What it means: a build job someone tampered with could hand the signing job a changed program, or
+an extra file beside the app on the disk image, and it would be signed.
+[Check a release yourself](security.md#check-a-release-yourself) covers the payload's files, not
+those programs.
 
 What closes it: a build anyone can reproduce byte for byte.
 
@@ -216,11 +216,12 @@ rehearsal. It can pay only your wallet.
 What it means: the money lands, but the window says the claim failed until Phosphor's next start
 finds it and marks the code claimed. Restart Phosphor before you ask for a new code.
 
-## One agent can get in the way of another
+## An agent can stop a worker it did not start
 
-Any agent can stop a worker another agent started.
+An agent can stop any worker by its id through `agent_jobs`, including a worker another agent
+started.
 
-What it means: a worker can lose its job before it finishes. That moves no money.
+What it means: a worker can lose its job before it reports. It moves no money.
 
 ## The invite tools
 
@@ -231,12 +232,12 @@ terminal gets past it and can read what the terminal shows, live links included.
 
 What it means: type the passphrase only in your own Terminal, never through an agent. A convert
 closes on 1Click's word, which is unsigned, so a lying 1Click can mark a convert done before its
-money reaches the treasury; a refund counts only once it shows there. A Mac clock running fast
+money reaches the treasury (a refund counts only once it shows there). A Mac clock running fast
 and a lying NEAR RPC together can run a batch's rehearsal as well as its real payload: each code
 then holds twice its amount, a claim takes all of it, and `reclaim` takes back what nobody
-claimed. A convert may give up 1 percent of its
-value to a fee hidden in the quote. `scripts/invite-proof.ts` keeps its throwaway keys in the
-clear and `release-code` prints a live code, so put in only what you are ready to lose.
+claimed. A convert may give up 1 percent of its value to a fee hidden in the quote.
+`scripts/invite-proof.ts` keeps its throwaway keys in the clear and `release-code` prints a live
+code, so put in only what you are ready to lose.
 [Money](money.md#issuing-invite-codes) has every command, and the
 [security model](security-model.md#the-invite-tools) what each one trusts.
 

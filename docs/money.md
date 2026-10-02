@@ -170,10 +170,10 @@ It is rehearsed and written to the file before it is signed, like every move her
 bytes are written down before 1Click gets them. If a run stops, the next `convert` finishes it with
 the same bytes, never a second signature, and converts nothing new while they can still run. A
 convert ends on NEAR Intents' own record, its one-time number spent, and then on 1Click's word for
-the NEAR USDC; a refund counts only once it shows on T, at what went in less 1 percent, the most
-a convert may lose (or the amount 1Click says it refunded, when that is more). 1Click's word is
-unsigned, so a lying 1Click can close a convert before its money reaches T by saying it
-succeeded (see [Known limits](known-limits.md#the-invite-tools)). If NEAR Intents can no longer answer for that
+the NEAR USDC; a refund counts only once T holds at least what went in less 1 percent, or more
+when 1Click says it refunded more. 1Click's word is unsigned, so a lying 1Click can close a
+convert before its money reaches T by saying it succeeded (see
+[Known limits](known-limits.md#the-invite-tools)). If NEAR Intents can no longer answer for that
 number (days later), 1Click's word decides, and a convert 1Click never saw lapses five minutes
 after its deadline instead of holding up the next one. A Mac clock more than a minute fast
 is refused before the signature, because three minutes on it would be longer on NEAR.
@@ -289,8 +289,8 @@ quote 1Click signs for the same swap. Under the click
 threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
 page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
 started outside Phosphor and is not allowed yet, the swap spends a coin the app cannot price,
-1Click's quote puts no dollar figure on one of its coins, or the relay's price could not be
-checked against a quote 1Click signed;
+1Click puts no dollar figure on one of its coins, or the relay's price could not be checked
+against a quote 1Click signed;
 above it, the card shows what you pay and what you get at least, and waits for your click. See
 [Policy](policy.md#the-click-threshold).
 
@@ -299,7 +299,8 @@ only by that list is judged at the larger of the listed price and what the quote
 so a wrong listed price cannot make a move look small. Three cases always wait for your click,
 whatever the size: a swap whose listed price nothing in the quote can check, a swap that spends a
 coin the app cannot price at all, which is valued off what the quote says arrives, and a swap
-1Click's quote puts no dollar figure on, since nothing can measure what it gives up.
+into or out of a coin 1Click puts no dollar figure on, since nothing can measure what it gives
+up.
 
 ## Send
 
@@ -465,7 +466,7 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A swap floor more than 20 percent below the app's quote is refused as no floor at all.
 - A swap may give up at most 3 percent of its value to fees and price, by the dollar figures
   1Click signs for both sides, on the solver relay and on 1Click alike. When 1Click gives no
-  dollar figure for a coin there is nothing to measure by, so no cap applies and the swap waits
+  dollar figure for a coin there is nothing to measure by and no cap applies, so the swap waits
   for your click on either route. A quote whose request carries a fee, a field or a
   value the app did not ask for is refused before anything is signed.
 - A move runs with the coins its card was priced with. If the swap service's coin list names a

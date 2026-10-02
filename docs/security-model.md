@@ -50,9 +50,9 @@ The agent cannot:
 A small move still waits for your click when its agent read text from outside Phosphor in that
 session (a page, the news, a chain read, a venue's words the app does not know, or words a marked
 agent wrote), when its agent was started outside Phosphor and you have not allowed it, when the
-agent asked for it on its own after a move failed, when it spends a coin the app cannot price,
-when 1Click's quote puts no dollar figure on one of a swap's coins, or when it is a swap on the
-solver relay whose price the app could not check against a quote 1Click signed.
+agent asked for it on its own after a move failed, when it spends a coin the app cannot price, or
+when it is a swap the app cannot measure by dollar figures 1Click signed: a coin 1Click puts no
+price on, or a relay price with no signed 1Click quote beside it.
 
 ### What it defends against, and the test that proves it
 
@@ -94,9 +94,9 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 - **A program stops the backend and takes its port.** The shell knows its backend by a fresh
   question only that backend can answer, and will not restart onto a port another program holds.
   Once it sees the backend gone, which takes up to two seconds, it posts nothing more that carries
-  the window token, and a screen lock posts only while the backend it was handed still runs.
-  Proof: attack `17-port-takeover`; the `session_watch.rs` tests under `cargo test` (the screen
-  lock).
+  the window token, and its own locks, on a closed window and on a screen lock, post only to a
+  backend whose process still runs. Proof: attack `17-port-takeover`; the `session_watch.rs` tests
+  under `cargo test` (the screen lock).
 - **Code loaded into the process that holds the key.** That process gets nothing from your
   environment but the settings Phosphor names, no debugger signal, no add-ons and no eval, and
   only 14 reviewed packages can load in it. Proof: attacks `01-env-injection`, `02-inspector`, `11-key-process`;
@@ -118,7 +118,7 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
 - **The solver relay prices a swap badly.** The relay signs nothing it quotes, so its price is
   checked against a quote 1Click signed for the same swap. A swap that gives up more than 3
-  percent of its value by that quote's prices is refused even when you click it, and one with no
+  percent of its value by that quote's prices is refused, even after your click, and one with no
   signed price to check it by waits for your click. Proof: `intents-relay.test.ts`,
   `swap-price-ask.test.ts`.
 - **The coin list changes under a card before you click.** A card's coins are pinned when it
@@ -130,18 +130,19 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   signing).
 - **One Touch ID opens more than it should.** A Touch ID that shows your deposit address or your
   recovery phrase leaves a locked wallet locked. A Touch ID that approves a move on a locked
-  wallet opens it for that move alone, and your rules run again after the touch, before anything
-  signs. The plan check arms no waiting plan while the wallet is locked, a touch's lease
-  included. Proof: `vault-routes.test.ts` (the address and the phrase),
-  `approve-touch-lease.test.ts`, `touch-recheck.test.ts`, `runner-host.test.ts` (the plan check).
-- **Freeze is pressed while a move is on its way.** Freeze is checked again as the last step
-  before the wallet's key signs, so a move that passed its checks before you pressed it signs
-  nothing, whether you clicked it, touched it or your rules allowed it, and a trading plan stops
-  before it fires, arms or changes. Closing positions and cancelling orders still run, because
-  Freeze needs them, and an invite claim, which only brings money in and is signed by the code's
-  key, is not stopped. Proof: `freeze-at-signature.test.ts`, `runner-host.test.ts`, and the last
-  check's tests in `intents-relay.test.ts`, `intents-native.test.ts`, `intents-spend.test.ts`,
-  `hypercore-withdraw.test.ts` and `hypercore-deposit.test.ts`.
+  wallet opens it for that move alone: no trading plan arms on it, even while the app starts, and
+  your rules run again after the touch, before anything signs. Proof: `vault-routes.test.ts` (the
+  address and the phrase), `approve-touch-lease.test.ts`, `touch-recheck.test.ts`,
+  `runner-host.test.ts` (the plans).
+- **Freeze is pressed while a move is on its way.** Every rail reads Freeze again as its last step
+  before the key signs, and a plan reads it before it fires, arms or changes, so a move that passed
+  its checks before you pressed Freeze signs nothing, whether you clicked it, touched it or your
+  rules allowed it. What still signs while frozen: the trading runner's cancel, close, flatten and
+  protect (Freeze's own close needs them), an invite claim (money coming in, signed by the code's
+  key), and a signature released before you pressed it. Proof: `freeze-at-signature.test.ts`,
+  `runner-host.test.ts`, and the last check's tests in `intents-relay.test.ts`,
+  `intents-native.test.ts`, `intents-spend.test.ts`, `hypercore-withdraw.test.ts` and
+  `hypercore-deposit.test.ts`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other
@@ -182,9 +183,9 @@ your money.
   threshold to zero: then every move waits for you.
 - **A program that takes the backend's port gets two seconds of the window.** If a program
   running as you stops the backend and takes its port, the shell needs up to two seconds to see
-  it. In that time the open window still posts to the port with the window token, a click or a
-  password typed into Unlock included. The token is dead by then: the shell will not restart onto
-  a port another program holds.
+  it. In that time the open window still posts to the port, a click or a password typed into
+  Unlock included. The window token in those posts is dead by then: the shell will not restart
+  onto a port another program holds.
 - **Names a venue lists reach the agent unmarked.** 1Click's coin names, the bridge's asset names
   and its deposit memo, and the account names in a swap's record do not mark the agent that reads
   them. A venue that lies, or someone who breaks HTTPS to it, can put words there, and the agent's
@@ -195,17 +196,16 @@ your money.
   or being the venue, can take up to a move's loss floor: 3 percent of a swap on either route, 1
   percent of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4
   percent of a Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. On the
-  relay route the 3 percent is measured by a quote 1Click signed for the same swap. A swap 1Click
-  puts no dollar figure on has no cap: it waits for your click on either route, and the amount on
-  its card is the only check. What closes it: the venues signing what they quote, the fee
-  included.
+  relay route the 3 percent is measured by a quote 1Click signed for the same swap. A swap of a
+  coin 1Click puts no dollar figure on has no cap at all: it waits for your click on either route,
+  and the amount on its card is the only check. What closes it: the venues signing what they
+  quote, the fee included.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
 - **A release signs what its build job made.** Before signing, the release checks that the
   payload's own files match the tagged source and that every program carries only the committed
-  entitlements. That check skips only files named `.DS_Store`, and nothing checks the rest of the
-  disk image beside the app. It cannot vouch for
+  entitlements. Nothing checks the rest of the disk image beside the app. It cannot vouch for
   the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
   installed packages, and the release build does not repeat CI's check of each package's registry
   signature. What closes it: a build anyone can reproduce byte for byte.
@@ -235,8 +235,8 @@ your money.
 - **A lying NEAR RPC can make a claim look failed.** An RPC that stamps a final block up to two
   minutes ahead can run a claim's rehearsal. It pays only this wallet, but the window says the
   claim failed until the app's next start finds the money and marks it claimed.
-- **One agent can get in the way of another.** Any agent can stop a worker another agent
-  started. That moves no money.
+- **An agent can stop a worker it did not start.** `agent_jobs` stops any worker it names, whoever
+  started it. That ends the worker's job and moves no money.
 
 ### The invite tools
 
@@ -269,10 +269,9 @@ What stays open:
   pretends to be a terminal gets past that and reads what the terminal shows, the codes' links
   included. Type the passphrase only in your own Terminal.
 - **1Click's word closes a convert.** 1Click's status is unsigned. A lying 1Click, or someone who
-  breaks HTTPS to it, can close a convert before its money reaches T by saying it succeeded, and
-  `invite-proof.ts sweep` can then call a proof file done while money may still arrive on the key
-  that file alone holds. A refund closes a convert only once T holds what went in less 1 percent,
-  or the refunded amount 1Click names when that is more.
+  breaks HTTPS to it, can close a convert before its money reaches T by saying it succeeded (a
+  refund counts only once it shows on T). `invite-proof.ts sweep` can then call a proof file done
+  while money may still arrive on the key that file alone holds.
 - **A fast Mac clock and a lying RPC can run a rehearsal.** With the Mac's clock fast and the RPC
   lying about the time, a batch's rehearsal can run beside its real payload when T holds twice the
   batch: each code then holds twice its amount, a claim takes all of it, and `reclaim` takes back
@@ -748,12 +747,13 @@ restart onto a port another program holds, and a second death stops the app with
 whether it is still running before it posts, so a process that killed the backend and took the
 port gets no token from it (`npm run attack`, 17-port-takeover). The screen-lock watch posts
 only while the backend it was handed still runs: before each post it asks that spawn's own
-process, as the closing lock does (`src-tauri/src/session_watch.rs`, `lock_target`). The shell's own reads (Copy MCP Config, Copy Log,
-an update's health check) carry the read key and never the window token, the first two with a
-challenge too, so a process that took the port reads nothing that can approve or unlock
-(`src-tauri/src/backend.rs`, `read_head`). One gap remains: for up to those two seconds the open
-window can still post to whatever holds the port, a click or a password typed into Unlock
-included, with the window token. That token opens nothing after: the shell never restarts onto a port another program holds.
+process, as the closing lock does (`src-tauri/src/session_watch.rs`, `lock_target`). The shell's
+own reads (Copy MCP Config, Copy Log, an update's health check) carry the read key and never the
+window token, the first two with a challenge too, so a process that took the port reads nothing
+that can approve or unlock (`src-tauri/src/backend.rs`, `read_head`). One gap remains: for up to
+those two seconds the open window can still post to whatever holds the port, a click or a
+password typed into Unlock included. The window token those posts carry opens nothing after: the
+shell never restarts onto a port another program holds.
 
 **The seat secret is the agent door's credential.** `src/http/mcp.ts` refuses every op on
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster
@@ -975,13 +975,13 @@ signature (`src/quote-signature.ts`) before it is trusted. The coins it names ar
 card was priced with. A coin's 1Click id and its decimals come off 1Click's token list, which
 nothing signs, so the proposal pins both into the draft when it lands (`src/proposals/draft.ts`),
 execute signs for exactly those, and a list that names another id or other decimals for them at
-the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). The registry's coins
-and the chains' own ETH (on Ethereum, Base and Arbitrum) and SOL carry 1Click's id, in
-`data/tokens.json` and in `NATIVE_ASSET` (`src/intents.ts`, decimals pinned too), and a list that
-files one of them under another id is refused before the card is priced. Six registry rows name
-coins 1Click does not list (USDS, PYUSD and USDe on Ethereum, DAI on Base and on Arbitrum, PYUSD
-on Solana); they carry no id and are never quoted (`tests/unit/asset-pins.test.ts`). A coin
-outside the registry takes the id the list gives when its card is priced.
+the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). Every registry coin
+1Click lists carries 1Click's id in `data/tokens.json`, and so do the chains' own coins, ETH and
+SOL (`NATIVE_ASSET` in `src/intents.ts`); a list that files one of them under another id is
+refused before the card is priced. The six registry coins 1Click did not list when they were
+pinned carry `null` and are never quoted (`tests/unit/asset-pins.test.ts`). A coin outside the
+registry takes the id the list gives when its card is priced, and the card's pin holds it from
+then on.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside

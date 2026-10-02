@@ -101,7 +101,7 @@ It can place the entry it was armed for and its exits; it cannot move money out.
 
 A plan whose session has ended while the wallet is locked waits as Needs unlock and re-arms when
 you unlock. Only Unlock re-arms it: showing an address, revealing the phrase or approving a move
-with Touch ID does not, even while the app is starting. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
+with Touch ID does not, not even while the app is starting. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
 nothing fires until they are back.
 
 Freeze everything in the top bar ends all of it: the orders your plans have resting are
