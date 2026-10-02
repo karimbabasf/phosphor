@@ -132,8 +132,13 @@ export const READ_TOOLS: readonly string[] = [
    of that agent session. Marked as the answer's head goes out (src/http/mcp.ts markStrangerReads),
    so no word of it reaches the agent unmarked. chain_address is here too, beside the four the audit
    named: its token names and symbols are whatever the token's deployer wrote. web_read marks its
-   own seat before it fetches. */
-export const STRANGER_TEXT_READS: readonly string[] = ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity'];
+   own seat before it fetches.
+   log_tail is here because it hands over every seat's logged arguments and every venue's error
+   text, and a stamp cannot follow those. The other reads that hand one seat what another wrote (a
+   board post, a worker's brief and report, a name on the roster) mark the reader by the writer's
+   stamp instead (markIfCarried), so text a clean seat wrote never makes a move wait (audit
+   2026-10-01: the mark was laundered from a marked seat to an unmarked one through those reads). */
+export const STRANGER_TEXT_READS: readonly string[] = ['research', 'chain_address', 'chain_transactions', 'chain_transaction', 'intents_activity', 'log_tail'];
 /* The reads a worker never gets. A picture is the window the human is reading. The proposal
    list is the lead's own money timeline, and one row's whole story with it: a spawned worker
    exists to measure something and hand back a paragraph, and enumerating what its parent is in

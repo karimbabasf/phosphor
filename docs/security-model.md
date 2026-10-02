@@ -413,7 +413,10 @@ Phosphor spawned gets it through `childEnv` as `PHOSPHOR_SEAT`. A proxy a human 
 directory, which `src/main.ts` mints and writes before the port opens, owner-readable only, one
 line, new each boot. A seat taken with the file's secret is OUTSIDE (`src/agents.ts`): it starts
 with the web-read mark, so every move it proposes waits for a click with its own reason, until
-the person allows it on the window's card (`POST /api/agents/answer`, window token). It is also
+the person allows it on the window's card (`POST /api/agents/answer`, window token). Every handler
+and log line behind the door reads the id the roster seated, never the raw session string
+(`src/http/mcp.ts`), so a session sent with a trailing space, a control character or past 64
+characters is the same seat, under the same mark, as its cleaned id. It is also
 bound to a key its proxy mints and holds in memory (`src/mcp.ts` SEAT_KEY), so no other process
 holding the file can post as it, and a call with the file's secret on a seat the app spawned is
 refused with `seat: 'foreign'`;

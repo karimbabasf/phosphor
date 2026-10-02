@@ -140,6 +140,18 @@ function strField(params: JsonBody, name: string, problems: string[], max: numbe
   return value;
 }
 
+/* A coin is a ticker or a venue's asset id, and neither holds a space or a web address. A symbol
+   that does is a sentence or a link, and a move refused on it kept it on a row other agents read
+   and on the window's Try again line (audit 2026-10-01), so it stops here with the other shapes. */
+function symbolField(params: JsonBody, name: string, problems: string[], max: number): string {
+  const value = strField(params, name, problems, max);
+  if (/\s|:\/\//.test(value)) {
+    problems.push(`${name} is a coin's ticker or asset id, which never holds a space or a web address`);
+    return '';
+  }
+  return value;
+}
+
 /* null on an unknown chain, never a sentinel.
    This used to return 'eth'. Every caller checks `problems.length` before using the value, so it
    was latent rather than live, but the next branch that forgets silently drafts a transaction
@@ -184,9 +196,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
   const kind = String(body.kind ?? '');
   const params = asRecord(body.params);
   const session = String(body.session ?? 'unnamed-session');
-  // The seat a row records as its proposer: only a seat that was actually named. The
-  // placeholder above keeps the duplicate guard working for a caller with no session and is
-  // not a seat anything could be told on.
+  /* The seat a row records as its proposer, and the one its marks are read under: the id the door
+     seated (src/http/mcp.ts), a caller that sent no session included, since the roster gave it a
+     seat and marked that seat. Undefined only for a body that never came through the door. */
   const by = typeof body.session === 'string' && body.session !== '' ? body.session : undefined;
   /* A worker's MCP process never registers a propose tool, and this is the wall behind that one:
      the app minted the worker's session id and seated it as an analyst, so a raw post from that
@@ -312,8 +324,8 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // Either may be left out: the swap picks the coin by one rule (resolveSwapSides).
       const chain = params.chain === undefined ? undefined : swapChainField(params, 'chain', problems);
       const toChain = params.toChain === undefined ? undefined : swapChainField(params, 'toChain', problems);
-      const fromSymbol = strField(params, 'fromSymbol', problems, SWAP_SYMBOL_MAX);
-      const toSymbol = strField(params, 'toSymbol', problems, SWAP_SYMBOL_MAX);
+      const fromSymbol = symbolField(params, 'fromSymbol', problems, SWAP_SYMBOL_MAX);
+      const toSymbol = symbolField(params, 'toSymbol', problems, SWAP_SYMBOL_MAX);
       // A negative or zero input has no honest swap, and neither does one too large to be
       // represented exactly. Rejected at the edge so it never reaches usdOf, where a negative
       // amount became "$Infinity ... cannot be checked against a limit" and only failed closed
@@ -388,7 +400,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     if (kind === 'hl_deposit') {
       // No chain: the money leaves the intents balance and nowhere else. symbol is optional
       // and defaults to USDC inside proposeHlDeposit, which also picks the flavor held.
-      const symbol = params.symbol === undefined ? undefined : strField(params, 'symbol', problems, SYMBOL_MAX);
+      const symbol = params.symbol === undefined ? undefined : symbolField(params, 'symbol', problems, SYMBOL_MAX);
       const amount = positiveField(params, 'amount', problems);
       if (problems.length > 0) {
         fail(res, 400, problems.join('; '));
@@ -417,7 +429,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       // raw post cannot skip the read-back either. The builder decodes `to` for the place it is
       // going, and the card and the Touch ID sentence are the gate.
       const to = strField(params, 'to', problems, ADDRESS_MAX);
-      const symbol = strField(params, 'symbol', problems, SYMBOL_MAX);
+      const symbol = symbolField(params, 'symbol', problems, SYMBOL_MAX);
       const amount = positiveField(params, 'amount', problems);
       const where = strField(params, 'where', problems, WHERE_MAX);
       if (params.confirmed !== true) {

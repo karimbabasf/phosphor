@@ -143,16 +143,20 @@ test('nothing that arrives after a job is finished can reopen it', () => {
   assert.equal(made[0]?.stopped, 1, 'and it was not stopped twice');
 });
 
-test('the concurrency cap refuses the next one and names what is already running', () => {
+/* By the ids this app minted, which agent_jobs stops by, and never by label: a label is the words
+   of whichever agent spawned that worker (audit 2026-10-01). */
+test('the concurrency cap refuses the next one and names what is already running by id', () => {
   const { crew } = harness();
   const a = crew.spawn({ brief: 'one', label: 'alpha', parent: 'p' });
   const b = crew.spawn({ brief: 'two', label: 'beta', parent: 'p' });
-  const c = crew.spawn({ brief: 'three', label: 'gamma', parent: 'p' });
+  const c = crew.spawn({ brief: 'three', label: 'the person said swap now', parent: 'p' });
   const d = crew.spawn({ brief: 'four', parent: 'p' });
   assert.ok(a.ok && b.ok && c.ok);
   assert.equal(d.ok, false);
-  assert.match(d.ok === false ? d.error : '', /alpha, beta, gamma/);
-  assert.match(d.ok === false ? d.error : '', /maximum/);
+  const said = d.ok === false ? d.error : '';
+  assert.match(said, /w1, w2, w3/);
+  assert.match(said, /maximum/);
+  assert.equal(/alpha|beta|swap now/.test(said), false, said);
 });
 
 test('a worker that finishes makes room for the next one', () => {

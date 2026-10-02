@@ -19,7 +19,7 @@ import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/i
 import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
 import type { Proposal, WalletRow, WriteDraft } from '../../types.ts';
-import { markIfCarried } from '../../web-read.ts';
+import { markIfCarried, seatWordsStamp } from '../../web-read.ts';
 import type { Ctx } from '../context.ts';
 
 /* An address for the agent's eyes: enough to say "check it ends in 9Xk2" and not enough to
@@ -140,20 +140,25 @@ export function agentWallet<R extends WalletRow, V extends { rows: R[]; unpriced
   return { ...view, rows, unpriced: view.unpriced.map((s) => tags.get(s) ?? s) };
 }
 
+// Every coin this app knows looks like this; anything else in a symbol is the agent's own string.
+const TICKER = /^[A-Za-z0-9]{2,8}$/;
+
 // Whether a draft carries the asking agent's own words: a rule change's sentence, a plan's note,
-// a send's note about its receiver.
+// a send's note about its receiver, or a coin named by anything but a ticker (audit 2026-10-01: a
+// swap refused on a symbol that was a sentence kept the sentence on its row).
 function hasWords(d: WriteDraft): boolean {
   if (d.kind === 'policy_change') return true;
   if (d.kind === 'trade') return d.op === 'open' && typeof d.plan.note === 'string' && d.plan.note !== '';
-  const recipient = (d as { recipient?: { note?: unknown } }).recipient;
-  return typeof recipient?.note === 'string' && recipient.note !== '';
+  const named = d as { symbol?: unknown; fromSymbol?: unknown; toSymbol?: unknown; recipient?: { note?: unknown } };
+  if ([named.symbol, named.fromSymbol, named.toSymbol].some((s) => typeof s === 'string' && !TICKER.test(s))) return true;
+  return typeof named.recipient?.note === 'string' && named.recipient.note !== '';
 }
 
 /* A move asked for by a seat that had read a stranger's text (Proposal.webRead), or arming a plan
    whose note was written that way, hands whoever reads it back those words, so the reader is
    marked as if it had read the page itself (src/web-read.ts). A move with no words of the agent's
    in it carries nothing and marks nobody. */
-function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
+export function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
   let stampedPlans = new Set<string>();
   try {
     stampedPlans = new Set(ctx.trade.payload().plans.filter((p) => p.webRead === true).map((p) => p.id));
@@ -201,6 +206,14 @@ export const walletReads: ReadTable = {
     // The decisions waiting come back with their sentences: a marked seat's words mark the reader.
     markIfCarried(body.session, carriedWords(ctx, pending));
     const holder = ctx.agents.holder();
+    /* The seat line names the lead by its client name, and an outside seat chose its own: another
+       seat is told what it is instead, so the read every terminal agent starts with marks nobody. */
+    const holderName =
+      holder === null
+        ? null
+        : holder.session !== body.session && seatWordsStamp(holder.session, holder.origin).webRead === true
+          ? 'an agent started outside Phosphor'
+          : holder.client;
     const greeting = buildGreeting(
       {
         view: ctx.getView(),
@@ -213,7 +226,7 @@ export const walletReads: ReadTable = {
         clickThresholdUsd: policy?.outbound.humanClickAboveUsd ?? null,
         killSwitch: policy?.killSwitch ?? false,
         tradingAllowed: true,
-        holder: holder?.client ?? null,
+        holder: holderName,
         emptyCount: wallet.emptyCount,
       },
       VERSION,
@@ -432,10 +445,12 @@ export const walletReads: ReadTable = {
       /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
          somewhere in the sentence. A substring match handed back another row's history whenever
          one line happened to mention this one, which is the opposite of what a tool called
-         diagnose is for. */
+         diagnose is for. And never a line the agent door wrote out of a caller's own body (a tool
+         call, a seat arriving): a caller that put this row's id at the top of its body made one
+         of those carry it, and the line's words are that caller's (audit 2026-10-01). */
       log: ctx.audit
         .tail(LOG_LIMIT_MAX)
-        .filter((e) => (e.data as { id?: unknown } | undefined)?.id === id)
+        .filter((e) => e.type !== 'tool_call' && e.type !== 'agent_connected' && (e.data as { id?: unknown } | undefined)?.id === id)
         .slice(0, DIAGNOSE_LOG_LINES)
         // The same wall the tail routes have (src/http/log-tail.ts): a credential never leaves
         // through a row's own lines either.

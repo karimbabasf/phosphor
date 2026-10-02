@@ -69,7 +69,8 @@ chat waits for your click, whatever its size, until the chat starts a new sessio
 restarts, or you start a new chat). Why it asks, in the card's Details, says: "This chat read
 text from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
 highlight the agent writes after a web read carries the same mark, and an agent that later reads
-one is marked too. A move
+one is marked too. So do a board post and a worker's report, and a worker that a marked agent
+starts begins marked. A move
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
 

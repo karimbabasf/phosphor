@@ -84,7 +84,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `chain_address` | What an address holds and has done on one network (any of the 36 chains the deposit card lists, from `ethereum` to `aleo`): native balance, transaction count where the chain gives one, contract or not (an EIP-7702 delegation reads as an account), last activity where the chain exposes it, token balances where the same answer carries them, an explorer link. The address has to pass its network's decoder first; a wrong checksum is refused, not repaired. See "Chain lookups" below |
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back. Only on the networks read through an indexer or a history call (ethereum, base, arbitrum, solana, fogo, near, bitcoin, litecoin) |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
-| `web_read` | One web page, read by the APP (`src/web-page.ts`) and only at an address that arrived from outside the model: a hit a web search returned this chat (its `url` field, never the query or commentary the answer's text repeats), or the person's own message, word for word, or a folder above one (`src/web-gate.ts`). https, the standard port, a public name whose every address is public at connect, no address or figure of this wallet in it, 12 pages a session and 3 a site. The text comes back stripped and quoted; `look_for` keeps the lines that name it. Marks the session |
+| `web_read` | One web page, read by the APP (`src/web-page.ts`) and only at an address that arrived from outside the model: a hit a web search returned this chat (its `url` field, never the query or commentary the answer's text repeats), or the person's own message, word for word, or a folder above one (`src/web-gate.ts`). The card's Try again line names a coin only by a ticker-shaped symbol (`ui/screens/decision.js`), and the propose door refuses a symbol with a space or `://` in it. https, the standard port, a public name whose every address is public at connect, no address or figure of this wallet in it, 12 pages a session and 3 a site. The text comes back stripped and quoted; `look_for` keeps the lines that name it. Marks the session |
 | `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
 | `swap_assets` | What can be swapped inside the balance, coins held first: symbol, name, network, `assetId`, decimals, price, the exact amount held, and `liquidity` (yes, no or unknown: whether anyone offers a price now). `query` narrows it. Files nothing (`src/http/read/swap.ts`) |
 | `swap_quote` | What a swap would get right now: amount in, expected amount out, the minimum, the fee in dollars and the time it takes. `chain` and `toChain` only when a network was named; otherwise the app picks each coin, the one held first. `sentence` says why when there is no quote, and `candidates` means a name fits several coins. Files nothing |
@@ -165,6 +165,17 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 | `agent_jobs` | What the workers this session spawned are doing, and what they have finished |
 | `agent_spawn` | Starts a worker of its own. Every worker is an ANALYST: the propose tools are not registered for its process at all, so there is nothing on its surface to talk it into |
 | `skill` | The app's own playbooks, by name. Text the app wrote about how to operate the app, which is why it is a tool and not a prompt |
+
+What one seat writes for another carries the writer's web-read mark (`src/web-read.ts`): a post
+(`src/board.ts`) and a worker's job (`src/crew.ts`) are stamped when their writer is marked, and
+`agent_board`, `agent_post`'s answer and `agent_jobs` mark the reader of a stamped one. A worker
+spawned by a marked seat starts marked, because its brief is that seat's words. `log_tail` marks
+its reader outright (`STRANGER_TEXT_READS`), since it carries every seat's logged arguments, and
+`diagnose` returns a row's own lines, never one the door wrote from a caller's body. An outside
+seat's id, label and client name are its own words (`seatWordsStamp`): until the person allows
+it they mark a reader of `agent_roster` or of the full `chart_read` (`lastDriverBy`, an
+indicator's `by`), `start` names such a lead "an agent started outside Phosphor", and a full
+roster is refused with a count rather than the members' names.
 
 | Display tool | Does |
 |---|---|

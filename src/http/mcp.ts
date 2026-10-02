@@ -286,7 +286,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
       rejectSeat(ctx, claim.error, body, res, claim.revoked === true, claim.foreign === true);
       return;
     }
-    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
+    if (claim.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', { ...logged, session: claim.member.session });
     /* A heartbeat arrives every five seconds per agent and used to push a whole state frame to
        the window each time, which rebuilt the state for nothing (R5). It pushes one now only when
        the roster the window draws changed: an agent arrived, or renamed itself on its handshake.
@@ -326,6 +326,15 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     rejectSeat(ctx, seat.error, body, res, seat.revoked === true, seat.foreign === true);
     return;
   }
+  /* ONE SEAT, ONE ID, from here to every handler and every log line. The roster keys a seat on the
+     session cleaned (control characters out, trimmed, cut to 64) and marks an outside seat under
+     that id; this door used to hand the raw string on. A caller holding the file secret sent
+     "seat " or 70 characters, was seated and marked as one id, and proposed as another: the row's
+     `by` named no marked seat and its small swap ran with no click (audit 2026-10-01). So every
+     read of body.session below, the propose door's `by`, the stranger-read mark and every
+     markIfCarried, is the id the roster checked. A call with no session is the seat it was given. */
+  body.session = seat.member.session;
+  logged.session = seat.member.session;
   if (seat.edge) {
     ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     // An agent that joined on its first op (no hello) is connected NOW. Push state so

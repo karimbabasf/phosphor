@@ -42,7 +42,10 @@ because the page stays in the agent's memory until the session ends. And it trav
 labels: a label the agent writes after a web read keeps the mark across a quit, and any agent
 that reads that label back is marked as if it had read the page itself. Plan notes and highlight
 notes carry it the same way, and so do Phosphor's own reads that hand over a stranger's words:
-news headlines, and the token names and memos in the chain reads. A concept the agent records as
+news headlines, and the token names and memos in the chain reads. So does what one agent hands
+another through Phosphor: a board post or a worker's report written after such a read marks the
+agent that reads it, a worker started by a marked agent starts marked, and the raw audit log
+(`log_tail`) marks whoever reads it. A concept the agent records as
 one you learned (`profile_learned`) after such a read is kept on your Mac and never handed to a
 later agent.
 
@@ -53,7 +56,9 @@ until you do, every move it proposes waits for your click. See
 
 A page cannot get your data sent out either. The vendors' own page readers are off: the app reads
 a page itself, and only at an address that came back in a web search in that chat or that you
-gave, word for word, never one the agent wrote. A search's answer also repeats the agent's own
+gave, word for word, never one the agent wrote. The Try again button on a failed swap sends a
+line that names the coins only when they are plain tickers, so a coin the agent named with an
+address never becomes one you gave. A search's answer also repeats the agent's own
 query and the search model's notes, so only the addresses the search engine itself returned
 count, never an address in that text. An address that carries your wallet's address or
 one of its balances is refused even then, and so is any address on this machine or your own
@@ -223,7 +228,8 @@ read the app and file proposals. Three things follow, stated rather than hidden:
 
 The web-read mark has an edge too. The app sees the web searches and page reads of the agent it
 runs in the chat. An agent in your terminal reads the web with its own tools, out of the app's
-sight, so its moves follow your click threshold as usual unless it reads a marked chart label.
+sight, so once you allow it, its moves follow your click threshold as usual unless it reads text
+a marked agent wrote: a chart label, a board post, a worker's report, or the raw audit log.
 
 The whole list, with what closes each item, is [Known limits](known-limits.md). Two more limits
 are yours to know here. The safety systems are engineering by one person, without a

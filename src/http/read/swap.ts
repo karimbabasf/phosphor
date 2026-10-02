@@ -5,6 +5,8 @@
 import { fail, intParam, sendJson } from '../respond.ts';
 import type { ReadTable } from '../context.ts';
 import { oneLine } from '../../intents.ts';
+import { markIfCarried } from '../../web-read.ts';
+import { carriedWords } from './wallet.ts';
 
 // The longest name a coin or a chain can be given here: an asset id, which runs past 50.
 const NAME_MAX = 128;
@@ -40,10 +42,13 @@ export const swapReads: ReadTable = {
   },
   /* One swap's truth, read again now: the venue's word, the sold coin's ledger since the click,
      and the balance. For "did my money leave?", answered from the balance and never from a note. */
-  swap_check: async (ctx, _body, args, res) => {
+  swap_check: async (ctx, body, args, res) => {
     if (ctx.proposals.swapCheck === undefined) return fail(res, 501, 'swap reads are not wired in this app');
     const id = typeof args.id === 'string' ? args.id : '';
-    if (ctx.proposals.get(id) === undefined) return fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
+    const row = ctx.proposals.get(id);
+    if (row === undefined) return fail(res, 404, `unknown proposal id: ${oneLine(id, 120)}`);
+    // The row's story names its coins as asked: a marked seat's words mark the reader.
+    markIfCarried(body.session, carriedWords(ctx, [row]));
     sendJson(res, 200, await ctx.proposals.swapCheck(id));
   },
 };
