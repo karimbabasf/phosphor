@@ -147,6 +147,8 @@ const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 
 
 const WORDS = ('abandon ability able about above absent absorb abstract absurd abuse access accident '
   + 'account accuse achieve acid acoustic acquire across act action actor actress actual').split(' ');
+// The three positions the app names with the words, the only three it checks (src/vault/phrase-proof.ts).
+const PROVE = [2, 6, 11];
 const EVM = '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d';
 
 function vaultState(overrides: Any = {}): Any {
@@ -187,7 +189,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   const toasts: string[] = [];
   const confirms: Any[] = [];
   const answer: Any = {
-    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" } },
+    reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" }, prove: PROVE.slice() },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
@@ -195,7 +197,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     prefs: { ok: true },
     confirm: true,
     revealStart: { ok: true, nonce: 'n1' },
-    revealFetch: { ok: true, what: 'mnemonic', mnemonic: WORDS.slice(0, 12) },
+    revealFetch: { ok: true, what: 'mnemonic', mnemonic: WORDS.slice(0, 12), prove: PROVE.slice() },
     exportAnswer: { ok: true, path: '/Users/x/Documents/Phosphor backup.json' },
     post: {} as Record<string, Any>,
   };
@@ -694,8 +696,7 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   let inputs = find(panel, 'input');
   assert.equal(inputs.length, 3, 'the prove step does not ask for three words');
   const positions = inputs.map((i: Any) => Number(i.dataset.index));
-  assert.equal(new Set(positions).size, 3, 'a position was asked twice');
-  assert.ok(positions.every((p: number) => p >= 0 && p < 24));
+  assert.deepEqual(positions, PROVE, 'the window asked other positions than the three the app named');
   assert.ok(textOf(panel).some((t) => t === 'Word ' + (positions[0] + 1)), 'the field is not labelled by its number');
 
   // Wrong words: the backend refuses, the row stays, nothing is cleared.
@@ -769,6 +770,19 @@ test('a proof the app can no longer check closes the row and says to show the wo
   assert.equal(find(flow(world), '.word').length, 0);
   assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
   assert.ok(backup(world).startsWith('Not backed up yet.'));
+});
+
+/* The app checks only the three positions it named with the words. Words that came without them
+   cannot be proven, so the row says to show them again rather than ask positions of its own. */
+test('words that came without the three positions to ask are shown again, never quizzed on a guess', async () => {
+  const world = build();
+  world.answer.reveal = { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" } };
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote them down').click();
+  assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 0);
+  assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
 });
 
 test('a cancelled Touch ID on the reveal shows nothing and says nothing', async () => {

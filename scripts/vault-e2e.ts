@@ -181,7 +181,9 @@ async function main(): Promise<number> {
     const revealed = await post('/api/vault/reveal', {});
     const words = (revealed.words ?? []) as string[];
     check('reveal takes its own touch and returns twelve words once', revealed.ok === true && words.length === 12);
-    const proven = await post('/api/vault/backup-proven', { words: [{ index: 0, word: words[0] }, { index: 5, word: words[5] }, { index: 11, word: words[11] }] });
+    const asked = (revealed.prove ?? []) as number[];
+    check('the reveal names the three positions Prove it asks for', asked.length === 3 && new Set(asked).size === 3, JSON.stringify(asked));
+    const proven = await post('/api/vault/backup-proven', { words: asked.map((index) => ({ index, word: words[index] })) });
     check('three words typed back prove the backup', proven.ok === true, JSON.stringify(proven));
     check('the vault says backed up', (await get('/api/vault')).backedUp === true);
 

@@ -72,7 +72,7 @@
      sentence off this rather than asserting a connection nobody made. `moneyIn` is whether the
      money step saw the balance land. `invite` is a code the app said is good, with what it
      holds, until the addresses step claims it; `claim` is that claim once asked for. */
-  var draft = { path: 'create', password: '', mnemonic: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '', invite: '', inviteAmount: '', inviteAsset: '', claim: null };
+  var draft = { path: 'create', password: '', mnemonic: [], prove: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '', invite: '', inviteAmount: '', inviteAsset: '', claim: null };
   var open_ = false;
 
   function boot() {
@@ -148,6 +148,7 @@
     cleanupStep();
     unmountField();
     draft.mnemonic = [];
+    draft.prove = [];
     draft.password = '';
     /* The code goes with the phrase, from the draft and from the field the card
        keeps until it next opens. A claim already asked for is the invite
@@ -909,6 +910,7 @@
              served again. They live in this page's memory until the flow ends
              and nowhere else. */
           draft.mnemonic = Array.isArray(answer.mnemonic) ? answer.mnemonic : [];
+          draft.prove = provable(answer.prove, draft.mnemonic.length);
           draft.addresses = answer.addresses || null;
           go('words');
         })
@@ -995,12 +997,16 @@
     }
   }
 
-  /* Three positions, never the same three. */
-  function pickPositions(count, total) {
+  /* The three positions the app picked when it showed the words, the only
+     three it can check (src/vault/phrase-proof.ts), or none when the answer
+     named none. */
+  function provable(list, total) {
+    if (!Array.isArray(list) || list.length !== PROVE_COUNT) return [];
     var out = [];
-    while (out.length < count && out.length < total) {
-      var at = Math.floor(Math.random() * total);
-      if (out.indexOf(at) === -1) out.push(at);
+    for (var i = 0; i < list.length; i += 1) {
+      var at = list[i];
+      if (typeof at !== 'number' || at % 1 !== 0 || at < 0 || at >= total || out.indexOf(at) !== -1) return [];
+      out.push(at);
     }
     return out.sort(function (a, b) { return a - b; });
   }
@@ -1013,7 +1019,7 @@
     card.appendChild(dom.el('h1', 'title', 'Prove it'));
     card.appendChild(dom.el('p', 'body dim', 'Type three of your words back, by their number.'));
 
-    var picks = pickPositions(PROVE_COUNT, draft.mnemonic.length);
+    var picks = draft.prove;
     var inputs = [];
     var fields = dom.el('div', 'firstrun-fields');
     for (var i = 0; i < picks.length; i += 1) {
@@ -1033,6 +1039,18 @@
     var tries = 0;
 
     actions('Continue', function (button) {
+      /* Words that came with no positions to ask: reading them again names them. */
+      if (!picks.length) {
+        window.PhosphorShell.setPending(button, true);
+        readAgain()
+          .then(function () {
+            if (draft.prove.length) return go('prove');
+            fail(error, 'Your words could not be checked just now. Press Continue to try again.');
+          })
+          .catch(function (err) { fail(error, net.readable(err)); })
+          .finally(function () { window.PhosphorShell.setPending(button, false); });
+        return;
+      }
       var words = [];
       for (var i = 0; i < inputs.length; i += 1) {
         var value = inputs[i].value.trim().toLowerCase();
@@ -1081,12 +1099,17 @@
   }
 
   /* Spent at once, so no reveal waits in the app for its timer; the words it
-     brings back are the ones this card already holds. */
+     brings back are the ones this card already holds, and the positions it
+     names are the three already asked. */
   function readAgain() {
     var spent = function () { return { ok: true }; };
     return api.revealStart(draft.password, 'mnemonic').then(function (answer) {
       if (!answer || answer.ok === false) return answer || { ok: false };
-      return api.revealFetch(answer.nonce).then(spent, spent);
+      return api.revealFetch(answer.nonce).then(function (material) {
+        var asked = provable(material && material.prove, draft.mnemonic.length);
+        if (asked.length) draft.prove = asked;
+        return spent();
+      }, spent);
     });
   }
 

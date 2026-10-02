@@ -239,7 +239,7 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
   if (read.value === null) return sendJson(res, 200, refusal('no_mnemonic'));
   const words = read.value.split(' ');
   const wallet = ctx.keystore.addresses().evm;
-  if (wallet !== null) rememberPhrase(words, wallet);
+  const prove = wallet === null ? [] : rememberPhrase(words, wallet, ctx.keystore.kdfParams());
   ctx.audit.append('app_start', 'the recovery phrase was revealed in the window after a Touch ID; the wallet stays as it was', {});
   ctx.session.touch();
   sendJson(res, 200, {
@@ -247,6 +247,8 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
     words,
     // Stated beside the words so a person checking them in another wallet knows where to look.
     paths: { evm: "m/44'/60'/0'/0/0" },
+    // The three positions Prove it asks for (src/vault/phrase-proof.ts).
+    prove,
   });
 }
 
@@ -263,7 +265,7 @@ export async function handleVaultBackupProven(ctx: Ctx, req: http.IncomingMessag
     const { index, word } = a as { index?: unknown; word?: unknown };
     return typeof index === 'number' && typeof word === 'string';
   });
-  const checked = raw.length < 3 || answers.length !== raw.length ? 'mismatch' : checkPhrase(answers, ctx.keystore.addresses().evm);
+  const checked = raw.length < 3 || answers.length !== raw.length ? 'mismatch' : await checkPhrase(answers, ctx.keystore.addresses().evm);
   if (checked === 'none') {
     return sendJson(res, 200, { ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
   }

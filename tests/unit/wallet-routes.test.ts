@@ -255,14 +255,19 @@ test('three of the words a create returned prove the backup, after a lock and an
   try {
     const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
     const words: string[] = made.json.mnemonic;
+    const asked: number[] = made.json.prove;
+    assert.equal(new Set(asked).size, 3, `the create named ${JSON.stringify(asked)} as the three to ask`);
     const typed = (at: number[]) => at.map((index) => ({ index, word: words[index] }));
     await b.post('/api/lock', { token: b.token, whenIdle: true, reason: 'screen' });
     assert.equal(b.keystore.state(), 'locked');
     assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
 
-    const wrong = await b.post('/api/vault/backup-proven', { token: b.token, words: [{ index: 0, word: 'notaword' }, ...typed([4, 9])] });
+    const wrong = await b.post('/api/vault/backup-proven', { token: b.token, words: [{ index: asked[0], word: 'notaword' }, ...typed(asked.slice(1))] });
     assert.equal(wrong.json.code, 'wrong_words');
-    const right = await b.post('/api/vault/backup-proven', { token: b.token, words: typed([2, 6, 11]) });
+    const elsewhere = words.map((_, index) => index).filter((index) => !asked.includes(index)).slice(0, 3);
+    const unasked = await b.post('/api/vault/backup-proven', { token: b.token, words: typed(elsewhere) });
+    assert.equal(unasked.json.code, 'wrong_words', 'right words at three positions the app did not name proved the backup');
+    const right = await b.post('/api/vault/backup-proven', { token: b.token, words: typed(asked) });
     assert.equal(right.json.ok, true, JSON.stringify(right.json));
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {
@@ -468,12 +473,13 @@ test('a lock wipes an unread reveal but keeps what Prove it checks against', asy
   try {
     const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
     const words: string[] = made.json.mnemonic;
+    const asked: number[] = made.json.prove;
     const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
     assert.equal(start.json.ok, true);
     await b.post('/api/lock', { token: b.token });
     assert.equal((await b.get(`/api/wallet/reveal/${start.json.nonce}`)).status, 404, 'the lock left the unread reveal redeemable');
     assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
-    const proven = await b.post('/api/vault/backup-proven', { token: b.token, words: [1, 5, 10].map((index) => ({ index, word: words[index] })) });
+    const proven = await b.post('/api/vault/backup-proven', { token: b.token, words: asked.map((index) => ({ index, word: words[index] })) });
     assert.equal(proven.json.ok, true, JSON.stringify(proven.json));
   } finally {
     await b.close();

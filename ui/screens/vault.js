@@ -601,7 +601,7 @@
           flowProblem('No phrase came back.');
           return;
         }
-        phrase = { words: answer.words.slice(), paths: answer.paths || null };
+        phrase = { words: answer.words.slice(), paths: answer.paths || null, prove: provable(answer.prove, answer.words.length) };
         showWords();
       })
       .catch(function (err) { flowProblem(net.readable(err)); })
@@ -667,7 +667,7 @@
             input.value = '';
             var words = material && Array.isArray(material.mnemonic) ? material.mnemonic : [];
             if (!words.length) throw new Error('No phrase came back.');
-            phrase = { words: words.slice(), paths: null };
+            phrase = { words: words.slice(), paths: null, prove: provable(material.prove, words.length) };
             showWords();
           })
           .catch(function (err) {
@@ -773,21 +773,28 @@
     }
   }
 
-  /* Prove. Three positions picked here, never the same three, typed back and
-     checked by the backend against the phrase it holds. Only a match clears
-     "not backed up"; a miss says so and reveals nothing about which word. Two
-     misses show the words again. */
-  function pickPositions(count, total) {
+  /* Prove. The three positions the app picked when it showed the words, the
+     only three it can check (src/vault/phrase-proof.ts), typed back. Only a
+     match clears "not backed up"; a miss says so and reveals nothing about
+     which word. Two misses show the words again. */
+  function provable(list, total) {
+    if (!Array.isArray(list) || list.length !== PROVE_COUNT) return [];
     var out = [];
-    while (out.length < count && out.length < total) {
-      var at = Math.floor(Math.random() * total);
-      if (out.indexOf(at) === -1) out.push(at);
+    for (var i = 0; i < list.length; i += 1) {
+      var at = list[i];
+      if (typeof at !== 'number' || at % 1 !== 0 || at < 0 || at >= total || out.indexOf(at) !== -1) return [];
+      out.push(at);
     }
     return out.sort(function (a, b) { return a - b; });
   }
 
   function showProve() {
     if (!phrase) return;
+    if (!phrase.prove.length) {
+      wipePhrase();
+      window.PhosphorToast.show('Show your words once more with Back it up, then type three of them back.');
+      return;
+    }
     grow(refs.backupRow, drawProve, refs.phraseFlow);
   }
 
@@ -801,7 +808,7 @@
     flow.appendChild(text('vault-sub', 'Type three of your words back, by their number, from the copy you made.'));
 
     var fields = dom.el('div', 'vault-fields');
-    var positions = pickPositions(PROVE_COUNT, phrase.words.length);
+    var positions = phrase.prove;
     var inputs = [];
     positions.forEach(function (at) {
       var field = dom.el('div', 'field');

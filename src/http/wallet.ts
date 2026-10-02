@@ -53,8 +53,8 @@ const MIN_PASSWORD = 8;
 const REVEAL_TTL_MS = 30_000;
 
 // The material rides in the slot as bytes, read under the password at the POST, so the GET needs
-// no open wallet and the slot can be wiped.
-type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null };
+// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for.
+type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null; prove: number[] };
 const pending = new Map<string, Pending>();
 
 /* A LOCK ENDS EVERY REVEAL THE WINDOW HAS NOT SPENT. A slot holds the key or the words, read under
@@ -276,11 +276,11 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     // written anywhere this process controls.
     // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
     // run's next step.
-    if (made.addresses.evm !== null) rememberPhrase(made.mnemonic.split(' '), made.addresses.evm);
+    const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
     ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
     ctx.session.touch();
     announce(ctx);
-    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses });
+    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
   } catch (err) {
     fail(res, 400, err instanceof Error ? err.message : String(err));
   }
@@ -410,9 +410,10 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   if (what === 'mnemonic' && (typeof read.value !== 'string' || read.value === '')) {
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
+  let prove: number[] = [];
   if (what === 'mnemonic' && typeof read.value === 'string') {
     const wallet = ctx.keystore.addresses().evm;
-    if (wallet !== null) rememberPhrase(read.value.split(' '), wallet);
+    if (wallet !== null) prove = rememberPhrase(read.value.split(' '), wallet, ctx.keystore.kdfParams());
   }
 
   // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
@@ -426,7 +427,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
 
   wipeOnLock(ctx.keystore);
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null, prove });
   setTimeout(() => {
     const held = pending.get(nonce);
     if (held === undefined) return;
@@ -476,7 +477,7 @@ export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMe
 
   if (held.what === 'mnemonic') {
     if (secret === null) return fail(res, 404, 'this wallet has no recovery phrase');
-    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.split(' ') });
+    return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.split(' '), prove: held.prove });
   }
   sendJson(res, 200, {
     ok: true,

@@ -253,6 +253,9 @@ export type Keystore = {
   updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses;
   // Shreds the file. The caller has already made the person prove they mean it.
   forget(): { destroyed: string };
+  // The scrypt parameters a new file is written with, a fresh salt each call. The words Prove it
+  // checks are slowed with the same (src/vault/phrase-proof.ts).
+  kdfParams(): KdfParams;
 };
 
 // ---------- files ----------
@@ -1086,6 +1089,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     rewrapToEnclave,
     updatePayload,
     forget,
+    kdfParams: params,
     onChange(fn) {
       listeners.add(fn);
       return () => listeners.delete(fn);

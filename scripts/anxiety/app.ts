@@ -362,8 +362,9 @@ export async function makeWallet(app: App): Promise<void> {
   const created = await app.post('/api/wallet/create', { token: app.token, password: WALLET_PASSWORD });
   if (created.status !== 200) throw new Error(`wallet create refused: ${created.status} ${JSON.stringify(created.json)}`);
   const mnemonic = Array.isArray(created.json?.mnemonic) ? (created.json.mnemonic as string[]) : [];
+  const asked = Array.isArray(created.json?.prove) ? (created.json.prove as number[]) : [];
   if (mnemonic.length >= 3) {
-    const proven = await app.post('/api/vault/backup-proven', { token: app.token, words: [0, 5, 11].map((index) => ({ index, word: mnemonic[index] })) });
+    const proven = await app.post('/api/vault/backup-proven', { token: app.token, words: asked.map((index) => ({ index, word: mnemonic[index] })) });
     if (proven.status !== 200 || proven.json?.ok !== true) throw new Error(`backup-proven refused: ${proven.status} ${JSON.stringify(proven.json)}`);
   }
 }

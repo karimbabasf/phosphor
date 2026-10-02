@@ -30,7 +30,9 @@ wallet or words shown to you left as text are not overwritten: JavaScript cannot
 they stay in memory until it is reused, after the lock too. The check behind Prove it, made when a
 wallet is created or its words are shown, also outlives a lock: it goes when the words are proven
 or shown again, after five wrong tries, after half an hour with the Mac awake, or when the app
-quits, and a program that can read memory can test each word against it.
+quits. It keeps only the three positions it asks for and one slow hash of those three words, the
+same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
+guesses to make before it learns them, and three words of twelve do not open the wallet.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right

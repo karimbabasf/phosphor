@@ -371,7 +371,8 @@ test('unlock, reveal, prove and forget: each touch names itself and the phrase i
     assert.ok(b.seen.includes('unwrap:Reveal your recovery phrase'), 'the reveal took its own touch even though the wallet was open');
 
     const words: string[] = revealed.json.words;
-    const wrong = await b.post('/api/vault/backup-proven', { words: [{ index: 0, word: 'zebra' }, { index: 1, word: words[1] }, { index: 2, word: words[2] }] });
+    const [a, c, d]: number[] = revealed.json.prove;
+    const wrong = await b.post('/api/vault/backup-proven', { words: [{ index: a, word: 'zebra' }, { index: c, word: words[c] }, { index: d, word: words[d] }] });
     assert.equal(wrong.json.ok, false);
     assert.equal(wrong.json.code, 'wrong_words');
     assert.equal((await b.get('/api/vault')).json.backedUp, false);
@@ -379,7 +380,7 @@ test('unlock, reveal, prove and forget: each touch names itself and the phrase i
     const tooFew = await b.post('/api/vault/backup-proven', { words: [{ index: 0, word: words[0] }] });
     assert.equal(tooFew.json.ok, false);
 
-    const right = await b.post('/api/vault/backup-proven', { words: [{ index: 3, word: ` ${words[3].toUpperCase()} ` }, { index: 7, word: words[7] }, { index: 11, word: words[11] }] });
+    const right = await b.post('/api/vault/backup-proven', { words: [{ index: a, word: ` ${words[a].toUpperCase()} ` }, { index: c, word: words[c] }, { index: d, word: words[d] }] });
     assert.equal(right.json.ok, true);
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
 
@@ -750,9 +751,10 @@ test('"Reveal your recovery phrase" shows the words and leaves a locked wallet l
     w.runner.stop();
 
     const words: string[] = revealed.json.words;
-    const right = await b.post('/api/vault/backup-proven', { words: [{ index: 2, word: words[2] }, { index: 5, word: words[5] }, { index: 9, word: words[9] }] });
+    const typed = (revealed.json.prove as number[]).map((index) => ({ index, word: words[index] }));
+    const right = await b.post('/api/vault/backup-proven', { words: typed });
     assert.equal(right.json.ok, true, 'proven against what the reveal left, with the wallet still locked');
-    const again = await b.post('/api/vault/backup-proven', { words: [{ index: 2, word: words[2] }, { index: 5, word: words[5] }, { index: 9, word: words[9] }] });
+    const again = await b.post('/api/vault/backup-proven', { words: typed });
     assert.equal(again.json.code, 'reveal_again', 'one reveal, one proof');
   } finally {
     useKeystore(null);

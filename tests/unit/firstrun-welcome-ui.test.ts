@@ -210,6 +210,8 @@ type World = {
 type Options = { motion?: 'real' | 'none'; devmode?: boolean; field?: boolean; fakeMotion?: boolean; reduced?: boolean; netpick?: boolean; watcher?: boolean; terms?: boolean; lockScreen?: boolean };
 
 const MNEMONIC = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
+// The three positions the app names with the words, the only three it checks (src/vault/phrase-proof.ts).
+const PROVE = [2, 6, 11];
 
 function build(state: Any, opts: Options = {}): World {
   const nodes: Record<string, Any> = {};
@@ -285,7 +287,7 @@ function build(state: Any, opts: Options = {}): World {
   sandbox.PhosphorApi = {
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }); },
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
-    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} }); },
+    walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {}, prove: PROVE.slice() }); },
     vaultBackupProven: (words: Any[]) => {
       calls.push({ route: '/api/vault/backup-proven', words });
       return Promise.resolve(words.every((w: Any) => MNEMONIC[w.index] === w.word) ? { ok: true } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' });
@@ -855,7 +857,7 @@ test('two misses on Prove it show the words again with the line that says why', 
   buttonNamed(screen, 'Continue').click();
   const typed = find(screen, 'input.input');
   const picks = typed.map((f: Any) => Number(f.dataset.index));
-  assert.equal(new Set(picks).size, 3, 'a word was asked twice');
+  assert.deepEqual(picks, PROVE, 'the window asked other positions than the three the app named');
   for (const field of typed) field.value = 'wrong';
   buttonNamed(screen, 'Continue').click();
   await flush();
@@ -904,7 +906,7 @@ test('Prove it after the app let its check go reads the words again under the pa
   };
   api.revealFetch = (nonce: string) => {
     world.calls.push({ route: '/api/wallet/reveal/:nonce', nonce });
-    return Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice() });
+    return Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
   };
   const screen = await toProve(world);
   buttonNamed(screen, 'Continue').click();
@@ -939,13 +941,33 @@ test('a check the app still lets go after the read again is said in the card\'s 
   const api = world.sandbox.PhosphorApi;
   api.vaultBackupProven = () => Promise.resolve({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
   api.revealStart = () => Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
-  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice() });
+  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
   const screen = await toProve(world);
   buttonNamed(screen, 'Continue').click();
   for (let i = 0; i < 6; i += 1) await flush();
   assert.ok(textOf(screen).includes('Your words could not be checked just now. Press Continue to try again.'));
   assert.ok(!textOf(screen).some((t) => t.includes('Back it up')), 'the card sent the person to a Back it up it does not have');
   assert.ok(textOf(screen).includes('Prove it'));
+});
+
+/* The app checks only the three positions it named with the words. A create that named none sends
+   the card to read the words again, and the three that read names are the ones asked. */
+test('words that came without the three positions to ask are read again, and the three it names are asked', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.walletCreate = () => Promise.resolve({ ok: true, mnemonic: MNEMONIC.slice(), addresses: {} });
+  api.revealStart = (password: string, what: string) => {
+    world.calls.push({ route: '/api/wallet/reveal', password, what });
+    return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  };
+  api.revealFetch = () => Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice(), prove: PROVE.slice() });
+  const screen = await toProve(world);
+  assert.equal(find(screen, 'input.input').length, 0, 'the card asked positions of its own');
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/reveal' && c.password === 'longenough'));
+  assert.deepEqual(find(screen, 'input.input').map((f: Any) => Number(f.dataset.index)), PROVE);
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 0, 'a check went out with no words in it');
 });
 
 test('a read again that the app refuses says why and stays on Prove it', async () => {

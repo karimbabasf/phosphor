@@ -301,7 +301,7 @@ function build(options: { terms?: boolean; vault?: Any; money?: boolean; deposit
     vaultCreate: () => Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }),
     vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
     vaultBackupProven: () => Promise.resolve({ ok: true }),
-    walletCreate: () => Promise.resolve({ ok: true, mnemonic: 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' '), addresses: {} }),
+    walletCreate: () => Promise.resolve({ ok: true, mnemonic: 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' '), addresses: {}, prove: [2, 6, 11] }),
     walletImport: () => Promise.resolve({ ok: true, addresses: {} }),
     connection: () => Promise.resolve({ missing: true }),
     driver: (payload: Any) => { calls.push({ route: '/api/driver', ...payload }); return answerFor(payload.action); },
