@@ -10,7 +10,7 @@ import type http from 'node:http';
 import type { ChainId, ClientKey, Proposal } from '../types.ts';
 import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
 import { fingerprint } from '../duplicates.ts';
-import { amountAsk } from '../intents.ts';
+import { amountAsk, venueReason } from '../intents.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
 import { NO_MEMO, memoKeys } from '../rails/pay-rules.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
@@ -47,9 +47,24 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     verdict: proposal.verdict,
     simulation: proposal.simulation === null ? null : simulation,
     view: ctx.proposals.view(proposal),
-    ...(proposal.result === undefined ? {} : { result: proposal.result }),
+    ...(proposal.result === undefined ? {} : { result: agentResult(proposal.result) }),
     ...sendFacts(proposal),
   });
+}
+
+/* The row's result as its proposer reads it: the venue's reason and stage words as one word or
+   quoted as data, like every other place a venue's words reach an agent (src/venue-words.ts). */
+function agentResult(result: NonNullable<Proposal['result']>): NonNullable<Proposal['result']> {
+  const evidence = result.evidence;
+  if (evidence === undefined || (evidence.refundReason === undefined && evidence.providerStage === undefined)) return result;
+  return {
+    ...result,
+    evidence: {
+      ...evidence,
+      ...(evidence.refundReason === undefined ? {} : { refundReason: venueReason('1Click', evidence.refundReason) }),
+      ...(evidence.providerStage === undefined ? {} : { providerStage: venueReason('The swap service', evidence.providerStage) }),
+    },
+  };
 }
 
 /* The reply carries no draft, and a send card in the conversation has to draw the address the

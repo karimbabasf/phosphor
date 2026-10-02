@@ -57,7 +57,7 @@ import { evmPrivateKey } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../keystore/index.ts';
 import { readTimeout, venueWriteTimeout } from '../net.ts';
-import { venueSaid } from '../intents.ts';
+import { venueSaid } from '../venue-words.ts';
 
 // ---------- the venue table ----------
 
@@ -343,7 +343,10 @@ async function info<T>(deps: HlUserSignedDeps, body: Record<string, unknown>): P
     body: JSON.stringify(body),
     signal: readTimeout(),
   });
-  if (!res.ok) throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status} ${await res.text()}`);
+  if (!res.ok) {
+    const said = (await res.text().catch(() => '')).trim();
+    throw new Error(`hyperliquid ${String(body.type)} failed: ${res.status}${said === '' ? '' : ` ${venueSaid('Hyperliquid', said, 200)}`}`);
+  }
   return (await res.json()) as T;
 }
 

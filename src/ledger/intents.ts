@@ -22,6 +22,7 @@
 
 import type { OneClickToken } from '../intents.ts';
 import { READ_TIMEOUT_MS, readTimeout } from '../net.ts';
+import { oneLine, venueReason } from '../venue-words.ts';
 
 export const INTENTS_VERIFIER = 'intents.near';
 
@@ -111,13 +112,21 @@ async function view(
     signal: readTimeout(),
   });
   if (!res.ok) throw new Error(`intents ${methodName} http ${res.status}`);
-  const body = (await res.json()) as { result?: ViewResult; error?: { cause?: { name?: string } } };
+  /* The node's words never ride on these errors whole: a parse error quotes the text it choked on,
+     and the wallet read hands this message to every agent. A cause name is one word or quoted. */
+  const body = (await res.json().catch(() => {
+    throw new Error(`intents ${methodName} answered with a body that is not JSON`);
+  })) as { result?: ViewResult; error?: { cause?: { name?: unknown } } };
   if (body.error !== undefined || body.result === undefined) {
-    const cause = body.error?.cause?.name ?? 'no result';
-    throw new Error(`intents ${methodName} failed: ${cause}`);
+    const cause = body.error?.cause?.name;
+    throw new Error(`intents ${methodName} failed: ${cause === undefined ? 'no result' : venueReason('The NEAR RPC', oneLine(cause, 80))}`);
   }
   // NEAR returns view output as a byte array of UTF-8 JSON.
-  return JSON.parse(Buffer.from(Uint8Array.from(body.result.result)).toString('utf8'));
+  try {
+    return JSON.parse(Buffer.from(Uint8Array.from(body.result.result)).toString('utf8'));
+  } catch {
+    throw new Error(`intents ${methodName} answered with a result that is not JSON`);
+  }
 }
 
 // Which assets the verifier holds for this account. An account it has never seen answers
@@ -228,7 +237,9 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
     const listedAt = deps.listedAt?.() ?? null;
     const holdings: IntentsHolding[] = [];
     for (const [i, assetId] of assetIds.entries()) {
-      const raw = BigInt(amounts[i] ?? '0');
+      const said = amounts[i] ?? '0';
+      if (typeof said !== 'string' || !/^\d+$/.test(said)) throw new Error(`the verifier returned a balance for asset ${i + 1} that is not a whole number`);
+      const raw = BigInt(said);
       if (raw <= 0n) continue; // enumerated but emptied since: not a holding
       const { symbol, decimals, originChain, priceUsd, pricedAt } = describe(assetId, list);
       /* AS OLD AS 1CLICK'S OWN STAMP, or the list's when that is older: a list read now can carry a

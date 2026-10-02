@@ -16,7 +16,7 @@ import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { depositRoute } from '../wallet.ts';
 import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
-import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
+import { baseUnitsToDecimal, oneLine, plainDecimal, venueReason } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
 import type { Proposal, ProposalView, WalletRow, WriteDraft } from '../../types.ts';
 import { markIfCarried, seatWordsStamp } from '../../web-read.ts';
@@ -454,13 +454,15 @@ export const walletReads: ReadTable = {
       evidence === undefined
         ? null
         : {
-            stage: evidence.providerStage ?? null,
+            // The venue's words, as one word or quoted (src/venue-words.ts): rows written before
+            // the relay's word was held to that are read the same way.
+            stage: evidence.providerStage === undefined ? null : venueReason('The swap service', evidence.providerStage),
             handleFingerprint: evidence.handle === undefined ? null : fingerprint(evidence.handle),
             correlationId: evidence.quote?.correlationId ?? null,
             deadline: evidence.deadline ?? null,
             settledAmountOut: evidence.settledAmountOut ?? null,
             refundedAmount: evidence.refundedAmount ?? null,
-            refundReason: evidence.refundReason ?? null,
+            refundReason: evidence.refundReason === undefined ? null : venueReason('1Click', evidence.refundReason),
           };
     // The far side of a Hyperliquid move, as the ledger last read it. Null for every other kind:
     // a swap and a send have no venue account, and answering with one anyway would be noise

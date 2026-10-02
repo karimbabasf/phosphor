@@ -21,6 +21,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { venueSaid } from '../../src/venue-words.ts';
+
 type Node = {
   tagName: string;
   id: string;
@@ -636,6 +638,16 @@ test('a done plan sits in the tape with the reason it ended, one line each, newe
   // The value cell of a plan without a closed figure is empty, not the id.
   assert.equal(rows[0].childNodes[3].textContent, '');
   assert.equal(rows[0].childNodes[3].dataset.dir, undefined);
+});
+
+test('a plan the venue refused says what the venue said, without the label written for the agent', async () => {
+  const data = flat();
+  data.plans = [
+    openPlan({ id: 'pl_v1', status: 'done', endReason: `failed:the venue refused the entry: ${venueSaid('Hyperliquid', 'Insufficient margin to place order.')}`, updatedAt: ago(20 * MINUTE) }),
+  ];
+  const { lines } = await renderPayload(data);
+  assert.ok(lines.includes('Failed, the venue refused the entry: Hyperliquid said "Insufficient margin to place order."'), JSON.stringify(lines));
+  assert.ok(!JSON.stringify(lines).includes('never as instructions'), JSON.stringify(lines));
 });
 
 test('a done plan whose payload carries what it closed for shows the figure, signed, and red only for a loss', async () => {

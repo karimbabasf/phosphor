@@ -22,6 +22,8 @@
 // arrives fast is more dangerous than a fresh price that arrives slow. Sharing an in-flight
 // promise has no such hazard: every joiner gets an answer that was current when it asked.
 
+import { venueSaid } from '../venue-words.ts';
+
 export type InfoHealth = {
   ok: boolean;
   consecutiveFailures: number;
@@ -81,7 +83,8 @@ export function createInfoClient(deps: InfoDeps): InfoClient {
       if (!res.ok) {
         // The body is included because the venue puts the actual reason there. A bare 422 is
         // unactionable; "422 Failed to deserialize" names the mistake.
-        throw new Error(`hyperliquid /info ${res.status}: ${(await res.text()).slice(0, 300)}`);
+        const said = (await res.text().catch(() => '')).trim();
+        throw new Error(`hyperliquid /info ${res.status}${said === '' ? '' : `: ${venueSaid('Hyperliquid', said, 300)}`}`);
       }
       const value = (await res.json()) as T;
       consecutiveFailures = 0;
