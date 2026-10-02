@@ -98,7 +98,9 @@ millisecond after a recent NEAR block and checked by NEAR Intents at that block.
 that answers the check is someone else's computer, so it only ever sees that copy, which no later
 block can run; the claim itself goes to the solver relay alone. Every signature is written down
 before it leaves this Mac. A claim that fails moves nothing: the money stays on the code, and you
-can add it again from Add money. An RPC that lies about the time could stretch the copy's life by
+can add it again from Add money. If this Mac's clock is more than two minutes behind NEAR's, the
+app signs nothing and says so: set date and time to automatic in System Settings, then add the
+code again. An RPC that lies about the time could stretch the copy's life by
 up to two minutes, and even then the money can only land in your wallet; the app finds it there
 the next time it opens. If the app quits in the middle of a claim, it finishes the check the next
 time it opens.

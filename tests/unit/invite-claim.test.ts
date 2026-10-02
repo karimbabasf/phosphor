@@ -680,9 +680,13 @@ test('a final block stamped more than two minutes ahead of this Mac is refused b
     assert.equal(world.published.length, 0, `${name}: something was published`);
     assert.equal(createClaimStore(h.dataDir).all().length, 0, `${name}: nothing was signed, so nothing is pending`);
     const failed = h.audit.find((e) => e.type === 'invite_failed')!;
-    assert.equal((failed.data as { reason: string }).reason, 'refused');
+    assert.equal((failed.data as { reason: string }).reason, 'clock');
+    assert.match(failed.msg, /this Mac's clock is more than two minutes behind NEAR's, so the claim was never signed/);
     assert.match((failed.data as { detail: string }).detail, /ahead of this Mac's clock/);
     assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
+    // The window is told why, so it can say how to fix it; the state carries it for a window opened late.
+    assert.equal(h.frames[1]!.reason, 'clock', name);
+    assert.equal(h.service.state()?.reason, 'clock', name);
   }
 
   // The claim itself is signed off the block its rehearsal passed at: no second read for an RPC to
@@ -736,4 +740,40 @@ test("the code's key is dropped once it can sign nothing more: before the watch 
     assert.deepEqual(held, [], `${mode}: ${held[0] ?? ''}`);
     assert.equal(signatures, mode === 'auth' ? 3 : 2, `${mode}: the rehearsal, the relay claim, and Plan B's one signature when it signs`);
   }
+});
+
+test('a claim that goes straight to Plan B asks the clock too: a Mac more than two minutes behind is told so, with nothing quoted or signed', async () => {
+  const world = freshWorld();
+  world.relayMode = 'auth';
+  let behind = 0;
+  const v = verifierOf(world);
+  const h = harness({ world, verifier: { ...v, finalBlock: async () => ({ hash: `block${world.chain + behind}`, atMs: world.chain + behind }) } });
+  // The relay turns the first claim away for auth, Plan B lands it, and later claims skip the relay.
+  const first = await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(first.ok, true);
+  assert.equal(h.frames.at(-1)?.status, 'landed');
+  const quotes = world.oneclick.quotes;
+  const relayed = world.published.length;
+
+  // The code is paid again, and this Mac's clock is now ten minutes behind NEAR's.
+  world.balances.set(CODE_ADDRESS, 5_000_000n);
+  behind = 10 * 60_000;
+  const second = await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(second.ok, true);
+  assert.equal(world.oneclick.quotes, quotes, 'nothing was quoted');
+  assert.equal(world.published.length, relayed, 'nothing went to the relay');
+  assert.equal(world.balances.get(CODE_ADDRESS), 5_000_000n, 'the money is still on the code');
+  assert.deepEqual(h.frames.at(-1), { type: 'invite', kind: 'invite', claim: second.ok ? second.claim : '', status: 'failed', amount: '5.00', asset: 'USDC', reason: 'clock' });
+  const failed = h.audit.filter((e) => e.type === 'invite_failed').at(-1)!;
+  assert.equal((failed.data as { reason: string }).reason, 'clock');
+
+  // A clock right again: the same code claims through Plan B as before.
+  behind = 0;
+  const third = await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(third.ok, true);
+  assert.equal(h.frames.at(-1)?.status, 'landed');
+  assert.equal(h.frames.at(-1)?.reason, undefined);
 });

@@ -325,7 +325,9 @@ nothing: a good code is kept in the first run's draft beside the password and th
 wiped with them when the card closes. The claim is `POST /api/invite/claim`, fired once on the
 addresses step, the first moment there is a wallet that exists and is open. Its end arrives as an
 `invite` frame on the event stream: the addresses step shows it in place, and a person who has
-moved on gets a toast on Basic. Both calls live in `ui/core/invite.js`.
+moved on gets a toast on Basic. A claim that failed because this Mac's clock is behind carries
+`reason: 'clock'` on its frame and in `/api/state`, and the window says to set the clock to
+automatic. Both calls live in `ui/core/invite.js`.
 
 Both routes take the window token and neither is an agent op. Each claim is a record in
 `state/invites.json` (mode 0600: the code's account, the nonce, the intent hash and the amount,

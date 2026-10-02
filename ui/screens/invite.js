@@ -71,6 +71,9 @@
       case 'failed':
         if (where === 'addmoney') return yours + ' didn\'t come through. Paste the code again to try once more.';
         return yours + ' didn\'t come through. Add the code again from Add money.';
+      case 'clock':
+        if (where === 'addmoney') return 'Your Mac\'s clock is off, so the code wasn\'t used. Set date and time to automatic in System Settings, then paste it again.';
+        return 'Your Mac\'s clock is off, so the code wasn\'t used. Set date and time to automatic in System Settings, then add it again from Add money.';
       default:
         if (where === 'firstrun') return 'Couldn\'t check the code right now. You can add it later from Add money.';
         return 'Couldn\'t check the code right now. Try again in a moment.';
@@ -78,11 +81,13 @@
   }
 
   /* A claim's own sentence. One the app refused before it ran keeps its reason when the
-     reason is about the code (used, on hold, another one running); anything else, a
-     dropped connection included, is that the money did not come through. */
+     reason is about the code (used, on hold, another one running); one that failed because
+     this Mac's clock is behind says how to fix it; anything else, a dropped connection
+     included, is that the money did not come through. */
   function claimSentence(entry, where) {
     var what = entry.status === 'asking' ? 'running' : entry.status;
     if (what === 'refused') what = ['empty', 'locked', 'busy'].indexOf(entry.reason) >= 0 ? entry.reason : 'failed';
+    if (what === 'failed' && entry.reason === 'clock') what = 'clock';
     return sentence(what, where, entry.amount, entry.asset);
   }
 
@@ -140,7 +145,8 @@
 
   /* Each claim this window knows: { id, status, reason, amount, asset, told, shows }.
      `status` is asking (the claim is posted), running, landed, failed, or refused (the
-     app said no before it ran, `reason` says why). `shows` are the surfaces showing it in
+     app said no before it ran, `reason` says why; a failed one carries reason 'clock' when
+     this Mac's clock is behind). `shows` are the surfaces showing it in
      place; each answers whether it is on screen, and a claim whose end no surface showed
      is a toast. */
   var claims = {};
@@ -192,6 +198,7 @@
         if (!entry.asset) entry.asset = known.asset;
         entry.shows = entry.shows.concat(known.shows);
         entry.status = known.status;
+        entry.reason = known.reason;
         entry.told = known.told;
       } else {
         entry.status = 'running';
@@ -203,6 +210,7 @@
         if (first.amount) entry.amount = first.amount;
         if (first.asset) entry.asset = first.asset;
         entry.status = first.status;
+        entry.reason = first.reason || '';
       }
       if (entry.status === 'running' || entry.told) update(entry);
       else tell(entry);
@@ -288,6 +296,7 @@
     if (outcome.asset) entry.asset = outcome.asset;
     if (entry.told || outcome.status === 'running' || entry.status !== 'running') return;
     entry.status = outcome.status;
+    entry.reason = outcome.reason || '';
     if (entry.heard && asking.length) {
       if (deferred.indexOf(entry) < 0) deferred.push(entry);
     } else {

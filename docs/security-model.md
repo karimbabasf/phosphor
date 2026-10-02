@@ -576,7 +576,8 @@ the transfer as signed or not at all. The wallet's key never signs for a claim. 
 rehearsed first, as the operator's moves are: the same transfer signed with a deadline one
 millisecond past a final block and simulated at that block, so the NEAR RPC never holds claim
 bytes a later block can run; the claim itself goes only to the relay. A final block stamped more
-than two minutes ahead of this Mac's clock is refused before anything is signed, and every
+than two minutes ahead of this Mac's clock is refused before anything is signed, on the relay
+route and on Plan B alike, and the window says to set the Mac's clock to automatic; every
 signature, rehearsals included, is in the pending claim record before the key makes it; the
 record of a claim that stops early stays open until the next start proves each signature spent or
 dead, whatever the RPC said. The one weaker
