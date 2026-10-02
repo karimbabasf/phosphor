@@ -7,8 +7,8 @@ without a git tag say so.
 
 ## 0.10.13
 
-Built 2026-10-01 and 2026-10-02, the invite codes and safety pass. Not tagged at the time of
-writing.
+Built 2026-10-01 and 2026-10-02, the invite codes and safety pass. Tagged v0.10.13 on
+2026-10-02.
 
 - Invite codes. Someone can send you a code, or a link to phosphor.money/invite, that holds USDC
   for a new wallet, usually $5. Paste it on the new step after the terms, Have an invite code?, or
