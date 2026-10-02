@@ -264,8 +264,7 @@ every release secret and wait for the maintainer's approval; at 0.10.13 the secr
 repository level and the environment asks no approval (see
 [Known limits](known-limits.md#the-release-keys-are-not-behind-an-approval-yet)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
-first-party payload file byte for byte (it skips anything named `.DS_Store`, a folder of that name
-and what is in it included), the payload digest the
+first-party payload file byte for byte, the payload digest the
 shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
 on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
 entitlements as it found them. Then it runs

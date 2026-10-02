@@ -571,9 +571,9 @@ inside out with the Developer ID from its secrets (hardened runtime, secure time
 notarize the app and the disk image, and staples both. A release without those secrets fails
 before it signs anything. That job installs and builds nothing (the build job, which holds no
 secret, does). Before it signs, it holds the unsigned app to its own checkout with
-`scripts/release-check.ts` (first-party payload files byte for byte, skipping anything named
-`.DS_Store`, a folder of that name included; the digest the shell carries; the committed
-entitlements on the app's executables and none on any other binary), and it runs the same check
+`scripts/release-check.ts` (first-party payload files byte for byte, the digest the shell
+carries, the committed entitlements on the app's executables and none on any other binary), and
+it runs the same check
 on the signed app in the DMG and in the update; the rest of the DMG is the build job's and goes
 unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
