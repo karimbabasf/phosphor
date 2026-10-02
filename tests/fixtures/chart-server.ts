@@ -121,6 +121,8 @@ export async function bootChartServer(
     proposals?: ProposalService;
     // The file secret a hand-started proxy reads (src/main.ts). Absent, there is none.
     handSeat?: string;
+    // What trade_read answers, the way the trade service builds it. Absent, an empty read.
+    tradeRead?: (symbol?: string) => unknown;
   } = {},
 ): Promise<ChartHarness> {
   const dataDir = opts.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
@@ -214,7 +216,7 @@ export async function bootChartServer(
       view: tradeView,
       // The view rides on the payload as it does on the real service's, so a test reads the header.
       payload: () => ({ plans, view: tradeView.state() }) as never,
-      read: () => ({}),
+      read: (symbol?: string) => (opts.tradeRead === undefined ? {} : opts.tradeRead(symbol)) as never,
       batch: () => [],
       action: async () => ({ ok: false, detail: 'no venue in this test' }),
       plan: () => ({ ok: false as const, error: 'no venue in this test' }),

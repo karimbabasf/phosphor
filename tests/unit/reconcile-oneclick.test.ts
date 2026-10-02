@@ -189,13 +189,14 @@ const LONG_AGO = new Date(Date.now() - 3_600_000).toISOString();
 const OWN_SWAP: Partial<Proposal> = { ...SWAP, draft: { ...(SWAP.draft as object), from: '0x1111111111111111111111111111111111111111' } as unknown as Proposal['draft'] };
 
 test('FAILED with no ledger to ask stays needs_reconciliation and says it is not confirmed, never that 1Click holds it', async () => {
-  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'SLIPPAGE' }));
+  // A reason on 1Click's published list is said as it is (src/venue-words/oneclick.ts).
+  const h = setup(statusOf({ status: 'FAILED', refundedAmount: '0', refundReason: 'AMOUNT_LESS_THAN_MIN_AMOUNT_OUT' }));
   seed(h.dir);
   const out = await h.svc.reconcile('oc-1');
   assert.equal(out.status, 'needs_reconciliation');
   assert.equal(out.result?.reason, 'stuck_unknown');
   assert.match(out.result?.detail ?? '', /refunded 0 so far/);
-  assert.match(out.result?.detail ?? '', /reason SLIPPAGE/);
+  assert.match(out.result?.detail ?? '', /reason AMOUNT_LESS_THAN_MIN_AMOUNT_OUT/);
   assert.match(out.result?.detail ?? '', /not confirmed yet/);
   assert.doesNotMatch(out.result?.detail ?? '', /held by 1Click/);
 });

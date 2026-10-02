@@ -12,7 +12,7 @@ import type http from 'node:http';
 import { SEAT_SECRET_FILE, seatSecretPath } from '../agents.ts';
 import { oneLine } from '../intents.ts';
 import { sameOrigin } from './auth.ts';
-import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, sendJson } from './respond.ts';
+import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, rewordAnswer, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 
 // The longest string any op on this door takes, and the longest one the audit line keeps. The
@@ -34,7 +34,7 @@ import { handleSetViewMode } from './mutation.ts';
 import { LEAD_ONLY_READ_TOOLS, READ_TOOLS, STRANGER_TEXT_READS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
 import { markWebRead } from '../web-read.ts';
-import { carriesVenueWords } from '../venue-words.ts';
+import { carriesVenueWords, inAppWords } from '../venue-words.ts';
 
 /* A stranger's text marks the seat it is handed to (STRANGER_TEXT_READS, audit finding 5). The
    mark is set inside writeHead, so it is in place before the first byte of the answer leaves: a
@@ -80,15 +80,37 @@ const READS: ReadTable = markStrangerReads({
    2026-10-01). An error body, a refund reason, the status page's title: text 1Click, the solver
    relay, Hyperliquid, an RPC node or the status page wrote, which a read, a reply or a refusal can
    carry (a move's details, the wallet's stale reason, a plan's end, a refused quote). Every quote
-   of one carries VENUE_WORDS_LABEL (src/venue-words.ts), so the answer is read for it as it goes
-   out and the seat is marked before a byte of it leaves, as a stranger's read marks it above. */
-function markVenueWords(res: http.ServerResponse, seat: string): void {
+   of one carries VENUE_WORDS_LABEL (src/venue-words.ts).
+   A REFUSAL THE APP KNOWS IS NOT A STRANGER'S WORDS (2026-10-02): a quote of one is put in the
+   app's own sentence before the answer's length is taken, so an agent that met an ordinary
+   refusal (margin, a price band, a minimum) keeps its no-click moves. Whatever still carries the
+   label is read for it as the answer goes out, and the seat is marked before a byte of it leaves,
+   as a stranger's read marks it above. The window reads its own routes and keeps the venue's
+   exact words. */
+function venueWordsFor(res: http.ServerResponse, seat: string): void {
+  rewordAnswer(res, (body) => (carriesVenueWords(body) ? inAppAnswer(body) : body));
   const end = res.end.bind(res);
   res.end = ((...args: Parameters<typeof end>) => {
     const chunk: unknown = args[0];
     if ((typeof chunk === 'string' || chunk instanceof Uint8Array) && carriesVenueWords(chunk)) markWebRead(seat);
     return end(...args);
   }) as typeof res.end;
+}
+
+// A JSON answer with every string in it put through inAppWords. Rebuilt with fromEntries, so a key
+// such as __proto__ stays a key; a body that is not JSON goes out as it was, and marks.
+function inAppAnswer(body: string): string {
+  const walk = (value: unknown): unknown => {
+    if (typeof value === 'string') return inAppWords(value);
+    if (Array.isArray(value)) return value.map(walk);
+    if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([key, inner]) => [key, walk(inner)]));
+    return value;
+  };
+  try {
+    return JSON.stringify(walk(JSON.parse(body)));
+  } catch {
+    return body;
+  }
 }
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
@@ -356,7 +378,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      markIfCarried, is the id the roster checked. A call with no session is the seat it was given. */
   body.session = seat.member.session;
   logged.session = seat.member.session;
-  markVenueWords(res, seat.member.session);
+  venueWordsFor(res, seat.member.session);
   if (seat.edge) {
     ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     // An agent that joined on its first op (no hello) is connected NOW. Push state so
