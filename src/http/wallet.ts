@@ -57,6 +57,25 @@ const REVEAL_TTL_MS = 30_000;
 type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null };
 const pending = new Map<string, Pending>();
 
+/* A LOCK ENDS EVERY REVEAL THE WINDOW HAS NOT SPENT. A slot holds the key or the words, read under
+   the password, and a lock that dropped the wallet's key left them here, redeemable for the rest
+   of the window (re-audit R-L5). Every lock wipes every slot: the person's Lock and a shut when
+   idle (handleLock), and the idle lock, the screen lock and a touch's lease ending, which turn the
+   keystore's state (wipeOnLock). */
+function wipeReveals(): void {
+  for (const held of pending.values()) wipe(held.secret);
+  pending.clear();
+}
+
+const watched = new WeakSet<object>();
+function wipeOnLock(keystore: Ctx['keystore']): void {
+  if (watched.has(keystore)) return;
+  watched.add(keystore);
+  keystore.onChange((state) => {
+    if (state !== 'unlocked') wipeReveals();
+  });
+}
+
 /* Every route here carries the window token, the same way approve does, and answers the same
    403. It is written once because the failure mode of writing it five times is that the fifth
    one forgets. */
@@ -208,6 +227,7 @@ function signing(ctx: Ctx): number {
 export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/lock', req, res);
   if (body === null) return;
+  wipeReveals();
   if (body.whenIdle === true) {
     const count = signing(ctx);
     const wasOpen = ctx.keystore.isUnlocked();
@@ -392,8 +412,8 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
     if (wallet !== null) rememberPhrase(read.value.split(' '), wallet);
   }
 
-  // Nonces that were issued and never spent are dropped here rather than by a timer, because
-  // the only thing that can add one is this line, so this is the only place the map can grow.
+  // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
+  // timer at its expiry as well: a window that never spends one leaves no key behind past it.
   const at = Date.now();
   for (const [key, held] of [...pending]) {
     if (at <= held.expires) continue;
@@ -401,8 +421,15 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
     pending.delete(key);
   }
 
+  wipeOnLock(ctx.keystore);
   const nonce = crypto.randomBytes(32).toString('hex');
   pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null });
+  setTimeout(() => {
+    const held = pending.get(nonce);
+    if (held === undefined) return;
+    wipe(held.secret);
+    pending.delete(nonce);
+  }, REVEAL_TTL_MS).unref();
   // The log records that somebody asked to see the key, which is exactly the event an owner
   // reading this file later wants to find. It records nothing about what they saw.
   ctx.audit.append('app_start', `the window asked to reveal the ${what === 'keys' ? 'private keys' : 'recovery phrase'}`, { what });
