@@ -98,10 +98,27 @@
     };
   }
 
+  /* The stream is a read like any other and carries the read key, in its URL
+     because an EventSource cannot set a header (src/http/read-gate.ts). The
+     key is traded once; a reconnect reuses it and never sends the token. */
+  var opening = false;
+
   function start() {
-    if (source) return;
+    if (source || opening) return;
     setConnection(seenOpen ? 'reconnecting' : 'connecting');
-    source = new EventSource('/api/events');
+    var net = window.PhosphorNet;
+    opening = true;
+    net.ensureReadKey().then(function () {
+      opening = false;
+      if (!source) open(net.withRead('/api/events'));
+    }, function () {
+      opening = false;
+      retry();
+    });
+  }
+
+  function open(url) {
+    source = new EventSource(url);
 
     source.onopen = function () {
       var wasDown = seenOpen && connection !== 'live';
@@ -126,18 +143,22 @@
     };
 
     source.onerror = function () {
-      setConnection('offline');
       if (source) {
         source.close();
         source = null;
       }
-      /* The browser's own retry is invisible and unbounded. This one backs off
-         to 8 s so a dead backend does not hammer the loopback, and the shell
-         can say the stream is down while it waits. */
-      var wait = Math.min(8000, Math.max(1000, (Date.now() - retryAt) > 20000 ? 1000 : 3000));
-      retryAt = Date.now();
-      window.setTimeout(start, wait);
+      retry();
     };
+  }
+
+  /* The browser's own retry is invisible and unbounded. This one backs off
+     to 8 s so a dead backend does not hammer the loopback, and the shell
+     can say the stream is down while it waits. */
+  function retry() {
+    setConnection('offline');
+    var wait = Math.min(8000, Math.max(1000, (Date.now() - retryAt) > 20000 ? 1000 : 3000));
+    retryAt = Date.now();
+    window.setTimeout(start, wait);
   }
 
   function state() {

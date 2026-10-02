@@ -252,9 +252,17 @@ Gatekeeper step.
 The release runs as four jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
 secret. The sign job, in the protected `release` environment that holds every release secret,
-installs nothing: it runs
+installs nothing. Before any key is in it, it holds the build job's app to its own checkout
+(`scripts/release-check.ts`): every first-party payload file byte for byte, the payload digest the
+shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
+on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
+entitlements as it found them. Then it runs
 `notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
-`scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate. The publish
+`scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
+the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
+one team on every binary. The split keeps the secrets from the build; this check keeps the build
+from choosing what gets signed. It cannot vouch for `node_modules`, which only a reproducible
+build could. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone
 and installs its uploader from `scripts/site-upload`'s own lockfile.
 `tests/unit/release-workflow.test.ts` holds the workflow to that. A dispatched run with `dry_run`

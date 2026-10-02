@@ -237,7 +237,7 @@ export async function bootApp(stage: string, seed: Seed): Promise<App> {
   while (Date.now() < until) {
     if (child.exitCode !== null) break;
     try {
-      const res = await fetch(`${base}/api/state`);
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) {
         await res.json();
         up = true;
@@ -279,7 +279,7 @@ export async function bootApp(stage: string, seed: Seed): Promise<App> {
     }
     return { status: res.status, json };
   };
-  const get = async (route: string): Promise<Json> => await (await fetch(`${base}${route}`)).json();
+  const get = async (route: string): Promise<Json> => await (await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } })).json();
   const seat = (): string => {
     const file = path.join(dataDir, 'agent.secret');
     return fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim() : '';

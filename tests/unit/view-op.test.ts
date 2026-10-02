@@ -191,7 +191,7 @@ async function postMcp(h: Harness, body: unknown): Promise<{ status: number; jso
 }
 
 async function state(h: Harness): Promise<any> {
-  return (await fetch(`${h.url}/api/state`)).json();
+  return (await fetch(`${h.url}/api/state`, { headers: { 'x-phosphor-token': TOKEN } })).json();
 }
 
 // The human's door: a window write, so it carries the token and the origin the window sends.

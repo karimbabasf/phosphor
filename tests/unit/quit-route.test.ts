@@ -18,8 +18,12 @@ type World = {
   deposit?: Record<string, unknown> | null;
 };
 
+// The window token the read gate wants on every read (src/http/read-gate.ts).
+const READ_TOKEN = 'q'.repeat(64);
+
 function ctxOf(world: World): Ctx {
   return {
+    token: READ_TOKEN,
     audit: { append: () => {} },
     proposals: { list: () => world.proposals ?? [] },
     trade: {
@@ -36,7 +40,7 @@ async function ask(world: World, host = '127.0.0.1'): Promise<{ status: number; 
   const { port } = server.address() as AddressInfo;
   try {
     return await new Promise((resolve, reject) => {
-      const req = http.request({ host: '127.0.0.1', port, path: '/api/quit', headers: { host: `${host}:${port}` } }, (res) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/api/quit', headers: { host: `${host}:${port}`, 'x-phosphor-token': READ_TOKEN } }, (res) => {
         let raw = '';
         res.on('data', (chunk) => (raw += chunk));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body: JSON.parse(raw) as QuitReport }));

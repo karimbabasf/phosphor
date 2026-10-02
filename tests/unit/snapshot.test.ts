@@ -133,9 +133,9 @@ test('an answer for a request nobody is waiting on is a 409, and something that 
 // ---------- the tool ----------
 
 // Opens the window's own stream and hands back the next snapshot frame the server sends.
-async function nextSnapshotFrame(url: string): Promise<{ frame: Promise<{ slot: number; reqId: string }>; close: () => void }> {
+async function nextSnapshotFrame(url: string, headers: Record<string, string>): Promise<{ frame: Promise<{ slot: number; reqId: string }>; close: () => void }> {
   const controller = new AbortController();
-  const res = await fetch(`${url}/api/events`, { signal: controller.signal });
+  const res = await fetch(`${url}/api/events`, { headers, signal: controller.signal });
   const reader = (res.body as ReadableStream<Uint8Array>).getReader();
   const frame = (async () => {
     let buffered = '';
@@ -157,7 +157,7 @@ async function nextSnapshotFrame(url: string): Promise<{ frame: Promise<{ slot: 
 
 test('a window that answers inside the TTL puts the image in the tool answer beside a one-line digest', async () => {
   const h = await bootChartServer();
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     // Something to say in the digest.
     await h.mcp({ op: 'view', tool: 'chart_draw', session: 'a', args: { indicators: { add: [{ type: 'rsi' }] }, levels: [{ px: 1 }] } });
@@ -196,7 +196,7 @@ test('with no window open the digest alone comes back and says so, without waiti
 
 test('a window that is not on the trade screen is not asked, and the digest says which screen it is on', async () => {
   const h = await bootChartServer({ view: 'pro' });
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     const out = await h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} });
     assert.equal(out.status, 200);
@@ -211,7 +211,7 @@ test('a window that is not on the trade screen is not asked, and the digest says
 
 test('a second snapshot of the same chart while one is outstanding is refused', async () => {
   const h = await bootChartServer();
-  const stream = await nextSnapshotFrame(h.url);
+  const stream = await nextSnapshotFrame(h.url, { 'x-phosphor-token': h.token });
   try {
     const first = h.mcp({ op: 'read', tool: 'chart_snapshot', session: 'a', args: {} });
     const frame = await stream.frame;

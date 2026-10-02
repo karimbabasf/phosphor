@@ -30,6 +30,8 @@ import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../
 import { stubView } from '../fixtures/view.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
+// The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
+const TOKEN = 'f'.repeat(64);
 
 function snapshot(): LedgerSnapshot {
   return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
@@ -76,6 +78,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
     keysPath: path.join(dataDir, 'keys.json'),
   };
   const server = createServer({
+    token: TOKEN,
     cfg,
     audit: createAudit(dataDir),
     store,
@@ -140,7 +143,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
 function get(urlBase: string, route: string): Promise<{ status: number; body: string }> {
   const u = new URL(urlBase + route);
   return new Promise((resolve, reject) => {
-    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search }, (res) => {
+    const req = http.request({ hostname: u.hostname, port: u.port, path: u.pathname + u.search, headers: { 'x-phosphor-token': TOKEN } }, (res) => {
       let d = '';
       res.on('data', (c) => (d += c));
       res.on('end', () => resolve({ status: res.statusCode ?? 0, body: d }));

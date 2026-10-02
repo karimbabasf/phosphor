@@ -154,7 +154,7 @@ async function boot() {
     });
     return { status: res.status, json: (await res.json()) as Record<string, any> };
   };
-  const get = async (route: string) => (await (await fetch(url + route)).json()) as Record<string, any>;
+  const get = async (route: string) => (await (await fetch(url + route, { headers: { 'x-phosphor-token': token } })).json()) as Record<string, any>;
   return { url, token, audit, dataDir, post, get, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 

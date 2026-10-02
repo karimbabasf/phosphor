@@ -160,18 +160,19 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     return { status: res.status, json: await res.json().catch(() => null) };
   }
   async function get(route: string, opts: { origin?: string } = {}) {
-    const res = await fetch(`${url}${route}`, { headers: { origin: opts.origin ?? url } });
+    const res = await fetch(`${url}${route}`, { headers: { origin: opts.origin ?? url, 'x-phosphor-token': token } });
     return { status: res.status, json: await res.json().catch(() => null) };
   }
   /* Exactly the headers a browser sends, which is not the same set the helper above
      sends: a same-origin GET carries no Origin at all, and it does carry Sec-Fetch-Site.
      This goes through node:http rather than fetch because Sec-Fetch-* are forbidden
-     header names, so fetch silently drops them and the request under test never happens. */
+     header names, so fetch silently drops them and the request under test never happens. The
+     window's credential rides along, as it does on every read the window makes. */
   function getRaw(route: string, headers: Record<string, string>): Promise<{ status: number; json: any }> {
     return new Promise((resolve, reject) => {
       const target = new URL(`${url}${route}`);
       const req = http.request(
-        { hostname: target.hostname, port: target.port, path: target.pathname, method: 'GET', headers },
+        { hostname: target.hostname, port: target.port, path: target.pathname, method: 'GET', headers: { 'x-phosphor-token': token, ...headers } },
         (res) => {
           let body = '';
           res.on('data', (chunk) => { body += chunk; });

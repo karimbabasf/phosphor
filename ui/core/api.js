@@ -97,9 +97,10 @@
 
     /* No token, and deliberately outside the busy contract: this is what the
        shell asks while the stream is down, and a spinner on the one call that
-       answers "is the app there" would be reporting on itself. */
+       answers "is the app there" would be reporting on itself. `open`: it never
+       waits for the read key, and carries it when the window has one. */
     health: function () {
-      return net.getJson('/api/health', { noCache: true });
+      return net.getJson('/api/health', { noCache: true, open: true });
     },
 
     quit: function () {

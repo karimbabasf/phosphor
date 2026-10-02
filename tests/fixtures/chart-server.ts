@@ -260,8 +260,9 @@ export async function bootChartServer(
     fetches: () => fetches,
     mcp: (body) => post('/api/mcp', { secret: seat, ...(body as Record<string, unknown>) }),
     post,
+    // Every read carries the window token, as the shell's do: the read gate refuses one without.
     get: async (route) => {
-      const res = await fetch(`${url}${route}`);
+      const res = await fetch(`${url}${route}`, { headers: { 'x-phosphor-token': token } });
       return { status: res.status, json: await res.json() };
     },
   };

@@ -85,7 +85,7 @@ function artPixels(size: number, art: number): Uint8ClampedArray {
   return data;
 }
 
-function boot(options: { net?: boolean; data?: Any; art?: Record<string, number>; taint?: boolean } = {}): Rig {
+function boot(options: { net?: boolean; data?: Any; art?: Record<string, number>; taint?: boolean; read?: string } = {}): Rig {
   const body = makeNode('body');
   const asked: string[] = [];
   const answer = { data: options.data ?? { symbols: {}, settled: true }, fails: false };
@@ -123,6 +123,7 @@ function boot(options: { net?: boolean; data?: Any; art?: Record<string, number>
         if (answer.fails) return Promise.reject(Object.assign(new Error('no'), { status: 502 }));
         return Promise.resolve({ data: answer.data, fresh: true });
       },
+      ...(options.read === undefined ? {} : { withRead: (path: string) => `${path}&read=${options.read}` }),
     };
     window.PhosphorState = { subscribe: (fn: () => void) => { subscribers.push(fn); } };
   }
@@ -146,6 +147,13 @@ function img(node: Any): Any {
 }
 
 const PICTURES = { symbols: { VVV: 'venice-token', ETH: 'ethereum', TRUMP: 'official-trump' }, settled: true };
+
+test('a picture is an <img>, which cannot set a header, so its URL carries the read key', async () => {
+  const rig = boot({ data: PICTURES, read: 'k'.repeat(64) });
+  rig.draw('VVV');
+  await tick();
+  assert.equal(img(rig.draw('VVV')).src, `/api/coin-image?id=venice-token&read=${'k'.repeat(64)}`);
+});
 
 test('a hand-picked file wins, then the cached picture from the local server, then the monogram', async () => {
   const rig = boot({ data: PICTURES });

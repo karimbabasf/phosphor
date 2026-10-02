@@ -33,6 +33,8 @@ import { stubView } from '../fixtures/view.ts';
 // every call. A moving timestamp would change the bytes on every request and make an ETag
 // useless, which is exactly the property the real payload was checked for before this was built.
 const FETCHED_AT = '2026-08-19T00:00:00.000Z';
+// The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
+const TOKEN = 'f'.repeat(64);
 
 // What test 4 mutates to prove a real change still gets a full 200: the verifier read.
 let intents: IntentsRead | undefined;
@@ -52,6 +54,7 @@ async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
     keysPath: path.join(dataDir, 'keys.json'),
   };
   const server = createServer({
+    token: TOKEN,
     cfg,
     audit: createAudit(dataDir),
     store: createStore(dataDir),
@@ -121,7 +124,7 @@ function raw(
   const u = new URL(urlBase + route);
   return new Promise((resolve, reject) => {
     const req = http.request(
-      { hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', headers },
+      { hostname: u.hostname, port: u.port, path: u.pathname, method: 'GET', headers: { 'x-phosphor-token': TOKEN, ...headers } },
       (res) => {
         let d = '';
         res.on('data', (c) => (d += c));

@@ -67,6 +67,15 @@ test('the release is verified the way Gatekeeper and an installed copy verify it
   assert.doesNotMatch(step('Write the release notes'), /notarized|Open Anyway/);
 });
 
+test('a local signed build is held to the checkout before it is signed and after', () => {
+  const local = fs.readFileSync(new URL('scripts/sign-and-notarize-local.sh', root), 'utf8');
+  const before = local.indexOf('node "$root/scripts/release-check.ts" --app "$bundle/macos/Phosphor.app" --checkout "$root" --stage built');
+  const signing = local.indexOf('bash "$root/scripts/notarize-mac.sh" "$bundle" "$version"');
+  const after = local.indexOf('node "$root/scripts/release-check.ts" --app "$app" --checkout "$root" --stage signed');
+  assert.ok(before >= 0 && before < signing, 'checked before notarize-mac.sh signs it');
+  assert.ok(after > signing, 'and among the rows after');
+});
+
 test('the script signs inside out, staples the app before the updater bundle and the DMG are made', () => {
   const at = (needle: string) => {
     const i = script.indexOf(needle);

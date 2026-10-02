@@ -33,6 +33,8 @@ import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
 
 const PASSWORD = 'a long enough password';
+// The window token this server is booted with. The event stream is a read, so it carries it.
+const TOKEN = 'e'.repeat(64);
 
 function snapshot(): LedgerSnapshot {
   return { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
@@ -55,6 +57,7 @@ async function boot() {
      same branch the real app does. That branch is where the missing frame lived. */
   const session = createSession({ isUnlocked: () => keystore.isUnlocked(), lock: () => keystore.lock() });
   const server = createServer({
+    token: TOKEN,
     cfg,
     audit: createAudit(dataDir),
     store: createStore(dataDir),
@@ -121,7 +124,7 @@ async function boot() {
 // One SSE connection, with every frame it has seen so far.
 function listen(url: string): { frames: Array<{ type: string; state?: string }>; stop: () => void } {
   const frames: Array<{ type: string; state?: string }> = [];
-  const req = http.request(`${url}/api/events`, { headers: { accept: 'text/event-stream' } }, (res) => {
+  const req = http.request(`${url}/api/events`, { headers: { accept: 'text/event-stream', 'x-phosphor-token': TOKEN } }, (res) => {
     res.setEncoding('utf8');
     res.on('data', (chunk: string) => {
       for (const line of chunk.split('\n')) {

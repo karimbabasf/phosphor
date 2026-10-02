@@ -27,7 +27,7 @@
 // appears in a log), and that is asserted at the write paths, not disguised here.
 
 import type { Ctx } from './context.ts';
-import { tokenMatches } from './auth.ts';
+import { readKeyFor, tokenMatches } from './auth.ts';
 import { redactInviteCodes } from '../invite/code.ts';
 import type { LogEvent } from '../types.ts';
 
@@ -89,7 +89,12 @@ export function credentialCheck(ctx: Partial<Pick<Ctx, 'agents' | 'token'>>): Is
   // A test context may carry no roster and no token; then only the shapes below apply.
   const agents = ctx.agents;
   const token = typeof ctx.token === 'string' && ctx.token.length > 0 ? ctx.token : null;
-  return (candidate) => (agents !== undefined && agents.recognises(candidate)) || (token !== null && tokenMatches(candidate, token));
+  // The read key is this boot's too (src/http/read-gate.ts): it opens every read.
+  const readKey = token === null ? null : readKeyFor(token);
+  return (candidate) =>
+    (agents !== undefined && agents.recognises(candidate)) ||
+    (token !== null && tokenMatches(candidate, token)) ||
+    (readKey !== null && tokenMatches(candidate, readKey));
 }
 
 function redactString(text: string, isCredential: IsCredential): string {

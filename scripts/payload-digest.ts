@@ -27,6 +27,16 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+// What the app reads at runtime, copied verbatim from the checkout (scripts/bundle-payload.ts); the
+// release gate compares these against the checkout too (scripts/release-check.ts). config.local.json
+// is deliberately absent: it is the writable half and lives in Application Support, not in a
+// read-only bundle. So is state/, and so are the keys, which have never been in the working copy.
+// `operator` carries the two lockdown files. Without it an installed app can still run, and the
+// driver would refuse to start rather than spawn an agent whose tool surface it cannot vouch for,
+// which is the correct failure and a useless one. It ships.
+// docs/changelog.md alone, not docs/ (37 MB of pictures): the agent's whats_new reads it.
+export const PAYLOAD = ['src', 'ui', 'data', 'skills', 'operator', 'config.json', 'package.json', 'package-lock.json', 'docs/changelog.md'];
+
 export type PayloadDigest = {
   digest: string;
   files: number;
@@ -36,12 +46,12 @@ export type PayloadDigest = {
   problems: string[];
 };
 
-const SKIPPED = '.DS_Store';
+export const SKIPPED = '.DS_Store';
 
 // The first four bytes of a Mach-O file or a universal binary, in either byte order.
 const MACHO_MAGIC = new Set([0xfeedface, 0xfeedfacf, 0xcefaedfe, 0xcffaedfe, 0xcafebabe, 0xbebafeca, 0xcafebabf, 0xbfbafeca]);
 
-function isMachO(body: Buffer): boolean {
+export function isMachO(body: Buffer): boolean {
   return body.length >= 4 && MACHO_MAGIC.has(body.readUInt32BE(0));
 }
 

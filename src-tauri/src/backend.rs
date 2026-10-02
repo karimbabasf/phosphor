@@ -570,11 +570,26 @@ pub fn request_within(port: u16, head: &str, body: Option<&str>, read_timeout: D
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
-/// The backend's health answer, parsed. No token: /api/health is the one route that answers
-/// anyone on loopback, and it says nothing a local caller could not already see.
-pub fn get_health(port: u16) -> Option<serde_json::Value> {
-    let head = format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n");
-    let raw = request(port, &head, None)?;
+/// A read this shell asks of its backend. Every GET under /api/ needs the window token or the
+/// read key (src/http/read-gate.ts), and the shell holds the token, so it sends it in its header.
+pub fn read_head(port: u16, path: &str, token: &str) -> String {
+    format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-phosphor-token: {token}\r\nConnection: close\r\n\r\n")
+}
+
+/// The same read for an answer the shell acts on (a line for the clipboard, the log copy): it
+/// carries a challenge too, and the answer counts only with its proof (identity_matches).
+pub fn challenged_read_head(port: u16, path: &str, token: &str, challenge: &Challenge) -> String {
+    format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-phosphor-token: {token}\r\n{}Connection: close\r\n\r\n",
+        challenge.header()
+    )
+}
+
+/// The backend's health answer, parsed. Health answers anyone that the app is alive and its
+/// version; the wallet's half (locked, executing, the last error) comes back only with the
+/// token, which is why this takes it.
+pub fn get_health(port: u16, token: &str) -> Option<serde_json::Value> {
+    let raw = request(port, &read_head(port, "/api/health", token), None)?;
     let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
     serde_json::from_str(body.trim()).ok()
 }
@@ -1429,7 +1444,7 @@ mod tests {
                 }
                 std::thread::sleep(Duration::from_millis(700));
                 alive_after_usr1 = matches!(child.try_wait(), Ok(None));
-                health_after_usr1 = get_health(port);
+                health_after_usr1 = get_health(port, &hand.token);
             }
             let _ = child.kill();
             let _ = child.wait();

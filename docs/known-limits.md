@@ -50,8 +50,18 @@ caller of. Until then the seat secret is the credential in its place.
 
 ## The Secure Enclave key is bound to this Mac, not to Phosphor
 
-The Keys row in the Vault tab says that other apps on this Mac could ask for the Secure Enclave
-key: it is bound to the machine rather than to this app. A signed update still verifies either
+Every build so far, the signed releases included, keeps the Secure Enclave key bound to this Mac
+rather than to Phosphor. The keychain home that would tie it to the app needs the
+keychain-access-groups entitlement, and no build carries it yet, so the key is a CryptoKit key any
+program running as you can load. The vault service answers only Phosphor; the key itself does not
+care who asks.
+
+What it means: another app running as you could ask to use the key, and macOS would show that
+app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for something you started
+in Phosphor, and read the sentence in it. The Keys row in the Vault tab says the same in one line.
+
+What closes it: a Developer ID provisioning profile that grants the keychain entitlement, so the
+key lives in the keychain where only Phosphor can ask for it. A signed update still verifies either
 way: the updater checks the bundle's own update signature, and then its Developer ID code
 signature against Phosphor's Team ID, before it replaces anything.
 

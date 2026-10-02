@@ -109,7 +109,7 @@ test('a boot on a throwaway folder, and a pick of every vendor in it, leaves a f
     let up = false;
     for (let i = 0; i < 200 && !up; i++) {
       try {
-        up = (await fetch(`${base}/api/state`)).ok;
+        up = (await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } })).ok;
       } catch {
         await new Promise((r) => setTimeout(r, 100));
       }

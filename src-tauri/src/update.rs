@@ -306,13 +306,8 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), Stop> {
     }
 
     let port = port_for(app).map_err(Stop::Failed)?;
-    if let Some(executing) = get_health(port).and_then(|h| h.get("executing").and_then(|e| e.as_u64())) {
-        if executing > 0 {
-            return Err(Stop::Failed(format!(
-                "{executing} proposal(s) are executing right now. Installing ends the process, and a venue write cut mid-flight is the one thing an update must never do. Let them finish, then try again from Phosphor > Check for Updates."
-            )));
-        }
-    }
+    let token = app.state::<Backend>().handshake().map(|h| h.token.clone()).unwrap_or_default();
+    executing_gate(get_health(port, &token).as_ref()).map_err(Stop::Failed)?;
 
     let progress_on = app.clone();
     let mut seen: u64 = 0;
@@ -345,9 +340,25 @@ async fn install(app: &AppHandle, update: &Update) -> Result<(), Stop> {
     // started during the download (the check above is long past), then stop the backend the
     // graceful way (Backend::kill drains a write in flight before SIGKILL). The same stop a quit
     // takes: Backend::lock_and_stop.
+    // Read again: a backend that restarted during the download has its own token.
     let token = app.state::<Backend>().handshake().map(|h| h.token.clone()).unwrap_or_default();
     app.state::<Backend>().lock_and_stop(Some(port), &token, "installing an update", |_| {});
     Ok(())
+}
+
+/// Whether installing may end the backend now, off its health. No answer is a backend that is not
+/// running, so nothing of it can be cut mid-flight. An answer with no `executing` count is one
+/// whose wallet half this shell could not read (health keeps it for a caller with the token), and
+/// that waits rather than reading as zero.
+fn executing_gate(health: Option<&serde_json::Value>) -> Result<(), String> {
+    let Some(health) = health else { return Ok(()) };
+    match health.get("executing").and_then(|e| e.as_u64()) {
+        Some(0) => Ok(()),
+        Some(executing) => Err(format!(
+            "{executing} proposal(s) are executing right now. Installing ends the process, and a venue write cut mid-flight is the one thing an update must never do. Let them finish, then try again from Phosphor > Check for Updates."
+        )),
+        None => Err("Phosphor did not say whether a move is running, so the update waits. Try again from Phosphor > Check for Updates.".to_string()),
+    }
 }
 
 pub(crate) fn port_for(app: &AppHandle) -> Result<u16, String> {
@@ -607,12 +618,23 @@ fn clip(text: &str, limit: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        bundled_version, check_failed, clip, expected_url, failed, init_literal, is_dismissed, newer, refused, requirement, runs_from_a_volume, unpack, vet, Scratch, Stop,
-        IDENTIFIER, NOTES_LIMIT, TEAMS,
+        bundled_version, check_failed, clip, executing_gate, expected_url, failed, init_literal, is_dismissed, newer, refused, requirement, runs_from_a_volume, unpack, vet,
+        Scratch, Stop, IDENTIFIER, NOTES_LIMIT, TEAMS,
     };
     use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::process::{Command, Stdio};
+
+    #[test]
+    fn an_install_waits_unless_health_says_nothing_is_executing() {
+        assert!(executing_gate(None).is_ok(), "no backend running, nothing to cut");
+        assert!(executing_gate(Some(&serde_json::json!({ "ok": true, "executing": 0 }))).is_ok());
+        let busy = executing_gate(Some(&serde_json::json!({ "ok": true, "executing": 2 }))).unwrap_err();
+        assert!(busy.starts_with("2 proposal(s) are executing right now."), "{busy}");
+        // Health without a credential says only that the app is alive. That is not zero.
+        let unread = executing_gate(Some(&serde_json::json!({ "ok": true, "version": "0.10.13", "uptimeSec": 9 }))).unwrap_err();
+        assert!(unread.contains("did not say whether a move is running"), "{unread}");
+    }
 
     #[test]
     fn a_failed_check_keeps_its_sentence_apart_from_the_raw_error_and_offers_try_again() {

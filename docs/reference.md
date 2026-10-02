@@ -437,7 +437,7 @@ stayed true. It lives beside `keysPath`, and THE DATA DIRECTORY DECIDES where th
 
 The installed app keeps everything else it writes under
 `~/Library/Application Support/com.karimbabasf.phosphor/`: `state/` (policy.json, proposals.json,
-audit.jsonl, terms.json, invites.json, agent.secret) and `config.local.json` beside it. The shell creates that
+audit.jsonl, terms.json, invites.json, agent.secret, read.key) and `config.local.json` beside it. The shell creates that
 folder before the backend starts, and `loadConfig` creates the data directory it is given, so a
 first run on an empty Mac makes both without a step from the person; the key folder is made at
 mode 0700 the moment the wallet is created. `tests/unit/keys-path.test.ts` holds all three rows.
@@ -540,8 +540,12 @@ runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Encl
 inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
 notarize the app and the disk image, and staples both. A release without those secrets fails
 before it signs anything. That job installs and builds nothing (the build job, which holds no
-secret, does), deletes the signing keychain right after the script, and only then signs the
-updater bundle with `scripts/updater-sign.ts`, which uses Node's own crypto. The same chain runs on
+secret, does). Before it signs, it holds the unsigned app to its own checkout with
+`scripts/release-check.ts` (first-party payload files byte for byte, the digest the shell carries,
+the committed entitlements on the app's executables and none on any other binary), and it runs the
+same check on the signed app in the DMG and in the update. It deletes the signing keychain right
+after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
+Node's own crypto. The same chain runs on
 a Mac, checks included, with nothing published:
 
     npm run notarize:local
@@ -561,10 +565,12 @@ with a data key wrapped to a key the enclave made and cannot export, and every c
 Touch ID dialog the app composes. The service answers only a peer whose code signature passes its
 requirement: under Developer ID, Apple's anchor, the app's Team ID and `com.karimbabasf.phosphor`;
 under ad hoc, that identifier alone (`sh scripts/xpc-attack.sh` plays a foreign process against a
-built bundle). On an ad hoc build the enclave key is bound to this Mac rather than to Phosphor's
-signature, which the Vault tab's Keys row says in one line ("This copy of Phosphor is not signed,
-so other apps on this Mac could ask for the key"); a Developer ID build that keeps the key in the
-keychain binds it to the app, and the service is then the only process that can reach it.
+built bundle). Every build so far, ad hoc or Developer ID, keeps the enclave key bound to this Mac
+rather than to Phosphor's signature: the keychain home needs the keychain-access-groups
+entitlement, which no build carries yet, so the key is a CryptoKit device key. The Vault tab's Keys
+row says so in one line ("Bound to this Mac rather than to Phosphor"). A build whose profile grants
+that entitlement keeps the key in the keychain, binds it to the app, and the service is then the
+only process that can reach it.
 
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
@@ -656,7 +662,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     ui/logos/          the token and venue logos as SVG files, with their notices in ATTRIBUTION.md
     operator/          the opt-in operator profile: an agent that drives but cannot develop
     state/             policy.json, proposals.json, audit.jsonl (append-only), terms.json,
-                       invites.json, agent.secret; the installed app keeps it under Application
+                       invites.json, agent.secret, read.key; the installed app keeps it under Application
                        Support
 
 ## The operator profile

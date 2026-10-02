@@ -505,13 +505,16 @@ test('the cache sits under the data directory, never beside the keys or under ~/
 
 /* ---------- the routes ---------- */
 
+// The window token the read gate wants on every read (src/http/read-gate.ts).
+const READ_TOKEN = 't'.repeat(64);
+
 async function get(ctx: Partial<Ctx>, route: string): Promise<{ status: number; headers: http.IncomingHttpHeaders; body: Buffer }> {
-  const server = http.createServer((req, res) => void handle(ctx as Ctx, req, res));
+  const server = http.createServer((req, res) => void handle({ token: READ_TOKEN, ...ctx } as Ctx, req, res));
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const { port } = server.address() as AddressInfo;
   try {
     return await new Promise((resolve, reject) => {
-      const req = http.request({ host: '127.0.0.1', port, path: route, headers: { host: `127.0.0.1:${port}` } }, (res) => {
+      const req = http.request({ host: '127.0.0.1', port, path: route, headers: { host: `127.0.0.1:${port}`, 'x-phosphor-token': READ_TOKEN } }, (res) => {
         const chunks: Buffer[] = [];
         res.on('data', (chunk: Buffer) => chunks.push(chunk));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, body: Buffer.concat(chunks) }));

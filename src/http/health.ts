@@ -5,11 +5,13 @@
 // control of Phosphor" were the same request, and every supervisor, probe and shell script that
 // wanted the first was reaching for the second.
 //
-// This carries no token and no secret. Everything in it is either a fact the window already
-// shows a person (the kill switch, how many decisions are waiting) or a fact about the process
-// (version, uptime, the last error). Nothing here names a balance, an address, a proposal or a
-// key, so it is safe for anything on this machine to read, which is the point: a health check
-// that needs a credential is a health check nobody runs.
+// It answers in two sizes. Anyone gets that the app is alive, its version and its uptime: a
+// health check that needs a credential is a health check nobody runs, and none of the three says
+// anything about the wallet. The rest (whether the wallet is locked, how many moves wait or run,
+// the kill switch, the last error, whose text can name an amount or a coin) is about the wallet,
+// and the read gate's credential (src/http/auth.ts, readAllowed) is what gets it. The window and
+// the shell both carry one: the window's offline notice reads lastError, and the updater reads
+// `executing` before it installs.
 
 import type http from 'node:http';
 
@@ -96,6 +98,10 @@ function buildHealth(ctx: Ctx): Health {
   };
 }
 
-export function sendHealth(ctx: Ctx, res: http.ServerResponse): void {
-  sendJson(res, 200, buildHealth(ctx));
+type Liveness = Pick<Health, 'ok' | 'version' | 'uptimeSec'>;
+
+export function sendHealth(ctx: Ctx, res: http.ServerResponse, full: boolean): void {
+  if (full) return sendJson(res, 200, buildHealth(ctx));
+  const alive: Liveness = { ok: true, version: VERSION, uptimeSec: Math.floor((Date.now() - startedAtMs) / 1000) };
+  sendJson(res, 200, alive);
 }

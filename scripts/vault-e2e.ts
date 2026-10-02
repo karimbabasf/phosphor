@@ -103,7 +103,7 @@ async function main(): Promise<number> {
     return (await res.json()) as Json;
   }
   async function get(route: string): Promise<Json> {
-    const res = await fetch(`${base}${route}`);
+    const res = await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } });
     return (await res.json()) as Json;
   }
 

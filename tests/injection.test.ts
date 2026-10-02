@@ -181,7 +181,7 @@ before(async () => {
   while (Date.now() < until && !up) {
     if (child.exitCode !== null) break;
     try {
-      const res = await fetch(`${base}/api/state`);
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) {
         await res.json();
         up = true;
@@ -374,7 +374,7 @@ test('the roster names a connected client by its own handshake name, never by th
   // client's name from the MCP initialize is what the row says now; the proxy's own name is the
   // fallback for a client that never sent one. A call first, so the hello that renames has landed.
   await callTool('wallet');
-  const state = (await fetch(`${base}/api/state`).then((r) => r.json())) as {
+  const state = (await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } }).then((r) => r.json())) as {
     agents?: { members?: Array<{ client?: string; label?: string; ops?: number }> };
   };
   const members = state.agents?.members ?? [];
@@ -923,7 +923,7 @@ test('a POST with the right Origin and no seat secret is refused on hello, read 
   assert.equal(since.some((e) => e.type === 'agent_connected' && JSON.stringify(e).includes('no-secret-session')), false, 'a refused session was seated');
   assert.equal(since.some((e) => JSON.stringify(e).includes(seatSecret())), false, 'the secret reached the log');
   assert.equal(since.some((e) => JSON.stringify(e).includes('not-the-secret')), false, 'the guess reached the log');
-  assert.ok(!JSON.stringify((await fetch(`${base}/api/state`).then((r) => r.json())) as unknown).includes(seatSecret()), 'the secret is served by /api/state');
+  assert.ok(!JSON.stringify((await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } }).then((r) => r.json())) as unknown).includes(seatSecret()), 'the secret is served by /api/state');
 
   // The same three, with the secret: the door opens and the app's own refusals take over.
   const hello = await postJson('/api/mcp', { ...ops[0], session: 'with-secret', secret: seatSecret() });

@@ -167,19 +167,20 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// the proxy needs, while the window handed out a third without them: two sources of one truth,
 /// and they differed. The backend is the one builder now (src/agents-catalog.ts, per agent, with
 /// the environment in every mode), and GET /api/connection answers with the line for the agent
-/// the person picked. No token on that route and nothing secret in the answer: a path already on
-/// this disk, this app's port and data directory. The bundled runtime is still checked first so
-/// a broken bundle fails with the same sentence it always did, before the port is asked.
+/// the person picked. Nothing secret in the answer (a path already on this disk, this app's port
+/// and data directory), and the window token on the request like every read (backend::challenged_read_head).
+/// The bundled runtime is still checked first so a broken bundle fails with the same sentence it
+/// always did, before the port is asked.
 ///
 /// THE ANSWER IS TRUSTED ONLY FROM THIS BOOT'S BACKEND. The port can be held by something else
 /// during the respawn backoff (see watch), and a line copied to the clipboard is a
 /// command the person is about to paste into a terminal, so the response has to prove this
 /// boot's nonce against a fresh challenge (identity_matches, the same check the readiness poll
 /// makes) before a byte of it is read, and the command it carries has to be one printable line.
-fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str) -> Result<String, String> {
+fn mcp_command(_payload: &Path, _data: &Path, port: u16, nonce: &str, token: &str) -> Result<String, String> {
     node_binary()?;
     let challenge = Challenge::new(nonce)?;
-    let head = format!("GET /api/connection HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", challenge.header());
+    let head = backend::challenged_read_head(port, "/api/connection", token, &challenge);
     let raw = backend::request_within(port, &head, None, Duration::from_secs(5))
         .ok_or_else(|| "Phosphor is not answering yet, so there is no line to copy.".to_string())?;
     connection_line_from(&raw, &challenge)
@@ -294,12 +295,9 @@ fn macos_version() -> String {
 /// with its own five second deadline: the probe timeout is sized for a liveness check, and a
 /// tail is a real read. `for=report` asks for the copy with addresses fingerprinted, since this
 /// text is about to land on a public issue.
-fn fetch_log_tail(port: u16, limit: u16, nonce: &str) -> Option<String> {
+fn fetch_log_tail(port: u16, limit: u16, nonce: &str, token: &str) -> Option<String> {
     let challenge = Challenge::new(nonce).ok()?;
-    let head = format!(
-        "GET /api/log?limit={limit}&for=report HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n",
-        challenge.header()
-    );
+    let head = backend::challenged_read_head(port, &format!("/api/log?limit={limit}&for=report"), token, &challenge);
     let raw = request_within(port, &head, None, Duration::from_secs(5))?;
     log_from_response(&raw, &challenge)
 }
@@ -332,8 +330,8 @@ fn copy_log_for_report(app: &tauri::AppHandle) {
     let outcome = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let nonce = app.state::<Backend>().handshake().ok_or_else(|| "no backend is running, so there is no log to copy".to_string())?.nonce.clone();
-        let text = fetch_log_tail(port, LOG_LINES_FOR_A_REPORT, &nonce).ok_or_else(|| "the control app did not answer as this shell's backend".to_string())?;
+        let hand = app.state::<Backend>().handshake().ok_or_else(|| "no backend is running, so there is no log to copy".to_string())?;
+        let text = fetch_log_tail(port, LOG_LINES_FOR_A_REPORT, &hand.nonce, &hand.token).ok_or_else(|| "the control app did not answer as this shell's backend".to_string())?;
         app.clipboard()
             .write_text(text)
             .map_err(|e| format!("could not write to the clipboard: {e}"))
@@ -394,8 +392,8 @@ fn on_menu(app: &tauri::AppHandle, event: MenuEvent) {
     let result = payload_dir(app).and_then(|payload| {
         let data = data_dir(app)?;
         let port = configured_port(&payload, &data);
-        let nonce = app.state::<Backend>().handshake().ok_or_else(|| "Phosphor is not ready yet, so there is no line to copy.".to_string())?.nonce.clone();
-        let command = mcp_command(&payload, &data, port, &nonce)?;
+        let hand = app.state::<Backend>().handshake().ok_or_else(|| "Phosphor is not ready yet, so there is no line to copy.".to_string())?;
+        let command = mcp_command(&payload, &data, port, &hand.nonce, &hand.token)?;
         app.clipboard().write_text(command).map_err(|e| {
             eprintln!("phosphor: copy MCP config: the clipboard refused it: {e}");
             "The clipboard would not take the line, so nothing was copied.".to_string()

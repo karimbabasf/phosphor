@@ -132,7 +132,7 @@ async function bootApp(stage: string, dataDir: string): Promise<{ base: string; 
   let up = false;
   while (Date.now() < until && child.exitCode === null) {
     try {
-      const res = await fetch(`${base}/api/state`);
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) {
         up = true;
         break;
@@ -264,7 +264,7 @@ async function main(): Promise<void> {
     let shots = 0;
     let done = false;
     while (Date.now() - started < DEADLINE_MS && !done) {
-      const state = (await (await fetch(`${app.base}/api/state`)).json()) as Json;
+      const state = (await (await fetch(`${app.base}/api/state`, { headers: { 'x-phosphor-token': app.token } })).json()) as Json;
       const now = Date.now();
       for (const row of (state.proposals as Json[]) ?? []) {
         const stage = String(row.view?.stage ?? row.status);

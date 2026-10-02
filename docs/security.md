@@ -70,8 +70,15 @@ of every agent it starts. A click is the only thing that carries it, so a click 
 recorded as a human decision in the audit log.
 
 The agent's own door is behind a second secret, written under the app's data directory at every
-boot. Nothing that has not read that file can read the app or file a proposal into it, which
-keeps the door shut to any web page and to any process that has not been given the file.
+boot. Nothing that has not read that file can file a proposal into the app, which keeps the door
+shut to any web page and to any process that has not been given the file.
+
+Reading the app takes a credential as well. The window's reads carry a read key it gets for its
+token, which opens reads and nothing else; the shell sends the token; and a program you run can
+use `read.key`, which the app writes into the same data directory at every boot, readable by you
+alone. Another account on this Mac, or a sandboxed app, has none of these and learns nothing:
+`/api/health` is the one route that answers it, and it says only that the app is running and which
+version.
 
 ## The Secure Enclave and Touch ID
 
@@ -83,9 +90,10 @@ each end (a NEAR name whole), the chain. No agent-written text reaches that dial
 
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows;
-the lock wipes it. And on a build that is not signed with a Developer ID, the enclave key is bound
-to this Mac rather than to Phosphor, so the Keys row in the Vault tab says "This copy of Phosphor
-is not signed, so other apps on this Mac could ask for the key."
+the lock wipes it. And every build so far, the signed releases included, binds the enclave key to
+this Mac rather than to Phosphor. The vault service answers only Phosphor, but another app running
+as you could ask to use the key with a Touch ID prompt of its own, and the Keys row in the Vault tab
+says so. Binding the key to Phosphor itself takes a keychain entitlement that no build carries yet.
 
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
@@ -162,6 +170,13 @@ Phosphor code involved in the check.
 The three agree when your copy is the one that tag builds. Only the files' contents and names go
 into the digest, never dates or owners, so the same tag gives the same digest on any Mac. Finder's
 `.DS_Store` files are left out because Finder writes one into any folder it shows.
+
+In that clone, the check the release itself passed before and after signing compares your copy
+with the tag file by file and reads the entitlements of every binary in it:
+
+```
+node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed
+```
 
 ## The lock
 

@@ -53,7 +53,8 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
-import { mintToken, readWindowToken } from './http/auth.ts';
+import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
+import { readKeyPath } from './http/read-gate.ts';
 import { refreshRegistration } from './http/mutation.ts';
 import { useIdentityValue } from './http/respond.ts';
 import { sweepOrphans, useSeatSecret } from './driver.ts';
@@ -204,6 +205,10 @@ const seatSecret = (handshake[2] ?? '').length >= 32 ? (handshake[2] as string) 
 const handSeatSecret = mintToken();
 useSeatSecret(seatSecret);
 atomicWrite(seatSecretPath(cfg.dataDir), `${handSeatSecret}\n`, { mode: 0o600 });
+// The read key, for a program the person runs: every GET under /api/ wants it or the token, and
+// only the window and the shell hold the token. Owner-readable, rewritten every boot. See
+// src/http/read-gate.ts for who holds which credential.
+atomicWrite(readKeyPath(cfg.dataDir), `${readKeyFor(windowTokenValue)}\n`, { mode: 0o600 });
 
 /* The enclave transport key, line 4, and the relay built over it. Absent (a bare `npm run app`,
    an older shell) means a relay with no key, which answers every ask with no_relay: the wallet

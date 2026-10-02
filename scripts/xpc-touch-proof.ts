@@ -195,10 +195,13 @@ async function main(): Promise<number> {
     // that Application Support followed HOME; not finding it means the real one may be in use,
     // and the app is stopped before it does anything else.
     if (!check('the shell keeps its data under the temporary HOME', fs.existsSync(path.join(dataDir, 'backend.pid')), dataDir)) return 1;
+    // Every read wants the window token or the read key, and the shell keeps the token to itself.
+    // The backend writes the key into its own data directory, which is this script's throwaway one.
+    const read = { headers: { 'x-phosphor-read': fs.readFileSync(path.join(stateDir, 'read.key'), 'utf8').trim() } };
 
     let vault: Json = {};
     for (let i = 0; i < 100; i += 1) {
-      vault = (await (await fetch(`${base}/api/vault`)).json()) as Json;
+      vault = (await (await fetch(`${base}/api/vault`, read)).json()) as Json;
       if (vault.enclave?.ready === true) break;
       await sleep(100);
     }
@@ -216,8 +219,8 @@ async function main(): Promise<number> {
     console.log(`   The dialog should say Phosphor and "${UNLOCK_REASON}". Waiting ${TOUCH_WAIT_MS / 1000} s.`);
     let state: Json = {};
     for (const deadline = Date.now() + TOUCH_WAIT_MS; Date.now() < deadline; await sleep(500)) {
-      state = (await (await fetch(`${base}/api/state`)).json()) as Json;
-      vault = (await (await fetch(`${base}/api/vault`)).json()) as Json;
+      state = (await (await fetch(`${base}/api/state`, read)).json()) as Json;
+      vault = (await (await fetch(`${base}/api/vault`, read)).json()) as Json;
       if (state.lock?.state === 'unlocked' || vault.foreign === true) break;
     }
     if (vault.foreign === true) {

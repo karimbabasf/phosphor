@@ -182,7 +182,7 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth 
     return post(route, { relay: relaySecret, ...body }, false);
   }
   async function get(route: string) {
-    const res = await fetch(`${url}${route}`, { headers: { origin: url } });
+    const res = await fetch(`${url}${route}`, { headers: { origin: url, 'x-phosphor-token': token } });
     return { status: res.status, json: (await res.json().catch(() => null)) as any };
   }
 
@@ -621,7 +621,7 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
     const json = (await res.json()) as { ok: boolean; code: string };
     assert.equal(json.ok, false);
     assert.equal(json.code, 'enclave_unavailable');
-    const status = await (await fetch(`${url}/api/vault`)).json() as { enclave: { attached: boolean; ready: boolean } };
+    const status = await (await fetch(`${url}/api/vault`, { headers: { 'x-phosphor-token': token } })).json() as { enclave: { attached: boolean; ready: boolean } };
     assert.equal(status.enclave.attached, false);
     assert.equal(status.enclave.ready, false);
   } finally {
