@@ -24,8 +24,9 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   code that cannot pay, Use code stays off until you change the field, and when the app could not
   check, the key says Try again.
 - If the solver relay turns a claim away, the app sends it through 1Click instead, for about 0.25
-  percent less, and a 1Click refund goes back to the code. A claim cut short by a quit is finished
-  at the next start.
+  percent less, and a 1Click refund goes back to the code; the claim counts it only once it shows
+  there, never on a refund figure shrunk to a crumb. A claim cut short by a quit is finished at
+  the next start.
 - Before a claim on the solver relay is signed, the app rehearses it with a copy that expires a
   millisecond after a recent block, so the outside server it checks with holds no claim it could
   run later, unless it lies about the time, and then only for up to two minutes and only into your
@@ -75,7 +76,8 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   An agent that reads how a move is going sees the first six and last four characters of the
   address 1Click made for it; the card in the window shows it whole.
 - Only the agent that holds a seat can end it, so another program on your Mac cannot drop an agent
-  you allowed, and closing an agent frees its seat right away instead of about 12 seconds later.
+  you allowed, and closing an agent frees its seat right away instead of about 12 seconds later. An
+  agent you allowed keeps its Allow if another program took its seat id while it was away.
 - A send card says which coin leaves when you hold it from more than one chain inside NEAR
   Intents: 1 USDC from Base.
 - Try again on a failed swap names the coins only when they are plain tickers, and a coin name
@@ -93,13 +95,19 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   on its card. The lock screen says why Phosphor locked (your screen locked, your Mac switched
   users or slept, or the minutes you picked went by) and how many moves wait for your OK, without
   saying what they are, and the Vault's lock timer says the window also locks with your screen.
+- Any lock, yours or the app's, wipes a key or recovery phrase you asked to see and had not read
+  yet, and one you never read is wiped when it expires.
 - The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault
   stays, and the app now waits the time you picked; before, it always waited 15 minutes. The one
   exception is 15 minutes picked before this version: the app cannot tell it from the old default,
   so it now reads as 5. Pick it again if you want it.
 - Approving with Touch ID checks your limits and Freeze once more right before anything is signed,
-  and opens the wallet for that one move only. Showing your deposit address or your recovery
-  phrase no longer opens the wallet.
+  and opens the wallet for that one move only: waiting trading plans do not re-arm on it, even
+  while the app is starting. Showing your deposit address or your recovery phrase no longer opens
+  the wallet.
+- Freeze now stops a move at its signature: anything already past its check signs nothing, whether
+  you clicked it, touched it or your rules allowed it, and a trading plan stops before it fires,
+  arms or changes. Closing positions still runs.
 - Freeze over a damaged policy file still stops every plan and says the switch could not be saved,
   and Unfreeze waits until the file is fixed. Freeze tells you when it could not close your trading
   positions.
@@ -108,24 +116,29 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   interrupted migration counts wrong passwords like every other password check.
 - A quote changed on its way to 1Click (a fee paying someone else, a field the app never sent, a
   value it never chose) is refused before anything is signed, and a swap gives up at most 3
-  percent of its value by 1Click's own figures, when 1Click gives a figure for both coins.
+  percent of its value by the dollar figures 1Click signs. A swap on the solver relay is held to
+  the same 3 percent, judged by a quote 1Click signed for the same swap; with no signed price to
+  check it by, it waits for your click. A swap 1Click puts no dollar figure on waits for your
+  click on either route.
 - A swap, send, payout or Hyperliquid deposit moves exactly the coins its card showed. If the coin
   list names another coin or other decimals by the time you click, the move is refused and nothing
-  is signed.
+  is signed. Native ETH and SOL are pinned to 1Click's ids like the registry's coins, and a registry
+  coin 1Click does not list is never quoted.
 - Reading your balances, policy and waiting moves takes a key that only Phosphor's window, the app
   itself and a program you run from its data folder hold. Another account on this Mac, or a
   sandboxed app, learns only that Phosphor is running and its version.
 - The Keys row says plainly that the Touch ID key is bound to this Mac rather than to Phosphor, on
-  every build so far.
+  every build so far, and first run says the chip keeps the key that seals the wallet, not the
+  wallet's key itself.
 - Phosphor checks its own files before it starts its backend. If any changed since the release
   was built, it starts nothing and asks you to install a fresh copy, with Details that fit the
   window. The security docs show how to check a release yourself.
 - Phosphor's window knows its own backend by a question only that backend can answer. If the
   backend stops, its window closes within two seconds and its keys go with it, and a fresh window
   opens when the backend is back. A program that stopped the backend and took its place gets no
-  token it can use, and Phosphor will not open onto it. Copy Log, Copy MCP Config and an update's
-  check read with a read-only key, so a program that grabs Phosphor's port sees nothing that can
-  approve or unlock.
+  token it can use, and Phosphor will not open onto it; a screen lock asks only a backend that is
+  still running to lock. Copy Log, Copy MCP Config and an update's check read with a read-only
+  key, so a program that grabs Phosphor's port sees nothing that can approve or unlock.
 - On a signed release, the Secure Enclave helper and the hand-over at launch accept only the
   Phosphor app signed by Phosphor's team, and the bundled runtime only a Node runtime signed by
   that team, not any other program from it. The backend loads code only from inside the installed
@@ -139,16 +152,21 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   Phosphor's identifier and its team. One that fails is refused, the app stays as it was, and the
   update window says the update did not pass its check and where to get that version. While the
   signature is checked the window says Checking the update, and Installing only once the swap
-  starts. A failed install no longer says "try again later" next to its Try again button.
+  starts. A failed install no longer says "try again later" next to its Try again button. No update
+  is offered to a copy in a folder whose name holds a quote mark or a backslash; Check for Updates
+  says to move it into Applications.
 - Releases are built in a job that holds no secret. The job that signs and notarizes installs and
   builds nothing, deletes its keychain as soon as notarizing ends, and signs the update with Node
-  alone. Release secrets live in a protected environment that waits for an approval and lets in
-  only version tags, and the Release workflow has a dry run that builds, signs and notarizes and
-  publishes nothing. A release stops unless the payload's own files match the tagged source and
-  every program inside carries only the committed entitlements, checked before signing and again
-  on the disk image and the update. The compiled programs and the installed packages are not
-  compared. The release notes give the disk image and the update archive each their own command
-  and the exact line it prints.
+  alone. The signing keys live in a protected environment that lets in only version tags and waits
+  for one approval; the site upload reads only its own token, in an environment of its own, after
+  that approval. The Release workflow has a dry run that builds, signs and notarizes and publishes
+  nothing. A release stops unless the payload's own files match the tagged source (files in a
+  folder named .DS_Store included) and every program inside carries only the committed
+  entitlements, checked before signing and again on the disk image and the update. The compiled
+  programs and the installed packages are not compared. The release notes give the disk image and
+  the update archive each their own command and the exact line it prints, and their attestation
+  check pins the release workflow and the version's tag:
+  `gh attestation verify <file> --repo karimbabasf/phosphor --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml --source-ref refs/tags/v<version>`.
 - For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
   one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
   address you confirm by its first six and last six characters, and shows where every code stands
@@ -161,7 +179,8 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - `npm run invite -- convert` turns any other USDC that reached the treasury inside NEAR Intents
   (on Base, Ethereum, Arbitrum, Solana and ten more chains) into NEAR USDC through 1Click, with one
   signature from the treasury, after it shows what each will bring and you type yes. Issue, status
-  and treasury say exactly what arrived and to run it.
+  and treasury say exactly what arrived and to run it. A convert closes on a refund only once the
+  refund shows on the treasury, never on a refund figure shrunk to a crumb.
 - `scripts/invite-proof.ts` checks both claim routes with your own money on throwaway accounts,
   records what NEAR Intents says about each, and sweeps the rest back. Its `convert` does the same
   for the proof's treasury, `run` converts first and says so instead of waiting for NEAR USDC
@@ -169,9 +188,17 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - The docs and phosphor.money say only what 0.10.13 does: small moves can run under your limit
   while sends, withdrawals and rule changes always wait, the agent's read-back of an address is an
   instruction and the card is the check, Freeze leaves orders you placed by hand, and the lock
-  overwrites the key it holds while copies a signature left can stay in memory.
+  overwrites the key it holds while copies a signature left can stay in memory. The front page no
+  longer promises a finger on a password wallet, or says the Secure Enclave signs.
 - phosphor.money/security shows Phosphor's threat model: what the agent can and cannot do, each
-  defence with the test that proves it, what stays open, and how to check a release yourself.
+  defence with the tests that prove each half of it, what stays open, and how to check a release
+  yourself. What stays open names, each with a Known limits section: the two seconds after the
+  backend stops, names a venue lists that do not mark the agent, disk image files nobody checks,
+  the fee room on a Hyperliquid withdrawal and on an invite claim through 1Click, a claim that
+  looks failed until the next start, an agent that can stop another's worker, and a release that
+  rests on one GitHub account. It also covers the invite tools: what `npm run invite` guards and
+  trusts, the tests behind it, and what stays open (the terminal rule is a speed bump; the
+  passphrase is the wall).
 - For people who build Phosphor: the update signer names its key the way minisign does, so a test
   that failed about one run in sixteen passes every time.
 - For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
