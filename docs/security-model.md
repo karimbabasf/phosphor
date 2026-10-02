@@ -154,7 +154,8 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 - **An invite claim is replayed, or paid to an edited address.** One code makes one signature that
   can land (its rehearsal is dead a millisecond past the block it was tried at), and the money
   goes to the wallet's decrypted address, never to the plain copy on disk. Proof: attacks
-  `13-invite-replay`, `13-invite-replay-sim`, `13-invite-tampered-header`.
+  `13-invite-replay`, `13-invite-replay-sim`, `13-invite-tampered-header`; `invite-claim.test.ts`
+  (the rehearsal).
 - **Words are planted in Claude Code's task list.** The task tools are denied to the chat's agent
   and to the operator profile. Proof: attack `08-task-list`.
 - **A test or a scratch copy rewrites your agents' settings.** Only the installed app, on its own
@@ -192,14 +193,21 @@ your money.
   next small move still runs on your rules alone. A token name or memo read on a chain marks as
   usual.
 - **A fee can hide inside fixed floors.** 1Click does not sign its fee field, and the solver relay
-  signs nothing it quotes. Someone who can change a quote on its way, which takes breaking HTTPS
-  or being the venue, can take up to a move's loss floor: 3 percent of a swap on either route, 1
-  percent of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4
-  percent of a Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. On the
-  relay route the 3 percent is measured by a quote 1Click signed for the same swap. A swap of a
-  coin 1Click puts no dollar figure on has no cap at all: it waits for your click on either route,
-  and the amount on its card is the only check. What closes it: the venues signing what they
-  quote, the fee included.
+  signs nothing it quotes. Someone who can change a quote on its way, which takes breaking HTTPS,
+  can take up to a move's loss floor: 3 percent of a swap on either route, 1 percent of a send, 3
+  percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent of a
+  Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. The relay itself can
+  price a swap on its route up to 3 percent worse. On both swap routes the 3 percent is measured by
+  dollar figures 1Click signed (on the relay route, in a quote for the same swap), so it trusts
+  1Click's prices: a 1Click that signs false figures is not held to it. A swap of a coin 1Click
+  puts no dollar figure on has no cap at all: it waits for your click on either route, and the
+  amount on its card is the only check. What closes it: the venues signing what they quote, the
+  fee included.
+- **A relay swap with no signed price has no cap once you click it.** When no quote 1Click signed
+  for the same swap comes back (1Click did not answer in time, or someone who breaks HTTPS dropped
+  its answer), a relay swap waits for your click whatever its size. Once you click, it runs at the
+  relay's price, held only to what its card says you get at least, so the card is the only check.
+  What closes it: the relay signing what it quotes.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
