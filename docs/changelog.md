@@ -144,7 +144,8 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   publishes nothing. A release stops unless the payload's own files match the tagged source and
   every program inside carries only the committed entitlements, checked before signing and again
   on the disk image and the update. The compiled programs and the installed packages are not
-  compared.
+  compared. The release notes give the disk image and the update archive each their own command
+  and the exact line it prints.
 - For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
   one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
   address you confirm by its first six and last six characters, and shows where every code stands
@@ -180,6 +181,14 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   app `npm run app:build` made and proves each defence holds, 26 cases including the three serious
   findings of this release's audit; `-- --app <Phosphor.app>` adds the checks that need a signed
   build. `scripts/xpc-attack.sh` compiles again, and ip-address is 10.7.2 (four advisories closed).
+  It runs unattended on a Developer ID build: it never runs a changed copy of a notarized app,
+  times out any caller that hangs, and says who refused each stranger (the service, launchd or
+  macOS). Its screen-lock check locks only the shell it started, which also hears that signal
+  addressed to its own process id; `--real-screen-lock` posts macOS's own notice, which every app
+  receives. It leaves nothing outside its scratch: WebKit state stays in the throwaway home,
+  launched copies leave no LaunchServices record, and passing cases leave no temp folders. The
+  task-list check finds the claude CLI the way the app does, and skips with the reason when there
+  is none.
 
 ## 0.10.12
 
