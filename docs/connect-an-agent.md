@@ -82,7 +82,7 @@ The session it starts is locked down, and the lockdown is not a setting you can 
   access, and no page reader of the vendor's: pages come through Phosphor's `web_read`, which
   reads only an address a search in that chat returned or you gave.
 - Once it has searched the web, read a page, or read a stranger's words through Phosphor (news, a
-  token name on a chain), every move it proposes in that chat waits for your click, whatever the
+  token name on a chain, a venue's error text on a move), every move it proposes in that chat waits for your click, whatever the
   size, until the chat starts a new session. See
   [Security](security.md#a-web-page-is-not-an-instruction).
 - It runs with none of your own settings, hooks, plugins or instruction files (such as

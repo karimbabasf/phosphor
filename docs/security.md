@@ -44,7 +44,9 @@ because the page stays in the agent's memory until the session ends. And it trav
 labels: a label the agent writes after a web read keeps the mark across a quit, and any agent
 that reads that label back is marked as if it had read the page itself. Plan notes and highlight
 notes carry it the same way, and so do Phosphor's own reads that hand over a stranger's words:
-news headlines, and the token names and memos in the chain reads. So does what one agent hands
+news headlines, the token names and memos in the chain reads, and a venue's own words on a move
+(an error from 1Click, the solver relay, Hyperliquid or a chain's node, a refund reason, the NEAR
+Intents status page's title), in a read, a reply or a refusal. So does what one agent hands
 another through Phosphor: a board post or a worker's report written after such a read marks the
 agent that reads it, a worker started by a marked agent starts marked, and the raw audit log
 (`log_tail`) marks whoever reads it. A concept the agent records as
@@ -82,7 +84,8 @@ boot, and a seat taken with that copy waits for your click on every move until y
 web page can reach neither. A program running as you can read both.
 
 Reading the app takes a credential as well. The window's reads carry a read key it gets for its
-token, which opens reads and nothing else; the shell sends the token; and a program you run can
+token, which opens reads and nothing else; the shell's own reads carry the same key, never the
+token; and a program you run can
 use `read.key`, which the app writes into the same data directory at every boot, readable by you
 alone. Another account on this Mac, or a sandboxed app, has none of these and learns nothing:
 `/api/health` is the one route that answers it, and it says only that the app is running and which
@@ -260,7 +263,8 @@ waits for your click until you allow it. Three things follow, stated rather than
 The web-read mark has an edge too. The app sees the web searches and page reads of the agent it
 runs in the chat. An agent in your terminal reads the web with its own tools, out of the app's
 sight, so once you allow it, its moves follow your click threshold as usual unless it reads outside
-text through Phosphor (the news, a chain read) or words a marked agent wrote: a chart label, a
+text through Phosphor (the news, a chain read, a venue's error text on a move) or words a marked
+agent wrote: a chart label, a
 board post, a worker's report, the name of an agent you have not allowed, or the raw audit log.
 
 The whole list, with what closes each item, is [Known limits](known-limits.md). Two more limits

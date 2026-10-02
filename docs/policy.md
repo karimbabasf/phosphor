@@ -64,8 +64,9 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 ### After a web page
 
 Once the agent in the chat has searched the web, read a page, or read a stranger's words through
-Phosphor (news headlines, token names and memos on a chain), every money move it proposes in that
-chat waits for your click, whatever its size, until the chat starts a new session (the agent
+Phosphor (news headlines, token names and memos on a chain, or a venue's own words: an error from
+1Click, the solver relay, Hyperliquid or a chain's node, a refund reason, the NEAR Intents status
+page's title), every money move it proposes in that chat waits for your click, whatever its size, until the chat starts a new session (the agent
 restarts, or you start a new chat). The card says why under its head: "This chat read text
 from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
 highlight the agent writes after a web read carries the same mark, and an agent that later reads

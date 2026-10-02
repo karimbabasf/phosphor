@@ -19,7 +19,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `composition` | Stablecoin composition by issuer and chain: shares, freezable share, unclassified holdings |
 | `policy_show` | The current policy as plain-English sentences |
 | `log_tail` | The most recent audit log lines, newest first |
-| `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong |
+| `proposal_status` | Where one money move is right now, as the one object the card in the window draws: the stage and its label, what is being waited on, how long it has been going, the amounts and both pockets, every transaction hash, and an error with a sentence when something went wrong. The deposit address 1Click made for the move comes as its first six and last four characters; the card in the window shows it whole |
 | `proposals` | Recent money moves, newest first, each the same object `proposal_status` returns; a kind filter and a limit up to 50. For "show me my last deposit" without asking anyone for an id. Lead only |
 | `diagnose` | Everything about one money move in one call, for "why is it not there yet": the view, the row's own audit lines, and what the router and the venue say about it. Lead only |
 | `swap_assets` | What can be swapped inside your balance, the coins you hold first: name, network, price, what you hold of it, and whether anyone offers a price now. Files nothing |
@@ -106,8 +106,9 @@ Claude in the chat also holds its vendor's own web search, and nothing else beyo
 tools. Pages are read by `web_read`, and only at an address that came back in a web search in that
 chat or that you gave, word for word, never one the agent wrote: a page cannot get your figures
 sent out in an address. Grok holds no web search, so it reads a page from a link you give. After a
-search, a page, or a read that carries a stranger's words (`research`, the chain reads), every move
-the agent proposes in that chat waits for your click, whatever the size, see
+search, a page, a read that carries a stranger's words (`research`, the chain reads), or any answer
+that quotes a venue's own words (an error from 1Click, the solver relay, Hyperliquid or a chain's
+node), every move the agent proposes in that chat waits for your click, whatever the size, see
 [Policy](policy.md#after-a-web-page). An agent in your terminal brings whatever tools its own
 setup gives it, and the app cannot see them.
 

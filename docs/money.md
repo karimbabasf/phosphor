@@ -350,7 +350,9 @@ Every send waits for your click, whatever the size. The click threshold applies 
 and trades, which keep money in your own custody; it never applies to money leaving it. The card
 in the chat shows what you send, what they get at least, the fee, and the full address in groups
 of four with Copy and an Explorer link, the network it lands on, and whether you have sent there
-before. Its Details say why it asks and what the chain says about the address.
+before. When you hold the coin from more than one chain inside NEAR Intents (USDC that came in on
+Base and on Arbitrum, say), the send takes the largest, and the card names it after the amount:
+1 USDC from Base. Its Details say why it asks and what the chain says about the address.
 
 ### The Touch ID sentence
 

@@ -13,8 +13,9 @@ gives the detail behind each line.
 
 ### Who it plans for
 
-- **The agent.** It reads text from strangers all day: web pages, news, token names, memos and
-  other agents' words. Any of that text can try to talk it into a move. This is the main case.
+- **The agent.** It reads text from strangers all day: web pages, news, token names, memos, a
+  venue's error text and other agents' words. Any of that text can try to talk it into a move.
+  This is the main case.
 - **A web page** open in your browser, which can try to reach the app on 127.0.0.1.
 - **Another account on this Mac, or a sandboxed app.**
 - **A program running as you.** It can read your files, so it is only partly kept out.
@@ -69,10 +70,10 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 - **A program running as you takes the agent's door with its secret file.** Its seat counts as
   an agent started outside Phosphor, so every move it proposes waits until you allow it, however
   it names itself. Proof: attacks `06-agent-door`, `15-seat-id-dodge`.
-- **A page, a token name or a memo talks the agent into a small move.** The read marks that agent
-  until its session ends, and any agent that reads its words is marked too. Every move a marked
-  agent asks for waits for your click. Proof: attacks `07-stranger-text`, `16-mark-laundering`;
-  `stranger-relay.test.ts`.
+- **A page, a token name, a memo or a venue's error text talks the agent into a small move.** The
+  read marks that agent until its session ends, and any agent that reads its words is marked too.
+  Every move a marked agent asks for waits for your click. Proof: attacks `07-stranger-text`,
+  `16-mark-laundering`; `stranger-relay.test.ts`, `venue-words-mark.test.ts`.
 - **A page gets your data sent out in a web address.** A page is read only at an address a search
   returned or you typed. An address that carries your wallet's address or balances, or points at
   this Mac or your network, is refused. Proof: attacks `05-web-gate-addresses`,
@@ -365,8 +366,9 @@ the model; the other three are checks the app makes, and no caller can skip them
 
 The card (`ui/screens/cards.js`, its question in `ui/screens/decision.js`) is what the person reads before the click: the amount, the
 route from their balance through the bridge to the destination, the full address in groups of
-four with a copy and an explorer link the server built, the chain, the token, what arrives at
-least, the fee with the bridge's flat part named, the time, and whether they have paid this
+four with a copy and an explorer link the server built, the chain, the token (and the chain it
+leaves from, when the person holds that token from more than one chain inside NEAR Intents:
+`1 USDC from Base`), what arrives at least, the fee with the bridge's flat part named, the time, and whether they have paid this
 address before. That last fact comes from the recipients book (`src/recipients.ts`,
 `<dataDir>/recipients.json`): every send a human approved, by (where, address), with a count and
 a last date. The book gates nothing. A first send is a line in amber on the card, never a refusal,
@@ -400,7 +402,10 @@ is not a path.
   access control (`src-tauri/se-helper/main.swift`).
 - **A repeat.** The same send twice from one session while the first is pending is one row: a
   `clientKey` repeat is answered with the existing row, and a keyless repeat is refused with its
-  id (`src/duplicates.ts`).
+  id (`src/duplicates.ts`), as is the same move from a second agent inside ninety seconds. The
+  refusal carries the row's view, the one `proposal_status` reads, never its result, and every
+  agent read of a view fingerprints the deposit address 1Click minted for the move
+  (`src/http/read/wallet.ts`, `agentView`).
 - **A row rewritten on disk under the card.** The store re-reads `proposals.json` whenever the
   file moves, and a process running as this user can move it: until 2026-09-17 a pending send
   whose `to` was rewritten on disk after the card was drawn went to the rail as the new address
@@ -620,11 +625,12 @@ window down, shows the splash, and restarts the backend once onto a fresh token;
 restart onto a port another program holds, and a second death stops the app with a sentence
 (`src-tauri/src/main.rs`, `watch`). The window's closing lock and the screen-lock watch post only
 to a backend still running, so a process that killed the backend and took the port gets no token
-from them (`npm run attack`, 17-port-takeover). Two gaps remain. For up to those two seconds the
-open window can still post to whatever holds the port, a click or a password typed into Unlock
-included. And Copy Log, Copy MCP Config and an update install send the dead backend's token in
-their header before any answer is read; that token opens nothing, because a restart mints a new
-one.
+from them (`npm run attack`, 17-port-takeover). The shell's own reads (Copy MCP Config, Copy Log,
+an update's health check) carry the read key and never the window token, the first two with a
+challenge too, so a process that took the port reads nothing that can approve or unlock
+(`src-tauri/src/backend.rs`, `read_head`). One gap remains: for up to those two seconds the open
+window can still post to whatever holds the port, a click or a password typed into Unlock
+included.
 
 **The seat secret is the agent door's credential.** `src/http/mcp.ts` refuses every op on
 `/api/mcp`, `hello` and `bye` included, that does not carry this boot's secret, before the roster
@@ -640,7 +646,10 @@ and log line behind the door reads the id the roster seated, never the raw sessi
 characters is the same seat, under the same mark, as its cleaned id. It is also
 bound to a key its proxy mints and holds in memory (`src/mcp.ts` SEAT_KEY), so no other process
 holding the file can post as it, and a call with the file's secret on a seat the app spawned is
-refused with `seat: 'foreign'`;
+refused with `seat: 'foreign'`; a `bye` is held to the same rule and key, so only a seat's holder
+can end it and the person's Allow with it (`src/agents.ts`, `release`), and the proxy's bye
+carries the secret and its key, so a closed agent leaves the roster when it closes, not when its
+seat lapses.
 `src/mcp.ts` reads the file on every call, so a proxy that outlives an app restart picks the new
 value up on its next call. Behind the door `src/agents.ts` still holds four of the six roster seats
 for sessions it recognises, which is now every session that got in.
@@ -667,7 +676,7 @@ what:
 | Caller | Credential |
 |---|---|
 | the window | the read key, which it trades its token for once (`POST /api/read-key`, window token and a matching Origin) |
-| the shell | the window token, in the header |
+| the shell | the read key, which it derives from its token, in the header; never the token on a read |
 | an agent | none here: it reads through `/api/mcp` with the seat secret, where its reads are seated, audited and marked |
 | a program you run (a proof script, curl) | the read key in `read.key` in the data directory, written owner-readable at every boot |
 
