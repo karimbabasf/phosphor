@@ -34,6 +34,7 @@ import {
   INTENTS_NATIVE_COUNTERPARTY,
   INTENTS_NATIVE_VENUE,
   INTENTS_VERIFIER,
+  UNPRICED_SWAP_ASK,
   base58Encode,
   checkIntentPayload,
   duplicateJsonKey,
@@ -1299,4 +1300,27 @@ test("the executor's last check runs right before the key; one that throws leave
   assert.equal(result.ok, true, result.detail);
   assert.equal(checks, 1);
   assert.equal(open.signedPayloads.length, 1);
+});
+
+// ---------- a swap 1Click puts no dollar price on (re-audit R-L15) ----------
+
+test('a swap whose quote carries no dollar figure on a side asks for a click, and execute holds one the policy decided', async () => {
+  for (const unpriced of [{ amountOutUsd: '0' }, { amountOutUsd: undefined }, { amountInUsd: '0' }]) {
+    const sim = await railOf(harness({ quote: quoteOf(unpriced) })).simulate(draftOf());
+    assert.equal(sim.ok, true, String(sim.error));
+    assert.equal(sim.ask, UNPRICED_SWAP_ASK, JSON.stringify(unpriced));
+
+    const h = harness({ quote: quoteOf(unpriced) });
+    const held = await railOf(h).execute(draftOf(), 'p1', { decidedBy: 'policy' });
+    assert.equal(held.held, true);
+    assert.equal(held.reason, 'simulation_failed');
+    assert.equal(h.signedPayloads.length, 0);
+  }
+  const clicked = harness({ quote: quoteOf({ amountOutUsd: '0' }) });
+  const ran = await railOf(clicked).execute(draftOf(), 'p1', { decidedBy: 'human' });
+  assert.equal(ran.ok, true, ran.detail);
+  assert.equal(clicked.signedPayloads.length, 1, 'a clicked swap runs at the floor the person approved');
+
+  const priced = await railOf(harness()).simulate(draftOf());
+  assert.equal(priced.ask, undefined, 'a priced quote asks for nothing');
 });

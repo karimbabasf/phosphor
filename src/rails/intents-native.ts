@@ -186,9 +186,19 @@ export const QUOTE_SLIPPAGE_BPS = 50;
    dry quotes: USDC, ETH, SOL, wNEAR, ZEC, BOME and AURORA, $5 to $2,000). The floor cannot catch a
    fee added to the request on the wire, because it is cut under a quote that already carries the
    fee; these two figures are inside 1Click's signature, so the fee shows here even when the echo
-   was rewritten to hide its line. A coin 1Click prices at nothing has no figure to check by, and
-   such a swap is valued off the quote and always waits for a click (src/proposals/draft.ts). */
+   was rewritten to hide its line. A coin 1Click prices at nothing has no figure to check by, on
+   either side, and such a swap always waits for a click: spending one, it is valued off the quote
+   (src/proposals/draft.ts); buying one, simulate says so in `ask` and execute holds a move the
+   policy decided (re-audit R-L15: a 50 percent hidden fee on a swap into one ran with no click). */
 export const SWAP_MAX_LOSS_BPS = 300;
+export const UNPRICED_SWAP_ASK = '1Click put no dollar price on this swap, so Phosphor cannot check what it gives up, and it waits for your OK.';
+
+// Whether 1Click put a dollar figure on both sides, which is what SWAP_MAX_LOSS_BPS is judged by.
+export function swapPriced(quote: Pick<OneClickQuote, 'amountInUsd' | 'amountOutUsd'>): boolean {
+  const inUsd = Number(quote.amountInUsd);
+  const outUsd = Number(quote.amountOutUsd);
+  return inUsd > 0 && outUsd > 0 && Number.isFinite(inUsd) && Number.isFinite(outUsd);
+}
 
 // The value a quote gives up past SWAP_MAX_LOSS_BPS, as one sentence; null when within it or unpriced.
 export function swapLossProblem(quote: Pick<OneClickQuote, 'amountInUsd' | 'amountOutUsd'>): string | null {
@@ -1134,7 +1144,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
           `inside ${INTENTS_VERIFIER}`,
       );
       const assets = { origin: { assetId: p.originAsset, decimals: p.originDecimals }, destination: { assetId: p.destinationAsset, decimals: p.destDecimals } };
-      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap, assets };
+      const ask = swapPriced(response.quote) ? {} : { ask: UNPRICED_SWAP_ASK };
+      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap, assets, ...ask };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
@@ -1181,6 +1192,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     ];
     if (problems.length > 0) {
       throw new ReasonError(causeOf(problems), `live quote does not match the approved draft: ${problems.map((x) => x.text).join('; ')}`);
+    }
+    // A quote with no dollar figure on a side has no bound to judge it by: a move the policy
+    // decided waits, and one a person clicked on runs at the floor they approved.
+    if (!swapPriced(quote) && hooks?.decidedBy !== 'human') {
+      return { ok: false, held: true, reason: 'simulation_failed', detail: `${UNPRICED_SWAP_ASK} Nothing was signed; the price is asked for again in a while.` };
     }
 
     // For an INTENTS quote this is an account id inside the verifier, not a chain address,
