@@ -1,14 +1,15 @@
-// What "backed up" is proven against: the words the last reveal showed, kept for as long as it
-// takes to write twelve words down and type three of them back.
+// What "backed up" is proven against: the words the last reveal or a new wallet showed, kept for
+// as long as it takes to write twelve words down and type three of them back.
 //
 // The proof used to read the phrase off the open wallet, so a reveal had to leave the wallet open,
 // for signing as much as for reading, until the idle lock. A reveal opens nothing now
 // (Keystore.readWithDataKey, readWithPassword), so it leaves this behind instead: one HMAC per
-// word under a key made for that reveal, compared in constant time, and wiped on a match, on the
-// next reveal and when its time is up. It is bound to the wallet's address, so a proof cannot
-// carry over to a wallet made or restored after it. It is not a vault: twelve words from a list
-// of 2048 are no secret from something that can read this process's memory. What it changes is
-// that nothing here can sign.
+// word under a key made for that reveal, compared in constant time, and wiped on a match, after
+// the fifth miss, on the next reveal and when its half hour is up. A lock leaves it, because the
+// words are often still being written down when the idle lock lands. It is bound to the wallet's
+// address, so a proof cannot carry over to a wallet made or restored after it. It is not a vault:
+// twelve words from a list of 2048 are no secret from something that can read this process's
+// memory. What it changes is that nothing here can sign.
 
 import crypto from 'node:crypto';
 
@@ -21,6 +22,9 @@ export const PHRASE_PROOF_MISSES = 5;
 
 type Held = { key: Buffer; words: Buffer[]; wallet: string; until: number; misses: number };
 let held: Held | null = null;
+/* The wipe when the half hour is up, so the proof leaves memory then and not at the next check.
+   Its clock stops while the Mac sleeps, which is why checkPhrase still reads the wall clock. */
+let expiry: NodeJS.Timeout | null = null;
 
 function mac(key: Buffer, index: number, word: string): Buffer {
   return crypto.createHmac('sha256', key).update(`${index}:${word.trim().toLowerCase()}`, 'utf8').digest();
@@ -30,6 +34,8 @@ export function rememberPhrase(words: string[], wallet: string, now: number = Da
   forgetPhrase();
   const key = crypto.randomBytes(32);
   held = { key, words: words.map((word, index) => mac(key, index, word)), wallet: wallet.toLowerCase(), until: now + PHRASE_PROOF_MS, misses: 0 };
+  expiry = setTimeout(forgetPhrase, PHRASE_PROOF_MS);
+  expiry.unref();
 }
 
 /* 'none' when nothing was revealed for this wallet in the last half hour, or the misses ran out:
@@ -56,6 +62,8 @@ export function checkPhrase(answers: Array<{ index: number; word: string }>, wal
 }
 
 export function forgetPhrase(): void {
+  if (expiry !== null) clearTimeout(expiry);
+  expiry = null;
   if (held !== null) {
     held.key.fill(0);
     for (const word of held.words) word.fill(0);

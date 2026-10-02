@@ -29,8 +29,8 @@ new starts. Copies of the key, and of your recovery phrase, that an unlock, a si
 wallet or words shown to you left as text are not overwritten: JavaScript cannot wipe them, so
 they stay in memory until it is reused, after the lock too. The check behind Prove it, made when a
 wallet is created or its words are shown, also outlives a lock: it goes when the words are proven
-or shown again, after five wrong tries or a try past half an hour, or when the app quits, and a
-program that can read memory can test each word against it.
+or shown again, after five wrong tries, after half an hour with the Mac awake, or when the app
+quits, and a program that can read memory can test each word against it.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right

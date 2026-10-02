@@ -36,3 +36,21 @@ test('the proof belongs to the wallet it was revealed for, and to the half hour 
   assert.equal(checkPhrase([at(0), at(1), at(2)], WALLET, 1000 + PHRASE_PROOF_MS + 1), 'none');
   assert.equal(checkPhrase([at(0), at(1), at(2)], WALLET, 2000), 'none', 'and an expired proof is gone');
 });
+
+/* The checks below pass a time inside the half hour, so only the timer can be what wiped it. */
+test('the proof leaves memory when its half hour is up, with no check to notice, and a newer reveal keeps its own half hour', (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  rememberPhrase(WORDS, WALLET, 1000);
+  t.mock.timers.tick(PHRASE_PROOF_MS - 1);
+  assert.equal(checkPhrase([at(0), at(1), at(2)], WALLET, 2000), 'match', 'gone before its half hour');
+  t.mock.timers.tick(1);
+  assert.equal(checkPhrase([at(0), at(1), at(2)], WALLET, 2000), 'none', 'still held after its half hour');
+
+  rememberPhrase(WORDS, WALLET, 1000);
+  t.mock.timers.tick(20 * 60_000);
+  rememberPhrase(WORDS, WALLET, 1000);
+  t.mock.timers.tick(15 * 60_000);
+  assert.equal(checkPhrase([at(3), at(4), at(5)], WALLET, 2000), 'match', 'the first reveal\'s timer wiped the second');
+  t.mock.timers.tick(15 * 60_000);
+  assert.equal(checkPhrase([at(3), at(4), at(5)], WALLET, 2000), 'none');
+});

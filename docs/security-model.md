@@ -173,9 +173,9 @@ your money.
   refuse that. A lock by any door drops the key and every key or phrase you asked to see and the
   window has not read yet, and an unread one also goes when it expires, but copies left by a
   signature, an unlock, a new wallet or words shown to you can stay in memory until it is reused,
-  and the check behind Prove it outlives a lock. What closes it: the chip vault, where the Secure
-  Enclave signs NEAR Intents moves itself, so that key never exists as bytes. It is planned, not
-  built. Until then, lock the wallet when you step away.
+  and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
+  closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
+  never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
 - **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
   to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
   started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
