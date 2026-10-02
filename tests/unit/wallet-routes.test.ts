@@ -460,6 +460,26 @@ test('reveal is a two step handshake whose nonce works exactly once', async () =
   }
 });
 
+/* A lock wipes every reveal the window has not read (re-audit R-L5), and never what Prove it checks
+   against: that is not a reveal, it answers at most five tries, and a lock lands most often while
+   the words are being written down. The Vault's Prove it after an unlock needs only the words. */
+test('a lock wipes an unread reveal but keeps what Prove it checks against', async () => {
+  const b = await boot();
+  try {
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const words: string[] = made.json.mnemonic;
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    assert.equal(start.json.ok, true);
+    await b.post('/api/lock', { token: b.token });
+    assert.equal((await b.get(`/api/wallet/reveal/${start.json.nonce}`)).status, 404, 'the lock left the unread reveal redeemable');
+    assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
+    const proven = await b.post('/api/vault/backup-proven', { token: b.token, words: [1, 5, 10].map((index) => ({ index, word: words[index] })) });
+    assert.equal(proven.json.ok, true, JSON.stringify(proven.json));
+  } finally {
+    await b.close();
+  }
+});
+
 test('a reveal is redeemable by the window, which sends no Origin on a GET', async () => {
   // The regression this exists for: every other test here sends an Origin header, and a
   // browser does not send one on a same-origin GET. Checking Origin alone made this route
