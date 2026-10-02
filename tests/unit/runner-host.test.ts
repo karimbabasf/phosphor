@@ -157,6 +157,10 @@ type HarnessOptions = {
   freeze?: { on: boolean };
   // Held open while a fire reads whether the API wallet is still approved.
   agentWait?: Promise<void>;
+  // Whether the wallet is open, as main.ts reads it; absent is open.
+  walletOpen?: () => boolean;
+  // Counts every read of the trading key.
+  keyReads?: { n: number };
   dir?: string;
 };
 
@@ -169,7 +173,9 @@ function harness(over: HarnessOptions = {}): Harness {
   const agentOk = { value: true };
   const session = createSession({ now: () => clock.now, isUnlocked: () => true, lock: () => {} });
   const runner = createRunnerHost({
+    ...(over.walletOpen !== undefined ? { walletOpen: over.walletOpen } : {}),
     apiWalletKey: async () => {
+      if (over.keyReads !== undefined) over.keyReads.n += 1;
       if (over.keyDelayMs !== undefined) await new Promise((r) => setTimeout(r, over.keyDelayMs));
       return over.key === undefined ? ('0x'.padEnd(66, '1') as `0x${string}`) : over.key;
     },
@@ -924,4 +930,32 @@ test('Freeze stops a change before the child signs new exits', async () => {
   assert.match(out.detail, /kill switch is on; nothing is changed/);
   assert.equal(h.forked[0].of('modify').length, 0);
   assert.equal(h.runner.get('pl_1')?.stop, 90, 'the plan keeps its levels');
+});
+
+// ---------- a shut wallet arms nothing on a reconcile (re-audit R-L2) ----------
+
+test('a reconcile that lands while the wallet is shut (a touch lease, a shut when idle) locks the waiting plan and reads no trading key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const store = createPlanStore(dir);
+  const waiting = row({ id: 'pl_wait', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
+  store.put(waiting);
+  const keyReads = { n: 0 };
+  const h = harness({ dir, walletOpen: () => false, keyReads });
+  h.approvals.set('p1', { hash: waiting.hash, status: 'executed' });
+  h.runner.onAccount(account());
+  await h.runner.reconcile(100);
+  await settle();
+  assert.equal(keyReads.n, 0, 'the trading key was never read');
+  assert.equal(h.forked.length, 0, 'no child was started');
+  assert.equal(h.runner.get('pl_wait')?.status, 'waiting');
+  assert.equal(h.runner.get('pl_wait')?.locked, true, 'it waits for the unlock');
+  assert.equal(h.session.sessionFor('pl_wait'), null, 'no signing session was opened');
+
+  // The unlock re-runs reconcile, and with the wallet open the plan arms.
+  const open = harness({ dir, walletOpen: () => true });
+  open.approvals.set('p1', { hash: waiting.hash, status: 'executed' });
+  open.runner.onAccount(account());
+  await open.runner.reconcile(100);
+  await settle();
+  assert.equal(open.forked[0]?.of('arm').length, 1);
 });

@@ -96,6 +96,8 @@ export type HostDeps = {
   user: string | (() => string);
   onEvent: (e: RunnerEvent) => void;
   killSwitch: () => boolean;
+  // Whether the wallet is open: reconcile re-arms a waiting plan only then. Absent reads as open.
+  walletOpen?: () => boolean;
   store: PlanStore;
   meta: (coin: string) => AssetMeta | null;
   mark: (coin: string) => number | null;
@@ -1200,7 +1202,11 @@ export function createRunnerHost(deps: HostDeps) {
         rearm.push(row);
       }
       for (const row of rearm) {
-        const out = await armRow(row);
+        /* A SHUT WALLET ARMS NOTHING HERE. While a touch's lease or a shut when idle holds the key
+           for the move it shuts behind, the trading key still reads, and a reconcile landing then
+           armed every waiting plan with it (re-audit R-L2). Such a row waits, locked, for the
+           unlock that re-runs this. */
+        const out = deps.walletOpen?.() === false ? { ok: false as const, reason: 'the wallet is locked' } : await armRow(row);
         if (!out.ok) {
           row.locked = true;
           persist(row);
