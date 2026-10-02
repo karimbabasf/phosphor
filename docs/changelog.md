@@ -13,8 +13,9 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   for a new wallet, usually $5. Paste it on the new step after the terms, Have an invite code?, or
   later under the same question in Add money. The app checks it on your Mac first and says what is
   waiting, that it has a typo, or that it has nothing left in it. No code? Press Skip.
-- The money lands right after your wallet is made, or when you open it. A claim signs one
-  transfer with the code's own key to your wallet's address, and your wallet key signs nothing.
+- The money lands right after your wallet is made, or when you press Add in Add money with your
+  wallet open. A claim signs one transfer with the code's own key, and your wallet key signs
+  nothing.
   The app calls it done only when NEAR Intents shows the code's one-time number spent, and
   Activity shows "Invite: +5 USDC". If you moved on before it lands, a note on Basic says so.
 - A claim that did not come through cannot be missed: the note on Basic stays until you close it,
@@ -25,17 +26,20 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - If the solver relay turns a claim away, the app sends it through 1Click instead, for about 0.25
   percent less, and a 1Click refund goes back to the code. A claim cut short by a quit is finished
   at the next start.
-- Before a claim is signed, the app rehearses it with a copy that expires a millisecond after a
-  recent block, so the outside server it checks with never holds a claim it could run later. Every
+- Before a claim on the solver relay is signed, the app rehearses it with a copy that expires a
+  millisecond after a recent block, so the outside server it checks with holds no claim it could
+  run later, unless it lies about the time, and then only for up to two minutes and only into your
+  wallet. A claim through 1Click is not rehearsed. Every
   signature is written down before it is made, the code's key is let go as soon as it can sign
   nothing more, and a claim stops, moving nothing, when your Mac's clock is more than two minutes
   behind NEAR's.
-- An invite code never reaches your assistant. One pasted in the chat leaves the box on its own,
-  your other words stay, and the code opens in Add money. The app turns away any chat message that
-  still carries one before the assistant sees it, and the log tail and the agent's log read cut
-  every code. All of them catch a code an editor or a chat app changed: hyphens turned into
-  dashes, invisible spaces, full-width letters, a first group cut short or PHOS left off. The
-  invite field reads all of those.
+- A pasted invite code never reaches your assistant. One pasted in the chat leaves the box on its
+  own, your other words stay, and the code opens in Add money. The app turns away any chat message
+  that still carries one before the assistant sees it, and the log tail and the agent's log read
+  cut every code as it was issued. All of them catch a code an editor or a chat app changed:
+  hyphens turned into dashes, invisible spaces, full-width letters, a first group cut short or
+  PHOS left off. The invite field reads all of those. A code someone changed by hand can still get
+  through, so paste codes into the invite field only.
 - The invite page on phosphor.money shows the code with Copy and the download, takes it out of
   the address bar before anything else runs, sends it nowhere and loads no analytics.
 - The terms card comes back once. The terms now carry the invite code rules (one claim per code,
@@ -76,19 +80,21 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   users or slept, or the minutes you picked went by) and how many moves wait for your OK, without
   saying what they are, and the Vault's lock timer says the window also locks with your screen.
 - The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault
-  stays, and the app now waits the time you picked; before, it always waited 15 minutes.
+  stays, and the app now waits the time you picked; before, it always waited 15 minutes. The one
+  exception is 15 minutes picked before this version: the app cannot tell it from the old default,
+  so it now reads as 5. Pick it again if you want it.
 - Approving with Touch ID checks your limits and Freeze once more right before anything is signed,
   and opens the wallet for that one move only. Showing your deposit address or your recovery
   phrase no longer opens the wallet.
 - Freeze over a damaged policy file still stops every plan and says the switch could not be saved,
   and Unfreeze waits until the file is fixed. Freeze tells you when it could not close your trading
   positions.
-- Proving your backup asks for three different words and asks you to show them again after five
-  misses. Finishing an interrupted migration counts wrong passwords like every other password
-  check.
+- Proving your backup asks for three different words. After two misses the window shows the words
+  again; after five, the check stops until you show the words again with Back it up. Finishing an
+  interrupted migration counts wrong passwords like every other password check.
 - A quote changed on its way to 1Click (a fee paying someone else, a field the app never sent, a
   value it never chose) is refused before anything is signed, and a swap gives up at most 3
-  percent of its value by 1Click's own figures.
+  percent of its value by 1Click's own figures, when 1Click gives a figure for both coins.
 - A swap, send, payout or Hyperliquid deposit moves exactly the coins its card showed. If the coin
   list names another coin or other decimals by the time you click, the move is refused and nothing
   is signed.
@@ -101,12 +107,13 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   was built, it starts nothing and asks you to install a fresh copy, with Details that fit the
   window. The security docs show how to check a release yourself.
 - Phosphor's window knows its own backend by a question only that backend can answer. If the
-  backend stops, its window closes at once and its keys go with it, and a fresh window opens when
-  the backend is back. A program that stopped the backend and took its place gets nothing it can
-  use, and Phosphor will not open onto it.
-- The Secure Enclave helper, the bundled runtime and the hand-over at launch each accept only the
-  signed Phosphor app, not any other program from its team, and the backend loads code only from
-  inside the installed app.
+  backend stops, its window closes within two seconds and its keys go with it, and a fresh window
+  opens when the backend is back. A program that stopped the backend and took its place gets no
+  token it can use, and Phosphor will not open onto it.
+- On a signed release, the Secure Enclave helper and the hand-over at launch accept only the
+  Phosphor app signed by Phosphor's team, and the bundled runtime only a Node runtime signed by
+  that team, not any other program from it. The backend loads code only from inside the installed
+  app.
 - The process that holds your key starts with no debugger signal, no NODE_OPTIONS from your Mac,
   no add-ons and no eval, runs only on a runtime signed by Phosphor's team, and loads only 14
   reviewed packages.
@@ -121,15 +128,18 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   builds nothing, deletes its keychain as soon as notarizing ends, and signs the update with Node
   alone. Release secrets live in a protected environment that waits for an approval and lets in
   only version tags, and the Release workflow has a dry run that builds, signs and notarizes and
-  publishes nothing. A release stops unless the app it signs is the tagged source file for file,
-  with the committed entitlements on every program inside, checked before signing and again on the
-  disk image and the update.
+  publishes nothing. A release stops unless the payload's own files match the tagged source and
+  every program inside carries only the committed entitlements, checked before signing and again
+  on the disk image and the update. The compiled programs and the installed packages are not
+  compared.
 - For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
   one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
   address you confirm by its first six and last six characters, and shows where every code stands
-  without ever showing a code. It runs only in a real terminal, from a file encrypted under a
-  passphrase of at least 20 characters, and rehearses every move with a signature no block can run
-  before it signs the real one. A dry run keeps its codes in the file as void, and status lists it
+  without ever showing a code. It refuses piped input, so a script or an agent does not run it by
+  accident (a program that fakes a terminal gets past that; the passphrase is what keeps the file
+  shut), works from a file encrypted under a passphrase of at least 20 characters, and rehearses
+  every move with a signature no block can run while this Mac's clock is right, before it signs
+  the real one. A dry run keeps its codes in the file as void, and status lists it
   as one. The script says plainly that the passphrase is what keeps the file shut.
 - `scripts/invite-proof.ts` checks both claim routes with your own money on throwaway accounts,
   records what NEAR Intents says about each, and sweeps the rest back.
@@ -137,7 +147,7 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   public (transactions and addresses the chain reader reads live, deposit addresses, test
   receivers, one curve constant), each now excused by its exact value. `npm run sweep` reads the
   history a push can publish (HEAD, the remote branches and the tags), takes `--history=all` or a
-  revision, and fails a shallow clone. CI runs it on every push and pull request, over the full
+  revision, and fails a shallow clone. CI runs it on every push to main and every pull request, over the full
   history and every pull request head, and checks every installed package's registry signature.
 - For people who build Phosphor: `npm run attack` plays a hostile program on your Mac against the
   app `npm run app:build` made and proves each defence holds, 26 cases including the three serious

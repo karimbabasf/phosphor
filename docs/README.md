@@ -20,7 +20,7 @@ files, and the three developer documents below sit beside them.
 
 ## For developers
 - [Architecture](architecture.md): the two-process topology, module map, data flow and failure modes.
-- [Security model](security-model.md): the trust boundary, the three verdicts, fail-closed rules, the approval token and the v1 limits.
+- [Security model](security-model.md): the threat model with the test behind each defence, the trust boundary, the three verdicts, fail-closed rules, the approval token and the v1 limits.
 - [Reference](reference.md): the tool surface, policy as sentences, the first run, config, keys and signing.
 
 ## Keeping these current

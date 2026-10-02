@@ -57,7 +57,9 @@ A deny rule naming a bare tool removes it from the model's context, in every per
 
 `driver.settings.json` is the one the app itself uses when a human presses START THE AGENT in the
 window. It is the same idea taken all the way: `Read` is denied there too, so the agent holds
-`mcp__phosphor__*` and nothing else at all. The reasoning is only that the person
+`mcp__phosphor__*` and Claude's web search (`WebSearch`), and nothing else. A page it wants is
+read through Phosphor's `web_read`, which opens only an address a search returned or the person
+typed. The reasoning is only that the person
 using the desktop app is not the person reading the code, and a tool nobody needs is a tool that
 can only be misused.
 

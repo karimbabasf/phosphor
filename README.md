@@ -6,7 +6,7 @@
 
 <p align="center">
   A Mac app that holds real money and lets an AI agent move it.<br>
-  Every move stops and waits for your click.
+  Every move above your limit waits for your click. Sends and withdrawals always do.
 </p>
 
 <p align="center">
@@ -27,15 +27,18 @@
 
 The app is the car. The agent is the driver. You hold the key.
 
-Phosphor runs on your Mac and nowhere else. There is no server, no account and no telemetry. Your
-keys sit in an enclave-wrapped file on your own disk. Any MCP agent drives the app (Claude Code,
-Codex, anything that speaks MCP), or the app runs its own assistant. The agent reads your money,
-prices a move and proposes it. The agent can never approve. Every execution takes a click in the
-window, and the policy engine runs your rules with no model in the path.
+Phosphor runs on your Mac and nowhere else. There is no server, no account and no telemetry. Every
+request it sends to NEAR Intents' 1Click service carries the label `phosphor`, which 1Click's
+public explorer shows. Your keys sit in an enclave-wrapped file on your own disk. Any MCP agent
+drives the app (Claude Code, Codex, anything that speaks MCP), or the app runs its own assistant.
+The agent reads your money, prices a move and proposes it. The agent can never approve. A send, a
+withdrawal, a rule change and any move above your click threshold wait for your click in the
+window. Smaller swaps, Hyperliquid deposits and trades run on their own, inside a daily limit,
+under rules the policy engine checks with no model in the path.
 
 Two venues, and only two. A swap reaches any coin NEAR Intents lists, on any chain it lists. A
-payout reaches every chain whose address the app can decode by itself: every EVM chain, Solana,
-Fogo and NEAR. Any other chain is refused by name. Perps run on Hyperliquid.
+payout reaches every chain the deposit card lists except Zcash and Aleo, which are refused by
+name, and only an address the app can decode and check by itself. Perps run on Hyperliquid.
 
 This is alpha software that moves real money. It has had no third-party audit. It is not a wallet
 service, an exchange, a broker or an adviser, and nothing it or your agent says is financial
@@ -74,7 +77,8 @@ copy against this repository's source yourself, follow
 Someone may send you an invite code, `PHOS-` and 27 letters and digits, usually as a link to
 phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Have an invite
 code? step, or later under the same question in Add money, and the money moves into your wallet
-once the wallet exists. Never paste a code into the chat: the app keeps it from your agent. How a
+once the wallet exists. Never paste a code into the chat: the app holds back a code it
+recognizes there, but one changed by hand can slip through to your agent. How a
 claim works: [docs/money.md](docs/money.md#invite-codes). To hand codes out yourself, see
 [Issuing invite codes](docs/money.md#issuing-invite-codes).
 

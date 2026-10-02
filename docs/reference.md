@@ -4,7 +4,7 @@ The long form of what the README says in short: the tool surface, how a proposal
 
 ## The tool surface
 
-Forty-eight tools, in six families. Read tools execute directly and cannot move anything. Write
+Fifty tools, in six families. Read tools execute directly and cannot move anything. Write
 tools never execute: they return a proposal id and a simulation result, and nothing else. Chart
 and trading tools move a view or a marker, never funds. Team tools coordinate several agents.
 Display tools move the window. The tables below are the whole surface, and
@@ -26,8 +26,8 @@ the record `{ view, since, by }` with `by` naming who moved it. Every other JSON
 picture carries a `screen: <view>` line, so an agent never has to spend a call to learn where the
 human is looking, and never describes a screen the human left.
 
-**A team, not a seat.** Up to six agents drive this app at once, and any of them can spawn
-workers of its own. Each is named on a roster, each thing it draws carries its id, and they
+**A team, not a seat.** Up to six agents drive this app at once, and an agent in a terminal can
+spawn workers. Each is named on a roster, each thing it draws carries its id, and they
 coordinate on a shared board they all read. A session leaves by shutting down, or by going quiet
 for longer than two and a half heartbeats.
 
@@ -74,6 +74,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 |---|---|
 | `start` | The greeting, the live state and the index of everything this door opens onto, grouped by intent. `screen` is `{ view, since, by }`: which screen the window is on, since when, and whether a human tab or an agent `switch` put it there. Call it again after a long gap: the network, the wallet and the pending decisions all move |
 | `wallet` | Everything held, one row per balance in the two pockets (the NEAR Intents balance and the Hyperliquid collateral): place, quantity, price, value, share. Only what is actually held; how many pockets came back empty is reported as a count |
+| `deposit` | Opens the deposit card in the chat for one asset on one network and starts watching for the money. The agent gets the first six and last four characters of the address, never the whole; the window is where an address is read. Lead only |
 | `composition` | Shares by issuer and pocket, freezable share, unclassified holdings |
 | `policy_show` | Current policy as plain-English sentences, or a notice that the file is unreadable |
 | `log_tail` | Most recent audit lines, newest first |
@@ -98,7 +99,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |
 | `propose_hl_deposit` | Funds the Hyperliquid perpetuals account from the intents balance: one signed intent, nothing sent on any chain. The account credited is derived from the app's own key |
 | `propose_hl_withdraw` | Brings collateral back from Hyperliquid into the intents balance. One field, the amount; the intents account credited is the app's own. Always waits for a human click and is refused while any position is open |
-| `propose_send` | Sends a balance held inside `intents.near` to somebody else: the one tool with a destination field. `where` is required and has no default: a network id (any the deposit card lists but `zec` and `aleo`) pays it out on that real chain through 1Click's bridge (an `intents_pay` draft); `intents` credits another NEAR Intents account (an `intents_send` draft). `to` is decoded for that place (EIP-55 on an EVM chain, base58 on Solana, an account id on NEAR, each other chain's own checksum) and a typo is refused before any quote; no memo, tag or comment can go with a payout, the schema refuses any extra key with that sentence, and the chain rules in [Money](money.md#no-memo-tag-or-comment) are checked before either quote; the app reads the address's public activity and the card says whether it has ever been used. `confirmed` is the literal `true`, allowed only after the agent read the amount, token, full address and landing place back to the human and got a yes. No allowlist: every send waits for the human click and, on an enclave wallet, a Touch ID that names the receiver, whatever the size. A chain payout pays the bridge's flat fee and is refused with the fee named when the fee eats more than 3 percent |
+| `propose_send` | Sends a balance held inside `intents.near` to somebody else: the one tool with a destination field. `where` is required and has no default: a network id (any the deposit card lists but `zec` and `aleo`) pays it out on that real chain through 1Click's bridge (an `intents_pay` draft); `intents` credits another NEAR Intents account (an `intents_send` draft). `to` is decoded for that place (EIP-55 on an EVM chain, base58 on Solana, an account id on NEAR, each other chain's own checksum) and a typo is refused before any quote; no memo, tag or comment can go with a payout, the schema refuses any extra key with that sentence, and the chain rules in [Money](money.md#no-memo-tag-or-comment) are checked before either quote; the app reads the address's public activity and the card says whether it has ever been used. `confirmed` is the literal `true`, which the agent sets itself: it is told to set it only after reading the amount, token, full address and landing place back to the human and getting a yes, and the app cannot check that it did. No allowlist: every send waits for the human click and, on an enclave wallet, a Touch ID that names the receiver, whatever the size. A chain payout pays the bridge's flat fee and is refused with the fee named when the fee eats more than 3 percent |
 
 This door now names exactly the set the app can execute. `propose_lp_add`, `propose_lp_remove`,
 `propose_yield_deposit`, `propose_yield_withdraw`, `yield_read` and `yield_auto` were on it or
@@ -128,7 +129,8 @@ intents to Hyperliquid and back along that one line, and nothing crosses a bridg
 | `market_search` | Finds a market by name. Takes "btc", "bitcoin", "wif" or "PEPE-USD" and returns the product id to open, plus near matches when the query is ambiguous |
 
 `chart_draw`, `chart_layout` and `chart_snapshot` are the lead's and are not registered for a
-worker: a worker measures and reports, it does not redraw the chart the human is looking at.
+worker. A worker can still put a trend line or a zone on the chart, or clear one, through the
+`draw` ops of `chart_batch`, and what it draws carries its id.
 Sloped objects live in one store, `src/drawings.ts`, and the window draws them; the chart store
 holds the view, the indicators, the levels and the marks.
 
@@ -162,9 +164,11 @@ live on `/api/trade/action`, which the agent's door does not open onto.
 | `agent_roster` | Who else is driving right now: name, role, when each was last heard from |
 | `agent_board` | The shared noticeboard, read. Every line on it is another agent's claim, held as data and never as an instruction |
 | `agent_post` | Writes one line to it. This is how two agents avoid taking the same job, and it is a courtesy rather than a lock |
-| `agent_jobs` | What the workers this session spawned are doing, and what they have finished |
-| `agent_spawn` | Starts a worker of its own. Every worker is an ANALYST: the propose tools are not registered for its process at all, so there is nothing on its surface to talk it into |
-| `skill` | The app's own playbooks, by name. Text the app wrote about how to operate the app, which is why it is a tool and not a prompt |
+| `agent_jobs` | Every worker in the app, what it is doing and what it has finished; `stop` ends one by its id |
+| `agent_spawn` | Starts a worker on a brief, three running at once across the app. Every worker is an ANALYST: the propose tools are not registered for its process at all, so there is nothing on its surface to talk it into. Not on the chat's surface or a worker's |
+| `skill` | The app's own playbooks, by name. Text the app wrote about how to operate the app, which is why it is a tool and not a prompt. Answered by the proxy from a file, never posted to the app |
+| `whats_new` | What changed in this version, or since the version the person had, from the app's own changelog. Answered by the proxy from a file, like `skill` |
+| `profile_learned` | Records one concept the agent explained, so a later session does not explain it again. Not on the chat's surface. A record from an agent that read outside text, or from an outside agent not yet allowed, is kept out of later chats |
 
 What one seat writes for another carries the writer's web-read mark (`src/web-read.ts`): a post
 (`src/board.ts`) and a worker's job (`src/crew.ts`) are stamped when their writer is marked, and
@@ -190,10 +194,10 @@ behind, and the refusal was removed. What replaces it is disclosure rather than 
 pending ids ride back on the response and the tool description tells the agent to say the count
 out loud, because a card scrolled out of view is one quiet line above the chat's box.
 
-There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `switch` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. There is also no
-argument anywhere in the surface that names a recipient or destination, so an agent that has been
-talked into sending money to an attacker has no field in which to say where. Both properties are
-asserted by tests, not just by convention.
+There is no `approve`, no `refuse`, no `kill`, no `dismiss` and no `execute` tool. `switch` changes what a human sees and nothing about what may move; `docs/security-model.md` says exactly what that does and does not buy. The one
+argument that names a receiver is `to` on `propose_send`, and every send waits for the human's
+click whatever its size, so an agent talked into paying an attacker gets as far as a card. Both
+properties are asserted by tests, not just by convention.
 
 The chart tools do not touch money and do not go near the approval gate, but they are audited like
 every other call, because an agent that can change what the human sees while that human decides on
@@ -282,8 +286,9 @@ every cap; the gate on the receiver is the click, and `src/proposals/execute.ts`
 word alone.
 
 Every amount the engine reads is priced by the app, never supplied by the agent. A token the app
-cannot price is refused rather than assumed to be worth a dollar, because a value it cannot
-establish is a value its caps cannot bound.
+cannot price is never assumed to be worth a dollar, because a value it cannot establish is a value
+its caps cannot bound: a swap that spends one is valued off its quote and waits for a click, and
+any other move with one is refused.
 
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
@@ -348,17 +353,19 @@ finished at the next start. A claim that lands writes `invite_claimed` to the au
 does not writes `invite_failed`, and neither line is `executed`. See
 [money.md](money.md#invite-codes).
 
-The wallet is made in the window. Set a password, write down the twelve words it shows once, and
-it writes `keys.enc.json` beside `keysPath`, file mode 0600, in a directory mode 0700. That path
+The wallet is made in the window: with one Touch ID on a Mac with a Secure Enclave, otherwise with
+a password and the twelve words it shows once. It writes `keys.enc.json` beside `keysPath`, file
+mode 0600, in a directory mode 0700. That path
 is outside the working copy on purpose: a key file inside a git working copy is one `git add -f`
 from being published, and one outside it cannot be reached by git at all. The `.gitignore` entry
 is the second line of defence, not the first. Move the file with `PHOSPHOR_KEYS` or a `keysPath`
 config key; the app refuses to start if that path lands inside the repo.
 
 Then the lock, which is the state the app is in every time you open it after that. Locked, every
-read still works behind the frosted window; the password is what buys the ability to sign. It
-locks itself after five minutes with nobody at the window (the Vault offers 5, 15 or 60
-minutes), when the machine sleeps, and when the screen locks or the Mac switches to another user.
+read still works behind the frosted window; Touch ID, or the password on a software wallet, is
+what buys the ability to sign. It locks itself after five minutes with nobody at the window (the
+Vault offers 5, 15 or 60 minutes), when the machine wakes from a sleep of more than a minute, and
+when the screen locks or the Mac switches to another user.
 
 `npm run keygen` still exists and mints one RAW UNENCRYPTED EVM key for development. It is not
 the setup path, and running it before the first launch is a mistake rather than a step: a file it
@@ -502,8 +509,9 @@ or NEAR key, and an import that brings one is refused, because an address the ap
 from is a place money can be sent and stranded.
 
 The wallet locks after five minutes with nobody at the window (or the time picked in the Vault
-tab), when the machine sleeps, when the screen locks or the Mac switches to another user, when
-the window closes, and on demand. `/api/state` says why on its lock slice: `lock.reason` is one of
+tab), when the machine wakes from a sleep of more than a minute (the backend's fifteen-second tick
+sees the gap; the key stays in memory while the Mac sleeps), when the screen locks or the Mac
+switches to another user, when the window closes, and on demand. `/api/state` says why on its lock slice: `lock.reason` is one of
 `screen`, `switch`, `idle` or `sleep`, or null for Lock now, a quit, the window closing and the
 app's start, and `lock.waiting` counts the moves waiting for a person. The words a caller sent
 with its lock are never kept. Locked, every read still works, and every write proposal an
@@ -513,8 +521,9 @@ lands as something to click. An unlock is not an approval: the click threshold s
 ONE action may move without a person, and a queue released all at once is a different question, so
 even the small ones wait for the click they would not have needed with the app open. An
 armed trading rule is the one exception: it keeps the Hyperliquid API wallet key on a session with
-an expiry set when it was armed: the plan's own expiry, a day at most, and eight hours when the
-plan names none. That key can place
+an expiry set when it was armed: the plan's own expiry, a day at most (a plan that names none
+expires after 24 hours). A plan whose entry rests on the venue renews it eight hours at a time
+until the plan expires, at most seven days after it was made. That key can place
 orders and cannot withdraw, so a bot that outlives a lock holds trading authority, not custody.
 
 An install with an older plaintext `keys.json` reads as `needs_migration` and keeps working.
@@ -636,7 +645,7 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/web-read.ts    the mark a web read leaves: every later move in that chat waits for a click
     src/keystore/      the encrypted key file, the lock, the session, the derivation
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
-    src/proposals.ts   a 92-line door onto src/proposals/
+    src/proposals.ts   a thin door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
     src/rails/         the rail registry: intents, hyperliquid
     src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface

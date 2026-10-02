@@ -49,7 +49,7 @@ size, and the policy engine never executes them on its own:
 
 Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
 spends a coin the app cannot price or one whose listed price nothing in the quote can check (see
-[Money](money.md#swap)), and every move the chat's agent proposes after it read text from outside
+[Money](money.md#swap)), and every move an agent proposes after it read text from outside
 Phosphor (see below).
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
@@ -85,8 +85,9 @@ under these rules like the chat's own agent, and a move it already asked for sti
 each time keeps every one waiting, and its row in the conversation keeps a Change that asks
 again. An Allow holds for that one connection: restart the agent and the window asks again.
 Phosphor cannot see what such an agent reads with its own tools, so a read it makes through
-Phosphor (a page, news, a chain read) still marks it as above, and the card says to allow only an
-agent you started yourself.
+Phosphor (news, a chain read) still marks it as above, and the card says to allow only an agent
+you started yourself. It cannot read a page through Phosphor: `web_read` opens only an address a
+search in the chat returned or you typed in the chat.
 
 ### After a move that did not go through
 

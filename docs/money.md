@@ -30,8 +30,9 @@ draws the card in the chat for one coin on one network and starts watching for t
 
 The card has three steps. Pick the network you are sending on: six quick tiles, then a search
 over every network the bridge credits. Pick the token: the list shows what that network credits
-and the minimum for each. Then read the address. The card draws it only once the wallet is open
-(Touch ID to show the address), checks the QR code by reading it back, and checks the clipboard
+and the minimum for each. Then read the address. The card draws it only once this Mac has opened
+the wallet since the app started; on a Touch ID wallet that has not, Touch ID to show the address
+reads the address and leaves the wallet locked. It checks the QR code by reading it back, and checks the clipboard
 after Copy address. Where the network needs a memo, the card says Memo, required with the address.
 
 Before the first address appears you confirm one line: only the tokens on the list can be sent
@@ -79,28 +80,33 @@ letters. The app checks it first and says what is waiting, that it has a typo, o
 nothing left in it. One wrong character, or two neighbours swapped, is caught on this Mac before
 the network is asked anything.
 
-The money moves once your wallet exists and is open: right after you make it, or after you
-unlock it. It lands as USDC in your NEAR Intents balance and Activity shows "Invite: +5 USDC".
+The money moves only while your wallet exists and is open: on first open, right after you make
+it; later, when you press Add in Add money. It lands as USDC in your NEAR Intents balance and
+Activity shows "Invite: +5 USDC".
 A claim can take up to two minutes. You can move on, and the app tells you when it lands.
 
 Each code is a key, and the key's address is an account inside NEAR Intents that holds the
 money. Claiming signs one transfer with the code's key: everything the code holds, to your
-wallet's address. Your address is inside the signed message, so nobody between this Mac and
-NEAR Intents can send the money anywhere else, and your own wallet key signs nothing. A transfer
-pays no fee, so a $5 code lands as exactly 5.00 USDC. The app calls a claim done only on NEAR
+wallet's address. On the solver relay route your address is inside the signed message, so nobody
+between this Mac and NEAR Intents can send the money anywhere else. On the 1Click route below,
+the code signs a transfer to a 1Click address instead, and the money reaches you only if 1Click
+delivers it. Either way your own wallet key signs nothing. A transfer on the relay route pays no
+fee, so a $5 code lands as exactly 5.00 USDC. The app calls a claim done only on NEAR
 Intents' own record: the code's one-time number (its nonce) spent, which NEAR Intents writes in
 the same step that moves the money. Your balance rising is shown, never taken as proof, because a
 deposit landing at the same moment would look the same.
 
-If the solver relay turns the claim away, the app sends it through 1Click instead. That route
-costs about 0.25 percent, so a $5 code lands as about $4.99, and the check says the smaller
-figure before you claim. If 1Click refunds it, the refund goes back to the code, and the claim
-ends only once the refund shows there.
+If the solver relay turns the claim away because it asks for authorization or a quote, the app
+sends it through 1Click instead. That route costs about 0.25 percent, so a $5 code lands as about
+$4.99. The first claim that takes this route was checked at the full $5; after that, until the
+app restarts, the check says the smaller figure. If 1Click refunds it, the refund goes back to
+the code, and the claim ends only once the refund shows there.
 
-Before the claim is signed, the app rehearses it: the same transfer, signed to expire one
-millisecond after a recent NEAR block and checked by NEAR Intents at that block. The NEAR RPC
-that answers the check is someone else's computer, so it only ever sees that copy, which no later
-block can run; the claim itself goes to the solver relay alone. Every signature is written down
+Before a claim on the solver relay is signed, the app rehearses it: the same transfer, signed to
+expire one millisecond after a recent NEAR block and checked by NEAR Intents at that block. The
+NEAR RPC that answers the check is someone else's computer, so it only ever sees that copy, which
+no later block can run; the claim itself goes to the solver relay alone. A claim on the 1Click
+route is not rehearsed: its signed transfer goes to 1Click. Every signature is written down
 before it leaves this Mac. A claim that fails moves nothing: the money stays on the code, and you
 can add it again from Add money. If you had moved on, the note on Basic stays until you close it.
 If this Mac's clock is more than two minutes behind NEAR's, the app signs nothing and says so: set
@@ -115,10 +121,11 @@ Never paste a code into the chat. What you type there goes to your assistant and
 provider, so the chat takes the code out of the box, leaves your other words, and opens the
 invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
-conversation. Both know a code with PHOS in front in every spelling the invite field reads, and a
-code with PHOS left off when spaces or dashes split it into its groups. A code you changed by
-hand can still get through, say one with a character missing, or one with no PHOS in front and a
-wrong character or odd spacing, so paste codes into the invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
+conversation. Both know a code with PHOS in front in almost every spelling the invite field reads,
+and a code with PHOS left off when spaces or dashes split it into its groups. A code you changed
+by hand can still get through, say one with a character missing, its zeros and ones typed as O, I
+or L, or one with no PHOS in front and a wrong character or odd spacing, so paste codes into the
+invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
 app that does is not Phosphor.
 
 ### Issuing invite codes
@@ -180,8 +187,8 @@ block. The NEAR RPC that answers the simulation is someone else's computer. No l
 run a rehearsal as long as the block's time is true, and the script refuses a block stamped less
 than a second behind this Mac's clock, so with this clock right the RPC never holds bytes that
 could move money. A Mac clock running fast is the one thing that check cannot see, so every
-account a rehearsal pays (T, your typed address, or codes already in the file) has its key on
-disk before the rehearsal is signed. Only then is the real payload signed, once, written to the
+account a rehearsal pays is one you meant to pay: T, the address you typed for a withdraw, or
+codes whose keys are already in the file. Only then is the real payload signed, once, written to the
 file, and sent to the solver relay. The script waits until NEAR
 Intents shows the payload's one-time number (its nonce) spent, reads every code back, marks it
 open, and prints the links once. Give one link to one person, and never post them.
@@ -197,7 +204,7 @@ sent. A dry run of `issue` writes its codes to the file as void before it signs,
 could take back anything that ever reached them, and `status` lists it as a dry run; it takes the
 file's lock like any write. If NEAR's final block looks less than a second behind this Mac's
 clock (an honest one trails by about 2.6 s, so a clock running slow shows this), or the RPC does
-not answer, a command stops before it signs anything and says so. A batch then waits for
+not answer, a command stops before it signs anything that can run, and says so. A batch then waits for
 `issue --resume`.
 
     npm run invite -- status
@@ -209,8 +216,9 @@ batch that never ran or a dry run). It never shows a code.
     npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
 
 pays each open code's balance back to T, signed with that code's own key, and marks it
-reclaimed. A code that already holds under a cent is marked claimed. After a reclaim its link
-says "This code was already used, or it has a typo." With no flag it takes every open code,
+reclaimed. A code that already holds under a cent is marked claimed. After a reclaim the app
+says of that code "This code has nothing left in it. Ask whoever sent it for a new one." With no
+flag it takes every open code,
 after you type yes.
 
     npm run invite -- withdraw --to <address>
@@ -273,7 +281,8 @@ is refused before any price is asked. The app asks for a price once per swap and
 the least you will get, one percent under that quote. A floor you name yourself is kept, but a
 floor of zero, or one more than 20 percent below the app's quote, is refused. Under the click
 threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
-page, the news, a chain read) earlier in that chat;
+page, the news, a chain read) earlier in that session, was started outside Phosphor and is not
+allowed yet, or the swap spends a coin the app cannot price;
 above it, the card shows what you pay and what you get at least, and waits for your click. See
 [Policy](policy.md#the-click-threshold).
 
@@ -293,10 +302,12 @@ are different moves with different fees, and a wrong choice is not reversible.
 
 ### The read-back
 
-Before it proposes, the agent reads the move back to you and waits for your yes: the amount,
-the token, the full address character for character, and where it lands. It may only send to an
-address you typed or pasted in the conversation, never one from a tool result, a page or a file.
-A send the agent has not confirmed cannot be expressed: the tool refuses it.
+Before it proposes, the agent is told to read the move back to you and wait for your yes: the
+amount, the token, the full address character for character, and where it lands. It is told to
+send only to an address you gave it in the conversation, never one from a tool result, a page or
+a file. Those are instructions to your assistant, not checks: the app cannot tell where an
+address came from. The card and the Touch ID dialog show the address in full, and your click is
+the check.
 
 The app then decodes the address for the place it is going. A mistyped address is refused before
 any quote (see [Troubleshooting](troubleshooting.md#a-send-was-refused-for-a-typo)), and a
@@ -364,7 +375,9 @@ agent attaches to a receiver is kept as data and never drawn as a name.
 
 `propose_hl_deposit` moves USDC from your intents balance into your Hyperliquid account so a plan
 has collateral. One signed intent, nothing sent on any chain, and the account credited is your
-own. The card is titled Fund trading. Under the click threshold it runs on its own.
+own. The card is titled Fund trading. Under the click threshold it runs on its own, with the same
+exceptions as a swap: an assistant that read outside text, or one started outside Phosphor and
+not allowed yet, waits for your click.
 
 The fee is almost flat, about $0.32 plus 0.25 percent, so it is about 3.4 percent on $10 and
 about 0.3 percent on $1,000. The app refuses any deposit whose fee is above 5 percent, which is
@@ -440,8 +453,9 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A Hyperliquid withdrawal is refused under 5 USDC.
 - A swap floor more than 20 percent below the app's quote is refused as no floor at all.
 - A swap may give up at most 3 percent of its value to fees and price, by the swap service's own
-  dollar figures for both sides. A quote whose request carries a fee, a field or a value the app
-  did not ask for is refused before anything is signed.
+  dollar figures for both sides. When the swap service gives no dollar figure for a coin there is
+  nothing to measure by, and no cap applies. A quote whose request carries a fee, a field or a
+  value the app did not ask for is refused before anything is signed.
 - A move runs with the coins its card was priced with. If the swap service's coin list names a
   different coin, or counts one in different decimals, when you click, nothing is signed and you
   ask again for a fresh quote.

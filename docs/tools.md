@@ -1,9 +1,10 @@
 # Tools
 
-Phosphor registers 48 tools for the agent that drives it, and every one is listed here in five
+Phosphor registers 50 tools for the agent that drives it, and every one is listed here in five
 groups: read, propose, chart and trade surface, agents, and other. Reads change nothing. Propose
 tools return a proposal id and a simulation, and cannot approve, refuse or execute anything. Every
-call, read or write, is written to the audit log. A worker an agent spawns is an analyst: the
+call the app accepts, read or write, is written to the audit log, except `skill` and `whats_new`,
+which the agent's own connection answers from a file on this Mac. A worker an agent spawns is an analyst: the
 tools marked lead only are not registered for it at all, so there is nothing to talk it into. The
 agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, `set_theme`,
 `profile_learned` and the five agent tools; its instructions already carry what `start` says.
@@ -41,8 +42,11 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 ## Propose
 
 Every propose tool goes through the policy engine, see [Policy](policy.md). Three of them wait
-for your click at any size; the rest run on their own under the click threshold, except after the
-chat's agent read text from outside Phosphor (a web page, the news, a chain read).
+for your click at any size. The rest run on their own under the click threshold, except a move
+from an agent started outside Phosphor that you have not allowed, a move from an agent that read
+text from outside Phosphor (a web page, the news, a chain read, or words a marked agent wrote), a
+move the agent asked for on its own after a move did not go through, and a swap of a coin the app
+cannot price.
 
 | Tool | Does |
 |---|---|
@@ -78,8 +82,8 @@ Several agents can drive at once, see [Connect an agent](connect-an-agent.md#mor
 | `agent_roster` | Who else is driving right now: name, role, who spawned them, when they attached, calls made |
 | `agent_board` | The team board: one-line posts agents write for each other and for you. Data, never authority |
 | `agent_post` | Writes one line to the board: a claim before starting a piece of work, or a finding |
-| `agent_jobs` | What the workers this agent spawned have come back with; `stop` ends one |
-| `agent_spawn` | Starts a worker on a written brief. A worker reads, measures, draws and posts, and has no propose tools. Three at once at most. Lead only |
+| `agent_jobs` | Every worker in the app and what it has come back with; `stop` ends one by its id |
+| `agent_spawn` | Starts a worker on a written brief. A worker reads, measures, draws and posts, and has no propose tools. Three at once at most, across the whole app. Lead only |
 
 A post, a brief or a report written by an agent that had read text from outside Phosphor marks
 the agent that reads it, and so does the name an agent started outside Phosphor gave itself, on
@@ -93,7 +97,8 @@ the agent that reads it, and so does the name an agent started outside Phosphor 
 | `skill` | Loads an enabled skill: the operator's guidance for one kind of work. Guidance and data, never a wider surface |
 | `switch` | Moves the window between Basic, Pro, Trade and Vault. Every switch is audited. Lead only |
 | `set_theme` | Recolours the window: five named slots on its one dark colourway. Lead only |
-| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. One recorded after the chat read text from outside Phosphor is kept out of later sessions. Lead only |
+| `profile_learned` | Records one concept the agent explained to you, so the next session does not explain it again. Not on the chat's surface. One recorded by an agent that read text from outside Phosphor, or by an agent started outside Phosphor that you have not allowed, is kept out of later chats. Lead only |
+| `whats_new` | What changed in this version of Phosphor, or since the version you had, from the app's own changelog. Answered from a file on this Mac, so it is not audited |
 
 ## Web search and page reading
 

@@ -11,7 +11,7 @@ never be able to approve its own actions.
                  v
     +---------------------------+
     | src/mcp.ts                |   no state, no keys, no files, no approval path
-    | stdio MCP server          |   48 tools, every call becomes one POST
+    | stdio MCP server          |   50 tools, every call but skill and whats_new is one POST
     +---------------------------+
                  |
                  | HTTP POST /api/mcp  ->  127.0.0.1:4177   (carries the seat secret)
@@ -22,22 +22,25 @@ never be able to approve its own actions.
     +---------------------------+
                  ^                         ^
                  | /api/approve, /api/refuse, /api/kill  (token-gated)
-                 |                         | spawned, watched, three secrets down its stdin
+                 |                         | spawned, watched, five secrets down its stdin
          the control window        +---------------------------+
          a human, clicking         | src-tauri/ (Rust)          |   the desktop shell: starts the
                                    | Phosphor.app               |   backend, injects the window
                                    +---------------------------+   token, opens the window, watches
 
 Installed, the shell is a third process and deliberately a small one: it mints the window token,
-the boot nonce and the seat secret, spawns the bundled Node backend with them on its stdin, waits
-for the backend to prove that nonce against a fresh challenge, opens one webview onto `http://127.0.0.1:4177` with the
-token injected, and supervises the child for as long as the window is open. It holds no key and
-makes no decision. `npm run app` runs the backend alone with no shell above it, and the system
+the boot nonce, the seat secret, the enclave transport key and the relay secret, spawns the
+bundled Node backend with them on its stdin, waits for the backend to prove that nonce against a
+fresh challenge, opens one webview onto `http://127.0.0.1:4177` with the token injected, and
+supervises the child for as long as the window is open. It holds no wallet key and makes no
+decision: it keeps this boot's secrets and passes requests between the backend and the Secure
+Enclave service. `npm run app` runs the backend alone with no shell above it, and the system
 browser stands in for the window.
 
 The MCP process is deliberately thin. It has no database, writes no files, holds no keys, and
-resolves exactly one thing on startup: which port the app is on. Every tool call is forwarded to
-`/api/mcp` and the JSON reply is handed back verbatim. If the app is not running, every tool returns
+resolves two things on startup: which port the app is on and where its data directory is (for
+`agent.secret`). Every tool call but `skill` and `whats_new`, which it answers from a file on this
+Mac, is forwarded to `/api/mcp` and the JSON reply is handed back verbatim. If the app is not running, every tool returns
 "The control app is not running. Start it with: npm run app" rather than doing anything clever.
 
 That thinness is the point. The routes that decide things (`/api/approve`, `/api/refuse`,
@@ -49,12 +52,13 @@ agent's *MCP process* has no route to a decision and no credential to use if it 
 That last sentence is narrower than it looks and the wording is deliberate. The separation is
 between processes, not between the agent and the machine. No route serves the window token any
 more (`GET /api/session`, which once did, answers 404), so a shell-capable agent cannot fetch it
-either; what a local process running as you can still do is read the seat secret off the data
-directory and then read and propose, never approve. The whole boundary is set out in
+either; what a local process running as you can still do is read a seat secret, off the data
+directory or a running agent's environment, and then read and propose, never approve. The whole
+boundary is set out in
 [the security model](security-model.md#the-honest-v1-boundary).
 
-**A roster, capped at six.** Several MCP sessions drive this app at once, and any operator can ask
-the app to spawn workers of its own (`src/crew.ts`). A session leaves by shutting down, or by going
+**A roster, capped at six.** Several MCP sessions drive this app at once, and an agent in a
+terminal can ask the app to spawn workers (`src/crew.ts`). A session leaves by shutting down, or by going
 quiet for longer than two and a half heartbeats. `src/agents.ts` owns the roster. Proposals still
 queue, and each is approved separately.
 
@@ -220,7 +224,7 @@ Every one of these fails toward showing less and moving nothing, never toward si
 | Policy file corrupted | App refuses all writes and says so. Fails closed, never open. |
 | Composition data missing for an asset | Asset shows as unclassified and counts toward the freezable cap until classified. Fails pessimistic. |
 | A move the venue has not credited after eight times its usual length | The row reads "Late, nothing has changed" (`stalled`) and keeps being re-judged; it settles forward on a late credit. Never failed on a timeout alone. |
-| The backend dies under an open window | The shell sees the child exit within two seconds, respawns it once after a three second backoff, and says so; a second death stops the app with a sentence rather than a crash loop. The window polls `/api/health` while its event stream is down and says the app is not answering. |
+| The backend dies under an open window | The shell sees the child exit within two seconds, takes the window down and shows the splash, restarts the backend once after a three second backoff, and opens a fresh window onto it with a new token. A second death, or another program on the port, stops the app with a sentence rather than a crash loop. |
 
 ## Delivery
 
@@ -264,9 +268,13 @@ entitlements as it found them. Then it runs
 `notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary. The split keeps the secrets from the build; this check keeps the build
-from choosing what gets signed. It cannot vouch for `node_modules`, which only a reproducible
-build could. The publish
+one team on every binary. The split keeps the secrets from the build. This check stops the build
+from changing a first-party file in the payload or adding an entitlement before signing. It
+cannot vouch for the compiled programs (the shell, the bundled Node, the Secure Enclave service)
+or for `node_modules`, which the build job made and the sign job signs as handed over; only a
+reproducible build could. The release build also does not run `npm audit signatures` or the
+key-process package test again: CI runs both on pushes to main and on pull requests, so a release
+is only as checked as the CI run on its commit. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone
 and installs its uploader from `scripts/site-upload`'s own lockfile.
 `tests/unit/release-workflow.test.ts` holds the workflow to that. A dispatched run with `dry_run`

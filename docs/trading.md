@@ -88,12 +88,14 @@ Hyperliquid API wallet the app keeps for trading: by the venue's own signing spl
 and cancel orders, and it cannot withdraw, cannot transfer, and cannot approve another agent. The
 session lasts as long as the plan's expiry, and never more than 24 hours. When it runs out, a
 waiting plan shows Needs unlock and re-arms on your next unlock; a placed plan renews its session,
+eight hours at a time until the plan itself expires (at most seven days after it was made),
 because a fill needs the key to be protected; an open plan needs no key at all.
 
 ## After the wallet locks
 
-The lock wipes the wallet key from memory, so nothing can be signed with it: no swap, no send, no
-funding, no withdrawal, and no new plan can arm. A plan that was already armed keeps its session
+The lock overwrites the wallet key the app holds, so nothing can be signed with it: no swap, no
+send, no funding, no withdrawal, and no new plan can arm. (Copies a signature left as text can
+stay in memory until it is reused; see [Known limits](known-limits.md).) A plan that was already armed keeps its session
 key until that session ends, so a bot that outlives a lock holds trading authority, not custody.
 It can place the entry it was armed for and its exits; it cannot move money out.
 
@@ -102,9 +104,11 @@ you unlock. Only Unlock re-arms it: showing an address, revealing the phrase or 
 with Touch ID does not. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
 nothing fires until they are back.
 
-Freeze everything in the top bar ends all of it: every plan is finished, resting orders are
-cancelled, and every open position on the account is closed at the market price when the venue
-can be reached. A position that does not close keeps its stop and target resting. Closing takes
+Freeze everything in the top bar ends all of it: the orders your plans have resting are
+cancelled, every open position on the account is closed at the market price when the venue can be
+reached, and every plan whose position closed is finished. A plan whose position does not close
+stays live with its stop and target resting. Orders you placed on Hyperliquid yourself are not
+cancelled. Closing takes
 the trading key, which a running plan holds and an open wallet hands over: with neither (the
 wallet locked and no plan running, or no trading key for the account) nothing on Hyperliquid can
 be closed, the freeze still stops everything else, and the window says the positions are still
