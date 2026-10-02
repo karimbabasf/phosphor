@@ -722,6 +722,19 @@ test("1Click's word that it refunded a convert closes it only once the refund sh
   assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
 });
 
+test('a refund figure shrunk to a crumb does not close a convert 1Click still holds: the refund must show at what went in, less the most a convert may lose', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING'; // 1Click still holds the deposit
+  const inner = oneclickOn(b.chain);
+  const crumb: MoneyNet = { ...b.net, oneclick: { ...inner, status: async (h) => ({ ...(await inner.status(h)), status: 'REFUNDED', reported: 'REFUNDED', refundedAmount: '0.000001' }) } };
+  await b.run(['convert'], [PASS, 'yes'], crumb);
+  assert.equal(converts(b)[0]?.state, 'pending');
+  setBalance(b.chain, b.t, BASE_USDC, 10n); // a few base units of the same USDC reach T meanwhile
+  await b.run(['convert'], [PASS], crumb);
+  assert.equal(converts(b)[0]?.state, 'pending', 'never closed on a crumb any USDC on T would show');
+});
+
 test('with its nonce pruned, a convert 1Click is still delivering is never lapsed on a failed status read', async () => {
   const b = await bench();
   setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
