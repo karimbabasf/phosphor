@@ -533,7 +533,7 @@
     var facts = dom.el('ul', 'firstrun-facts');
     facts.appendChild(fact(icon('mac'), 'Made and kept on this Mac.', 'Nothing is uploaded, and there is no account to make.'));
     if (kind === 'enclave') {
-      facts.appendChild(fact(icon('lock'), 'Locked by this Mac\'s Secure Enclave.', 'Touch ID opens it, and the key never leaves the chip.'));
+      facts.appendChild(fact(icon('lock'), 'Locked by this Mac\'s Secure Enclave.', 'Touch ID opens it, and the key that seals it never leaves the chip.'));
     } else {
       facts.appendChild(fact(icon('lock'), 'Locked by your password.', 'Nobody can reset it, not us, not your assistant. Your recovery phrase brings the wallet back.'));
     }
