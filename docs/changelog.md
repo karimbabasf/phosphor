@@ -32,7 +32,8 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   wallet. A claim through 1Click is not rehearsed. Every
   signature is written down before it is made, the code's key is let go as soon as it can sign
   nothing more, and a claim stops, moving nothing, when your Mac's clock is more than two minutes
-  behind NEAR's.
+  behind NEAR's. Then the first run, the Add money line or the note on Basic says your Mac's clock
+  is off: set date and time to automatic in System Settings, then add the code again.
 - A pasted invite code never reaches your assistant. One pasted in the chat leaves the box on its
   own, your other words stay, and the code opens in Add money. The app turns away any chat message
   that still carries one before the assistant sees it, and the log tail and the agent's log read
@@ -64,6 +65,16 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   its agent was started outside Phosphor, says why on its card, and a cancelled card's Details say
   when you said no. A concept your agent records after reading outside text stays on your Mac and
   is not handed to later agents.
+- An agent that reads a venue's own words (an error from 1Click, the solver relay, Hyperliquid or a
+  chain's node, a refund reason, the NEAR Intents status page) waits for your click on every move
+  after that, the way it does after reading a web page.
+- A second agent that repeats a move is told which move it repeats, never where that move was paid.
+  An agent that reads how a move is going sees the first six and last four characters of the
+  address 1Click made for it; the card in the window shows it whole.
+- Only the agent that holds a seat can end it, so another program on your Mac cannot drop an agent
+  you allowed, and closing an agent frees its seat right away instead of about 12 seconds later.
+- A send card says which coin leaves when you hold it from more than one chain inside NEAR
+  Intents: 1 USDC from Base.
 - Try again on a failed swap names the coins only when they are plain tickers, and a coin name
   with a space or a web address in it is refused.
 - Grok asks you for a link instead of searching the web.
@@ -109,7 +120,9 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - Phosphor's window knows its own backend by a question only that backend can answer. If the
   backend stops, its window closes within two seconds and its keys go with it, and a fresh window
   opens when the backend is back. A program that stopped the backend and took its place gets no
-  token it can use, and Phosphor will not open onto it.
+  token it can use, and Phosphor will not open onto it. Copy Log, Copy MCP Config and an update's
+  check read with a read-only key, so a program that grabs Phosphor's port sees nothing that can
+  approve or unlock.
 - On a signed release, the Secure Enclave helper and the hand-over at launch accept only the
   Phosphor app signed by Phosphor's team, and the bundled runtime only a Node runtime signed by
   that team, not any other program from it. The backend loads code only from inside the installed
@@ -141,8 +154,22 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   every move with a signature no block can run while this Mac's clock is right, before it signs
   the real one. A dry run keeps its codes in the file as void, and status lists it
   as one. The script says plainly that the passphrase is what keeps the file shut.
+- `npm run invite -- convert` turns any other USDC that reached the treasury inside NEAR Intents
+  (on Base, Ethereum, Arbitrum, Solana and ten more chains) into NEAR USDC through 1Click, with one
+  signature from the treasury, after it shows what each will bring and you type yes. Issue, status
+  and treasury say exactly what arrived and to run it.
 - `scripts/invite-proof.ts` checks both claim routes with your own money on throwaway accounts,
-  records what NEAR Intents says about each, and sweeps the rest back.
+  records what NEAR Intents says about each, and sweeps the rest back. Its `convert` does the same
+  for the proof's treasury, `run` converts first and says so instead of waiting for NEAR USDC
+  forever, and `sweep` never calls the file done while a convert is unfinished.
+- The docs and phosphor.money say only what 0.10.13 does: small moves can run under your limit
+  while sends, withdrawals and rule changes always wait, the agent's read-back of an address is an
+  instruction and the card is the check, Freeze leaves orders you placed by hand, and the lock
+  overwrites the key it holds while copies a signature left can stay in memory.
+- phosphor.money/security shows Phosphor's threat model: what the agent can and cannot do, each
+  defence with the test that proves it, what stays open, and how to check a release yourself.
+- For people who build Phosphor: the update signer names its key the way minisign does, so a test
+  that failed about one run in sixteen passes every time.
 - For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
   public (transactions and addresses the chain reader reads live, deposit addresses, test
   receivers, one curve constant), each now excused by its exact value. `npm run sweep` reads the

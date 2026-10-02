@@ -77,10 +77,12 @@ copy against this repository's source yourself, follow
 Someone may send you an invite code, `PHOS-` and 27 letters and digits, usually as a link to
 phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Have an invite
 code? step, or later under the same question in Add money, and the money moves into your wallet
-once the wallet exists. Never paste a code into the chat: the app holds back a code it
-recognizes there, but one changed by hand can slip through to your agent. How a
-claim works: [docs/money.md](docs/money.md#invite-codes). To hand codes out yourself, see
-[Issuing invite codes](docs/money.md#issuing-invite-codes).
+once the wallet exists. If your Mac's clock runs more than two minutes behind, nothing moves and
+the app says so: set date and time to automatic, then add the code again. Never paste a code into the
+chat: the app holds back a code it recognizes there, but one changed by hand can slip through to
+your agent. How a claim works: [docs/money.md](docs/money.md#invite-codes). To hand codes out
+yourself, see [Issuing invite codes](docs/money.md#issuing-invite-codes): any USDC you send the
+treasury inside NEAR Intents works, because `npm run invite -- convert` turns it into NEAR USDC.
 
 ## Connect an agent
 
@@ -88,7 +90,9 @@ The first run asks which agent you use and registers Phosphor with it. To do it 
 **Phosphor > Copy MCP Config** in the menu bar puts the one line on your clipboard with your real
 paths filled in. Run it in the directory you want the agent to work from. An agent you start
 yourself like this asks once in the window, "Allow this agent?", and until you allow it every move
-it proposes waits for your click.
+it proposes waits for your click. Any agent that reads a web page or a stranger's words through
+Phosphor (a token name, a memo, a venue's error text) waits for your click on every move after
+that, until its session ends.
 
 Then ask it things.
 
@@ -134,7 +138,8 @@ Read them at [phosphor.money/docs](https://phosphor.money/docs), or in
 [docs/](docs/README.md).
 
 - [Getting started](docs/getting-started.md): download, wallet, backup, the lock and the brake.
-- [Security model](docs/security-model.md): the trust boundary, the fail-closed rules, the limits.
+- [Security model](docs/security-model.md): the threat model, the trust boundary, the fail-closed
+  rules, the limits.
 - [Known limits](docs/known-limits.md): what this build does not cover.
 - [Architecture](docs/architecture.md) and [Reference](docs/reference.md): for people changing it.
 - [SECURITY.md](SECURITY.md): reporting a vulnerability privately.
