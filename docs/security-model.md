@@ -128,8 +128,8 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   gets its signature, then the key goes. During the first run the lock card covers it, so the
   recovery words leave the screen and the unlock field takes the keyboard; unlocking goes back to
   the same step. Proof: attacks `10-screen-lock-shell`, `10-screen-lock-backend` (the wallet
-  shuts); `lock-when-signed.test.ts` (a move already signing); `scripts/firstrun-lock-proof.ts`
-  (the first run).
+  shuts); `lock-when-signed.test.ts` (a move already signing); `firstrun-e2e.test.ts` and
+  `scripts/firstrun-lock-proof.ts` (the first run).
 - **One Touch ID opens more than it should.** A Touch ID that shows your deposit address or your
   recovery phrase leaves a locked wallet locked. A Touch ID that approves a move on a locked
   wallet opens it for that move alone: no trading plan arms on it, even while the app starts, and
