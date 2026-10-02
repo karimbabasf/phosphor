@@ -158,9 +158,14 @@ The signing keys (the Developer ID and the update key) are read only in the rele
 `release` environment, which lets only `v*` tags in and waits for the maintainer's approval. The
 job that puts the disk image on phosphor.money reads the Blob token alone, in a `release-site`
 environment that starts only after that approved job, so a release asks for one approval. Both
-are settings on the repository, not code in it; the GitHub API shows them
-(`gh api repos/karimbabasf/phosphor/environments`, and each environment's
-`deployment-branch-policies`).
+are settings on the repository, not code in it. The GitHub API shows them: the approval each
+environment asks, then which tags each lets in.
+
+```
+gh api repos/karimbabasf/phosphor/environments
+gh api repos/karimbabasf/phosphor/environments/release/deployment-branch-policies
+gh api repos/karimbabasf/phosphor/environments/release-site/deployment-branch-policies
+```
 
 What it means: the maintainer's GitHub account, the only one that can push, approves every
 release and can change those settings. Someone who takes that account can ship a signed release.

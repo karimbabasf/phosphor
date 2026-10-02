@@ -213,8 +213,8 @@ your money.
   key, are read only in the `release` environment, which lets only `v*` tags in and waits for the
   maintainer's approval; the site upload's `release-site` environment holds the Blob token alone
   and starts only after that approved job. These are repository settings, not code, so the
-  source cannot show them; the GitHub API can (`gh api repos/karimbabasf/phosphor/environments`,
-  and each environment's `deployment-branch-policies`). The
+  source cannot show them; the GitHub API can
+  ([Known limits](known-limits.md#a-release-rests-on-one-github-account) has the commands). The
   maintainer's account, the only one that can push, approves each release and can change those
   rules. What closes it: a second approver, or signing that needs a device outside GitHub.
 - **An armed trading plan outlives a lock.** Its trading key can place and cancel orders until the

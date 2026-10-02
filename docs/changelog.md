@@ -165,8 +165,8 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   entitlements, checked before signing and again on the disk image and the update. The compiled
   programs and the installed packages are not compared. The release notes give the disk image and
   the update archive each their own command and the exact line it prints, and their attestation
-  check pins the release workflow and the version's tag:
-  `gh attestation verify <file> --repo karimbabasf/phosphor --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml --source-ref refs/tags/v<version>`.
+  check pins the release workflow and the version's tag (`--signer-workflow` and
+  `--source-ref`), as the README and Getting started now do.
 - For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
   one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
   address you confirm by its first six and last six characters, and shows where every code stands
