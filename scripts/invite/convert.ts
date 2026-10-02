@@ -250,8 +250,13 @@ async function judge(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Ve
   const fate = await transferFate(fateReads(net), { account: move.signer, nonce: move.nonce ?? '', deadline }, net.now()).catch(() => null);
   if (fate?.ran === false) return fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
   let ran = fate?.ran === true;
-  // A nonce that is not V1 can still be asked whether it was spent, as the claim's Plan B asks it.
-  if (fate?.ran === null && fate.why === 'not_the_verifiers') ran = (await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null)) === true;
+  // A nonce that is not V1 can still be asked whether it was spent, as the claim's Plan B asks it;
+  // a read that fails is no answer here too.
+  if (fate?.ran === null && fate.why === 'not_the_verifiers') {
+    const used = await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null);
+    if (used === null) return { kind: 'open' };
+    ran = used;
+  }
   if (ran) return (await oneclickSays(move, api, net)) ?? { kind: 'running', said: 'nothing' };
   if (fate === null || fate.ran !== null || !NEVER_PROVEN.has(fate.why)) return { kind: 'open' };
   const said = await oneclickSays(move, api, net);

@@ -571,6 +571,18 @@ test('a nonce whose life ends inside the deadline is refused before anything is 
   assert.equal(ok.code, 0, text(ok));
   assert.equal(converts(legacy)[0]?.state, 'done');
   assert.equal(runnable(legacy).length, 1);
+
+  // Such a nonce whose spent read fails is no answer either: it stays open until the read answers.
+  const blind = await bench();
+  setBalance(blind.chain, blind.t, BASE_USDC, 1_000_000n);
+  blind.chain.oneclick.payloadAs = (p) => {
+    p['nonce'] = Buffer.alloc(32, 8).toString('base64');
+  };
+  blind.chain.oneclick.submitAnswer = 'error';
+  const unread: MoneyNet = { ...blind.net, verifier: { ...blind.net.verifier, nonceUsed: async () => null } };
+  const r2 = await blind.run(['convert'], [PASS, 'yes'], unread);
+  assert.equal(r2.code, 1);
+  assert.equal(converts(blind)[0]?.state, 'pending', 'never lapsed on a read that did not answer');
 });
 
 test('a convert whose nonce NEAR Intents can no longer answer for closes on 1Click\'s word, and with no word at all it lapses: it never holds up the next one for good', async () => {
