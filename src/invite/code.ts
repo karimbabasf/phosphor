@@ -14,12 +14,15 @@
 // so a code never carries `* ~ $ = U`, and until the 26 secret characters hold at least two
 // digits, which is what lets the composer tell a code from a sentence (below).
 //
-// TWO MATCHERS. The shape found inside any text is what the log tail redacts: right after the
-// prefix a separator or five data characters in a row, so the word "Phosphor" and a sentence are
-// not one, and over-redacting is fine there. The composer guard (looksLikeInviteCode) adds one rule
-// every issued code meets and prose almost never does: at least two literal digits in the match.
-// "phosphorus is used in fertilizer and in matches" has the shape and no digit. Both read every
-// match, overlapping ones included. CONTRACTS.md, "Code shape", pins both.
+// ONE FOLD, TWO MATCHERS. The parser, the log tail and the composer guard read text through the
+// same fold (foldText, below), so a hyphen an editor turned into a dash, a zero-width space or a
+// full-width letter is the same code to all three. A match is the prefixed shape (right after the
+// prefix a separator, five data characters in a row or a digit, so the word "Phosphor" is not one)
+// or a bare run: a code copied without its prefix, which must read as a valid code. The log tail
+// redacts every match, and over-redacting is fine there. The composer guard (looksLikeInviteCode)
+// adds one rule every issued code meets and prose almost never does: at least two literal digits
+// in the match. "phosphorus is used in fertilizer and in matches" has the shape and no digit. Both
+// read every match, overlapping ones included. CONTRACTS.md, "Code shape", pins both.
 
 import crypto from 'node:crypto';
 
@@ -121,9 +124,9 @@ export function inviteLink(code: string): string {
 
 export type ParsedCode = { ok: true; secret: Uint8Array } | { ok: false };
 
-/* Crockford's reading rules: case does not matter, O reads as 0, I and L read as 1. ASCII only:
-   toUpperCase folds a dotless ı to I and a long ſ to S, and a ligature to two letters, so a
-   spelling the redaction pattern cannot see would otherwise parse as a real code. */
+/* Crockford's reading rules: case does not matter, O reads as 0, I and L read as 1. ASCII only,
+   on folded text (foldText): toUpperCase would turn a dotless ı into I, and the fold leaves ı as a
+   separator, so a spelling the matchers read one way would parse another. */
 function crockfordIndex(ch: string): number {
   if (!/^[0-9A-Za-z]$/.test(ch)) return -1;
   const upper = ch.toUpperCase();
@@ -131,19 +134,53 @@ function crockfordIndex(ch: string): number {
   return CROCKFORD.indexOf(mapped);
 }
 
-/* The secret back out of whatever was pasted, or not ok. In this order, because the order is
-   what keeps the prefix's O from being read as a zero: find and strip the prefix (PHOS or PH0S,
-   any case, alone or as the fragment of a pasted invite link), then on the 27 data characters
-   only drop spaces and hyphens, read them by Crockford's rules, require the two spare bits to be
-   zero, and check the symbol. Never says why: a reason that quoted the input would be the code
-   in an error. */
+/* THE FOLD. Text read one character at a time through Unicode NFKD (UAX #15), with combining
+   marks and invisible format characters (categories M and Cf) dropped: a full-width or bold letter
+   is that letter, a ligature is its letters, an accented letter is its base letter, and a
+   zero-width space, a soft hyphen or a direction mark is nothing at all. What is left that is an
+   ASCII letter or digit is a data character; any other character separates. NFKD rather than NFKC
+   because it reads every character NFKC reads as a letter or digit the same way, and also reads a
+   letter and its accent alike however they were encoded; one character at a time so that `starts`
+   and `ends` map each folded character back to the text, and the log tail cuts what was written.
+   ui/core/invite.js folds the same way. */
+const DROPPED = /[\p{M}\p{Cf}]/gu;
+const DATA_CHAR = /[0-9A-Za-z]/;
+
+export type Folded = { text: string; starts: number[] | null; ends: number[] | null };
+
+export function foldText(input: string): Folded {
+  if (!/[^\x00-\x7f]/.test(input)) return { text: input, starts: null, ends: null };
+  let text = '';
+  const starts: number[] = [];
+  const ends: number[] = [];
+  let at = 0;
+  for (const ch of input) {
+    const out = ch.charCodeAt(0) < 0x80 ? ch : ch.normalize('NFKD').replace(DROPPED, '');
+    for (let i = 0; i < out.length; i += 1) {
+      starts.push(at);
+      ends.push(at + ch.length);
+    }
+    text += out;
+    at += ch.length;
+  }
+  return { text, starts, ends };
+}
+
+/* The secret back out of whatever was pasted, or not ok. Folded first (above), then in this
+   order, because the order is what keeps the prefix's O from being read as a zero: the fragment of
+   a pasted invite link if there is one, then the prefix (PHOS or PH0S, any case) stripped when it
+   is there, then every separator dropped from the 27 data characters, read by Crockford's rules,
+   the two spare bits required to be zero, and the symbol checked. A code with no prefix parses
+   too: no valid code starts with P, so the prefix can never be taken for data. Never says why: a
+   reason that quoted the input would be the code in an error. */
 export function parseCode(input: unknown): ParsedCode {
   if (typeof input !== 'string' || input.length > 512) return { ok: false };
-  let text = input.trim();
+  let text = foldText(input).text;
   const hash = text.indexOf('#');
-  if (hash >= 0) text = text.slice(hash + 1).trim();
-  if (!/^PH[O0]S/i.test(text)) return { ok: false };
-  const data = text.slice(INVITE_PREFIX.length).replace(/[\s-]+/g, '');
+  if (hash >= 0) text = text.slice(hash + 1);
+  text = text.replace(/^[^0-9A-Za-z]+/, '');
+  if (/^PH[O0]S/i.test(text)) text = text.slice(INVITE_PREFIX.length);
+  const data = text.replace(/[^0-9A-Za-z]+/g, '');
   if (data.length !== CODE_CHARS) return { ok: false };
   let value = 0n;
   for (let i = 0; i < DATA_CHARS; i += 1) {
@@ -162,55 +199,112 @@ export function parseCode(input: unknown): ParsedCode {
   return { ok: true, secret };
 }
 
-/* The canonical shape: a code in any form the parser accepts, inside any text. A separator or
-   five data characters in a row after the prefix, 27 data characters with any spaces or hyphens
-   between them, and no data character straight after the last one. Case-insensitive. The log
-   tail redacts by this alone; the composer asks looksLikeInviteCode. CONTRACTS.md pins both. */
-export const INVITE_CODE_SOURCE = String.raw`PH[O0]S(?:[\s-]+|(?=[0-9A-Z]{5}))[0-9A-Z](?:[\s-]*[0-9A-Z]){26}(?![0-9A-Z])`;
+/* The prefixed shape, on folded text: the prefix, then a separator, five data characters in a
+   row or a digit (every code starts with one, so a first group cut short is still a code, and the
+   word "Phosphor" is still not), then 27 data characters with any separators between them, and no
+   data character straight after the last one. Case-insensitive. CONTRACTS.md pins it. */
+export const INVITE_CODE_SOURCE = String.raw`PH[O0]S(?:[^0-9A-Za-z]+|(?=[0-9A-Za-z]{5})|(?=[0-9]))[0-9A-Za-z](?:[^0-9A-Za-z]*[0-9A-Za-z]){26}(?![0-9A-Za-z])`;
 
 export function inviteCodePattern(): RegExp {
   return new RegExp(INVITE_CODE_SOURCE, 'gi');
 }
 
-export function containsInviteCode(text: string): boolean {
-  return inviteCodePattern().test(text);
-}
+// A match in folded text: where it starts and ends there, and the literal digits it holds.
+type Found = { start: number; end: number; digits: number };
 
-/* Every match of the shape, overlapping ones included. A plain global search goes on from the end
-   of each match, so prose that fills the shape can swallow the prefix of a code right behind it
-   ("phosphorus is used in my codes ok PHOS-..."): starting again one character after each
-   match's start finds that code too. */
-function* shapeMatches(text: string): Generator<RegExpExecArray> {
+/* Every match of the prefixed shape, overlapping ones included. A plain global search goes on from
+   the end of each match, so prose that fills the shape can swallow the prefix of a code right
+   behind it ("phosphorus is used in my codes ok PHOS-..."): starting again one character after
+   each match's start finds that code too. */
+function shapeMatches(folded: string, out: Found[]): void {
   const pattern = inviteCodePattern();
-  let found = pattern.exec(text);
+  let found = pattern.exec(folded);
   while (found !== null) {
-    yield found;
+    out.push({ start: found.index, end: found.index + found[0].length, digits: digitCount(found[0]) });
     pattern.lastIndex = found.index + 1;
-    found = pattern.exec(text);
+    found = pattern.exec(folded);
   }
 }
 
-/* The composer's question: does this text carry something that is an invite code and not a
-   sentence. A match of the shape above, at any start, with at least two literal digits in it,
-   counted as typed with no O, I or L mapping, the zero of a PH0S prefix included. Every code the
-   generator issues has two in its secret characters alone. The window's codeIn
-   (ui/core/invite.js) is the same test, and tests/fixtures/invite-code-texts.ts holds both to one
-   corpus (CONTRACTS.md); change both or neither. */
+/* Every bare run: a code copied without its prefix. 27 data characters that start a word and end
+   one, with only spaces or dashes between them, every group of them but the last at least three
+   long, that read as a valid code (Crockford characters, the two spare bits zero, the check symbol
+   right) and hold two literal digits. The check is what tells a code from a sentence, and the
+   rest is what keeps words, numbers and JSON from passing it by chance one time in 37: measured
+   2026-10-01, 1 line in 253,062 of this repo's docs, code and fixtures, and 1 in 20,000 log
+   events with random ids and hashes. */
+const BARE_SEPARATOR = /[\s\p{Pd}−]/u;
+
+function bareRuns(folded: string, out: Found[]): void {
+  for (let start = 0; start < folded.length; start += 1) {
+    if (!DATA_CHAR.test(folded[start]!) || (start > 0 && DATA_CHAR.test(folded[start - 1]!))) continue;
+    const first = crockfordIndex(folded[start]!);
+    if (first < 0 || first >= 8) continue;
+    let check = 0;
+    let count = 0;
+    let digits = 0;
+    let group = 0;
+    let short = false;
+    let end = start;
+    for (let i = start; i < folded.length && count < CODE_CHARS; i += 1) {
+      const ch = folded[i]!;
+      if (!DATA_CHAR.test(ch)) {
+        if (!BARE_SEPARATOR.test(ch)) break;
+        if (group > 0 && group < 3) short = true;
+        group = 0;
+        continue;
+      }
+      const index = crockfordIndex(ch);
+      if (index < 0) break;
+      if (count < DATA_CHARS) check = (check * 32 + index) % 37;
+      else if (index !== check) break;
+      if (ch >= '0' && ch <= '9') digits += 1;
+      count += 1;
+      group += 1;
+      end = i + 1;
+    }
+    if (count !== CODE_CHARS || short || digits < MIN_CODE_DIGITS || (end < folded.length && DATA_CHAR.test(folded[end]!))) continue;
+    out.push({ start, end, digits });
+  }
+}
+
+/* Every match in a text, in the text's own positions, sorted by where it starts. */
+function inviteMatches(text: string): Array<Found & { from: number; to: number }> {
+  const folded = foldText(text);
+  const found: Found[] = [];
+  shapeMatches(folded.text, found);
+  bareRuns(folded.text, found);
+  return found
+    .map((f) => ({ ...f, from: folded.starts?.[f.start] ?? f.start, to: folded.ends?.[f.end - 1] ?? f.end }))
+    .sort((a, b) => a.from - b.from || b.to - a.to);
+}
+
+export function containsInviteCode(text: string): boolean {
+  return inviteMatches(text).length > 0;
+}
+
+/* The composer's question: the first stretch of this text that is an invite code and not a
+   sentence, as written, or null. A match (the prefixed shape or a bare run), at any start, with at
+   least two literal digits in it, counted as typed with no O, I or L mapping, the zero of a PH0S
+   prefix included. Every code the generator issues has two in its secret characters alone. The
+   window's codeIn (ui/core/invite.js) is the same function, and tests/fixtures/invite-code-texts.ts
+   holds both to one corpus (CONTRACTS.md); change both or neither. */
+export function findInviteCode(text: string): string | null {
+  const hit = inviteMatches(text).find((m) => m.digits >= MIN_CODE_DIGITS);
+  return hit === undefined ? null : text.slice(hit.from, hit.to);
+}
+
 export function looksLikeInviteCode(text: string): boolean {
-  for (const match of shapeMatches(text)) {
-    if (digitCount(match[0]) >= MIN_CODE_DIGITS) return true;
-  }
-  return false;
+  return findInviteCode(text) !== null;
 }
 
-/* The log tail's cut: every stretch the shape covers, overlaps joined, replaced whole. */
+/* The log tail's cut: every stretch a match covers, overlaps joined, replaced whole. */
 export function redactInviteCodes(text: string, replacement: string): string {
   const spans: Array<[number, number]> = [];
-  for (const match of shapeMatches(text)) {
-    const end = match.index + match[0].length;
+  for (const match of inviteMatches(text)) {
     const last = spans[spans.length - 1];
-    if (last !== undefined && match.index <= last[1]) last[1] = Math.max(last[1], end);
-    else spans.push([match.index, end]);
+    if (last !== undefined && match.from <= last[1]) last[1] = Math.max(last[1], match.to);
+    else spans.push([match.from, match.to]);
   }
   let out = '';
   let at = 0;

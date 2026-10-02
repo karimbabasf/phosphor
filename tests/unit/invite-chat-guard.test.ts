@@ -9,15 +9,15 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { INVITE_KEPT_OUT } from '../../src/http/mutation.ts';
+import { foldText } from '../../src/invite/code.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
-import { CODE, GUARD_TEXTS } from '../fixtures/invite-code-texts.ts';
+import { CODE_GROUPS, GUARD_TEXTS } from '../fixtures/invite-code-texts.ts';
 
-// The data groups of a code, as a person would read them back out of a log or a transcript.
-const GROUPS = CODE.replace(/^PHOS-/, '').split('-');
-
+// The data groups of the corpus codes, as a person would read them back out of a log or a
+// transcript: through the fold, every separator dropped.
 function holdsPartOfTheCode(text: string): string[] {
-  const flat = text.toUpperCase().replace(/[\s-]/g, '');
-  return GROUPS.filter((group) => flat.includes(group));
+  const flat = foldText(text).text.toUpperCase().replace(/[^0-9A-Z]/g, '');
+  return CODE_GROUPS.filter((group) => flat.includes(group));
 }
 
 test('a chat message that carries an invite code is turned away calmly, and nothing of it goes anywhere', async () => {

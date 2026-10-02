@@ -47,8 +47,10 @@ export type VerifierPort = {
      reader, and it refuses a claim it cannot ask this about. */
   accountLocked?(accountId: string): Promise<boolean | null>;
   /* The verifier running signed intents as a view, free and with no account: what execute would
-     do, or the contract's own refusal. Null when the call did not answer. Optional the same way. */
-  simulate?(signed: SignedIntent[]): Promise<Simulation | null>;
+     do, or the contract's own refusal. Null when the call did not answer. Optional the same way.
+     `at` runs it at that block hash rather than at the newest final block, the way a rehearsal
+     whose deadline is one millisecond past a block must be asked (src/invite/claim.ts). */
+  simulate?(signed: SignedIntent[], at?: string): Promise<Simulation | null>;
 };
 
 export type SignedIntent = { standard: string; payload: string; signature: string };
@@ -186,7 +188,7 @@ export function liveVerifier(fetchImpl: typeof fetch = fetch): VerifierPort {
         return null;
       }
     },
-    async simulate(signed) {
+    async simulate(signed, at) {
       try {
         const res = await fetchImpl(nearChainSpec().rpcUrl, {
           method: 'POST',
@@ -197,7 +199,7 @@ export function liveVerifier(fetchImpl: typeof fetch = fetch): VerifierPort {
             method: 'query',
             params: {
               request_type: 'call_function',
-              finality: 'final',
+              ...(at === undefined ? { finality: 'final' } : { block_id: at }),
               account_id: INTENTS_VERIFIER,
               method_name: 'simulate_intents',
               args_base64: Buffer.from(JSON.stringify({ signed })).toString('base64'),

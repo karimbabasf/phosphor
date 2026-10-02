@@ -62,6 +62,8 @@ export type Move = {
   detail?: string; // why it failed, in a sentence
   label?: string; // a batch's label
   printedAt?: string; // a batch's links, shown once, at this time
+  // A batch an `issue --simulate-only` rehearsed: never published, its codes void from the start.
+  dryRun?: true;
 };
 
 export type Treasury = { address: string; key: Hex; createdAt: string };
@@ -179,6 +181,7 @@ export function readBook(value: unknown): InviteBook {
       if (!optionalStr(m[field])) bad(`${at} has a ${field} that is not text`);
     }
     if (m['sends'] !== undefined && !(typeof m['sends'] === 'number' && Number.isInteger(m['sends']) && m['sends'] >= 0)) bad(`${at} has a count of sends that is not a count`);
+    if (m['dryRun'] !== undefined && (m['dryRun'] !== true || m['kind'] !== 'batch' || m['state'] !== 'failed')) bad(`${at} is a dry run that is not a failed batch`);
     const move: Move = {
       id: m['id'],
       kind: m['kind'] as MoveKind,
@@ -192,6 +195,7 @@ export function readBook(value: unknown): InviteBook {
       if (typeof m[field] === 'string') move[field] = m[field] as string;
     }
     if (typeof m['sends'] === 'number') move.sends = m['sends'];
+    if (m['dryRun'] === true) move.dryRun = true;
     return move;
   });
 

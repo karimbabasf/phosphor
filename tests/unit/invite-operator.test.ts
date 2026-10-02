@@ -359,19 +359,22 @@ test('no reply: the identical bytes go out once more, and the batch is proven by
   assert.ok(b.book().codes.every((c) => c.state === 'open'));
 });
 
-test('--simulate-only builds and simulates the funding payload, publishes nothing and writes nothing', async () => {
+test('--simulate-only builds and simulates the funding payload, publishes nothing, and keeps its codes void in the file', async () => {
   const b = await funded(0n);
-  const before = fs.readFileSync(b.file);
   const r = await b.run(['issue', '--count', '10', '--amount', '5', '--label', 'dry run', '--simulate-only'], [PASS]);
   assert.equal(r.code, 1, 'an empty T: the verifier would refuse it');
   assert.equal(b.chain.simulated.length, 1);
-  const body = JSON.parse(b.chain.simulated[0]![0]!.payload) as { signer_id: string; intents: unknown[] };
+  const body = JSON.parse(b.chain.simulated[0]![0]!.payload) as { signer_id: string; intents: Array<{ receiver_id: string }> };
   assert.equal(body.signer_id, b.book().treasury.address);
   assert.equal(body.intents.length, 10);
   assert.equal(b.chain.published.length, 0, 'nothing published');
-  assert.deepEqual(fs.readFileSync(b.file), before, 'nothing written');
+  // Every account the rehearsal pays is in the file, void, with its key: a dry run is never a batch.
+  const book = b.book();
+  assert.deepEqual(body.intents.map((i) => book.codes.find((c) => c.address === i.receiver_id)?.state), new Array(10).fill('void'));
+  assert.deepEqual(book.moves.map((m) => [m.kind, m.state, m.dryRun, m.signed]), [['batch', 'failed', true, undefined]]);
   assert.ok(r.out.some((l) => /would refuse it: .*insufficient balance or overflow/.test(l)));
-  assert.ok(r.out.some((l) => /^Nothing was published and nothing was written\. The signature expired at \S+, one millisecond after a final block stamped no later than this Mac's clock, so no block can ever run it\.$/.test(l)));
+  assert.ok(r.out.some((l) => /^Nothing was published\. The signature expired at \S+, one millisecond after a final block stamped at least a second behind this Mac's clock, so while this clock is right no block can run it\.$/.test(l)));
+  assert.ok(r.out.some((l) => /^Its 10 codes are in the invite file as void, never handed out, so a reclaim would take back anything that ever reached them\.$/.test(l)));
   assert.deepEqual(r.prompts, ['Invite file passphrase: '], 'no confirmation for a dry run');
 
   const t = b.book().treasury.address;
@@ -380,8 +383,9 @@ test('--simulate-only builds and simulates the funding payload, publishes nothin
   assert.equal(ok.code, 0);
   assert.ok(ok.out.some((l) => /The verifier would run it/.test(l)));
   assert.equal(b.chain.published.length, 0);
-  assert.deepEqual(fs.readFileSync(b.file), before);
-  assert.equal(b.book().codes.length, 0);
+  assert.equal(b.book().codes.filter((c) => c.state !== 'void').length, 0, 'no code of a dry run is ever open');
+  const status = await b.run(['status'], [PASS]);
+  assert.ok(status.out.some((l) => /^"dry run"  10 codes, a dry run on \d{4}-\d\d-\d\d, never published$/.test(l)), status.out.join('\n'));
 
   // The dry run's bytes went to a third party, the RPC. Published by anyone, they still never run:
   // they died a millisecond after the block they were simulated at, and every later block is later.
@@ -393,6 +397,44 @@ test('--simulate-only builds and simulates the funding payload, publishes nothin
   assert.equal(await verdict(b.chain, dry.payload, dry.signature, false), 'deadline has expired');
   assert.equal(await b.net.verifier.balance(t, INVITE_ASSET_ID), 50_000_000n, 'T kept every cent');
   assert.deepEqual(b.chain.executed.filter((h) => h === intentHashOf(dry.payload)), []);
+
+  // A dry run blocks no batch.
+  b.chain.mac = b.chain.chain + 2_500;
+  const real = await b.run(['issue', '--count', '1', '--amount', '5', '--label', 'real'], [PASS, 'yes']);
+  assert.equal(real.code, 0, real.out.join('\n'));
+});
+
+/* Audit L7: this Mac's clock a minute fast and an RPC that stamps its final block to match. The
+   clock check cannot see that, so a rehearsal it keeps can still run inside the skew; what keeps the
+   money is that every account a rehearsal pays has its key in the file first. */
+test('a dry run cannot lose money to a fast Mac clock and an RPC lying about the time: what reached its codes is reclaimed', async () => {
+  const b = await funded(1n);
+  const t = b.book().treasury.address;
+  b.chain.mac = b.chain.chain + 2_500 + 60_000;
+  const v = b.net.verifier;
+  const stampedAt = (lag: number): MoneyNet => ({ ...b.net, verifier: { ...v, finalBlock: async () => ({ hash: `block${b.chain.mac - lag}`, atMs: b.chain.mac - lag }) } });
+
+  // A block stamped at this Mac's own time, the audit's case, is refused before anything is signed.
+  const atMac = await b.run(['issue', '--count', '1', '--amount', '0.50', '--label', 'dry', '--simulate-only'], [PASS], { net: stampedAt(0) });
+  assert.equal(atMac.code, 1);
+  assert.ok(atMac.out.some((l) => /stamped only 0\.0 s behind this Mac's clock.*so nothing was signed/.test(l)), atMac.out.join('\n'));
+  assert.equal(b.signed.length, 0);
+
+  // One stamped 1.5 s behind this fast clock passes, and the rehearsal it keeps outlives real time.
+  const r = await b.run(['issue', '--count', '1', '--amount', '0.50', '--label', 'dry', '--simulate-only'], [PASS], { net: stampedAt(1_500) });
+  assert.equal(r.code, 0, r.out.join('\n'));
+  const rehearsal = b.chain.simulated.flat().at(-1)!;
+  const paid = (JSON.parse(rehearsal.payload) as { intents: Array<{ receiver_id: string }> }).intents[0]!.receiver_id;
+  assert.equal(await verdict(b.chain, rehearsal.payload, rehearsal.signature, true, b.chain.chain + 5_000), null, 'published 5 s later, it ran');
+  assert.equal(b.chain.balances.get(paid), 500_000n);
+
+  // The code it paid is in the file, void, with its key, so the money comes back to T.
+  assert.equal(b.book().codes.find((c) => c.address === paid)?.state, 'void');
+  b.chain.mac = b.chain.chain + 2_500;
+  const back = await b.run(['reclaim', '--address', paid], [PASS, 'yes']);
+  assert.equal(back.code, 0, back.out.join('\n'));
+  assert.equal(b.chain.balances.get(t), 1_000_000n, 'T has every cent back');
+  assert.equal(b.chain.balances.get(paid) ?? 0n, 0n);
 });
 
 test('a network that cannot simulate at a fixed block gets no dry run signed at all', async () => {
@@ -527,7 +569,7 @@ test('reclaim --address and --label pick codes; --simulate-only signs and simula
   assert.deepEqual(after.codes.map((c) => c.state), ['open', 'open', 'reclaimed']);
 });
 
-test('withdraw pays T to the typed address only after its last six are typed back, never the keystore header', async () => {
+test('withdraw pays T to the typed address only after its first six and last six are typed back, never the keystore header', async () => {
   const b = await funded(7n);
   // A keystore header in this HOME names another address: withdraw must never read it.
   const other = '0x1111111111111111111111111111111111111111';
@@ -535,15 +577,21 @@ test('withdraw pays T to the typed address only after its last six are typed bac
   fs.writeFileSync(path.join(b.home, '.phosphor', 'keys.enc.json'), JSON.stringify({ addresses: { evm: other } }));
   const to = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 
-  const wrong = await b.run(['withdraw', '--to', to], [PASS, 'aeda95', 'yes']);
-  assert.equal(wrong.code, 1);
-  assert.ok(wrong.out.some((l) => /Those six do not match/.test(l)));
+  for (const answer of ['aeda94', '9858ef aeda95', '9858ee...aeda94']) {
+    const wrong = await b.run(['withdraw', '--to', to], [PASS, answer, 'yes']);
+    assert.equal(wrong.code, 1, answer);
+    assert.ok(wrong.out.some((l) => /Those characters do not match/.test(l)), answer);
+  }
   assert.equal(b.signed.length, 0);
   assert.equal(b.chain.simulated.length, 0);
 
-  const r = await b.run(['withdraw', '--to', to], [PASS, 'AEDA94', 'yes']);
+  const r = await b.run(['withdraw', '--to', to], [PASS, '9858EF ... AEDA94', 'yes']);
   assert.equal(r.code, 0, r.out.join('\n'));
-  assert.deepEqual(r.prompts, ['Invite file passphrase: ', "Type the last six characters of the address on Phosphor's Receive screen: ", `Send $7.00 from T to ${to.toLowerCase()}? Type yes to go on: `]);
+  assert.deepEqual(r.prompts, [
+    'Invite file passphrase: ',
+    "Type the first six and the last six characters of the address on Phosphor's Receive screen, after the 0x: ",
+    `Send $7.00 from T to ${to.toLowerCase()}? Type yes to go on: `,
+  ]);
   assert.equal(runnable(b).length, 1);
   const body = JSON.parse(runnable(b)[0]!) as { signer_id: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
   assert.equal(body.signer_id, b.book().treasury.address);
@@ -551,6 +599,30 @@ test('withdraw pays T to the typed address only after its last six are typed bac
   assert.equal(b.chain.balances.get(to.toLowerCase()), 7_000_000n);
   assert.equal(b.chain.balances.get(other) ?? 0n, 0n);
   assert.equal(b.chain.balances.get(b.book().treasury.address), 0n);
+});
+
+/* Audit L8: a program running as Karim swaps the clipboard for an address it ground to end in the
+   same six characters as his wallet. He types what Receive shows; the swapped address is caught. */
+test('withdraw catches a swapped address that shares the last six: the first six are typed back too', async () => {
+  const b = await funded(1n);
+  const real = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
+  const swapped = '0x' + 'ab'.repeat(17) + real.slice(-6);
+  for (const answer of [real.slice(-6), `${real.slice(2, 8)} ${real.slice(-6)}`]) {
+    const r = await b.run(['withdraw', '--to', swapped], [PASS, answer, 'yes']);
+    assert.equal(r.code, 1, `${answer}: ${r.out.join('\n')}`);
+    assert.ok(r.out.some((l) => /Those characters do not match/.test(l)));
+  }
+  assert.equal(b.signed.length, 0);
+  assert.equal(b.chain.balances.get(swapped) ?? 0n, 0n);
+  assert.equal(b.chain.balances.get(b.book().treasury.address), 1_000_000n, 'T kept every cent');
+
+  // A NEAR name is too short to split in two, so it is typed whole.
+  const named = await b.run(['withdraw', '--to', 'karim.near'], [PASS, 'karim.nea', 'yes']);
+  assert.equal(named.code, 1);
+  assert.equal(named.prompts[1], "Type the whole address shown on Phosphor's Receive screen: ");
+  const ok = await b.run(['withdraw', '--to', 'karim.near'], [PASS, ' Karim.Near ', 'yes']);
+  assert.equal(ok.code, 0, ok.out.join('\n'));
+  assert.equal(b.chain.balances.get('karim.near'), 1_000_000n);
 });
 
 test('withdraw refuses an invite account as the receiver, and waits while a batch is pending', async () => {
@@ -681,12 +753,13 @@ test("a final block stamped ahead of this Mac's clock is refused before anything
   const real = await b.run(['issue', '--count', '2', '--amount', '5', '--label', 'x'], [PASS, 'yes']);
   assert.equal(real.code, 1);
   assert.equal(b.signed.length, 0, 'not a rehearsal, not a batch');
-  assert.ok(b.book().codes.every((c) => c.state === 'pending'), 'the codes wait, not void');
+  const batch = b.book().moves.find((m) => m.kind === 'batch' && m.dryRun !== true)!;
+  assert.ok(b.book().codes.filter((c) => c.batch === batch.id).every((c) => c.state === 'pending'), 'the codes wait, not void');
   // An honest clock again: the same batch goes through, signed for the first time.
   b.chain.chain = b.chain.mac - 2_500;
   const resumed = await b.run(['issue', '--resume'], [PASS]);
   assert.equal(resumed.code, 0, resumed.out.join('\n'));
-  assert.ok(b.book().codes.every((c) => c.state === 'open'));
+  assert.ok(b.book().codes.filter((c) => c.batch === batch.id).every((c) => c.state === 'open'));
 });
 
 test('an older copy of the invite file put back cannot make a batch sign twice: its money is reclaimed instead', async () => {
@@ -827,4 +900,17 @@ test('a reclaim still waiting for proof keeps its batch from being signed, so a 
   assert.equal(batch.signed, undefined);
   assert.deepEqual(shown, [], 'no link was ever shown');
   assert.equal(chain.balances.get(book.treasury.address), 23_000_000n);
+});
+
+/* Audit L9: a program that fakes a terminal (script(1)) gets past the TTY rule, types a passphrase
+   and reads /dev/tty. No code makes that impossible, so nothing here may say it is: the rule is a
+   speed bump against running by accident, and the passphrase a person types is the guard. */
+test('the terminal rule is described as what it is: a speed bump, with the passphrase as the guard', () => {
+  assert.doesNotMatch(NOT_A_TERMINAL, /can never|never be piped/);
+  assert.match(NOT_A_TERMINAL, /refuses piped input, so a script or an agent does not run it by accident/);
+  assert.match(NOT_A_TERMINAL, /Your passphrase is what keeps the file shut/);
+  for (const file of ['scripts/invite.ts', 'scripts/invite/tty.ts', 'scripts/invite/money.ts', 'docs/money.md']) {
+    const text = fs.readFileSync(path.join(REPO, file), 'utf8');
+    assert.doesNotMatch(text, /can never be piped|keeps a passphrase\s+from being piped|no block can ever run it|never holds bytes that could move money\./, file);
+  }
 });

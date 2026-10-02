@@ -35,6 +35,9 @@ export const INVITE_ASSET_DECIMALS = 6;
 
 // How long a signed claim stays valid on the chain's clock: two minutes, the relay rail's cap.
 export const CLAIM_DEADLINE_MS = 120_000;
+// How long a rehearsal's signature lives past the block it is simulated at: the app's claim and the
+// operator's moves both rehearse this way (src/invite/claim.ts, scripts/invite/money.ts).
+export const REHEARSAL_LIFE_MS = 1;
 // The most transfers one payload carries. One issue batch is at most ten codes.
 export const MAX_TRANSFERS = 10;
 

@@ -615,11 +615,34 @@ protects the wallet's key, and this key is not the wallet's: the person typed it
 only what the code's account holds. The claim still runs only while the wallet is open, because
 the receiver is the wallet's decrypted address (`addressReport()` verified and not tampered),
 never the plaintext header, and the receiver is inside the signed bytes, so the relay can submit
-the transfer as signed or not at all. The wallet's key never signs for a claim. The one weaker
+the transfer as signed or not at all. The wallet's key never signs for a claim. The claim is
+rehearsed first, as the operator's moves are: the same transfer signed with a deadline one
+millisecond past a final block and simulated at that block, so the NEAR RPC never holds claim
+bytes a later block can run; the claim itself goes only to the relay. A final block stamped more
+than two minutes ahead of this Mac's clock is refused before anything is signed, and every
+signature, rehearsals included, is in the pending claim record before the key makes it; the
+record of a claim that stops early stays open until the next start proves each signature spent or
+dead, whatever the RPC said. The one weaker
 path is Plan B through 1Click: there the code signs a transfer to 1Click's handle, the receiver
 is held by the quote echo and 1Click's quote signature rather than by the code's signature (a fee
 line added to the request on the wire is refused by the same echo, and a hidden one by the claim's
-1 percent floor), and the claim rests on 1Click delivering. The code lives as bytes for the length of one claim, is
-wiped, and is written nowhere: not an audit line, `/api/state`, an SSE frame, the claim record
-(`state/invites.json`) or an error. No agent tool reaches it. The log tail redacts a code by shape
-in every form the parser accepts, as the wall behind that.
+1 percent floor), and the claim rests on 1Click delivering. The code is written nowhere: not an audit line,
+`/api/state`, an SSE frame, the claim record (`state/invites.json`) or an error. No agent tool
+reaches it. Its 16 secret bytes are wiped as soon as the key is derived, and the key is dropped
+the moment it can sign nothing more: once the relay has answered, or right after Plan B's one
+signature, never held through the watch. What cannot be wiped are JavaScript strings: the code as
+the request carried it (and as the window held it in the field) and the key's hex inside viem's
+account. Nothing holds them after the route answers and the last signature is made, and their
+memory is reused when the runtime needs it; until then a process able to read this one's memory
+could find them. That is the same exposure the wallet's own key has while the wallet is open, and
+here it is worth one code. The chat's guard, the backend's wall
+in front of the agent and the log tail read text through the parser's own fold (Unicode NFKD, one
+character at a time, marks and invisible characters dropped), so a hyphen an editor turned into a
+dash, a zero-width space or a full-width letter is the same code to all four. All three catch a
+code with its prefix in any spelling the parser reads, and one without its prefix when spaces or
+dashes split it into groups of three or more (the last may be shorter) and it reads as a valid
+code; the chat's two also want two digits as typed, which every issued code has
+(`src/invite/code.ts`, CONTRACTS.md "Code shape"). They miss a code someone changed by hand: no
+prefix and a slip, another separator or groups of one or two; a character short or one stuck to
+its end; its digits typed as O, I or L; or a code split over two messages. Each costs that one
+code.

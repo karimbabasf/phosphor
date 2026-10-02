@@ -19,7 +19,7 @@
 //      private key block, an `ed25519:` or `secp256k1:` prefixed base58 value, a bare 64 byte
 //      base58 run (a Solana or NEAR secret key; a Solana signature has that shape too, and a
 //      signature of a deposit somebody sent is a price worth paying), an `sk-` API key, a JWT,
-//      a bearer token, and an invite code (`PHOS` and 27 characters, in any form it is typed).
+//      a bearer token, and an invite code (27 characters, with `PHOS` or reading as a valid code).
 // A bare 64 hex run is NOT redacted by shape. A transaction hash, an intent hash and a 1Click
 // deposit handle are the same 32 bytes of hex as a private key, and they are the evidence the
 // log exists to carry; cutting them would leave a person a log that proves nothing. The key is
@@ -100,10 +100,10 @@ export function credentialCheck(ctx: Partial<Pick<Ctx, 'agents' | 'token'>>): Is
 function redactString(text: string, isCredential: IsCredential): string {
   let swept = text.replace(PEM_BLOCK, REDACTED);
   for (const shape of CREDENTIAL_SHAPES) swept = swept.replace(shape, REDACTED);
-  // An invite code in every form the parser accepts: any case, PH0S, spaces or no hyphens, alone
+  // An invite code as src/invite/code.ts reads one: any case, PH0S, whatever an editor or a chat
+  // app put between the groups, full-width letters, no prefix when it reads as a valid code, alone
   // or inside an invite link, and right behind prose that fills the same shape. The code is the
-  // key to money, and no writer is meant to have one; this is the wall behind that
-  // (src/invite/code.ts owns the shape).
+  // key to money, and no writer is meant to have one; this is the wall behind that.
   swept = redactInviteCodes(swept, REDACTED);
   return swept.replace(CREDENTIAL_RUN, (run) => (isCredential(run) ? REDACTED : run));
 }

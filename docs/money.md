@@ -69,10 +69,11 @@ address, only its first six and last four characters. Read the address in the wi
 An invite code is USDC waiting for a new wallet, usually $5. It looks like
 `PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ` and usually comes as a link,
 `https://phosphor.money/invite#PHOS-...`. Paste the code or the whole link on the invite step
-after the terms on first open, or under Have an invite code? on the Add money card. The app
-checks it first and says what is waiting, that it has a typo, or that it was already used. One
-wrong character, or two neighbours swapped, is caught on this Mac before the network is asked
-anything.
+after the terms on first open, or under Have an invite code? on the Add money card. The code
+still reads with PHOS left off, with its hyphens turned into dashes or spaces, or in full-width
+letters. The app checks it first and says what is waiting, that it has a typo, or that it was
+already used. One wrong character, or two neighbours swapped, is caught on this Mac before the
+network is asked anything.
 
 The money moves once your wallet exists and is open: right after you make it, or after you
 unlock it. It lands as USDC in your NEAR Intents balance and Activity shows "Invite: +5 USDC".
@@ -92,22 +93,34 @@ costs about 0.25 percent, so a $5 code lands as about $4.99, and the check says 
 figure before you claim. If 1Click refunds it, the refund goes back to the code, and the claim
 ends only once the refund shows there.
 
-A claim that fails moves nothing: the money stays on the code, and you can add it again from Add
-money. If the app quits in the middle of a claim, it finishes the check the next time it opens.
+Before the claim is signed, the app rehearses it: the same transfer, signed to expire one
+millisecond after a recent NEAR block and checked by NEAR Intents at that block. The NEAR RPC
+that answers the check is someone else's computer, so it only ever sees that copy, which no later
+block can run; the claim itself goes to the solver relay alone. Every signature is written down
+before it leaves this Mac. A claim that fails moves nothing: the money stays on the code, and you
+can add it again from Add money. An RPC that lies about the time could stretch the copy's life by
+up to two minutes, and even then the money can only land in your wallet; the app finds it there
+the next time it opens. If the app quits in the middle of a claim, it finishes the check the next
+time it opens.
 A code pays once; a second claim says "This code was already used, or it has a typo."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model
 provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
-conversation. Phosphor never asks for your recovery phrase to claim a code. A page or an app that
-does is not Phosphor.
+conversation. Both know a code with PHOS in front in every spelling the invite field reads, and a
+code with PHOS left off when spaces or dashes split it into its groups. A code you changed by
+hand can still get through, say one with a character missing, or one with no PHOS in front and a
+wrong character or odd spacing, so paste codes into the invite field only. Phosphor never asks for your recovery phrase to claim a code. A page or an
+app that does is not Phosphor.
 
 ### Issuing invite codes
 
 This part is for whoever hands out the invites. Run it in your own Terminal, never through an
 agent: an agent session would keep every live code in its transcripts and send them to its
 model provider. The script refuses piped input, asks for its passphrase with echo off, and shows
-the links on the terminal only, never on stdout.
+the links on the terminal only, never on stdout. Refusing piped input stops a run by accident; a
+program that pretends to be a terminal gets past it and can read what the terminal shows. The
+passphrase is what keeps the file shut, so type it only in your own Terminal.
 
 The money sits in three places. Your wallet is never touched by any of this. The treasury, T,
 holds only the batch you are about to issue. Each code holds its $5 until someone claims it or
@@ -133,9 +146,13 @@ checks that T holds enough and asks you to type yes. Then it writes the codes to
 marked pending, before anything is signed, so a crash from that moment loses nothing. It builds
 one payload from T with one transfer per code (ten at most) and rehearses it: the same transfers,
 signed so the signature expires one millisecond after a recent NEAR block, and simulated at that
-block. The NEAR RPC that answers the simulation is someone else's computer, and no later block
-can run a rehearsal, so it never holds bytes that could move money. Only then is the real payload
-signed, once, written to the file, and sent to the solver relay. The script waits until NEAR
+block. The NEAR RPC that answers the simulation is someone else's computer. No later block can
+run a rehearsal as long as the block's time is true, and the script refuses a block stamped less
+than a second behind this Mac's clock, so with this clock right the RPC never holds bytes that
+could move money. A Mac clock running fast is the one thing that check cannot see, so every
+account a rehearsal pays (T, your typed address, or codes already in the file) has its key on
+disk before the rehearsal is signed. Only then is the real payload signed, once, written to the
+file, and sent to the solver relay. The script waits until NEAR
 Intents shows the payload's one-time number (its nonce) spent, reads every code back, marks it
 open, and prints the links once. Give one link to one person, and never post them.
 
@@ -146,14 +163,17 @@ fallback: the script waits until the signed payload has expired on NEAR's own cl
 minutes, and then marks the codes void. T still holds the money.
 
 `--simulate-only` is the rehearsal alone: it shows what NEAR Intents would say, and nothing is
-sent or written. If this Mac's clock is behind NEAR's, or the RPC does not answer, a command
-stops before it signs anything that can run and says so (a block that looks later than this
-clock would stretch a rehearsal's life). A batch then waits for `issue --resume`.
+sent. A dry run of `issue` writes its codes to the file as void before it signs, so a reclaim
+could take back anything that ever reached them, and `status` lists it as a dry run; it takes the
+file's lock like any write. If NEAR's final block looks less than a second behind this Mac's
+clock (an honest one trails by about 2.6 s, so a clock running slow shows this), or the RPC does
+not answer, a command stops before it signs anything and says so. A batch then waits for
+`issue --resume`.
 
     npm run invite -- status
 
 shows what T holds and every batch: each code's address, amount and state (pending, open,
-claimed, reclaimed, or void for a batch that never ran). It never shows a code.
+claimed, reclaimed, or void for a batch that never ran or a dry run). It never shows a code.
 
     npm run invite -- reclaim [--label "SF builders"] [--address <code address>]
 
@@ -165,7 +185,9 @@ after you type yes.
     npm run invite -- withdraw --to <address>
 
 sends everything T holds to the address you pass. Copy it from Receive in the app, which shows
-only an address it decrypted and checked, and type its last six characters back when asked.
+only an address it decrypted and checked, and when asked, type back its first six and last six
+characters as Receive shows them (a NEAR name, the whole name). A program that swapped your
+clipboard for a look-alike would have to match both ends, not just the last six.
 The script never reads the wallet's key file: its header is plain text that any program running
 as you could edit. A withdraw waits while a batch is pending.
 

@@ -131,21 +131,23 @@ test('run waits for the deposit, issues two $0.10 codes in one payload, claims o
   assert.equal(relay.record?.route, 'relay');
   assert.deepEqual(relay.before, { code: '100000', receiver: '0' });
   assert.deepEqual(relay.after, { code: '0', receiver: '100000' });
-  assert.equal(relay.nonces?.[0]?.isNonceUsed, true);
-  assert.equal(relay.nonces?.[0]?.intentHash, relay.record?.intentHash);
+  // The rehearsal went to the simulation only and never ran; the claim itself did.
+  assert.deepEqual(relay.nonces?.map((n) => [n.rehearsal === true, n.isNonceUsed]), [[true, false], [false, true]]);
+  assert.equal(relay.nonces?.[1]?.intentHash, relay.record?.intentHash);
+  assert.equal(relay.relayStatus?.length, 1, 'only the claim itself was asked of the relay');
   assert.equal((relay.relayStatus?.[0]?.answer as { status: string }).status, 'SETTLED');
   assert.ok(relay.audit?.some((a) => a.type === 'invite_claimed'));
 
   const planB = res.planBClaim!;
   assert.equal(planB.pass, true, planB.why ?? '');
   assert.equal(planB.record?.route, 'oneclick');
-  assert.deepEqual(planB.record?.attempts.map((a) => a.route), ['relay', 'oneclick'], 'the relay was asked first and turned it away');
+  assert.deepEqual(planB.record?.attempts.map((a) => [a.route, a.rehearsal === true]), [['relay', true], ['relay', false], ['oneclick', false]], 'rehearsed, the relay asked first and turning it away, then 1Click');
   assert.deepEqual(planB.before, { code: '100000', receiver: '100000' });
   assert.deepEqual(planB.after, { code: '0', receiver: '199750' });
   assert.equal(planB.record?.creditedBase, '99750');
   assert.equal((planB.oneclickStatus as { status: string }).status, 'SUCCESS');
   assert.equal(planB.nonces?.find((n) => n.route === 'oneclick')?.isNonceUsed, true);
-  assert.equal(planB.nonces?.find((n) => n.route === 'relay')?.isNonceUsed, false, 'the refused relay attempt never ran');
+  assert.deepEqual(planB.nonces?.filter((n) => n.route === 'relay').map((n) => n.isNonceUsed), [false, false], 'neither the rehearsal nor the refused relay attempt ran');
 
   assertNothingSpendable([...r.out, ...r.err].join('\n'), proof);
   const report = await b.run(['report', '--file', b.file]);

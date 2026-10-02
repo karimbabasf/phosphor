@@ -24,10 +24,13 @@
 // published by whoever runs it while the book calls the move failed. So every move is rehearsed:
 // built, checked and signed as it will be, but with a signature that dies one millisecond after a
 // final block, and simulated AT that block. The verifier answers for that block, and every block
-// that could ever execute the rehearsal is stamped later. A final block stamped later than this
-// Mac's clock is refused, because it would stretch that life. --simulate-only is the rehearsal
-// alone; its codes are never written, so this is what keeps a dry run from paying codes nobody
-// holds.
+// that could ever execute the rehearsal is stamped later. That holds while the block's stamp is
+// true, and the RPC is who says it: so a final block stamped less than REHEARSAL_AHEAD_MS behind
+// this Mac's clock is refused, and with this clock right a rehearsal is dead before it is signed.
+// A Mac clock running fast is what this check cannot see (audit L7): a lying RPC could then run a
+// rehearsal inside that skew. Every payee of a rehearsal is therefore an account whose key is on
+// disk first: T, a typed address, or codes in the file. --simulate-only writes its codes to the
+// file, void, before the rehearsal is signed, so anything that ever reached them is reclaimable.
 
 import type { Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -43,6 +46,7 @@ import {
   CLAIM_DEADLINE_MS,
   INVITE_ASSET_ID,
   MAX_TRANSFERS,
+  REHEARSAL_LIFE_MS,
   buildTransfersPayload,
   checkTransfersPayload,
   claimNonce,
@@ -114,14 +118,14 @@ export function liveSimulateAt(fetchImpl: typeof fetch = fetch): NonNullable<Mon
   };
 }
 
-// How long a rehearsal's signature lives past the block it is simulated at.
-export const REHEARSAL_LIFE_MS = 1;
+export { REHEARSAL_LIFE_MS };
 /* How far ahead of this Mac's clock NEAR's final block may be stamped. An honest final block trails
    real time by about 2.6 s (src/relay/verifier.ts), so it is behind this clock, never ahead. A
-   rehearsal allows nothing ahead: its signature lives until 1 ms past the block, and a block
-   stamped ahead of real time is a signature that lives that much longer. A real move allows what
-   src/relay/fate.ts allows before it stops believing a block at all. */
-export const REHEARSAL_AHEAD_MS = 0;
+   rehearsal wants it a second behind at least: its signature lives until 1 ms past the block, a
+   block stamped later than real time is a signature that lives that much longer, and the second
+   is the margin (audit L7; a Mac clock more than about 1.6 s slow is refused for it, and says so).
+   A real move allows what src/relay/fate.ts allows before it stops believing a block at all. */
+export const REHEARSAL_AHEAD_MS = -1_000;
 const MOVE_AHEAD_MS = FATE_AHEAD_MAX_MS;
 
 // The book in hand and the one way to put it on disk. save() throws when the write fails.
@@ -240,7 +244,8 @@ async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8
   if (salt === null || block === null) return 'the verifier did not answer with its salt and its clock';
   const ahead = block.atMs - net.now();
   if (ahead > aheadMs) {
-    return `NEAR's final block is stamped ${(ahead / 1000).toFixed(1)} s ahead of this Mac's clock (if this Mac's clock is behind, set it; if it is not, the RPC is not telling the time)`;
+    const where = ahead > 0 ? `${(ahead / 1000).toFixed(1)} s ahead of this Mac's clock` : `only ${(-ahead / 1000).toFixed(1)} s behind this Mac's clock, where an honest one trails by about 2.6 s`;
+    return `NEAR's final block is stamped ${where} (if this Mac's clock is behind, set it; if it is not, the RPC is not telling the time)`;
   }
   return { salt, block };
 }
@@ -393,7 +398,8 @@ async function close(ledger: Ledger, move: Move, verdict: 'ran' | 'dead' | 'unco
   return { kind: 'unconfirmed', detail: 'NEAR Intents has not answered either way yet. The signed move may still run.' };
 }
 
-/* A dry run: the rehearsal alone (see the header). Nothing is published and nothing is written. */
+/* A dry run: the rehearsal alone (see the header). Nothing is published; an issue's codes are
+   already in the file, void, so whatever the rehearsal pays has its key on disk. */
 async function simulateOnly(move: Move, signer: KeySigner, net: MoneyNet, io: Io, what: string): Promise<number> {
   const rehearsal = await rehearse(move, signer, net);
   if (rehearsal.signed === null) {
@@ -413,8 +419,11 @@ async function simulateOnly(move: Move, signer: KeySigner, net: MoneyNet, io: Io
     io.say(`The verifier would refuse it: ${rehearsal.detail}.`);
   }
   io.say(
-    `Nothing was published and nothing was written. The signature expired at ${rehearsal.signed.deadline}, one millisecond after a final block stamped no later than this Mac's clock, so no block can ever run it.`,
+    `Nothing was published. The signature expired at ${rehearsal.signed.deadline}, one millisecond after a final block stamped at least a second behind this Mac's clock, so while this clock is right no block can run it.`,
   );
+  if (move.dryRun === true) {
+    io.say(`Its ${legs} code${legs === 1 ? ' is' : 's are'} in the invite file as void, never handed out, so a reclaim would take back anything that ever reached ${legs === 1 ? 'it' : 'them'}.`);
+  }
   return rehearsal.ok ? 0 : 1;
 }
 
@@ -493,6 +502,25 @@ export async function issueBatch(ledger: Ledger, net: MoneyNet, req: IssueReques
     label,
   };
   if (req.simulateOnly) {
+    /* The rehearsal pays these codes, so they go to the file first, void and marked a dry run: if
+       an RPC ever ran the rehearsal anyway (see the header), the money sits on codes whose keys are
+       on disk, and reclaim takes it back. Nothing that can run is signed until they are. */
+    const at = nowIso(net);
+    for (const c of codes) {
+      c.state = 'void';
+      c.closedAt = at;
+    }
+    Object.assign(move, { state: 'failed', settledAt: at, dryRun: true, detail: 'A dry run (--simulate-only): rehearsed and never published.' });
+    book.codes.push(...codes);
+    book.moves.push(move);
+    try {
+      ledger.save();
+    } catch (err) {
+      book.codes.splice(book.codes.length - codes.length, codes.length);
+      book.moves.pop();
+      io.say(`Couldn't write the invite file (${errText(err)}), so nothing was signed.`);
+      return 1;
+    }
     const signer = treasurySigner(book, net);
     try {
       return await simulateOnly(move, signer, net, io, `a batch of ${req.count} code${plural} at $${formatUsdc(req.amountBase)}`);
@@ -791,10 +819,19 @@ export async function reclaimCodes(ledger: Ledger, net: MoneyNet, req: ReclaimRe
 
 export type WithdrawRequest = { to: string; simulateOnly: boolean };
 
+// The first six and the last six hex characters of a hex address (after any 0x), or null for a
+// NEAR name, which is typed whole.
+function addressEnds(to: string): string | null {
+  const body = to.startsWith('0x') ? to.slice(2) : to;
+  return /^[0-9a-f]{13,}$/.test(body) ? body.slice(0, 6) + body.slice(-6) : null;
+}
+
 /* T to a typed address. Never the keystore header: that header is plaintext and any process running
    as Karim can edit it (src/keystore/store.ts). The address is copied from the app's Receive
-   screen, which serves only a decrypted, untampered address, and its last six characters are typed
-   back here before anything is signed. */
+   screen, which serves only a decrypted, untampered address, and its first six and last six
+   characters are typed back here, read off that screen, before anything is signed: 48 bits where
+   the last six alone were 24, which a program swapping the clipboard can match with a look-alike
+   it grinds in seconds (audit L8). */
 export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: WithdrawRequest, io: Io): Promise<number> {
   const book = ledger.book;
   if (!req.simulateOnly) {
@@ -831,13 +868,19 @@ export async function withdrawTreasury(ledger: Ledger, net: MoneyNet, req: Withd
     io.say('That is an invite account, not your wallet. Copy the address from Receive in the app. Nothing was signed.');
     return 2;
   }
-  const typed = await io.ask(`Type the last six characters of the address on Phosphor's Receive screen: `);
+  const ends = addressEnds(to);
+  const typed = await io.ask(
+    ends === null
+      ? "Type the whole address shown on Phosphor's Receive screen: "
+      : `Type the first six and the last six characters of the address on Phosphor's Receive screen${to.startsWith('0x') ? ', after the 0x' : ''}: `,
+  );
   if (typed === null) {
     io.say('Stopped. Nothing was signed.');
     return 1;
   }
-  if (typed.trim().toLowerCase() !== to.slice(-6).toLowerCase()) {
-    io.say(`Those six do not match the end of ${to}. Nothing was signed. Copy the address from Receive in the app again.`);
+  const said = typed.trim().toLowerCase();
+  if (ends === null ? said !== to : said.replace(/^0x/, '').replace(/[^0-9a-f]/g, '') !== ends) {
+    io.say(`Those characters do not match ${to}. Nothing was signed. Copy the address from Receive in the app again.`);
     return 1;
   }
   const held = await net.verifier.balance(book.treasury.address, INVITE_ASSET_ID).catch(() => null);
@@ -916,7 +959,8 @@ export async function statusLines(book: InviteBook, net: MoneyNet): Promise<stri
   for (const batch of batches) {
     const codes = codesOf(book, batch.id);
     out.push('');
-    out.push(`"${batch.label ?? ''}"  ${codes.length} code${codes.length === 1 ? '' : 's'}, issued ${batch.createdAt.slice(0, 10)}${batch.state === 'failed' ? ', never funded' : ''}`);
+    const when = batch.dryRun === true ? `a dry run on ${batch.createdAt.slice(0, 10)}, never published` : `issued ${batch.createdAt.slice(0, 10)}${batch.state === 'failed' ? ', never funded' : ''}`;
+    out.push(`"${batch.label ?? ''}"  ${codes.length} code${codes.length === 1 ? '' : 's'}, ${when}`);
     for (const code of codes) {
       let state: string = code.state;
       if (code.state === 'open') {

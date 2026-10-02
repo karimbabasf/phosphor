@@ -1,9 +1,10 @@
 // The terminal, and only the terminal. The operator script runs in Karim's own Terminal, never in
 // an agent session, which would put every live code into transcripts on disk and at the model
-// provider (spec, "The money path"). So stdin must be a TTY, which is also what keeps a passphrase
-// from being piped in; the passphrase is read with echo off, as bytes, and wiped after use; and
-// the links are written to /dev/tty, so a shell that redirects stdout to a file or a pipe does not
-// catch them.
+// provider (spec, "The money path"). So stdin must be a TTY, which stops a pipe or an agent from
+// running the script by accident; the passphrase is read with echo off, as bytes, and wiped after
+// use; and the links are written to /dev/tty, so a shell that redirects stdout to a file or a pipe
+// does not catch them. None of that stops a program that fakes a terminal (script(1)): it can type
+// the passphrase and read /dev/tty (audit L9). The passphrase a person types is the guard.
 
 import fs from 'node:fs';
 

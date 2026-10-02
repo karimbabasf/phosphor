@@ -84,8 +84,9 @@ export type ClaimProof = {
   claim?: string;
   record?: ClaimRecord; // the app's own record: every attempt's nonce, deadline and intent hash
   after?: { code: Amount; receiver: Amount };
-  nonces?: Array<{ route: ClaimRoute; nonce: string; intentHash: string; isNonceUsed: boolean | null }>;
-  relayStatus?: Array<{ intentHash: string; answer: unknown }>; // get_status, per attempt
+  // Per attempt; a rehearsal (src/invite/claim.ts) was only ever simulated, and its nonce must read unused.
+  nonces?: Array<{ route: ClaimRoute; nonce: string; intentHash: string; isNonceUsed: boolean | null; rehearsal?: true }>;
+  relayStatus?: Array<{ intentHash: string; answer: unknown }>; // get_status, per attempt the relay was sent
   oneclickStatus?: unknown; // Plan B: 1Click's status by its deposit address
   audit?: Array<{ type: string; msg: string; data: unknown }>;
   frames?: unknown[];
@@ -284,8 +285,10 @@ function judgeClaim(entry: ClaimProof, route: ClaimRoute): { pass: boolean; why:
   if (record === undefined) return { pass: false, why: 'the claim left no record' };
   if (record.status !== 'done') return { pass: false, why: `the claim ended ${record.status}${record.reason === undefined ? '' : ` (${record.reason})`}` };
   if (record.route !== route) return { pass: false, why: `it landed through ${record.route ?? 'no route'}, not ${route}` };
-  const own = entry.nonces?.filter((n) => n.route === route).at(-1);
+  const own = entry.nonces?.filter((n) => n.route === route && n.rehearsal !== true).at(-1);
   if (own?.isNonceUsed !== true) return { pass: false, why: `is_nonce_used for the ${route} attempt read ${String(own?.isNonceUsed)}` };
+  const rehearsal = entry.nonces?.find((n) => n.rehearsal === true && n.isNonceUsed !== false);
+  if (rehearsal !== undefined) return { pass: false, why: `is_nonce_used for a rehearsal read ${String(rehearsal.isNonceUsed)}, not false` };
   const amount = BigInt(entry.amountBase);
   const { before, after } = entry;
   if (after === undefined || before.code === null || after.code === null || before.receiver === null || after.receiver === null) {
@@ -347,7 +350,9 @@ async function claimStep(proof: ProofFile, file: string, net: ProofNet, api: Int
   entry.nonces = [];
   entry.relayStatus = [];
   for (const attempt of record?.attempts ?? []) {
-    entry.nonces.push({ route: attempt.route, nonce: attempt.nonce, intentHash: attempt.intentHash, isNonceUsed: await net.verifier.nonceUsed(code.address, attempt.nonce).catch(() => null) });
+    const isNonceUsed = await net.verifier.nonceUsed(code.address, attempt.nonce).catch(() => null);
+    entry.nonces.push({ route: attempt.route, nonce: attempt.nonce, intentHash: attempt.intentHash, isNonceUsed, ...(attempt.rehearsal ? { rehearsal: true as const } : {}) });
+    if (attempt.rehearsal) continue;
     let answer: unknown;
     try {
       answer = await net.relay.status(attempt.intentHash);

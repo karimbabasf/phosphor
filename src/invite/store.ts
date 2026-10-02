@@ -22,6 +22,9 @@ export type ClaimAttempt = {
   deadline: string; // ISO, the signed intent's own deadline
   intentHash: string; // base58 of the payload's EIP-191 hash, known before publish
   depositAddress?: string; // the 1Click handle, Plan B only: what its status is asked by
+  // A rehearsal (src/invite/claim.ts step 5): only ever simulated, and dead a millisecond past its
+  // block. Kept so that, if an RPC ever ran it anyway, the claim is still proven by its nonce.
+  rehearsal?: true;
 };
 
 export type ClaimRecord = {

@@ -15,6 +15,8 @@ import { decodeNonce } from '../../src/relay/payload.ts';
 import { createInviteService } from '../../src/invite/claim.ts';
 import type { InviteDeps } from '../../src/invite/claim.ts';
 import { inviteLink } from '../../src/invite/code.ts';
+import { codeSigner } from '../../src/invite/signer.ts';
+import type { KeySigner } from '../../src/invite/signer.ts';
 import { CLAIM_DEADLINE_MS, INVITE_ASSET_ID, intentHashOf } from '../../src/invite/payload.ts';
 import { CLAIMS_FILE, createClaimStore } from '../../src/invite/store.ts';
 import type { ClaimRecord } from '../../src/invite/store.ts';
@@ -30,6 +32,7 @@ import {
   freshWorld,
   oneclickOf,
   relayOf,
+  transferOf,
   verifierOf,
 } from './helpers/invite-world.ts';
 import type { World } from './helpers/invite-world.ts';
@@ -105,7 +108,7 @@ function assertNoCode(text: string): void {
   }
 }
 
-test('a claim on the relay: one signature, simulated, published with no quote, proven, written, never executed', async () => {
+test('a claim on the relay: rehearsed, then one signature published with no quote, proven, written, never executed', async () => {
   const h = harness();
   const answer = await h.service.claim(CODE);
   assert.equal(answer.ok, true);
@@ -113,12 +116,15 @@ test('a claim on the relay: one signature, simulated, published with no quote, p
   assert.equal(h.service.state()?.status, 'running');
   await h.service.idle();
 
-  // One signed payload, simulated first, then published once with an empty quote_hashes.
+  // A rehearsal simulated, then the claim itself published once with an empty quote_hashes and
+  // never simulated: the two are the same transfer with different deadlines and nonces.
   assert.equal(h.world.simulated.length, 1);
   assert.equal(h.world.published.length, 1);
   const sent = h.world.published[0]!;
   assert.deepEqual(sent.quoteHashes, []);
-  assert.equal(sent.payload, h.world.simulated[0]![0]!.payload);
+  const rehearsed = JSON.parse(h.world.simulated[0]![0]!.payload) as { deadline: string; intents: unknown };
+  assert.notEqual(sent.payload, h.world.simulated[0]![0]!.payload, 'the claim itself never went to the simulation');
+  assert.deepEqual(rehearsed.intents, JSON.parse(sent.payload).intents);
   const body = JSON.parse(sent.payload) as { signer_id: string; deadline: string; nonce: string; intents: Array<{ receiver_id: string; tokens: Record<string, string> }> };
   assert.equal(body.signer_id, CODE_ADDRESS);
   assert.equal(body.intents[0]!.receiver_id, WALLET_ID, 'the receiver is the decrypted address, lowercased');
@@ -146,9 +152,9 @@ test('a claim on the relay: one signature, simulated, published with no quote, p
   assertNoCode(everythingWritten(h));
 });
 
-test("the deadline is the chain's clock plus two minutes even when this Mac runs slow", async () => {
+test("the deadline is the chain's clock plus two minutes even when this Mac runs up to two minutes slow", async () => {
   const world = freshWorld();
-  world.mac = world.chain - 10 * 60_000;
+  world.mac = world.chain - 100_000;
   const h = harness({ world });
   const chainAtSign = world.chain;
   await h.service.claim(CODE);
@@ -179,9 +185,13 @@ test('the pending record is on disk before the publish, and never holds the code
   assert.equal(pending.status, 'pending');
   assert.equal(pending.codeAddress, CODE_ADDRESS);
   assert.equal(pending.amountBase, '5000000');
-  assert.equal(pending.attempts.length, 1);
-  assert.equal(pending.attempts[0]!.nonce, JSON.parse(world.published[0]!.payload).nonce);
-  assert.equal(pending.attempts[0]!.intentHash, intentHashOf(world.published[0]!.payload));
+  // The rehearsal, then the claim itself: every signature the code's key made, before it left.
+  assert.equal(pending.attempts.length, 2);
+  assert.equal(pending.attempts[0]!.rehearsal, true);
+  assert.equal(pending.attempts[0]!.nonce, JSON.parse(world.simulated[0]![0]!.payload).nonce);
+  assert.equal(pending.attempts[1]!.rehearsal, undefined);
+  assert.equal(pending.attempts[1]!.nonce, JSON.parse(world.published[0]!.payload).nonce);
+  assert.equal(pending.attempts[1]!.intentHash, intentHashOf(world.published[0]!.payload));
   assertNoCode(JSON.stringify(onDisk));
   assertNoCode(fs.readFileSync(path.join(h.dataDir, CLAIMS_FILE), 'utf8'));
   const mode = fs.statSync(path.join(h.dataDir, CLAIMS_FILE)).mode & 0o777;
@@ -273,7 +283,7 @@ test('Plan B only on a refusal to the first send: a resend refused after no repl
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed'], 'and it was: the first bytes ran');
 });
 
-test('simulate refusals stop the claim before anything is sent, in plain words', async () => {
+test('a refused rehearsal stops the claim before its signature, in plain words, and the next start closes the record', async () => {
   for (const [refusal, reason, words] of [
     ['insufficient balance or overflow', 'empty', /holds nothing now/],
     ['account is locked', 'locked', /locked the code's account/],
@@ -290,9 +300,23 @@ test('simulate refusals stop the claim before anything is sent, in plain words',
     const failed = h.audit.find((e) => e.type === 'invite_failed')!;
     assert.equal((failed.data as { reason: string }).reason, reason);
     assert.match(failed.msg, words);
-    assert.equal(createClaimStore(h.dataDir).all().length, 0, 'no pending record for a claim never sent');
+    assert.match((failed.data as { detail: string }).detail, /The claim itself was never signed/);
     assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
+    // The rehearsal went to the RPC, so the record keeps it until a start proves it dead.
+    const [kept] = createClaimStore(h.dataDir).all();
+    assert.equal(kept!.status, 'pending');
+    assert.deepEqual(kept!.attempts.map((a) => a.rehearsal), [true]);
     assertNoCode(everythingWritten(h));
+
+    world.simRefusal = null;
+    world.mac += 60_000;
+    world.chain += 60_000;
+    const next = harness({ world, dataDir: h.dataDir });
+    next.service.reconcile();
+    await next.service.idle();
+    assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
+    assert.deepEqual(next.frames, [], 'no toast at launch for it');
+    assert.equal(world.balances.get(CODE_ADDRESS), 5_000_000n);
   }
 });
 
@@ -436,8 +460,9 @@ test('a relay auth refusal falls back to Plan B with the 3 minute deadline, and 
   assert.match(claimed.msg, /through 1Click/);
   assert.deepEqual(h.holds.map((x) => x.proven), [4_987_500n]);
   const record = h.service.landed()[0]!;
-  assert.equal(record.attempts.length, 2, 'the refused relay attempt and the 1Click one');
-  assert.equal(record.attempts[1]!.depositAddress, HANDLE);
+  assert.equal(record.attempts.length, 3, 'the rehearsal, the refused relay attempt and the 1Click one');
+  assert.equal(record.attempts[0]!.rehearsal, true);
+  assert.equal(record.attempts[2]!.depositAddress, HANDLE);
   assertNoCode(everythingWritten(h));
 
   // From now on the check says where the money will come from, and what lands.
@@ -533,4 +558,182 @@ test('Plan B stopping before its signature watches the refused relay claim to it
   assert.match((failed.data as { detail: string }).detail, /1Click stopped the claim before signing/);
   assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
   assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
+});
+
+/* Audit L5: the NEAR RPC is someone else's computer. Whatever it is handed to simulate, it can keep
+   and publish, and it can answer anything. The claim hands it only a rehearsal that dies a
+   millisecond past the block it is simulated at, written to the record first. */
+
+test('the RPC never holds claim bytes that can still run: only a rehearsal, on disk first, dying a millisecond past its block', async () => {
+  const world = freshWorld();
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-'));
+  const v = verifierOf(world);
+  const seen: Array<{ payload: string; at: string | undefined; onDisk: boolean }> = [];
+  const verifier = {
+    ...v,
+    async simulate(signed: Array<{ standard: string; payload: string; signature: string }>, at?: string) {
+      const file = path.join(dataDir, CLAIMS_FILE);
+      const records = fs.existsSync(file) ? (JSON.parse(fs.readFileSync(file, 'utf8')) as { claims: ClaimRecord[] }).claims : [];
+      for (const s of signed) {
+        const nonce = (JSON.parse(s.payload) as { nonce: string }).nonce;
+        seen.push({ payload: s.payload, at, onDisk: records.some((r) => r.attempts.some((a) => a.nonce === nonce)) });
+      }
+      return v.simulate!(signed, at);
+    },
+  };
+  const h = harness({ world, dataDir, verifier });
+  const chainAtRehearsal = world.chain;
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.deepEqual(h.frames.map((f) => f.status), ['running', 'landed']);
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0]!.onDisk, true, 'the rehearsal was on disk before the RPC saw it');
+  assert.equal(seen[0]!.at, `block${chainAtRehearsal}`, 'simulated at the block its deadline is counted from');
+  assert.equal(Date.parse((JSON.parse(seen[0]!.payload) as { deadline: string }).deadline), chainAtRehearsal + 1);
+  assert.ok(!seen.some((s) => s.payload === world.published[0]!.payload), 'the claim itself was handed to the RPC');
+});
+
+test('an RPC that keeps what it simulates and publishes it while saying nothing: the rehearsal cannot run, and the record is kept', async () => {
+  const world = freshWorld();
+  const v = verifierOf(world);
+  const verifier = {
+    ...v,
+    async simulate(signed: Array<{ payload: string }>) {
+      for (const s of signed) world.queued.push({ at: world.mac + 5_000, t: transferOf(s.payload) });
+      return null;
+    },
+  };
+  const h = harness({ world, verifier: verifier as never });
+  assert.equal((await h.service.claim(CODE)).ok, true);
+  await h.service.idle();
+  world.mac += 10_000;
+  world.chain += 10_000;
+  await v.balance(WALLET_ID, INVITE_ASSET_ID);
+  assert.equal(world.balances.get(WALLET_ID) ?? 0n, 0n, 'nothing the RPC kept could run');
+  assert.equal(world.balances.get(CODE_ADDRESS), 5_000_000n);
+  assert.equal(world.published.length, 0, 'the claim itself was never signed or sent');
+  assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
+  assert.equal((h.audit.find((e) => e.type === 'invite_failed')!.data as { reason: string }).reason, 'offline');
+  const [kept] = createClaimStore(h.dataDir).all();
+  assert.equal(kept!.status, 'pending');
+  assert.deepEqual(kept!.attempts.map((a) => a.rehearsal), [true, true, true], 'three blocks tried, each rehearsal written first');
+
+  // The next start proves every rehearsal dead and closes the record without a toast; the code
+  // still holds its money, so the person can add it again.
+  world.mac += 60_000;
+  world.chain += 60_000;
+  const next = harness({ world, dataDir: h.dataDir });
+  next.service.reconcile();
+  await next.service.idle();
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'failed');
+  assert.deepEqual(next.frames, []);
+  const again = harness({ world, dataDir: h.dataDir });
+  assert.equal((await again.service.claim(CODE)).ok, true);
+  await again.service.idle();
+  assert.deepEqual(again.frames.map((f) => f.status), ['running', 'landed']);
+});
+
+test('an RPC that lies about the time and runs a rehearsal anyway pays only this wallet, and the claim is still proven', async () => {
+  // Its final block is stamped a minute ahead of real time (inside the two minutes this Mac's clock
+  // allows), so the rehearsal it keeps lives a minute; it says nothing and publishes it 5 s later.
+  const world = freshWorld();
+  const v = verifierOf(world);
+  const lying = {
+    ...v,
+    finalBlock: async () => ({ hash: `block${world.mac + 60_000}`, atMs: world.mac + 60_000 }),
+    async simulate(signed: Array<{ payload: string }>) {
+      for (const s of signed) world.queued.push({ at: world.mac + 5_000, t: transferOf(s.payload) });
+      return null;
+    },
+  };
+  const h = harness({ world, verifier: lying as never });
+  await h.service.claim(CODE);
+  await h.service.idle();
+  world.mac += 10_000;
+  world.chain += 10_000;
+  await v.balance(WALLET_ID, INVITE_ASSET_ID);
+  assert.equal(world.balances.get(WALLET_ID), 5_000_000n, 'it ran, and the wallet is the only payee it can name');
+  assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed'], 'the window was told what the RPC said');
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'pending', 'but nothing was written as over');
+
+  // The next start, with an RPC that answers truly, finds the rehearsal's nonce spent.
+  const next = harness({ world, dataDir: h.dataDir });
+  next.service.reconcile();
+  await next.service.idle();
+  assert.equal(next.audit.filter((e) => e.type === 'invite_claimed').length, 1);
+  assert.equal(createClaimStore(h.dataDir).all()[0]!.status, 'done');
+  assert.equal(next.service.landed().length, 1, 'and an Activity row');
+});
+
+test('a final block stamped more than two minutes ahead of this Mac is refused before anything is signed', async () => {
+  const YEAR = 365 * 86_400_000;
+  for (const [name, stamp] of [
+    ['an RPC a year ahead', (w: World) => w.mac + YEAR],
+    ['this Mac ten minutes slow', (w: World) => w.mac + 10 * 60_000],
+  ] as const) {
+    const world = freshWorld();
+    const v = verifierOf(world);
+    const h = harness({ world, verifier: { ...v, finalBlock: async () => ({ hash: 'ahead', atMs: stamp(world) }) } });
+    await h.service.claim(CODE);
+    await h.service.idle();
+    assert.equal(world.simulated.length, 0, `${name}: something was simulated`);
+    assert.equal(world.published.length, 0, `${name}: something was published`);
+    assert.equal(createClaimStore(h.dataDir).all().length, 0, `${name}: nothing was signed, so nothing is pending`);
+    const failed = h.audit.find((e) => e.type === 'invite_failed')!;
+    assert.equal((failed.data as { reason: string }).reason, 'refused');
+    assert.match((failed.data as { detail: string }).detail, /ahead of this Mac's clock/);
+    assert.deepEqual(h.frames.map((f) => f.status), ['running', 'failed']);
+  }
+
+  // The claim itself is signed off the block its rehearsal passed at: no second read for an RPC to
+  // move, and a deadline exactly two minutes past that block.
+  const world = freshWorld();
+  const h = harness({ world });
+  const chainAtRehearsal = world.chain;
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(world.reads > 0, true);
+  assert.equal(Date.parse(JSON.parse(world.published[0]!.payload).deadline as string), chainAtRehearsal + CLAIM_DEADLINE_MS);
+  assert.equal(Date.parse(JSON.parse(world.simulated[0]![0]!.payload).deadline as string), chainAtRehearsal + 1);
+});
+
+/* Audit L6: the key's hex is an immutable string inside viem's account, so it cannot be wiped; what
+   the claim can do is let go of it the moment it can sign nothing more, instead of holding it
+   through a watch that runs for minutes. */
+
+test("the code's key is dropped once it can sign nothing more: before the watch on the relay, right after Plan B's one signature, or when Plan B stops unsigned", async () => {
+  for (const mode of ['ok', 'auth', 'auth, 1Click down'] as const) {
+    const world = freshWorld();
+    world.relayMode = mode === 'ok' ? 'ok' : 'auth';
+    world.oneclick.quoteFails = mode === 'auth, 1Click down';
+    let dropped = false;
+    let signatures = 0;
+    const signerOf = (secret: Uint8Array): KeySigner | null => {
+      const inner = codeSigner(secret);
+      if (inner === null) return null;
+      return {
+        address: inner.address,
+        sign: async (payload) => {
+          signatures += 1;
+          return inner.sign(payload);
+        },
+        drop: () => {
+          dropped = true;
+          inner.drop();
+        },
+      };
+    };
+    const held: string[] = [];
+    const v = verifierOf(world);
+    const verifier = { ...v, nonceUsed: (...args: Parameters<typeof v.nonceUsed>) => (dropped || held.push('the watch read a nonce with the key held'), v.nonceUsed(...args)) };
+    const oc = oneclickOf(world);
+    const oneclick = { ...oc, status: (...args: Parameters<typeof oc.status>) => (dropped || held.push("1Click's watch ran with the key held"), oc.status(...args)) };
+    const h = harness({ world, verifier, oneclick, signerOf });
+    await h.service.claim(CODE);
+    await h.service.idle();
+    assert.deepEqual(h.frames.map((f) => f.status), ['running', mode === 'auth, 1Click down' ? 'failed' : 'landed'], mode);
+    assert.equal(dropped, true, `${mode}: the key was never dropped`);
+    assert.deepEqual(held, [], `${mode}: ${held[0] ?? ''}`);
+    assert.equal(signatures, mode === 'auth' ? 3 : 2, `${mode}: the rehearsal, the relay claim, and Plan B's one signature when it signs`);
+  }
 });
