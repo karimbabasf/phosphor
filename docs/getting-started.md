@@ -25,11 +25,15 @@ The checksum proves your file is the one on the release page. This proves the re
 file was built from the public code. It needs the GitHub CLI (`brew install gh`):
 
 ```sh
-gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
+  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.10.13
 ```
 
-It passes only for a file that this repository's release workflow built on GitHub's machines,
-and it prints the commit it came from, so you can read the exact code you are about to run. The
+Put the version you downloaded in the last line. It passes only for a file that this
+repository's release workflow built on GitHub's machines from that version's tag, and it prints
+the commit it came from, so you can read the exact code you are about to run. Leave out the last
+two lines and it also passes for a file any other workflow in this repository vouched for. The
 record is signed through Sigstore and kept in a public log that this project cannot edit, so
 someone who took over the release page or the site could swap the file and its checksum, but
 not this. What it does not prove: that the code is free of bugs. For that, read
@@ -151,9 +155,11 @@ positions at the market price and stops every plan. Nothing can move your money 
 unfreeze."
 
 Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
-proposal is refused until you unfreeze, whatever its size. The app also cancels the orders its own
-plans have resting, closes every open position on your Hyperliquid account when it can reach the
-venue, including one you opened somewhere else, and ends every plan whose position closed. An
+proposal is refused until you unfreeze, whatever its size, and a move already on its way stops
+at its last step, before it is signed; one signed before you pressed Freeze still lands. The app
+also cancels the orders its own plans have resting, closes every open position on your
+Hyperliquid account when it can reach the venue, including one you opened somewhere else, and
+ends every plan whose position closed. An
 order you placed on Hyperliquid yourself stays on the book: cancel it there. Closing a position
 takes the trading key; when the app has none in reach, the positions stay open and the window
 says so. Money does not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).

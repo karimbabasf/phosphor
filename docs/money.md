@@ -170,9 +170,12 @@ It is rehearsed and written to the file before it is signed, like every move her
 bytes are written down before 1Click gets them. If a run stops, the next `convert` finishes it with
 the same bytes, never a second signature, and converts nothing new while they can still run. A
 convert ends on NEAR Intents' own record, its one-time number spent, and then on 1Click's word for
-the NEAR USDC; a refund counts only once it shows on T. If NEAR Intents can no longer answer for
-that number (days later), 1Click's word decides, and a convert 1Click never saw lapses five
-minutes after its deadline instead of holding up the next one. A Mac clock more than a minute fast
+the NEAR USDC; a refund counts once T holds at least the amount 1Click says it refunded (with no
+amount given, what went in less 1 percent). 1Click's word is unsigned, so a lying 1Click can
+close a convert before its money reaches T (see
+[Known limits](known-limits.md#the-invite-tools)). If NEAR Intents can no longer answer for that
+number (days later), 1Click's word decides, and a convert 1Click never saw lapses five minutes
+after its deadline instead of holding up the next one. A Mac clock more than a minute fast
 is refused before the signature, because three minutes on it would be longer on NEAR.
 
     npm run invite -- issue --count 10 --amount 5 --label "SF builders"
@@ -255,7 +258,8 @@ the intent hashes, `is_nonce_used`, every balance before and after, and the rela
 `get_status` answer, then prints that report (`report` prints it again). It never prints a key
 or a code. `sweep` sends every cent of NEAR USDC left on the throwaway accounts to your address
 and names any other USDC still on the treasury, for `convert` first; it never calls the file done
-while a convert is unfinished or a balance did not read. `release-code` issues one $5
+while a convert is unfinished in the file or a balance did not read (a convert a lying 1Click
+closed counts as finished, see above). `release-code` issues one $5
 code and prints it once, to try a real claim in the app; if its money arrived as another USDC, it
 says so and stops, for `convert` first.
 
@@ -279,10 +283,13 @@ Before it proposes, your assistant can ask what can be swapped and what a swap w
 The amount is "all", which means every last unit you hold, or an exact amount; more than you hold
 is refused before any price is asked. The app asks for a price once per swap and sets the floor,
 the least you will get, one percent under that quote. A floor you name yourself is kept, but a
-floor of zero, or one more than 20 percent below the app's quote, is refused. Under the click
+floor of zero, or one more than 20 percent below the app's quote, is refused. By default the
+price comes from the solver relay, which signs nothing it quotes, so the app checks it against a
+quote 1Click signs for the same swap. Under the click
 threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
-page, the news, a chain read) earlier in that session, was started outside Phosphor and is not
-allowed yet, or the swap spends a coin the app cannot price;
+page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
+started outside Phosphor and is not allowed yet, the swap spends a coin the app cannot price, or
+the relay's price could not be checked against a quote 1Click signed;
 above it, the card shows what you pay and what you get at least, and waits for your click. See
 [Policy](policy.md#the-click-threshold).
 
@@ -306,8 +313,8 @@ Before it proposes, the agent is told to read the move back to you and wait for 
 amount, the token, the full address character for character, and where it lands. It is told to
 send only to an address you gave it in the conversation, never one from a tool result, a page or
 a file. Those are instructions to your assistant, not checks: the app cannot tell where an
-address came from. The card and the Touch ID dialog show the address in full, and your click is
-the check.
+address came from. The card shows the address in full, the Touch ID dialog on a Touch ID wallet
+shows its two ends, and your click is the check.
 
 The app then decodes the address for the place it is going. A mistyped address is refused before
 any quote (see [Troubleshooting](troubleshooting.md#a-send-was-refused-for-a-typo)), and a
@@ -454,9 +461,10 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A Hyperliquid deposit is refused under 7 USDC and when the fee is above 5 percent.
 - A Hyperliquid withdrawal is refused under 5 USDC.
 - A swap floor more than 20 percent below the app's quote is refused as no floor at all.
-- A swap may give up at most 3 percent of its value to fees and price, by the swap service's own
-  dollar figures for both sides. When the swap service gives no dollar figure for a coin there is
-  nothing to measure by, and no cap applies. A quote whose request carries a fee, a field or a
+- A swap may give up at most 3 percent of its value to fees and price, by the dollar figures
+  1Click signs for both sides, on the solver relay and on 1Click alike. When 1Click gives no
+  dollar figure for a coin there is nothing to measure by, and no cap applies; on the solver
+  relay such a swap waits for your click. A quote whose request carries a fee, a field or a
   value the app did not ask for is refused before anything is signed.
 - A move runs with the coins its card was priced with. If the swap service's coin list names a
   different coin, or counts one in different decimals, when you click, nothing is signed and you

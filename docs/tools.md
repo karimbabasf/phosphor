@@ -2,7 +2,9 @@
 
 Phosphor registers 50 tools for the agent that drives it, and every one is listed here in five
 groups: read, propose, chart and trade surface, agents, and other. Reads change nothing. Propose
-tools return a proposal id and a simulation, and cannot approve, refuse or execute anything. Every
+tools return a proposal id and a simulation, and cannot approve or refuse anything: a move your
+rules let run without a click runs at once, and every other move waits for your click or is
+refused. Every
 call the app accepts, read or write, is written to the audit log, except `skill` and `whats_new`,
 which the agent's own connection answers from a file on this Mac. A worker an agent spawns is an analyst: the
 tools marked lead only are not registered for it at all, so there is nothing to talk it into. The

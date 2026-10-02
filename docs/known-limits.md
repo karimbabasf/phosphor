@@ -1,8 +1,8 @@
 # Known limits
 
 What this build does not cover, stated plainly so you can size what you put in it. Each item
-says what the limit is, what it means for your money, and what closes it. None of them is hidden
-in the app: the Vault tab, the cards and the audit log say the same things in their own words.
+says what the limit is, what it means for your money, and what closes it. The Vault tab, the
+cards and the audit log say several of them in their own words; this page has them all.
 
 ## Alpha software that moves real money
 
@@ -35,6 +35,30 @@ only while you are using it.
 
 What closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself so that
 key never exists as bytes, or a hardware signer. Neither ships here.
+
+## A Touch ID while the app starts can re-arm a plan
+
+For up to 20 seconds after Phosphor starts, its check of your trading plans waits for
+Hyperliquid's first answer. If you approve a move with Touch ID on a locked wallet in that time,
+and the check lands while that move holds the key, every waiting plan re-arms with its trading
+key, as an unlock would.
+
+What it means: a plan you armed earlier can trade again without an unlock, inside the limits you
+armed it with. Its trading key can place and cancel orders and can never withdraw or transfer.
+Freeze stops it.
+
+What closes it: the check arming plans only after an unlock.
+
+## Two seconds after the backend stops
+
+If a program running as you stops the app's backend and takes its port, the app needs up to two
+seconds to notice. In that time what the window sends goes to that program: a click, or a
+password typed into Unlock. A screen lock in those seconds sends the lock there too, with the
+window token, which no longer opens anything.
+
+What it means: the program would have to time this to the second, and a password wallet's
+password is what it would be after. If the window suddenly shows the splash, or Phosphor says
+its backend stopped, do not type your password until it is back.
 
 ## A local program that reads the seat secret can propose
 
@@ -97,33 +121,77 @@ account modes accept, or refuses before any quote and names the most it can send
 
 ## A fee can hide inside the loss floors
 
-Every quote comes from 1Click, and 1Click does not sign the field that names its fee. The app
-checks what it can: the request must come back as it was sent, a fee line may pay only 1Click, the
-quote must carry 1Click's signature, and what a move gives up is held to a floor. Inside that floor
-a fee hidden from the app is not caught.
+Quotes come from 1Click and, for swaps by default, from the solver relay. 1Click does not sign
+the field that names its fee, and the relay signs nothing it quotes. The app checks what it can:
+a 1Click quote must come back as it was sent, a fee line may pay only 1Click, and the quote must
+carry 1Click's signature; a relay price is checked against a quote 1Click signed for the same
+swap; and what a move gives up is held to a floor. Inside that floor a fee hidden from the app is
+not caught.
 
-What it means: someone who can change a quote between your Mac and 1Click, which takes breaking
-HTTPS or being 1Click, can take up to 3 percent of a swap, 1 percent of a send, 3 percent of a
-payout or 5 percent of a Hyperliquid deposit. A swap of a coin 1Click puts no dollar figure on has
-no cap at all. The same strict check cuts the other way: if 1Click starts sending back a field the
-app does not know, every quote is refused until Phosphor is updated, and nothing moves.
+What it means: someone who can change a quote between your Mac and the venue, which takes
+breaking HTTPS or being the venue, can take up to 3 percent of a swap on either route, 1 percent
+of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent
+of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap of a
+coin 1Click puts no dollar figure on has no cap at all; on the relay route such a swap waits for
+your click. The same strict check cuts the other way:
+if 1Click starts sending back a field the app does not know, every quote is refused until
+Phosphor is updated, and nothing moves.
 
-What closes it: 1Click signing its fee field.
+What closes it: the venues signing what they quote, the fee included.
+
+## Some coins take their 1Click id on first sight
+
+A card pins each coin's 1Click id and decimals when it lands, so the coin list cannot change under
+it before you click. For most coins the app's own registry names the id ahead of time. ETH (on
+Ethereum, Base and Arbitrum), SOL, and six registry coins (USDS, PYUSD and USDe on Ethereum, DAI on
+Base and on Arbitrum, PYUSD on Solana) take the id 1Click's coin list gives the first time a card
+is priced.
+
+What it means: someone who can forge 1Click's coin list at that moment, which takes breaking HTTPS
+or being 1Click, could price another coin under one of those names. When 1Click prices both coins,
+its signed figures still hold the swap to the 3 percent floor.
+
+What closes it: the registry naming 1Click's id for every coin it lists.
+
+## Names a venue lists do not mark the agent
+
+A page, the news, a chain read or a venue's error text marks the agent that reads it, and its
+next small move waits for your click. Some names a venue lists do not: 1Click's coin names, the
+bridge's asset names and its deposit memo, and the account names in a swap's record.
+
+What it means: a venue that lies, or someone who breaks HTTPS to it, can put words in those names,
+and the agent that reads them keeps its no-click moves. Those moves stay inside your rules and
+your daily limit.
 
 ## A release signs what its build made
 
 Releases are built in a job that holds no secret, and signed in another job that installs and
 builds nothing. Before signing, the release checks that the payload's own files match the tagged
-source and that every program inside carries only the committed entitlements. It cannot vouch for
-the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
-installed packages, and the release build does not repeat CI's check of each package's registry
-signature.
+source and that every program inside carries only the committed entitlements. That check skips
+anything named `.DS_Store`, a folder of that name and what is in it included, and nothing checks
+what else the build put on the disk image beside the app. It cannot vouch for the compiled
+programs (the shell, the bundled Node, the Secure Enclave service) or for the installed packages,
+and the release build does not repeat CI's check of each package's registry signature.
 
-What it means: a build job someone tampered with could hand the signing job a changed program, and
-it would be signed. [Check a release yourself](security.md#check-a-release-yourself) covers the
-payload's files, not those programs.
+What it means: a build job someone tampered with could hand the signing job a changed program, a
+file in a `.DS_Store` folder, or an extra file beside the app on the disk image, and it would be
+signed. [Check a release yourself](security.md#check-a-release-yourself) covers the payload's
+files, not those programs.
 
 What closes it: a build anyone can reproduce byte for byte.
+
+## The release keys are not behind an approval yet
+
+The release workflow names a `release` environment that is meant to hold the signing secrets and
+wait for the maintainer's approval. At 0.10.13 it asks no approval and lets any branch in, and the
+secrets (the Developer ID and the update key among them) sit at repository level.
+
+What it means: any workflow pushed to this repository can read both signing keys, not only a
+tagged release that the maintainer approved. Only the maintainer can push to it, so this rests
+on that one GitHub account.
+
+What closes it: the secrets moved into the environment, with a required approval and only `v*`
+tags let in.
 
 ## An armed plan keeps trading after a lock
 
@@ -159,6 +227,43 @@ and as an editor or a chat app changes it. A code someone retyped with a slip (a
 zeros and ones typed as O, I or L, no PHOS in front and odd spacing, or a code split over two
 messages) can reach your agent and its transcript. Paste codes only into the invite field.
 [Money](money.md#invite-codes) says how a claim works.
+
+## A claim can look failed for a while
+
+A claim on the relay route is rehearsed first, signed so it expires a millisecond after a recent
+NEAR block. A NEAR RPC that stamps that block up to two minutes ahead of the true time can run the
+rehearsal. It can pay only your wallet.
+
+What it means: the money lands, but the window says the claim failed until Phosphor's next start
+finds it and marks the code claimed. Restart Phosphor before you ask for a new code.
+
+## One agent can get in the way of another
+
+When an outside agent's seat lapses, another program that read the agent's secret file can take
+its id. Its goodbye then removes your Allow, so the returning agent's moves wait for your click
+again; or the returning agent shows as allowed while every move it asks for waits. Any agent can
+also stop a worker another agent started.
+
+What it means: an agent can lose its no-click moves, or a worker its job. None of this moves
+money; each case ends in a move that waits for you.
+
+## The invite tools
+
+`npm run invite`, for whoever hands out invite codes, guards the treasury, each code's key and the
+encrypted invite file. Its passphrase is what keeps that file shut. Its refusal of piped input
+only stops a script or an agent from running it by accident: a program that pretends to be a
+terminal gets past it and can read what the terminal shows, live links included.
+
+What it means: type the passphrase only in your own Terminal, never through an agent. A convert
+closes on 1Click's word, which is unsigned, so a lying 1Click can mark a convert done or refunded
+before its money reaches the treasury. A Mac clock running fast
+and a lying NEAR RPC together can run a batch's rehearsal as well as its real payload: each code
+then holds twice its amount, a claim takes all of it, and `reclaim` takes back what nobody
+claimed. A convert may give up 1 percent of its
+value to a fee hidden in the quote. `scripts/invite-proof.ts` keeps its throwaway keys in the
+clear and `release-code` prints a live code, so put in only what you are ready to lose.
+[Money](money.md#issuing-invite-codes) has every command, and the
+[security model](security-model.md#the-invite-tools) what each one trusts.
 
 ## What the app cannot protect you from
 

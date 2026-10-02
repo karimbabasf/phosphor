@@ -259,16 +259,22 @@ Gatekeeper step.
 
 The release runs as four jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
-secret. The sign job, in the protected `release` environment that holds every release secret,
-installs nothing. Before any key is in it, it holds the build job's app to its own checkout
-(`scripts/release-check.ts`): every first-party payload file byte for byte, the payload digest the
+secret. The sign job installs nothing. It names the `release` environment, which is meant to hold
+every release secret and wait for the maintainer's approval; at 0.10.13 the secrets still sit at
+repository level and the environment asks no approval (see
+[Known limits](known-limits.md#the-release-keys-are-not-behind-an-approval-yet)). Before any key
+is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
+first-party payload file byte for byte (it skips anything named `.DS_Store`, a folder of that name
+and what is in it included), the payload digest the
 shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
 on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
 entitlements as it found them. Then it runs
 `notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary. The split keeps the secrets from the build. This check stops the build
+one team on every binary. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
+app inside it, and nothing checks what else sits beside the app before the DMG is signed and
+notarized. The split keeps the secrets from the build. This check stops the build
 from changing a first-party file in the payload or adding an entitlement before signing. It
 cannot vouch for the compiled programs (the shell, the bundled Node, the Secure Enclave service)
 or for `node_modules`, which the build job made and the sign job signs as handed over; only a
