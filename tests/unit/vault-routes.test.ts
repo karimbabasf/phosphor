@@ -34,7 +34,7 @@ import { ADDRESS_WAIT_MS, STATUS_LINK } from '../../src/preflight/route-health.t
 import type { RouteAsk, RouteHealth } from '../../src/preflight/route-health.ts';
 import { EventEmitter } from 'node:events';
 import type { ChildProcess } from 'node:child_process';
-import { useKeystore } from '../../src/keystore/index.ts';
+import { isLocked, useKeystore } from '../../src/keystore/index.ts';
 import { readApiWalletKey } from '../../src/runner/keys.ts';
 import { createRunnerHost } from '../../src/runner/host.ts';
 import { createSession } from '../../src/keystore/session.ts';
@@ -686,6 +686,8 @@ async function walletWithLockedPlan(b: Awaited<ReturnType<typeof boot>>) {
     baseUrl: 'https://api.hyperliquid.xyz',
     user: '0x2222222222222222222222222222222222222222',
     killSwitch: () => false,
+    // As src/main.ts wires it.
+    walletOpen: () => !isLocked(),
     onEvent: () => {},
     session,
     store,

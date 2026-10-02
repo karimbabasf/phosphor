@@ -173,6 +173,7 @@ function host(script: string[], replyMs = 500) {
     baseUrl: 'http://127.0.0.1:1',
     user: USER,
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: (e) => events.push(e),
     store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hl-confirm-'))),
     meta: () => ({ assetId: 3, szDecimals: 4, maxLeverage: 25 }),

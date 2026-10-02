@@ -157,8 +157,9 @@ type HarnessOptions = {
   freeze?: { on: boolean };
   // Held open while a fire reads whether the API wallet is still approved.
   agentWait?: Promise<void>;
-  // Whether the wallet is open, as main.ts reads it; absent is open.
-  walletOpen?: () => boolean;
+  // Whether the wallet is open, as main.ts reads it; open unless a test says. null builds a host
+  // nobody wired, the way a caller that left the line out would.
+  walletOpen?: (() => boolean) | null;
   // Counts every read of the trading key.
   keyReads?: { n: number };
   dir?: string;
@@ -173,7 +174,7 @@ function harness(over: HarnessOptions = {}): Harness {
   const agentOk = { value: true };
   const session = createSession({ now: () => clock.now, isUnlocked: () => true, lock: () => {} });
   const runner = createRunnerHost({
-    ...(over.walletOpen !== undefined ? { walletOpen: over.walletOpen } : {}),
+    walletOpen: (over.walletOpen === null ? undefined : (over.walletOpen ?? (() => true))) as () => boolean,
     apiWalletKey: async () => {
       if (over.keyReads !== undefined) over.keyReads.n += 1;
       if (over.keyDelayMs !== undefined) await new Promise((r) => setTimeout(r, over.keyDelayMs));
@@ -718,6 +719,7 @@ test('no venue metadata for the coin refuses the arm rather than arming a plan t
     baseUrl: 'http://127.0.0.1:1',
     user: '0x1',
     killSwitch: () => false,
+    walletOpen: () => true,
     onEvent: () => {},
     store: createPlanStore(dir),
     meta: () => null,
@@ -958,4 +960,30 @@ test('a reconcile that lands while the wallet is shut (a touch lease, a shut whe
   await open.runner.reconcile(100);
   await settle();
   assert.equal(open.forked[0]?.of('arm').length, 1);
+});
+
+test('a host built without walletOpen reads the wallet as shut: a reconcile locks the waiting plan and reads no trading key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const waiting = row({ id: 'pl_wait', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
+  createPlanStore(dir).put(waiting);
+  const keyReads = { n: 0 };
+  const h = harness({ dir, walletOpen: null, keyReads });
+  h.approvals.set('p1', { hash: waiting.hash, status: 'executed' });
+  h.runner.onAccount(account());
+  await h.runner.reconcile(100);
+  await settle();
+  assert.equal(keyReads.n, 0, 'the trading key was never read');
+  assert.equal(h.forked.length, 0, 'no child was started');
+  assert.equal(h.runner.get('pl_wait')?.locked, true, 'it waits, locked');
+});
+
+test("main.ts hands the plan check the keystore's own lock, the one a touch's lease and a shut when idle keep", () => {
+  /* Read as text because importing main.ts starts the app. That a lease reads as locked is
+     approve-touch-lease.test.ts and lock-when-signed.test.ts; that reconcile honours it is above. */
+  const main = fs.readFileSync(new URL('../../src/main.ts', import.meta.url), 'utf8');
+  assert.equal(main.split('createRunnerHost({').length, 2, 'one runner host, built once');
+  const call = main.slice(main.indexOf('createRunnerHost({'));
+  const deps = call.slice(0, call.indexOf('\n});'));
+  assert.match(deps, /^ {2}walletOpen: \(\) => !isLocked\(\),$/m, 'the runner reads the wallet as open only while the keystore is not locked');
+  assert.match(main, /^import \{[^}]*\bisLocked\b[^}]*\} from '\.\/keystore\/index\.ts';$/m, "isLocked is the keystore's own");
 });
