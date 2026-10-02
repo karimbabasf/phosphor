@@ -1641,13 +1641,15 @@
       }, CLOSE_FADE_MS + 10);
     }
 
-    /* The line under the head: why it did not go through, what a held move waits on, what a
-       late one is doing. One sentence, never the venue's raw words. */
+    /* The line under the head: why it did not go through, why a small move waits when the
+       person's own would run alone, what a held move waits on, what a late one is doing. One
+       sentence, never the venue's raw words. */
     function lineFor(plain, view, row, stale) {
       var decision = window.PhosphorDecision;
       if (plain.state === 'didnt_go_through' || plain.state === 'coming_back') return plain.sentence;
       if (plain.state === 'done') return plain.note;
       if (stale) return 'This is no longer waiting on you.';
+      if (plain.state === 'needs_you') return decision && typeof decision.gateLine === 'function' ? decision.gateLine(row) : '';
       if (plain.state !== 'working') return '';
       if (plain.held) return decision && typeof decision.heldLine === 'function' ? decision.heldLine(row) : 'Waiting for the checks to clear. Nothing is signed until they do.';
       if (plain.late) {
@@ -1829,7 +1831,9 @@
       for (var a = 0; a < ask.details.length; a += 1) fold.appendChild(ask.details[a]);
     }
     if (view) {
-      if (view.decidedAt && view.decidedBy === 'human') factLine(fold, 'You approved it at', clock(view.decidedAt));
+      /* A person's click either way: a Cancel is "You said no", never an approval. */
+      var saidNo = view.stage === 'declined' || (isObject(row) && row.status === 'refused');
+      if (view.decidedAt && view.decidedBy === 'human') factLine(fold, saidNo ? 'You said no at' : 'You approved it at', clock(view.decidedAt));
       else if (view.decidedAt && view.decidedBy === 'policy' && view.stage !== 'refused') factLine(fold, 'Your rules allowed it at', clock(view.decidedAt));
       if (view.settledAt) {
         var done = view.stage === 'confirmed';

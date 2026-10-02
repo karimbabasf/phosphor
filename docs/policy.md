@@ -66,8 +66,8 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 Once the agent in the chat has searched the web, read a page, or read a stranger's words through
 Phosphor (news headlines, token names and memos on a chain), every money move it proposes in that
 chat waits for your click, whatever its size, until the chat starts a new session (the agent
-restarts, or you start a new chat). Why it asks, in the card's Details, says: "This chat read
-text from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
+restarts, or you start a new chat). The card says why under its head: "This chat read text
+from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
 highlight the agent writes after a web read carries the same mark, and an agent that later reads
 one is marked too. So do a board post and a worker's report, and a worker that a marked agent
 starts begins marked. A move
@@ -79,19 +79,21 @@ its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruct
 An agent in your terminal or in another app attaches with a secret the app writes into its data
 folder, and any program running as you can read that folder. So the first time one attaches, the
 window asks "Allow this agent?", and until you allow it, every money move it proposes waits for
-your click, whatever its size. Why it asks says: "This agent was started outside Phosphor and is
-not allowed yet, so this move waits for your OK." Allow lets its moves run under these rules like
-the chat's own agent; Not now keeps every one waiting. An Allow holds for that one connection:
-restart the agent and the window asks again. Phosphor cannot see what such an agent reads with
-its own tools, so a read it makes through Phosphor (a page, news, a chain read) still marks it as
-above, and the card says to allow only an agent you started yourself.
+your click, whatever its size. The card says under its head: "This agent was started outside
+Phosphor and is not allowed yet, so this move waits for your OK." Allow lets its next moves run
+under these rules like the chat's own agent, and a move it already asked for still waits; Ask
+each time keeps every one waiting, and its row in the conversation keeps a Change that asks
+again. An Allow holds for that one connection: restart the agent and the window asks again.
+Phosphor cannot see what such an agent reads with its own tools, so a read it makes through
+Phosphor (a page, news, a chain read) still marks it as above, and the card says to allow only an
+agent you started yourself.
 
 ### After a move that did not go through
 
 When a move your agent proposed does not go through, the app wakes the agent to tell you in one
 line, without waiting for your next message. Nobody typed that turn, so every money move the agent
-proposes in it waits for your click, whatever its size. Why it asks says: "Your agent asked for
-this on its own after a move did not go through, so it waits for your OK." The mark ends with that
+proposes in it waits for your click, whatever its size. The card says under its head: "Your
+agent asked for this on its own after a move did not go through, so it waits for your OK." The mark ends with that
 turn, and a move that would have been refused is still refused.
 
 ## Policy as sentences

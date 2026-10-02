@@ -41,7 +41,11 @@ the wrong network is lost, and the bridge does not refund. Send a small test amo
 Under the network tiles, Have an invite code? opens a field for a Phosphor invite code. A pasted
 code is checked at once, and Use code checks a typed one. A good code says what is waiting
 ("Nice. $5 is waiting for you."), and Add $5 moves it into your wallet; that can take up to two
-minutes, and the line says when it lands. The deposit card has the same line on its first step.
+minutes, and the line says when it lands. What the app says about the code sits between the field
+and the key, and scrolls into view when it changes. A code that holds nothing, or cannot pay, keeps
+Use code off until you change the field; if the app could not check it, the key says Try again. A
+claim that did not come through stays said on the closed line until you open it. The deposit card
+has the same line on its first step.
 
 ### When NEAR Intents pauses a network
 
@@ -71,9 +75,9 @@ An invite code is USDC waiting for a new wallet, usually $5. It looks like
 `https://phosphor.money/invite#PHOS-...`. Paste the code or the whole link on the invite step
 after the terms on first open, or under Have an invite code? on the Add money card. The code
 still reads with PHOS left off, with its hyphens turned into dashes or spaces, or in full-width
-letters. The app checks it first and says what is waiting, that it has a typo, or that it was
-already used. One wrong character, or two neighbours swapped, is caught on this Mac before the
-network is asked anything.
+letters. The app checks it first and says what is waiting, that it has a typo, or that it has
+nothing left in it. One wrong character, or two neighbours swapped, is caught on this Mac before
+the network is asked anything.
 
 The money moves once your wallet exists and is open: right after you make it, or after you
 unlock it. It lands as USDC in your NEAR Intents balance and Activity shows "Invite: +5 USDC".
@@ -98,14 +102,16 @@ millisecond after a recent NEAR block and checked by NEAR Intents at that block.
 that answers the check is someone else's computer, so it only ever sees that copy, which no later
 block can run; the claim itself goes to the solver relay alone. Every signature is written down
 before it leaves this Mac. A claim that fails moves nothing: the money stays on the code, and you
-can add it again from Add money. An RPC that lies about the time could stretch the copy's life by
-up to two minutes, and even then the money can only land in your wallet; the app finds it there
-the next time it opens. If the app quits in the middle of a claim, it finishes the check the next
-time it opens.
-A code pays once; a second claim says "This code was already used, or it has a typo."
+can add it again from Add money. If you had moved on, the note on Basic stays until you close it.
+An RPC that lies about the time could stretch the copy's life by up to two minutes, and even then
+the money can only land in your wallet; the app finds it there the next time it opens. If the app
+quits in the middle of a claim, it finishes the check the next time it opens.
+A code pays once; a second claim says "This code has nothing left in it. Ask whoever sent it for
+a new one."
 
 Never paste a code into the chat. What you type there goes to your assistant and its model
-provider, so the chat refuses a code and opens the invite field instead. The app's backend turns
+provider, so the chat takes the code out of the box, leaves your other words, and opens the
+invite field instead. The app's backend turns
 such a message away too, before the assistant sees it, and writes none of it to the log or the
 conversation. Both know a code with PHOS in front in every spelling the invite field reads, and a
 code with PHOS left off when spaces or dashes split it into its groups. A code you changed by

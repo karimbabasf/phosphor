@@ -90,6 +90,32 @@ body[data-firstrun="true"] #page {
   text-wrap: balance;
 }
 
+/* The title and the lines under it read as one group: why it locked, then
+   what waits for the person, closer to the title than the card's gap. */
+.lock-head {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.lock-why {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.lock-why[hidden] { display: none; }
+
+.lock-why-line {
+  margin: 0;
+  max-width: 40ch;
+  font-size: var(--fs-15);
+  line-height: 1.45;
+  color: var(--text-2);
+  text-wrap: balance;
+}
+
 .lock-form {
   width: 100%;
   display: flex;

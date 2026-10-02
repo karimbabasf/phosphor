@@ -347,9 +347,15 @@
   }
 
   /* Only an agent that is doing something earns a row: an idle connection is plumbing, and a
-     person reading "1 connected, no call yet" learns nothing they can act on. */
+     person reading "1 connected, no call yet" learns nothing they can act on. One the person
+     put off with Ask each time earns a row whatever it did, while the built-in one runs too:
+     the row is their way back to allowing it (paintAllow). */
   function rosterRows() {
-    return workingAgents();
+    var rows = workingAgents();
+    for (var i = 0; i < roster.length; i += 1) {
+      if (roster[i].putOff && rows.indexOf(roster[i]) === -1) rows.push(roster[i]);
+    }
+    return rows;
   }
 
   /* The newest call still open, which is the step the working line names. */
@@ -437,6 +443,12 @@
        detail, so it is named under the head rather than behind a fold. */
     var clients = dom.el('div', 'agent-clients');
     host.appendChild(clients);
+
+    /* Under them, the question about one started outside Phosphor (ui/screens/agentask.js draws
+       it here): in the column's flow, so the thread moves down for it and nothing is covered. */
+    var asks = dom.el('div', 'agent-asks');
+    asks.hidden = true;
+    host.appendChild(asks);
 
     /* THE CENTRE: the card, or the connect sheet in its place. */
     var centre = dom.el('div', 'agent-centre');
@@ -654,9 +666,9 @@
 
   /* AN INVITE CODE NEVER GOES TO THE ASSISTANT: a code in the chat would reach the agent, its
      model provider and the transcript. The box is read for the code's shape as it changes and
-     again at every send (ui/core/invite.js codeIn). A code found there leaves the box with
-     everything around it, goes to the invite field in Add money (ui/screens/invite.js open),
-     and the line over the box says why. Nothing is sent. */
+     again at every send (ui/core/invite.js codeIn). A code found there leaves the box, the
+     person's other words stay, the code goes to the invite field in Add money
+     (ui/screens/invite.js open), and the line over the box says why. Nothing is sent. */
   function keepOut(text) {
     var shape = window.PhosphorInviteApi;
     var code = shape && typeof shape.codeIn === 'function' ? shape.codeIn(text) : null;
@@ -665,8 +677,9 @@
     var words = invite && invite.COPY ? invite.COPY.chat : 'Invite codes never go to your assistant.';
     for (var i = 0; i < mounts.length; i += 1) {
       var refs = mounts[i].refs;
-      if (refs.input && refs.input.value) {
-        refs.input.value = '';
+      var left = refs.input && refs.input.value ? withoutCodes(refs.input.value, shape) : null;
+      if (left !== null && left !== refs.input.value) {
+        refs.input.value = left;
         autogrow(refs.input);
         arm(mounts[i]);
       }
@@ -677,6 +690,22 @@
     }
     if (invite && typeof invite.open === 'function') invite.open(code);
     return true;
+  }
+
+  /* The text with every code codeIn finds taken out, the rescan past prose included, one
+     space left where a code sat between words. */
+  function withoutCodes(text, shape) {
+    var rest = String(text);
+    var code = shape.codeIn(rest);
+    while (code) {
+      var at = rest.indexOf(code);
+      if (at < 0) break;
+      var before = rest.slice(0, at).replace(/\s+$/, '');
+      var after = rest.slice(at + code.length).replace(/^\s+/, '');
+      rest = before && after ? before + ' ' + after : before + after;
+      code = shape.codeIn(rest);
+    }
+    return rest;
   }
 
   /* The send arrow is dim until the box holds a word. */
@@ -1257,6 +1286,7 @@
       return row;
     }, function (row, client) {
       var kids = row.children;
+      paintAllow(row, client);
       if (client.idle) {
         dom.setAttr(row, 'data-idle', 'true');
         dom.setText(kids[0], client.name);
@@ -1265,8 +1295,31 @@
       }
       dom.setAttr(row, 'data-idle', null);
       dom.setText(kids[0], client.name + ', ' + (client.role === 'analyst' ? 'read only' : client.waits ? 'its moves wait for your OK' : 'can ask'));
-      dom.setText(kids[1], String(client.calls || 0) + ' calls');
+      dom.setText(kids[1], client.calls > 0 ? client.calls + (client.calls === 1 ? ' call' : ' calls') : '');
     });
+  }
+
+  /* A put-off agent's way back: Change brings its card back, whole (ui/screens/agentask.js), with
+     its warning, its beat and both answers. The row decides nothing: Allow is the card's alone, so
+     no line of 12 px type next to a name the agent chose can let it in. */
+  function paintAllow(row, client) {
+    var key = row.__allow || null;
+    if (!client.putOff) {
+      if (key) {
+        row.removeChild(key);
+        row.__allow = null;
+      }
+      return;
+    }
+    row.__session = client.session;
+    if (key) return;
+    key = button('btn btn-ghost btn-sm agent-client-change', 'Change');
+    dom.on(key, 'click', function () {
+      var ask = window.PhosphorAgentAsk;
+      if (ask && typeof ask.reopen === 'function') ask.reopen(row.__session);
+    });
+    row.appendChild(key);
+    row.__allow = key;
   }
 
   /* ---------- the scroll ---------- */
@@ -2095,12 +2148,16 @@
     var next = [];
     for (var i = 0; i < members.length; i += 1) {
       var m = members[i] || {};
+      var waits = m.origin === 'outside' && m.allowed !== true;
       next.push({
+        session: String(m.session || ''),
         name: String(m.label || m.client || m.session || 'an agent'),
         role: String(m.role || ''),
         calls: typeof m.ops === 'number' ? m.ops : 0,
         // Started outside Phosphor and not allowed yet (ui/screens/agentask.js asks).
-        waits: m.origin === 'outside' && m.allowed !== true
+        waits: waits,
+        // Put off with Ask each time, and one the person can still allow: its row keeps a way back.
+        putOff: waits && m.askable === true && m.later === true
       });
     }
     roster = next;

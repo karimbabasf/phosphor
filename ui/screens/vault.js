@@ -421,7 +421,7 @@
 
   function buildLock(host) {
     var r = row('Locks after', 'window');
-    r.main.appendChild(text('vault-text', 'The window locks after this long without you and hides everything until you open it.'));
+    r.main.appendChild(text('vault-text', 'The window locks after this long without you, and whenever your Mac\'s screen locks. It hides everything until you open it.'));
     refs.lockNow = button('Lock now', 'btn-quiet btn-sm', 'Locking');
     /* The glyph and the word share one face: a button that can wait stacks its
        children in one cell (components.css), so a glyph beside the label

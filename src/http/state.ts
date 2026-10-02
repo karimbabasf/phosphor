@@ -15,6 +15,7 @@ import { intParam, jsonWithEtag } from './respond.ts';
 import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { vaultStatus } from './vault.ts';
+import { lockReasonFor } from '../keystore/lock-reason.ts';
 import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../rails/intents-address.ts';
 
 /* NOTHING UNBOUNDED RIDES ON /api/state, and this is where that rule is kept.
@@ -46,6 +47,8 @@ export const PROPOSAL_PAGE_MAX = 200;
 
 // Still waiting on someone: a person, an unlock, or a look at the chain. Never trimmed.
 const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch', 'needs_reconciliation']);
+// Of those, the ones waiting on the person's OK: the lock screen counts these.
+const ASKING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch']);
 
 /* The trim, in store order.
    The order is load-bearing rather than cosmetic: ui/screens/decision.js takes pending[0] out of
@@ -159,6 +162,12 @@ export function buildState(ctx: Ctx): unknown {
       addresses: { evm: lockAddresses.addresses.evm },
       verified: lockAddresses.verified,
       tampered: lockAddresses.tampered,
+      /* What the lock screen says under its title. `reason` is a fixed code (screen, switch,
+         idle, sleep) or null, never the text a caller sent; see src/keystore/lock-reason.ts.
+         `waiting` is a count only: the proposals below already carry what they are, and this
+         adds nothing a reader of this payload could not count for itself. */
+      reason: lockReasonFor(ctx.keystore).code(),
+      waiting: list.filter((p) => ASKING.has(p.status)).length,
     },
     /* The vault beside the lock: which custody, whether the enclave is reachable, what the
        Touch ID dialog is waiting on, whether the phrase is proven backed up. The Vault tab, the
@@ -298,7 +307,8 @@ function stateKey(ctx: Ctx): Omit<StateCache, 'built' | 'at'> {
   return {
     storeRevision: ctx.store.revision(),
     auditLines: ctx.audit.lineCount(),
-    lockState: ctx.keystore.state(),
+    // The lock and its reason, so a code noted after the lock's own frame still rebuilds.
+    lockState: `${ctx.keystore.state()}:${lockReasonFor(ctx.keystore).code() ?? ''}`,
     snapshot: ctx.ledger.snapshot(),
     // A claim's running frame writes no audit line, so its status moves the key on its own.
     invite: ctx.invites.revision(),

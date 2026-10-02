@@ -12,7 +12,7 @@
 
     { state: "offer",     version, current, notes }        a newer version is on the feed
     { state: "current",   version }                         asked, and this is the latest
-    { state: "failed",    title, message, retry }           the check or the install failed
+    { state: "failed",    title, message, retry, get }      the check or the install failed
     { state: "installing" }                                 set by the page itself after Install
 
   A failed message is one plain sentence, then a blank line, then the updater's own error. The
@@ -21,12 +21,16 @@
   buttons out of reach. Try again shows when the shell says it can take one (retry: true, the
   update_retry command).
 
-  While the install runs the shell calls window.__phosphorProgress(0 to 1) and, if it goes
-  wrong, window.__phosphorFailed(message, canRetry, title), through WebviewWindow::eval. The
+  While the install runs the shell calls window.__phosphorProgress(0 to 1) as the download
+  comes in, window.__phosphorChecking() before it checks the code signature (a few seconds, with
+  no figure to show, so the bar moves on its own), window.__phosphorInstalling() right before the
+  swap, and, if it goes wrong, window.__phosphorFailed(message, canRetry, title), all through
+  WebviewWindow::eval. The
   title is there for an update the shell refused (its signature or its contents did not pass
-  the check): that window says so, offers no Try again, and does not send the person to try
-  later, because the same update would be refused again. A finished install never reaches the
-  page: the app relaunches.
+  the check): that window says so and offers no Try again, because the same update would be
+  refused again. Its fourth argument shows Open phosphor.money (update_get_phosphor), which opens
+  the one fixed download address the shell holds, the splash's. A finished install never reaches
+  the page: the app relaunches.
 
   Same tokens as the splash and ui/design/tokens.css, copied because this page has no origin
   to import them from. The window is dark only, so this page is too.
@@ -289,6 +293,7 @@
     </div>
     <button id="later" class="btn" type="button"></button>
     <button id="retry" class="btn btn-primary" type="button" hidden>Try again</button>
+    <button id="get" class="btn btn-primary" type="button" hidden>Open phosphor.money</button>
     <button id="install" class="btn btn-primary" type="button">Install and relaunch</button>
   </footer>
 </main>
@@ -312,9 +317,22 @@
     var installing = document.getElementById('installing');
     var later = document.getElementById('later');
     var retry = document.getElementById('retry');
+    var get = document.getElementById('get');
     var install = document.getElementById('install');
 
     function dismiss() { invoke('update_dismiss'); }
+
+    /* The bar: a share of 0 to 1, or null for one that moves on its own. The moving bar takes its
+       width from the stylesheet, so no width of its own may be left on it. */
+    function bar(p) {
+      if (p === null) {
+        progress.setAttribute('data-indeterminate', '');
+        progress.firstElementChild.style.width = '';
+      } else {
+        progress.removeAttribute('data-indeterminate');
+        progress.firstElementChild.style.width = Math.round(p * 100) + '%';
+      }
+    }
 
     /* The notes are the release's tag message, wrapped at a line length when it was written,
        and a wrapped line is not a break anyone meant: it is joined back into its paragraph so
@@ -343,7 +361,7 @@
       var said = (cut >= 0 ? text.slice(0, cut) : text).trim();
       var raw = cut >= 0 ? text.slice(cut + 2).trim() : '';
       if (/release feed/i.test(said)) said = 'Phosphor could not reach its update server. Check your connection and try again.';
-      else if (raw && s.retry === true && /keeps running\.?$/.test(said)) said = said.replace(/\.?$/, '.') + ' Try again later.';
+      else if (raw && s.retry === true && /keeps running\.?$/.test(said)) said = said.replace(/\.?$/, '.') + ' Try again.';
       return { said: said, raw: raw };
     }
 
@@ -371,10 +389,10 @@
       showDetail(false);
       more.hidden = true;
       working.hidden = true;
-      progress.removeAttribute('data-indeterminate');
-      progress.firstElementChild.style.width = '0';
+      bar(0);
       install.hidden = true;
       retry.hidden = true;
+      get.hidden = true;
       later.hidden = false;
       later.textContent = 'Close';
       later.className = 'btn';
@@ -394,8 +412,8 @@
         line.textContent = 'Downloading and checking the update. The app closes and opens again on its own when this is done.';
         later.hidden = true;
         working.hidden = false;
-        progress.setAttribute('data-indeterminate', '');
-        installing.textContent = 'Installing';
+        bar(null);
+        installing.textContent = 'Downloading';
       } else {
         var f = failure(s);
         title.textContent = s.title || 'Could not check for updates';
@@ -403,6 +421,7 @@
         detail.textContent = f.raw;
         more.hidden = !f.raw;
         retry.hidden = s.retry !== true;
+        get.hidden = s.get !== true;
       }
       body.classList.remove('state');
       void body.offsetWidth;
@@ -414,19 +433,28 @@
     window.__phosphorProgress = function (p) {
       p = Number(p);
       if (!(p >= 0)) return;
-      progress.removeAttribute('data-indeterminate');
-      progress.firstElementChild.style.width = Math.round(Math.min(1, p) * 100) + '%';
-      installing.textContent = p < 1 ? 'Downloading ' + Math.round(p * 100) + '%' : 'Installing';
+      p = Math.min(1, p);
+      bar(p);
+      installing.textContent = 'Downloading ' + Math.round(p * 100) + '%';
+    };
+    window.__phosphorChecking = function () {
+      bar(null);
+      installing.textContent = 'Checking the update';
+    };
+    window.__phosphorInstalling = function () {
+      bar(null);
+      installing.textContent = 'Installing';
     };
     // The second argument is true once the shell can take a Try again (update_retry); the third
-    // is the title of a refused update.
-    window.__phosphorFailed = function (message, canRetry, heading) {
-      render({ state: 'failed', title: String(heading || 'The update was not installed'), message: String(message || ''), retry: canRetry === true });
+    // is the title of a refused update, and the fourth shows Open phosphor.money.
+    window.__phosphorFailed = function (message, canRetry, heading, canGet) {
+      render({ state: 'failed', title: String(heading || 'The update was not installed'), message: String(message || ''), retry: canRetry === true, get: canGet === true });
     };
 
     more.addEventListener('click', function () { showDetail(detail.hidden); });
     later.addEventListener('click', dismiss);
     retry.addEventListener('click', function () { invoke('update_retry'); });
+    get.addEventListener('click', function () { invoke('update_get_phosphor'); });
     install.addEventListener('click', function () {
       render({ state: 'installing', version: info.version });
       invoke('update_install');
@@ -438,6 +466,7 @@
       if (e.key === 'Enter' && document.activeElement !== later && document.activeElement !== more) {
         if (!install.hidden) install.click();
         else if (!retry.hidden) retry.click();
+        else if (!get.hidden) get.click();
       }
     });
 

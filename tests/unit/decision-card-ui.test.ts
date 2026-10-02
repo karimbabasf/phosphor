@@ -24,6 +24,8 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 import { fillChains } from '../fixtures/chains.ts';
 import { checkPage, recordPersonText, walletPrints } from '../../src/web-gate.ts';
+import { OUTSIDE_REASON, WEB_READ_REASON } from '../../src/web-read.ts';
+import { APP_TURN_REASON } from '../../src/app-turn.ts';
 
 const SOURCE = readFileSync(new URL('../../ui/screens/decision.js', import.meta.url), 'utf8');
 const CARDS = readFileSync(new URL('../../ui/screens/cards.js', import.meta.url), 'utf8');
@@ -662,6 +664,23 @@ test('a held deposit says what it is waiting for, keeps the checks in Details, a
   assert.ok(text.some((t) => /^Waiting for Arbitrum gas to settle/.test(t) && t.endsWith('Nothing is signed until it clears.')), text.join(' | '));
   assert.equal(find(card, 'checks').length, 1, 'the checks are not in Details');
   assert.deepEqual(labelsOf(card), [], 'a held move offers a button');
+});
+
+// UX review 2026-10-01, finding 2: a $20 move from a chat that read a stranger's text, or from an
+// agent started outside Phosphor, said Needs your OK and nothing else, while the person's own
+// moves under $100 run alone. The reason sat in the closed Details. It goes on the face, in the
+// app's own words, and Details stop saying it a second time.
+test('a small move that waits because of where it came from says why on its face, once', () => {
+  for (const [stamp, words] of [[{ webRead: true }, WEB_READ_REASON], [{ outside: true }, OUTSIDE_REASON], [{ appTurn: true }, APP_TURN_REASON]] as const) {
+    const card = cardFor(swapProposal({ ...stamp, verdict: { outcome: 'needs_approval', reasons: ['swap of $2.00 to intents.near.', words] } }));
+    assert.ok(faceOf(card).includes(words), `${JSON.stringify(stamp)}: ${faceOf(card)}`);
+    assert.equal(detailsOf(card).includes('Why it asks'), false, `${JSON.stringify(stamp)} says why twice`);
+  }
+  // A move above the person's own limit, from their own chat, waits as they asked: its face
+  // says nothing more, and Details keep why.
+  const plain = cardFor(swapProposal());
+  assert.equal(faceOf(plain).includes('click threshold'), false, faceOf(plain));
+  assert.ok(detailsOf(plain).includes('Why it asks'), detailsOf(plain).join(' | '));
 });
 
 // "Why it asks" is a sentence: it stands under its label and breaks between words, where a

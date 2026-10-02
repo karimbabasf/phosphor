@@ -2,11 +2,15 @@
 //
 // Boots the app in demo mode on a free port with an EMPTY data directory, so the window opens on
 // the first run, then drives headless Chromium through playwright-core at 1280 x 800 (two device
-// pixels per CSS pixel) and shoots every state an invite code has: the terms card, the first
-// run's step (empty, checking, a good code and each refusal), the claim on the addresses step
-// (running, landed, failed), the toast a claim that ends after the person moved on becomes, the
-// Add money line on Basic (closed, open, a good code, running, landed, a refusal, failed), and the
-// chat keeping a pasted code out of the conversation.
+// pixels per CSS pixel; PROOF_VIEWPORT=960x700 shoots at the window's minimum size) and shoots
+// every state an invite code has: the terms card, the first run's step (empty, checking, a good
+// code and each refusal), the claim on the addresses step (running, landed, failed), the toast a
+// claim that ends after the person moved on becomes (a failed one stays until it is closed), the
+// Add money line on Basic (a failure kept on the closed line, closed, open, a good code, running,
+// landed, offline, a used code, failed), and the chat keeping a pasted code out of the
+// conversation while the words around it stay. Each state also records the key a person would
+// press next and whether the invite line is inside its scroller, and the run ends on one summary
+// line.
 //
 // Everything is the real backend: the window asks the app's own routes, the app's claim signs and
 // watches, and each claim's end reaches the window as the app's own frame. Only the network is
@@ -19,7 +23,9 @@
 // Fixture data only: temp directories, never the live wallet, and codes made of a repeated byte
 // that were never issued. Run:
 //   node scripts/invite-window-proof.ts
-// PROOF_OUT names another directory for the pictures (default docs/screenshots/invite/).
+// PROOF_OUT names another directory for the pictures (default docs/screenshots/invite/), and
+// PROOF_VIEWPORT another window size as WIDTHxHEIGHT (default 1280x800; 960x700 is the smallest
+// the app's window opens at, src-tauri/src/main.rs min_inner_size).
 // playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
 // playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary.
 
@@ -39,6 +45,11 @@ const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
 const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'invite');
+const VIEWPORT = (() => {
+  const m = /^(\d{3,4})x(\d{3,4})$/.exec(process.env.PROOF_VIEWPORT ?? '1280x800');
+  if (!m) throw new Error('PROOF_VIEWPORT is WIDTHxHEIGHT, for example 960x700');
+  return { width: Number(m[1]), height: Number(m[2]) };
+})();
 
 /* One made-up code per part it plays, since a code pays once. Each is a repeated byte whose code
    parses; the demo world holds what each stands for, by its account. */
@@ -192,8 +203,26 @@ const READ = `(function () {
   var codeOnPage = document.body.innerText.indexOf(${JSON.stringify(CODE)}) >= 0;
   var body = document.querySelector('#screen-firstrun:not([hidden]) .screen-body');
   var scroll = document.scrollingElement ? document.scrollingElement.scrollHeight - window.innerHeight : 0;
+  /* The key a person would press next, and whether the line about the code is inside its scroller. */
+  var key = Array.prototype.slice.call(document.querySelectorAll('#screen-firstrun:not([hidden]) .screen-actions .btn-lg:last-child, .invite-use'))
+    .filter(function (n) { return n.getClientRects().length > 0; })[0];
+  var line = Array.prototype.slice.call(document.querySelectorAll('.invite-said'))
+    .filter(function (n) { return !n.hidden && n.getClientRects().length > 0; })[0];
+  var lineInView = null;
+  if (line) {
+    var r = line.getBoundingClientRect();
+    var top = 0, bottom = window.innerHeight;
+    for (var n = line.parentElement; n && n !== document.body; n = n.parentElement) {
+      if (!/auto|scroll|hidden|clip/.test(getComputedStyle(n).overflowY)) continue;
+      var b = n.getBoundingClientRect();
+      top = Math.max(top, b.top);
+      bottom = Math.min(bottom, b.bottom);
+    }
+    lineInView = r.top >= top - 1 && r.bottom <= bottom + 1;
+  }
   return { title: title, said: said, toasts: toasts, codeShownAsText: codeOnPage, pageScrolls: scroll > 0,
-    cardScrolls: body ? body.scrollHeight > body.clientHeight + 1 : null };
+    cardScrolls: body ? body.scrollHeight > body.clientHeight + 1 : null,
+    key: key ? { label: key.textContent, disabled: key.disabled } : null, lineInView: lineInView };
 })()`;
 
 async function shoot(page: Json, name: string): Promise<void> {
@@ -214,7 +243,7 @@ async function waitTitle(page: Json, words: string): Promise<void> {
 const primary = '#screen-firstrun .screen-body .screen-actions .btn-lg:last-child';
 
 async function open(browser: Json, backend: Backend): Promise<Json> {
-  const page: Json = await browser.newPage({ viewport: { width: 1280, height: 800 }, deviceScaleFactor: 2, bypassCSP: true });
+  const page: Json = await browser.newPage({ viewport: VIEWPORT, deviceScaleFactor: 2, bypassCSP: true });
   page.on('pageerror', (err: unknown) => log.push(`[page] ${String(err)}\n`));
   page.on('console', (msg: Json) => {
     if (msg.type() === 'error' || msg.type() === 'warning') log.push(`[console.${msg.type()}] ${msg.text()}\n`);
@@ -230,7 +259,7 @@ async function open(browser: Json, backend: Backend): Promise<Json> {
     if (!shots.some((file) => file.endsWith('firstrun-terms.png'))) await shoot(page, 'firstrun-terms');
     await page.click(primary);
   }
-  await waitTitle(page, 'Got an invite code?');
+  await waitTitle(page, 'Have an invite code?');
   return page;
 }
 
@@ -287,7 +316,7 @@ async function main(): Promise<void> {
     await said(page, 'waiting for you');
     const refusals: Array<[string, string, string]> = [
       ['typo', TYPO, 'has a typo'],
-      ['used', codeOf('used'), 'already used'],
+      ['used', codeOf('used'), 'nothing left'],
       ['offline', codeOf('offline'), "Couldn't check"],
       ['locked', codeOf('locked'), "can't pay out"],
     ];
@@ -337,12 +366,21 @@ async function main(): Promise<void> {
     await second.evaluate(`window.PhosphorInvite.claim(${JSON.stringify(codeOf('toastFails'))}, { amount: '5.00', asset: 'USDC' })`);
     await toasted(second, "didn't come through");
     await shoot(second, 'basic-toast-failed');
+    // Money that did not come stays said: past the 7 s a toast lives, until its close key.
+    await sleep(8_000);
+    await shoot(second, 'basic-toast-failed-stays');
+    await second.click('.toast-stay .dock-close');
     await second.waitForFunction('document.querySelectorAll(".toast").length === 0', undefined, { timeout: 12_000 });
 
-    // Add money on Basic.
+    // Add money on Basic: the closed line still says the claim did not come through, until it is opened.
     await second.click('.bal-add');
     await second.waitForSelector('.invite-open', { timeout: 10_000 });
-    await sleep(700);
+    await said(second, "didn't come through");
+    await shoot(second, 'addmoney-kept-failure');
+    await second.click('.invite-open');
+    await sleep(500);
+    await second.click('.invite-open');
+    await sleep(500);
     await shoot(second, 'addmoney-line');
     await second.click('.invite-open');
     await sleep(500);
@@ -362,6 +400,10 @@ async function main(): Promise<void> {
     await second.click('.invite-use');
     await said(second, "Couldn't check");
     await shoot(second, 'addmoney-offline');
+    await second.fill('.invite-input', codeOf('used'));
+    await second.click('.invite-use');
+    await said(second, 'nothing left');
+    await shoot(second, 'addmoney-used');
     await second.fill('.invite-input', codeOf('addFails'));
     await second.click('.invite-use');
     await said(second, 'waiting for you');
@@ -378,6 +420,11 @@ async function main(): Promise<void> {
     await sleep(900);
     await shoot(second, 'chat-code-kept-out');
     results['chat-code-kept-out-composer'] = await second.evaluate('document.querySelector(".composer-input").value');
+    // Words around the code stay in the box; only the code goes.
+    await second.fill('.composer-input', `here is my invite ${CODE} thanks`);
+    await sleep(900);
+    await shoot(second, 'chat-words-kept');
+    results['chat-words-kept-composer'] = await second.evaluate('document.querySelector(".composer-input").value');
     await second.close();
 
     results.screenshots = shots;
@@ -385,6 +432,11 @@ async function main(): Promise<void> {
     await browser.close();
   }
   console.log(JSON.stringify(results, null, 2));
+  /* The proof's own summary: how many states, at what size, and whether any drew the code. */
+  const states = shots.map((file) => path.basename(file, '.png'));
+  const drawn = states.filter((name) => (results[name] as { codeShownAsText?: boolean } | undefined)?.codeShownAsText !== false);
+  const hidden = states.filter((name) => (results[name] as { lineInView?: boolean | null } | undefined)?.lineInView === false);
+  console.log(`proof: ${states.length} states shot at ${VIEWPORT.width}x${VIEWPORT.height} into ${SHOTS}; code shown as text in ${drawn.length}${drawn.length ? ` (${drawn.join(', ')})` : ''}; invite line under a fold in ${hidden.length}${hidden.length ? ` (${hidden.join(', ')})` : ''}`);
   const noise = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console'));
   if (noise.length) console.log(`browser noise:\n${noise.join('')}`);
 }

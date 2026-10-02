@@ -15,6 +15,7 @@ import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
 import { INVITE_CODE_SOURCE, formatCode, generateSecret } from '../../src/invite/code.ts';
+import { GUARD_TEXTS } from '../fixtures/invite-code-texts.ts';
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM_SOURCE = read('../../ui/core/dom.js');
@@ -215,6 +216,12 @@ const LINE = 'Invite codes never go to your assistant. Yours is waiting in Add m
 
 /* Every form the contract names, plus the two a person is most likely to send: a code in a
    sentence and one broken over lines. */
+/* What the box keeps of each: the code goes, the person's own words stay. */
+const LEFT: Record<string, string> = {
+  'a whole link': 'https://phosphor.money/invite#',
+  'in a sentence': 'hey, here is my invite: thanks!',
+};
+
 const FORMS: Array<[string, string]> = [
   ['upper', CODE],
   ['lower', CODE.toLowerCase()],
@@ -234,7 +241,7 @@ test('every form of a code is kept out of the chat at send, and goes to the invi
     world.send(text);
     assert.deepEqual(world.sends, [], `${name}: the code was sent to the assistant`);
     assert.deepEqual(world.said(), [], `${name}: the code landed in the transcript`);
-    assert.equal(world.input.value, '', `${name}: the code stayed in the box`);
+    assert.equal(world.input.value, LEFT[name] ?? '', `${name}: the box kept the wrong words`);
     assert.equal(world.asideText(), LINE, `${name}: nothing said why`);
     assert.equal(world.handed.length, 1, `${name}: the code did not go to Add money`);
     assert.equal(world.handed[0].screen, 'basic');
@@ -256,11 +263,13 @@ test('a code an editor rewrote, or one with no prefix, is kept out too, and Add 
     ['no prefix, in a sentence', `is ${code.slice(5).toLowerCase()} still good?`],
     ['a first group cut short', 'PHOS' + code.slice(5).replace(/-/g, '').replace(/(.{4})(?=.)/g, '$1 ')],
   ];
+  const left: Record<string, string> = { 'no prefix, in a sentence': 'is still good?' };
   for (const [name, text] of forms) {
     const world = build();
     world.send(text);
     assert.deepEqual(world.sends, [], `${name}: the code was sent to the assistant`);
-    assert.equal(world.input.value, '', `${name}: the code stayed in the box`);
+    assert.equal(world.input.value, left[name] ?? '', `${name}: the code stayed in the box`);
+    assert.equal(world.win.PhosphorInviteApi.codeIn(world.input.value), null, `${name}: a code is still in the box`);
     assert.equal(world.handed.length, 1, `${name}: the code did not go to Add money`);
     assert.ok(text.includes(world.handed[0].code), `${name}: Add money got text that was not typed: ${JSON.stringify(world.handed[0].code)}`);
   }
@@ -270,12 +279,51 @@ test('a pasted code leaves the box the moment it lands, before anything can send
   for (const [name, text] of FORMS) {
     const world = build();
     world.paste(text);
-    assert.equal(world.input.value, '', `${name}: the pasted code sat in the box`);
+    assert.equal(world.input.value, LEFT[name] ?? '', `${name}: the pasted code sat in the box`);
     assert.equal(world.asideText(), LINE);
     assert.equal(world.handed.length, 1);
-    world.send(world.input.value);
     assert.deepEqual(world.sends, [], `${name}: something was sent`);
+    // What is left is the person's to send, and it holds no code.
+    world.send(world.input.value);
+    assert.deepEqual(world.sends, LEFT[name] ? [LEFT[name]] : [], `${name}: the words left were not sent as they stood`);
   }
+});
+
+test('the guard takes out only what the matcher found, every match, and leaves the person\'s other words', () => {
+  const shape = (world: Any): Any => world.win.PhosphorInviteApi;
+  for (const { name, text, code } of GUARD_TEXTS) {
+    if (!code) continue;
+    const world = build();
+    world.paste(text);
+    const left = world.input.value;
+    assert.equal(shape(world).codeIn(left), null, `${name}: a code is still in the box`);
+    assert.equal(world.asideText(), LINE, `${name}: nothing said why`);
+    assert.deepEqual(world.sends, [], `${name}: something was sent`);
+    // Every character left was in the text, in order: nothing was added but a space at a seam.
+    let from = 0;
+    for (const ch of left) {
+      const at = text.indexOf(ch, from);
+      assert.ok(ch === ' ' || at >= 0, `${name}: the box gained a character`);
+      if (at >= 0) from = at + 1;
+    }
+  }
+  const exact: Array<[string, string]> = [
+    ['phosphorus is used in fertilizer and in matches ' + CODE, PHOSPHORUS],
+    ['two codes: ' + CODE + ' and ' + CODE.toLowerCase() + ' for you', 'two codes: and for you'],
+    ['my code\n' + CODE + '\nsee you', 'my code see you'],
+  ];
+  for (const [text, words] of exact) {
+    const world = build();
+    world.paste(text);
+    assert.equal(world.input.value, words);
+    assert.equal(world.handed.length, 1);
+    assert.deepEqual(world.sends, []);
+  }
+  // A code from a card's Try again leaves the person's draft alone.
+  const draft = build();
+  draft.paste('swap 10 usdc to eth');
+  assert.equal(draft.win.PhosphorAgent.send('try again with ' + CODE), false);
+  assert.equal(draft.input.value, 'swap 10 usdc to eth', 'the draft went with a code it never held');
 });
 
 test('the plain messages that look most like a code still go, and the line goes with the next key', () => {

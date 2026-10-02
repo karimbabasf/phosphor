@@ -33,6 +33,7 @@ import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { mnemonicProblem } from '../keystore/derive.ts';
+import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { wipe } from '../keystore/envelope.ts';
@@ -212,6 +213,8 @@ export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.
     const wasOpen = ctx.keystore.isUnlocked();
     if (count !== 0 && ctx.keystore.lockWhen('when-idle', () => signing(ctx) === 0, CLOSE_GRACE_MS)) {
       if (wasOpen) {
+        // Shut is locked to the window, so the lock screen says why from now, not when the key goes.
+        lockReasonFor(ctx.keystore).note(lockCodeOf(body.reason));
         const moves = count < 0 ? 'the moves already signing have' : count === 1 ? 'the move already signing has' : `the ${count} moves already signing have`;
         ctx.audit.append('app_start', `the wallet was shut (${String(body.reason ?? 'on demand')}); its key goes as soon as ${moves} a signature, at most ${CLOSE_GRACE_MS / 60_000} minutes`, { reason: body.reason ?? 'on_demand', signing: count < 0 ? null : count });
         announce(ctx);
@@ -220,7 +223,11 @@ export async function handleLock(ctx: Ctx, req: http.IncomingMessage, res: http.
     }
   }
   const was = ctx.keystore.lock();
-  if (was) ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  // Only a lock that happened gets a code; a second request while locked keeps the first one's.
+  if (was) {
+    lockReasonFor(ctx.keystore).note(lockCodeOf(body.reason));
+    ctx.audit.append('app_start', `the wallet was locked (${String(body.reason ?? 'on demand')})`, { reason: body.reason ?? 'on_demand' });
+  }
   announce(ctx);
   sendJson(res, 200, { ok: true });
 }

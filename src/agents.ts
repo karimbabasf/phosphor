@@ -59,7 +59,7 @@ export type AgentMember = {
   /* An outside seat the person allowed with one click in the window. Until then every move it
      asks for waits for their click (src/web-read.ts OUTSIDE_REASON). Always true for an app seat. */
   allowed: boolean;
-  // The person answered Not now: the window stops asking, and its moves keep waiting.
+  // The person answered Ask each time: the window stops asking, and its moves keep waiting.
   later: boolean;
   /* Whether an Allow can bind to this seat: its proxy sent a key of its own (src/mcp.ts SEAT_KEY),
      so no other process holding the file secret can post as it. An outside seat with no key is
@@ -113,7 +113,7 @@ export type AgentPresence = {
   recognises(supplied: unknown): boolean;
   /* The person's answer to an outside seat, from the window's card (src/http/agents.ts). Allow
      lifts the mark the seat started with, so its moves run under the policy like the app's own
-     agent's; Not now keeps every move waiting and stops the window asking. Allow binds to the
+     agent's; Ask each time keeps every move waiting and stops the window asking. Allow binds to the
      key the seat's proxy holds, so it is refused for a seat that sent none. */
   allow(session: unknown): { ok: true; member: AgentMember } | { ok: false; reason: string };
   later(session: unknown): AgentMember | null;
@@ -247,7 +247,7 @@ export function createAgents(
   // Sessions this app minted for its chats, held to the app's secret like the workers'.
   const own = new Set<string>();
   /* Per outside seat: the hash of the key its proxy bound on its first call ('' for none), the
-     key an Allow was given to, and the seats answered Not now. Kept off AgentMember, which the
+     key an Allow was given to, and the seats answered Ask each time. Kept off AgentMember, which the
      window and the agents read. */
   const keys = new Map<string, string>();
   const allowances = new Map<string, string>();

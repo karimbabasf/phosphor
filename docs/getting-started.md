@@ -49,7 +49,7 @@ else opens until you click Accept and continue. The app records the click (the d
 version of the terms) in its own state folder and in the audit log, and asks again only when the
 terms change. Nothing is uploaded and there is no account to make.
 
-Then Got an invite code? If someone sent you a Phosphor invite, paste the code, or the whole
+Then Have an invite code? If someone sent you a Phosphor invite, paste the code, or the whole
 invite link, there. The app checks it on the spot and says what is waiting: "Nice. $5 is waiting
 for you." Nothing moves yet. The money comes into your wallet right after the wallet is made, on
 the addresses step, and that can take up to two minutes; if you have moved on by then, a note on
@@ -131,7 +131,10 @@ behind the enclave. Nothing moves and the addresses stay the same.
 The wallet locks after five minutes with nobody at the window, when the Mac sleeps, when the
 screen locks or the Mac switches to another user, and when you close the window. A move waiting
 for your click stays on its card through a lock. Locks after, under Safety in the Vault tab, sets the time to 5 minutes,
-15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked.
+15 minutes or 1 hour, and Lock now locks at once. The window frosts and says Phosphor is locked,
+with a line under it that says why: the screen locked, the Mac switched users or slept, or the
+minutes you picked went by. When moves wait for your OK, it says how many. Lock now and the app's
+start add no reason.
 Unlock with Touch ID, or with your password on a software wallet.
 
 Locked, every read still works. A move the agent asks for while the wallet is locked is drafted,

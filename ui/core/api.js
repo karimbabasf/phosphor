@@ -209,7 +209,7 @@
     },
 
     /* The person's answer to an agent started outside Phosphor: Allow lets its
-       moves run under the rules, Not now keeps each one waiting for a click.
+       moves run under the rules, Ask each time keeps each one waiting for a click.
        Carries the window token like the vault writes (src/http/agent-answer.ts). */
     agentAnswer: function (session, allow) {
       return net.postJson('/api/agents/answer', { session: session, allow: allow === true });
