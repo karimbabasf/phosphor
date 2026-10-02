@@ -120,3 +120,46 @@ for (const origin of ['outside', 'app'] as const) {
     }
   });
 }
+
+/* Another key can take a lapsed seat's id. It holds that seat, so its bye ends it, but the person's
+   Allow was given to the first proxy's key and stays for it; and a mark the other key's seat
+   started with goes when the allowed proxy is back (re-audit R-L8). */
+test('a key that took a lapsed allowed id cannot bye the Allow away, and leaves no mark on the allowed proxy that returns', () => {
+  let now = 1_000_000;
+  const agents = createAgents(() => now, MAX_AGENTS, { secret: 'o'.repeat(64), handSecret: HAND });
+  const seat = 'bye-bound-retaken';
+  assert.ok(agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: KEY, intervalMs: 5000 }).ok);
+  assert.ok(agents.allow(seat).ok);
+
+  now += 60_000;
+  agents.sweep();
+  const taken = agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: OTHER_KEY, intervalMs: 5000 });
+  assert.ok(taken.ok);
+  assert.equal(taken.member.allowed, false, 'the Allow is not the other key\'s');
+  assert.equal(outsideBy(seat), true);
+  const bye = agents.release({ session: seat, secret: HAND, key: OTHER_KEY });
+  assert.equal(bye.ok, true, 'it ends the seat it holds');
+
+  const back = agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: KEY, intervalMs: 5000 });
+  assert.ok(back.ok);
+  assert.equal(back.member.allowed, true, 'the Allow is still there for the proxy it was given to');
+  assert.equal(outsideBy(seat), false, 'and no mark makes its moves wait');
+});
+
+test('an allowed proxy that returns after another key held its lapsed id is not left waiting under the other key\'s mark', () => {
+  let now = 2_000_000;
+  const agents = createAgents(() => now, MAX_AGENTS, { secret: 'o'.repeat(64), handSecret: HAND });
+  const seat = 'bye-bound-stale';
+  assert.ok(agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: KEY, intervalMs: 5000 }).ok);
+  assert.ok(agents.allow(seat).ok);
+  now += 60_000;
+  agents.sweep();
+  assert.ok(agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: OTHER_KEY, intervalMs: 5000 }).ok);
+  assert.equal(outsideBy(seat), true);
+  now += 60_000;
+  agents.sweep();
+  const back = agents.claim({ session: seat, client: 'claude-code', secret: HAND, key: KEY, intervalMs: 5000 });
+  assert.ok(back.ok);
+  assert.equal(back.member.allowed, true);
+  assert.equal(outsideBy(seat), false, 'the roster shows it allowed, so nothing may hold its moves as an outside agent');
+});

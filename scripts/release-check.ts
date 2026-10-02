@@ -48,8 +48,13 @@ function filesUnder(root: string, rels: string[], skip: (rel: string) => boolean
     if (stat === undefined) return;
     if (stat.isSymbolicLink()) files.set(rel, 'a link');
     else if (stat.isDirectory()) {
-      for (const name of fs.readdirSync(full)) if (name !== SKIPPED) add(`${rel}/${name}`);
-    } else if (stat.isFile()) files.set(rel, crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex'));
+      for (const name of fs.readdirSync(full)) add(`${rel}/${name}`);
+    } else if (stat.isFile()) {
+      // Finder's own file is left out, as the digest leaves it out. A folder by that name is
+      // read like any other: the digest counts what is in it and the shell loads it (re-audit R-L10).
+      if (path.posix.basename(rel) === SKIPPED) return;
+      files.set(rel, crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex'));
+    }
   };
   for (const rel of rels) add(rel);
   return files;
@@ -61,7 +66,7 @@ function filesUnder(root: string, rels: string[], skip: (rel: string) => boolean
 export function payloadProblems(checkout: string, payloadRoot: string): string[] {
   const problems: string[] = [];
   const want = filesUnder(checkout, PAYLOAD);
-  const top = fs.readdirSync(payloadRoot).filter((name) => name !== SKIPPED);
+  const top = fs.readdirSync(payloadRoot);
   const have = filesUnder(payloadRoot, top, (rel) => rel === 'node_modules');
   for (const [rel, hash] of want) {
     const got = have.get(rel);

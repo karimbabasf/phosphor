@@ -18,7 +18,7 @@ import { createMarkingsFile } from './markings.ts';
 import { loadConfig } from './config.ts';
 import { createAudit } from './audit.ts';
 import { recordAuditChain } from './http/health.ts';
-import { createKeystore, useKeystore } from './keystore/index.ts';
+import { createKeystore, isLocked, useKeystore } from './keystore/index.ts';
 import { createSession } from './keystore/session.ts';
 import { lockReasonFor } from './keystore/lock-reason.ts';
 import { createStore } from './store.ts';
@@ -474,6 +474,7 @@ const runner = createRunnerHost({
   // Fail closed: a policy file that will not load reads as the kill switch being ON, so an
   // unreadable policy can never be the reason a plan was allowed to arm.
   killSwitch: () => loadPolicy(cfg.dataDir)?.killSwitch ?? true,
+  walletOpen: () => !isLocked(),
   store: createPlanStore(cfg.dataDir),
   meta: (coin) => tradeService?.meta(coin) ?? null,
   mark: (coin) => tradeService?.mark(coin) ?? null,

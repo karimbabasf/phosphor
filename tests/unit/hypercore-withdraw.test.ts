@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import type { Address } from 'viem';
 
 import type { HlWithdrawDraft } from '../../src/types.ts';
+import { ReasonError } from '../../src/rails/reasons.ts';
 import type { OneClickClient, OneClickQuote, OneClickQuoteParams, OneClickStatus } from '../../src/intents.ts';
 import type { HlSignPort, HlTypedData, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 import { HL_USDC_TOKEN, toAmountString } from '../../src/rails/hl-user-signed.ts';
@@ -1026,4 +1027,36 @@ test('the route in from HyperCore is asked last, after the balance read and the 
   assert.equal(signed.length, 0);
   assert.equal(posts.length, 0);
   assert.deepEqual(asked.map((a) => a.maxAgeMs), [10_000, 10_000]);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs before the send is signed; one that throws leaves nothing signed or posted", async () => {
+  const { rail: r, signed, exchange } = rail({}, [{ available: 20, spot: 20, perp: 0 }, { available: 11, spot: 11, perp: 0 }]);
+  await assert.rejects(
+    () => r.execute(draft(), 'p1', { lastCheck: () => { throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.'); } }),
+    /Everything is frozen/,
+  );
+  assert.equal(signed.length, 0);
+  assert.equal(exchange.length, 0);
+});
+
+test('Freeze met between the move to spot and the send says where the collateral sits, and sends nothing', async () => {
+  const { rail: r, signed, exchange } = rail({}, [
+    { available: 0, spot: 2, perp: 20, unified: false },
+    { available: 0, spot: 2, perp: 20, unified: false },
+    { available: 0, spot: 9, perp: 13, unified: false },
+    { available: 0, spot: 0, perp: 13, unified: false },
+  ]);
+  let checks = 0;
+  const lastCheck = (): void => {
+    checks += 1;
+    if (checks > 1) throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+  };
+  const out = await r.execute(draft(), 'p1', { lastCheck });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'kill_switch');
+  assert.match(out.detail, /Everything is frozen, so nothing was signed\. 7 USDC was moved from the perp side to spot first and sits there now; nothing left the account/);
+  assert.equal(signed.length, 1, 'the move between books, and nothing after it');
+  assert.deepEqual(exchange.map((e) => e.action.type), ['usdClassTransfer']);
 });

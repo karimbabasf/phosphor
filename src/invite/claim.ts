@@ -668,6 +668,10 @@ export function createInviteService(deps: InviteDeps): InviteService {
       } catch {
         // not a figure; the refund is not shown yet
       }
+      // A figure shrunk to a crumb is held to the claim's own floor, or any dust on the code would
+      // show it (re-audit R-L6, the convert's sibling).
+      const floor = (amount * BigInt(10_000 - SEND_MAX_LOSS_BPS)) / 10_000n;
+      if (refundedBase > 0n && refundedBase < floor) refundedBase = floor;
       const held = refundedBase > 0n ? await verifier.balance(record.codeAddress, record.assetId).catch(() => null) : null;
       if (held !== null && held >= refundedBase) return 'refunded';
     }

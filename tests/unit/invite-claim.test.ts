@@ -529,6 +529,20 @@ test('Plan B refunded: the claim ends failed only once the refund shows on the c
   assert.deepEqual(h.holds.map((x) => x.proven), [null]);
 });
 
+test('Plan B: a refund figure shrunk to a crumb never ends the claim as refunded while 1Click holds the money', async () => {
+  const world = freshWorld();
+  world.relayMode = 'auth';
+  world.oneclick.lie = { status: 'REFUNDED', refundedAmount: '0.000001' };
+  const h = harness({ world });
+  await h.service.claim(CODE);
+  await h.service.idle();
+  assert.equal(world.balances.get(HANDLE), 5_000_000n, 'the money sits on the handle');
+  assert.equal(world.balances.get(CODE_ADDRESS), 10n, 'dust on the code would show any crumb');
+  const failed = h.audit.find((e) => e.type === 'invite_failed');
+  console.log('claim crumb:', JSON.stringify(h.frames.map((f) => f.status)), 'reason', (failed?.data as { reason?: string } | undefined)?.reason);
+  assert.notEqual((failed?.data as { reason?: string } | undefined)?.reason, 'refunded', 'never closed as refunded on a crumb');
+});
+
 test("Plan B FAILED with the refund not back yet never closes on 1Click's word", async () => {
   const world = freshWorld();
   world.relayMode = 'auth';

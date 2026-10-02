@@ -71,6 +71,7 @@ import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
+import { reasonOf } from './reasons.ts';
 
 // ---------- the two ends ----------
 
@@ -645,9 +646,11 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // that the collateral now sits on spot, or the human reads "nothing was sent" as "nothing
     // changed" and the next look at the perp book comes up short.
     const handle = depositAddress.toLowerCase();
+    // Every signature below runs the executor's last check (Freeze) first.
+    const signing: HlUserSignedDeps = { ...hl, lastCheck: hooks?.lastCheck };
     let movedToSpot = false;
     if (p.moveToSpot > 0) {
-      const moved = await usdClassTransfer(hl, { amount: p.moveToSpot, toPerp: false });
+      const moved = await usdClassTransfer(signing, { amount: p.moveToSpot, toPerp: false });
       if (!moved.ok) {
         return {
           ok: false,
@@ -669,7 +672,16 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
     // again, or a refused duplicate) and never with a fresh one, which would be a second real
     // payout. The ledger is read first: a send that landed shows there under its nonce, and
     // then there is nothing to retry. The rule is written out at the top of intents-spend.ts.
-    const first = await sendAsset(hl, { destination: depositAddress, amount: draft.amount });
+    let first: Awaited<ReturnType<typeof sendAsset>>;
+    try {
+      first = await sendAsset(signing, { destination: depositAddress, amount: draft.amount });
+    } catch (err) {
+      // Freeze or an unreadable policy, met by the last check before the key: nothing was sent,
+      // and collateral already moved to spot is said to be there.
+      const reason = reasonOf(err);
+      if (!movedToSpot || (reason !== 'kill_switch' && reason !== 'rules_unreadable')) throw err;
+      return { ok: false, reason, detail: `${errText(err)} ${p.moveToSpot} USDC was moved from the perp side to spot first and sits there now; nothing left the account.`, txids: [] };
+    }
     /* THE ROW HEARS BEFORE ANY OTHER READ. A send the venue took, or one it may have taken,
        reaches the row with its nonce, the signed quote and the intents pocket the moment the
        answer is in, ahead of the ledger read, the retry and the watch loop. Every one of those
@@ -693,7 +705,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
            threw", which it writes as failed with no nonce on the row. A retry that could not
            run is the same fact as a retry that got no answer: unconfirmed, same nonce. */
         try {
-          sent = await sendAsset(hl, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+          sent = await sendAsset(signing, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
         } catch (err) {
           sent = { ok: false, ambiguous: true, nonce: first.nonce, detail: `the retry with the same nonce could not run: ${oneLine(errText(err), 160)}` };
         }

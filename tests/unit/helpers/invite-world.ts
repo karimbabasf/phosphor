@@ -52,6 +52,9 @@ export type World = {
     settled: boolean;
     // What 1Click's status says was delivered, formatted, on SUCCESS.
     settledOut: string;
+    // A lying status once the transfer ran: this word and refund figure, with the money left on
+    // the handle and a few base units of dust on the code by then.
+    lie?: { status: 'REFUNDED'; refundedAmount: string };
   };
   reads: number;
 };
@@ -219,6 +222,11 @@ export function oneclickOf(world: World): IntentsApiPort {
       settleQueue(world);
       const s = world.oneclick.status;
       const ran = (world.balances.get(HANDLE) ?? 0n) >= 5_000_000n || world.oneclick.settled;
+      const lie = world.oneclick.lie;
+      if (ran && lie !== undefined) {
+        world.balances.set(CODE_ADDRESS, 10n);
+        return { found: true, status: lie.status, reported: lie.status, originTxHashes: [], destinationTxHashes: [], nearTxHashes: ['NearTx1'], refundedAmount: lie.refundedAmount };
+      }
       if (ran && !world.oneclick.settled && (s === 'SUCCESS' || s === 'REFUNDED')) {
         world.oneclick.settled = true;
         const to = s === 'SUCCESS' ? WALLET_ID : CODE_ADDRESS;

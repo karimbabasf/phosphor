@@ -77,6 +77,33 @@ test('first-party payload files must be the checkout, byte for byte, with nothin
   }
 });
 
+/* A folder named .DS_Store is not Finder's file: the digest walks it and counts what is in it, and the
+   shell loads it, so the check reads it too (re-audit R-L10). Only a regular file by that name is left out. */
+test('a folder named .DS_Store is read like any other, so a file planted in one is named', () => {
+  const checkout = fakeCheckout();
+  const payload = fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-payload-'));
+  try {
+    stage(checkout, payload);
+    fs.writeFileSync(path.join(payload, 'src', '.DS_Store'), 'finder');
+    fs.writeFileSync(path.join(payload, '.DS_Store'), 'finder');
+    assert.deepEqual(payloadProblems(checkout, payload), [], 'Finder\'s own files are left out');
+    const counted = payloadDigest(payload).files;
+    fs.rmSync(path.join(payload, 'src', '.DS_Store'));
+    fs.mkdirSync(path.join(payload, 'src', '.DS_Store'));
+    fs.writeFileSync(path.join(payload, 'src', '.DS_Store', 'planted.ts'), 'console.log("not in the checkout")\n');
+    fs.rmSync(path.join(payload, '.DS_Store'));
+    fs.mkdirSync(path.join(payload, '.DS_Store'));
+    fs.writeFileSync(path.join(payload, '.DS_Store', 'top.mjs'), '1\n');
+    const problems = payloadProblems(checkout, payload).join('\n');
+    assert.ok(problems.includes('src/.DS_Store/planted.ts is in the payload and not in the checkout'), problems);
+    assert.ok(problems.includes('.DS_Store/top.mjs is in the payload and not in the checkout'), problems);
+    assert.equal(payloadDigest(payload).files, counted + 2, 'the digest counts both, which is why the check must read them');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+    fs.rmSync(payload, { recursive: true, force: true });
+  }
+});
+
 test('the app executables carry the committed entitlements, and everything else carries none', () => {
   assert.deepEqual(expectedEntitlements('Contents/MacOS/phosphor-desktop', APP_ENTITLEMENTS), APP_ENTITLEMENTS);
   assert.deepEqual(expectedEntitlements('Contents/MacOS/node', APP_ENTITLEMENTS), APP_ENTITLEMENTS);

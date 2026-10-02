@@ -369,6 +369,8 @@ test('the create screen says where the key is held in three lines, and the techn
     const facts = find(screen, '.firstrun-fact');
     assert.equal(facts.length, 3);
     assert.ok(facts[0].textContent.endsWith('Nothing is uploaded, and there is no account to make.'));
+    // The chip keeps the key that seals the wallet; the wallet's own key is opened into memory to sign (re-audit R-L14).
+    if (name === 'enclave') assert.ok(facts[1].textContent.endsWith('Touch ID opens it, and the key that seals it never leaves the chip.'), facts[1].textContent);
 
     // The switch is the shared control, off, and the list is marked for it.
     const control = find(screen, '.dev-switch');

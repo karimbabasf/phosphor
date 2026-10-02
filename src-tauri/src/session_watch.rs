@@ -36,13 +36,31 @@ const SCREEN: c_int = 1;
 const SESSION: c_int = 2;
 
 /// The port and window token of the running backend, from the moment it answered its spawn's
-/// challenge until it is seen gone. A respawn has a token of its own and sets it again.
-static BACKEND: Mutex<Option<(u16, String)>> = Mutex::new(None);
+/// challenge until it is seen gone, and how to ask whether that spawn still runs. A respawn has a
+/// token of its own and sets it again.
+static BACKEND: Mutex<Option<Held>> = Mutex::new(None);
 
-pub fn backend_up(port: u16, token: &str) {
+struct Held {
+    port: u16,
+    token: String,
+    alive: Box<dyn Fn() -> bool + Send>,
+}
+
+pub fn backend_up(port: u16, token: &str, alive: impl Fn() -> bool + Send + 'static) {
     if let Ok(mut held) = BACKEND.lock() {
-        *held = Some((port, token.to_string()));
+        *held = Some(Held { port, token: token.to_string(), alive: Box::new(alive) });
     }
+}
+
+/* WHERE A LOCK MAY GO: the port and token of the spawn that is running now, asked at the moment of
+   each post. The watch sees a dead backend up to two seconds after it died, and in that gap the
+   port may already be someone else's, while the lock carries the token in its body (re-audit R-L7). */
+fn lock_target(held: Option<&Held>) -> Option<(u16, String)> {
+    held.filter(|h| (h.alive)()).map(|h| (h.port, h.token.clone()))
+}
+
+fn still_up() -> bool {
+    BACKEND.lock().ok().is_some_and(|held| lock_target(held.as_ref()).is_some())
 }
 
 /// The backend died. A screen lock from now on posts nothing: the port may be held by whoever
@@ -92,22 +110,26 @@ extern "C" fn on_event(kind: c_int) {
             SESSION => "this Mac switched to another user",
             _ => return,
         };
-        let Some((port, token)) = BACKEND.lock().ok().and_then(|held| held.clone()) else {
+        let Some((port, token)) = BACKEND.lock().ok().and_then(|held| lock_target(held.as_ref())) else {
             return;
         };
-        let answer = lock_when_idle(port, &token, reason, SENDING_GRACE);
+        let answer = lock_when_idle(port, &token, reason, SENDING_GRACE, &still_up);
         eprintln!("phosphor: {reason}, so the wallet was asked to lock: {answer:?}");
     });
 }
 
 /// The when-idle lock, asked again while the backend answers busy, until it says the key is gone.
-/// The first ask did the locking; the ones after it only wait for that answer for the log.
-fn lock_when_idle(port: u16, token: &str, reason: &str, grace: Duration) -> LockAnswer {
+/// The first ask did the locking; the ones after it only wait for that answer for the log. Each ask
+/// goes only while `up` says its backend still runs.
+fn lock_when_idle(port: u16, token: &str, reason: &str, grace: Duration, up: &dyn Fn() -> bool) -> LockAnswer {
     let deadline = Instant::now() + grace;
     loop {
         match post_lock_when_idle(port, token, reason) {
             LockAnswer::Busy if Instant::now() < deadline => std::thread::sleep(ASK_AGAIN),
             answer => return answer,
+        }
+        if !up() {
+            return LockAnswer::Busy;
         }
     }
 }
@@ -156,14 +178,30 @@ mod tests {
     fn a_move_being_sent_holds_the_lock_off_until_it_lands_and_no_longer_than_the_grace() {
         let (port, sent) = stub(vec![BUSY, BUSY, LOCKED]);
         let started = Instant::now();
-        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", SENDING_GRACE), LockAnswer::Locked);
+        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", SENDING_GRACE, &|| true), LockAnswer::Locked);
         assert!(started.elapsed() >= ASK_AGAIN * 2, "asked again once a second while the move was sent");
         let asks: Vec<String> = sent.try_iter().collect();
         assert_eq!(asks.len(), 3);
         assert!(asks.iter().all(|ask| ask.contains("\"whenIdle\":true") && ask.contains("\"reason\":\"the screen locked\"")), "{asks:?}");
 
         let (port, _) = stub(vec![BUSY, BUSY, BUSY, BUSY]);
-        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", ASK_AGAIN), LockAnswer::Busy, "past the grace the shell stops asking");
+        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", ASK_AGAIN, &|| true), LockAnswer::Busy, "past the grace the shell stops asking");
+    }
+
+    #[test]
+    fn a_lock_goes_only_to_the_spawn_that_is_running_now() {
+        let dead = Held { port: 4242, token: "t0k".to_string(), alive: Box::new(|| false) };
+        assert_eq!(lock_target(Some(&dead)), None, "a dead spawn's port may be someone else's by now");
+        let live = Held { port: 4242, token: "t0k".to_string(), alive: Box::new(|| true) };
+        assert_eq!(lock_target(Some(&live)), Some((4242, "t0k".to_string())));
+        assert_eq!(lock_target(None), None);
+    }
+
+    #[test]
+    fn the_lock_stops_asking_the_moment_its_backend_is_gone() {
+        let (port, sent) = stub(vec![BUSY, BUSY, LOCKED]);
+        assert_eq!(lock_when_idle(port, "t0k", "the screen locked", SENDING_GRACE, &|| false), LockAnswer::Busy);
+        assert_eq!(sent.try_iter().count(), 1, "nothing was posted to the port after its backend died");
     }
 
     fn post(port: u16, path: &str, body: serde_json::Value) -> serde_json::Value {
@@ -256,7 +294,7 @@ mod tests {
             assert_eq!(waiting().as_deref(), Some("pending"));
             assert!(!locked(port, &hand.token), "the wallet is open before anyone steps away");
 
-            backend_up(port, &hand.token);
+            backend_up(port, &hand.token, || true);
             watch();
             let name = screen_locked_here(std::process::id());
             let posted = Command::new("/usr/bin/osascript")

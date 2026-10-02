@@ -572,7 +572,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     | { kind: 'unseen'; sentence: string; after: HlAccountSummary | null }
     | { kind: 'unread'; sentence: string };
 
-  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary): Promise<Settled> {
+  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary, hooks?: RailHooks): Promise<Settled> {
     /* READ UNTIL IT SHOWS. A credit to HyperCore crosses a bridge after 1Click says SUCCESS, so
        the one read this took saw the account from before the deposit and the sentence said
        "the venue has not shown the credit yet" over money that landed a few seconds later.
@@ -625,7 +625,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // On the spot side, which is observed money that is not margin yet. Nothing here says to
     // deposit again: a second proposal signs a second intent and spends a second time.
     try {
-      const moved = await usdClassTransfer(hl, { amount: spotGain, toPerp: true });
+      // A signature like any other: the executor's last check (Freeze) runs first.
+      const moved = await usdClassTransfer({ ...hl, lastCheck: hooks?.lastCheck }, { amount: spotGain, toPerp: true });
       return {
         kind: 'rose',
         after,
@@ -723,7 +724,8 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       if (reasonOf(err) === 'route_closed') return { ok: false, detail: errText(err), reason: 'route_closed' };
       const closed = closedQuoteSentence(err, 'hypercore', 'hl_deposit');
       if (closed !== null) return { ok: false, detail: closed, reason: 'route_closed' };
-      return { ok: false, detail: `${errText(err)}. Nothing was signed.` };
+      const reason = reasonOf(err);
+      return { ok: false, detail: `${errText(err)}. Nothing was signed.`, ...(reason === undefined ? {} : { reason }) };
     }
     if (!spent.signed) return describeHeld(spent.preflight);
     if (!spent.submitted) {
@@ -733,7 +735,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
 
     if (watch.status === 'SUCCESS') {
-      const settled = await settleToPerp(draft, before);
+      const settled = await settleToPerp(draft, before, hooks);
       const amount = `${deliveredAmount(watch, quote.amountOutFormatted)} USDC from ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`;
       const txids = uniqueTxids(spent.intentHash, watch);
       const recorded = { ...settledEvidence(watch, depositAddress), quote: signedQuote };

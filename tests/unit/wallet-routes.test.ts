@@ -714,3 +714,77 @@ test('health reports the lock the app is actually in', async () => {
     await b.close();
   }
 });
+
+// ---------- a lock ends every reveal (re-audit R-L5) ----------
+
+test('Lock wipes every reveal slot: a key and words asked for before it are gone after it', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const keys = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    const words = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
+    assert.equal(keys.json.ok, true);
+    assert.equal(words.json.ok, true);
+    const locked = await b.post('/api/lock', { token: b.token });
+    assert.equal(locked.json.ok, true);
+    assert.equal(b.keystore.state(), 'locked');
+    for (const nonce of [keys.json.nonce, words.json.nonce]) {
+      const after = await b.get(`/api/wallet/reveal/${nonce}`);
+      assert.equal(after.status, 404, 'nothing to spend after the lock');
+      assert.equal(after.json?.keys, undefined);
+      assert.equal(after.json?.mnemonic, undefined);
+    }
+  } finally {
+    await b.close();
+  }
+});
+
+test('a lock by any other door wipes the slots too: the idle lock, the screen lock and a touch lease all turn the keystore', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    assert.equal(b.keystore.lock(), true, 'what the idle lock and the screen lock call');
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404);
+    assert.equal(after.json?.keys, undefined);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a reveal the window never spends is wiped by its own timer at its expiry', async (t) => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    t.mock.timers.tick(30_001);
+    t.mock.timers.reset();
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404, 'the slot is gone, not merely expired');
+    assert.equal(after.json?.keys, undefined);
+  } finally {
+    await b.close();
+  }
+});
+
+test('Lock on a wallet already locked still wipes a reveal asked for while it was locked', async () => {
+  const b = await boot();
+  try {
+    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    await b.post('/api/lock', { token: b.token });
+    // A reveal reads under the password and opens nothing, so it works on a locked wallet.
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    assert.equal(start.json.ok, true);
+    assert.equal(b.keystore.state(), 'locked');
+    await b.post('/api/lock', { token: b.token });
+    const after = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(after.status, 404);
+    assert.equal(after.json?.keys, undefined);
+  } finally {
+    await b.close();
+  }
+});

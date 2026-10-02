@@ -223,8 +223,11 @@ async function refundShows(move: Move, status: OneClickStatus, net: MoneyNet): P
   } catch {
     refunded = 0n;
   }
-  // No figure (1Click's status can leave it out, read as 0): what went in, less the most a convert may lose.
-  if (refunded <= 0n) refunded = (BigInt(move.legs[0]?.amountBase ?? '0') * BigInt(10_000 - CONVERT_MAX_LOSS_BPS)) / 10_000n;
+  /* Never less than what went in, less the most a convert may lose: with no figure (1Click's status
+     can leave it out, read as 0), and with a figure shrunk to a crumb, which any USDC already on T
+     would show and close a convert 1Click still holds (re-audit R-L6). */
+  const floor = (BigInt(move.legs[0]?.amountBase ?? '0') * BigInt(10_000 - CONVERT_MAX_LOSS_BPS)) / 10_000n;
+  if (refunded < floor) refunded = floor;
   const held = refunded > 0n ? await net.verifier.balance(move.signer, variant.assetId).catch(() => null) : null;
   return held !== null && held >= refunded;
 }

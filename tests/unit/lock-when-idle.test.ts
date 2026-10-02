@@ -143,6 +143,9 @@ test('a screen lock and a switch to another user send the when-idle lock, from t
   assert.match(objc, /NSDistributedNotificationCenter defaultCenter\] addObserverForName:name/);
   assert.match(shell, /session_watch::watch\(\);/);
   // The session watch is handed this spawn's token, at the boot start and again on a respawn, so a
-  // screen lock after a restart still locks the fresh backend with its own token.
-  assert.equal([...shell.matchAll(/session_watch::backend_up\(port, &hand\.token\);/g)].length, 2);
+  // screen lock after a restart still locks the fresh backend with its own token; and with it the
+  // question whether that spawn still runs, asked before every post (re-audit R-L7).
+  assert.equal([...shell.matchAll(/session_watch::backend_up\(port, &hand\.token, move \|\| up\.state::<Backend>\(\)\.alive\(generation\)\);/g)].length, 2);
+  assert.match(watch, /held\.filter\(\|h\| \(h\.alive\)\(\)\)/, 'a lock goes only to the spawn that is running now');
+  assert.match(watch, /if !up\(\) \{\s*return LockAnswer::Busy;/, 'and stops asking once it is gone');
 });

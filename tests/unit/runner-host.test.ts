@@ -153,6 +153,14 @@ type HarnessOptions = {
   // Answers every forked child starts with, for a child the host forks on its own.
   answers?: FakeChild['answers'];
   killSwitch?: boolean;
+  // The switch as a test flips it mid-flight (the file /api/kill writes).
+  freeze?: { on: boolean };
+  // Held open while a fire reads whether the API wallet is still approved.
+  agentWait?: Promise<void>;
+  // Whether the wallet is open, as main.ts reads it; absent is open.
+  walletOpen?: () => boolean;
+  // Counts every read of the trading key.
+  keyReads?: { n: number };
   dir?: string;
 };
 
@@ -165,14 +173,16 @@ function harness(over: HarnessOptions = {}): Harness {
   const agentOk = { value: true };
   const session = createSession({ now: () => clock.now, isUnlocked: () => true, lock: () => {} });
   const runner = createRunnerHost({
+    ...(over.walletOpen !== undefined ? { walletOpen: over.walletOpen } : {}),
     apiWalletKey: async () => {
+      if (over.keyReads !== undefined) over.keyReads.n += 1;
       if (over.keyDelayMs !== undefined) await new Promise((r) => setTimeout(r, over.keyDelayMs));
       return over.key === undefined ? ('0x'.padEnd(66, '1') as `0x${string}`) : over.key;
     },
     session,
     baseUrl: 'http://127.0.0.1:1',
     user: '0x0000000000000000000000000000000000000001',
-    killSwitch: () => over.killSwitch === true,
+    killSwitch: () => over.killSwitch === true || over.freeze?.on === true,
     onEvent: (e) => events.push(e),
     store: createPlanStore(dir),
     meta: (coin) => (over.metaFor === undefined ? META : over.metaFor(coin)),
@@ -181,7 +191,10 @@ function harness(over: HarnessOptions = {}): Harness {
     ...(over.info !== undefined ? { info: over.info } : {}),
     bars: over.bars === undefined ? undefined : (coin, tf, count) => over.bars!(coin, tf, count),
     approval: (id) => approvals.get(id) ?? null,
-    agentApproved: async () => agentOk.value,
+    agentApproved: async () => {
+      if (over.agentWait !== undefined) await over.agentWait;
+      return agentOk.value;
+    },
     now: () => clock.now,
     replyMs: 500,
     forkImpl: (() => {
@@ -862,4 +875,87 @@ test('a plan note drawn or redrawn by a marked seat is stamped, kept on disk, an
   assert.equal(moved.ok && moved.row.webRead, true, 'a change that leaves the note keeps the stamp');
   const gone = h.runner.redraw(own.id, { note: null }, clean);
   assert.equal(gone.ok && gone.row.webRead, undefined, 'no note, nothing carried');
+});
+
+// ---------- Freeze at the last step before the child signs (re-audit R-L1) ----------
+
+test('Freeze pressed while a firing plan reads the API wallet approval stops the fire before the child signs', async () => {
+  let open: () => void = () => {};
+  const agentWait = new Promise<void>((resolve) => (open = resolve));
+  const h = harness({ agentWait });
+  fresh(h);
+  await h.runner.arm(row());
+  await settle(); // tick has passed its own check and the fire waits on the approval read
+  h.runner.setKilled(true); // what /api/kill does first
+  open();
+  await settle();
+  assert.equal(h.forked[0].of('fire').length, 0, 'no fire reached the child');
+  assert.equal(h.runner.get('pl_1')?.status, 'waiting');
+
+  // The control: the same wait with no Freeze fires once.
+  let release: () => void = () => {};
+  const wait = new Promise<void>((resolve) => (release = resolve));
+  const c = harness({ agentWait: wait });
+  fresh(c);
+  await c.runner.arm(row());
+  await settle();
+  release();
+  await settle();
+  assert.equal(c.forked[0].of('fire').length, 1);
+});
+
+test('a plan never arms frozen: Freeze pressed while its child starts refuses the arm, and no arm reaches the child', async () => {
+  const freeze = { on: false };
+  const h = harness({ keyDelayMs: 60, freeze });
+  fresh(h);
+  const arming = h.runner.arm(row());
+  await new Promise((r) => setTimeout(r, 15)); // past the first check, inside the key read
+  freeze.on = true;
+  const out = await arming;
+  assert.equal(out.ok, false);
+  assert.match(out.ok ? '' : out.reason, /kill switch is on; nothing can arm/);
+  assert.equal(h.forked.flatMap((c) => c.of('arm')).length, 0);
+  assert.equal(h.forked.flatMap((c) => c.of('fire')).length, 0);
+});
+
+test('Freeze stops a change before the child signs new exits', async () => {
+  const freeze = { on: false };
+  const h = harness({ freeze });
+  fresh(h);
+  await h.runner.arm(row());
+  await settle();
+  freeze.on = true;
+  const out = await h.runner.change('pl_1', { stop: 92 });
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /kill switch is on; nothing is changed/);
+  assert.equal(h.forked[0].of('modify').length, 0);
+  assert.equal(h.runner.get('pl_1')?.stop, 90, 'the plan keeps its levels');
+});
+
+// ---------- a shut wallet arms nothing on a reconcile (re-audit R-L2) ----------
+
+test('a reconcile that lands while the wallet is shut (a touch lease, a shut when idle) locks the waiting plan and reads no trading key', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const store = createPlanStore(dir);
+  const waiting = row({ id: 'pl_wait', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
+  store.put(waiting);
+  const keyReads = { n: 0 };
+  const h = harness({ dir, walletOpen: () => false, keyReads });
+  h.approvals.set('p1', { hash: waiting.hash, status: 'executed' });
+  h.runner.onAccount(account());
+  await h.runner.reconcile(100);
+  await settle();
+  assert.equal(keyReads.n, 0, 'the trading key was never read');
+  assert.equal(h.forked.length, 0, 'no child was started');
+  assert.equal(h.runner.get('pl_wait')?.status, 'waiting');
+  assert.equal(h.runner.get('pl_wait')?.locked, true, 'it waits for the unlock');
+  assert.equal(h.session.sessionFor('pl_wait'), null, 'no signing session was opened');
+
+  // The unlock re-runs reconcile, and with the wallet open the plan arms.
+  const open = harness({ dir, walletOpen: () => true });
+  open.approvals.set('p1', { hash: waiting.hash, status: 'executed' });
+  open.runner.onAccount(account());
+  await open.runner.reconcile(100);
+  await settle();
+  assert.equal(open.forked[0]?.of('arm').length, 1);
 });
