@@ -211,25 +211,51 @@ function creditedOf(status: OneClickStatus, move: Move): bigint | null {
   }
 }
 
-async function oneclickSays(move: Move, api: IntentsApiPort): Promise<Verdict | null> {
+/* A refund closes a convert only once it shows on T, never on 1Click's unsigned word alone (the
+   claim's rule, src/invite/claim.ts): a status that lied about a refund would otherwise close a
+   convert 1Click is still delivering, and the proof's sweep would call T empty. */
+async function refundShows(move: Move, status: OneClickStatus, net: MoneyNet): Promise<boolean> {
+  const variant = variantOf(move.assetId);
+  if (variant === undefined || status.refundedAmount === undefined) return false;
+  let refunded: bigint;
+  try {
+    refunded = decimalToBaseUnits(status.refundedAmount, variant.decimals);
+  } catch {
+    return false;
+  }
+  const held = refunded > 0n ? await net.verifier.balance(move.signer, variant.assetId).catch(() => null) : null;
+  return held !== null && held >= refunded;
+}
+
+async function oneclickSays(move: Move, api: IntentsApiPort, net: MoneyNet): Promise<Verdict | null> {
   const status = await api.status(move.handle ?? '').catch(() => null);
   if (status?.status === 'SUCCESS') return { kind: 'done', credited: creditedOf(status, move) };
-  if (status?.status === 'REFUNDED') return { kind: 'refunded' };
+  if (status?.status === 'REFUNDED' && (await refundShows(move, status, net))) return { kind: 'refunded' };
   return status === null ? null : { kind: 'running', said: status.status };
 }
 
+// NEAR Intents' answers that will never become a proof: a nonce that is not V1, its life over,
+// its salt retired. A read that failed (no answer, the salt unanswered) is asked again instead.
+const NEVER_PROVEN: ReadonlySet<string> = new Set(['not_the_verifiers', 'nonce_life_over', 'salt_retired']);
+
 /* One look: the nonce first, then 1Click. A spent nonce is T's transfer done, and 1Click says how
-   the far side ended. A nonce NEAR Intents can no longer answer for (its life over, its salt
-   retired, the RPC silent) is no proof either way: then 1Click's SUCCESS or REFUNDED closes the
-   convert, and once its latest deadline is RELAY_DEADLINE_GRACE_MS behind this Mac's clock (the
-   rule src/relay/fate.ts falls back on) it can never run, so it lapses rather than wait forever. */
+   the far side ended. A read that failed is no answer and the convert stays open (review N1: one
+   failed read once closed a convert 1Click was still delivering). Only a nonce NEAR Intents can
+   never answer for goes to 1Click: SUCCESS or REFUNDED closes it, a deposit 1Click has seen keeps
+   it pending without holding up the next convert, and a deposit 1Click never saw lapses once its
+   latest deadline is RELAY_DEADLINE_GRACE_MS behind this Mac's clock (the rule src/relay/fate.ts
+   falls back on), because no block can run it after that. */
 async function judge(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
   const deadline = move.signed?.deadline ?? move.rehearsalDeadline;
   const fate = await transferFate(fateReads(net), { account: move.signer, nonce: move.nonce ?? '', deadline }, net.now()).catch(() => null);
-  if (fate?.ran === true) return (await oneclickSays(move, api)) ?? { kind: 'running', said: 'nothing' };
   if (fate?.ran === false) return fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
-  const said = await oneclickSays(move, api);
-  if (said !== null && said.kind !== 'running') return said;
+  let ran = fate?.ran === true;
+  // A nonce that is not V1 can still be asked whether it was spent, as the claim's Plan B asks it.
+  if (fate?.ran === null && fate.why === 'not_the_verifiers') ran = (await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null)) === true;
+  if (ran) return (await oneclickSays(move, api, net)) ?? { kind: 'running', said: 'nothing' };
+  if (fate === null || fate.ran !== null || !NEVER_PROVEN.has(fate.why)) return { kind: 'open' };
+  const said = await oneclickSays(move, api, net);
+  if (said !== null && (said.kind !== 'running' || said.said !== 'PENDING_DEPOSIT')) return said;
   return net.now() > Date.parse(deadline ?? '') + RELAY_DEADLINE_GRACE_MS ? { kind: 'lapsed' } : { kind: 'open' };
 }
 
@@ -281,7 +307,11 @@ function close(ledger: Ledger, move: Move, verdict: Verdict, net: MoneyNet, io: 
   } else if (verdict.kind === 'running') {
     move.oneclickSaid = verdict.said;
     trySave(ledger);
-    io.say(`${what}: T's transfer to 1Click ran, and 1Click says ${verdict.said}, not done yet. Run convert again in a few minutes to see it land.`);
+    io.say(
+      verdict.said === 'REFUNDED'
+        ? `${what}: 1Click says it refunded it, and the refund does not show on T yet. Run convert again in a few minutes.`
+        : `${what}: T's transfer to 1Click ran, and 1Click says ${verdict.said}, not done yet. Run convert again in a few minutes to see it land.`,
+    );
   } else {
     trySave(ledger);
     io.say(`${what}: NEAR Intents has not answered either way yet, so the signed convert may still run. Run convert again in a few minutes; nothing new is converted until it ends.`);
@@ -383,11 +413,12 @@ async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: Int
     const g = generated;
     const nonce = g === null ? undefined : intentNonce(g.payload);
     if (g === null || nonce === undefined) return "1Click's payload carries no nonce to prove the convert by, so nothing was signed";
-    /* A nonce NEAR Intents keeps (V1), living past the signed deadline and the proof's floor: only
-       then can a later run prove the convert ran or never can, instead of waiting on it for good. */
+    /* A V1 nonce must live past the signed deadline and the proof's floor, so a later run can prove
+       the convert ran or never can. One that is not V1 is no proof either way, and judge falls back
+       on 1Click's word and the deadline for it. */
     const parts = decodeNonce(nonce);
-    if (parts === null || parts.deadlineMs <= net.now() + SIGNED_DEADLINE_MS + FATE_FLOOR_MS) {
-      return "1Click's payload carries a nonce NEAR Intents could not prove spent or dead after the convert's deadline, so nothing was signed";
+    if (parts !== null && parts.deadlineMs <= net.now() + SIGNED_DEADLINE_MS + FATE_FLOOR_MS) {
+      return "1Click's payload carries a nonce whose life ends before NEAR Intents could prove the convert spent or dead, so nothing was signed";
     }
     const fresh: Move = {
       id: idOf(net),

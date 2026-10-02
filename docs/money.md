@@ -155,7 +155,12 @@ priced must be the one sent, with a fee to 1Click's own account and nobody else,
 give up at most 1 percent of its value (honest quotes gave up about 0.02 percent on 2026-10-01).
 It is rehearsed and written to the file before it is signed, like every move here, and the signed
 bytes are written down before 1Click gets them. If a run stops, the next `convert` finishes it with
-the same bytes, never a second signature, and converts nothing new while they can still run.
+the same bytes, never a second signature, and converts nothing new while they can still run. A
+convert ends on NEAR Intents' own record, its one-time number spent, and then on 1Click's word for
+the NEAR USDC; a refund counts only once it shows on T. If NEAR Intents can no longer answer for
+that number (days later), 1Click's word decides, and a convert 1Click never saw lapses five
+minutes after its deadline instead of holding up the next one. A Mac clock more than a minute fast
+is refused before the signature, because three minutes on it would be longer on NEAR.
 
     npm run invite -- issue --count 10 --amount 5 --label "SF builders"
 
@@ -235,7 +240,8 @@ key, and the claim falls back on its own. It writes down what NEAR Intents says 
 the intent hashes, `is_nonce_used`, every balance before and after, and the relay's
 `get_status` answer, then prints that report (`report` prints it again). It never prints a key
 or a code. `sweep` sends every cent of NEAR USDC left on the throwaway accounts to your address
-and names any other USDC still on the treasury, for `convert` first. `release-code` issues one $5
+and names any other USDC still on the treasury, for `convert` first; it never calls the file done
+while a convert is unfinished or a balance did not read. `release-code` issues one $5
 code and prints it once, to try a real claim in the app; if its money arrived as another USDC, it
 says so and stops, for `convert` first.
 

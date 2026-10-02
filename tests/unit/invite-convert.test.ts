@@ -551,21 +551,26 @@ test('treasury says what T holds of NEAR USDC and of any other USDC, and that an
   assert.equal(b.chain.oneclick.quotes, 0);
 });
 
-test('a convert is refused before anything is signed when 1Click\'s nonce is one NEAR Intents could not prove spent or dead later', async () => {
-  for (const [name, nonce] of [
-    ['not a V1 nonce', Buffer.alloc(32, 7).toString('base64')],
-    ['a V1 nonce whose life ends inside the deadline', null],
-  ] as const) {
-    const b = await bench();
-    setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
-    b.chain.oneclick.payloadAs = (p) => {
-      p['nonce'] = nonce ?? buildNonce({ salt: CHAIN_SALT, deadlineMs: b.chain.mac + 60_000, random: new Uint8Array(15).fill(4) });
-    };
-    const r = await b.run(['convert'], [PASS, 'yes']);
-    assert.equal(r.code, 1, name);
-    assert.match(text(r), /1Click's payload carries a nonce NEAR Intents could not prove spent or dead after the convert's deadline, so nothing was signed/, name);
-    assert.equal(b.signed.length, 0, `${name}: nothing signed`);
-  }
+test('a nonce whose life ends inside the deadline is refused before anything is signed; one that is not V1 converts and is judged by its spent nonce and 1Click', async () => {
+  const short = await bench();
+  setBalance(short.chain, short.t, BASE_USDC, 1_000_000n);
+  short.chain.oneclick.payloadAs = (p) => {
+    p['nonce'] = buildNonce({ salt: CHAIN_SALT, deadlineMs: short.chain.mac + 60_000, random: new Uint8Array(15).fill(4) });
+  };
+  const r = await short.run(['convert'], [PASS, 'yes']);
+  assert.equal(r.code, 1);
+  assert.match(text(r), /1Click's payload carries a nonce whose life ends before NEAR Intents could prove the convert spent or dead, so nothing was signed/);
+  assert.equal(short.signed.length, 0);
+
+  const legacy = await bench();
+  setBalance(legacy.chain, legacy.t, BASE_USDC, 1_000_000n);
+  legacy.chain.oneclick.payloadAs = (p) => {
+    p['nonce'] = Buffer.alloc(32, 7).toString('base64');
+  };
+  const ok = await legacy.run(['convert'], [PASS, 'yes']);
+  assert.equal(ok.code, 0, text(ok));
+  assert.equal(converts(legacy)[0]?.state, 'done');
+  assert.equal(runnable(legacy).length, 1);
 });
 
 test('a convert whose nonce NEAR Intents can no longer answer for closes on 1Click\'s word, and with no word at all it lapses: it never holds up the next one for good', async () => {
@@ -601,19 +606,45 @@ test('a convert whose nonce NEAR Intents can no longer answer for closes on 1Cli
   assert.equal(r.code, 0, text(r));
   assert.deepEqual(converts(b).map((m) => m.state), ['done', 'done']);
 
-  // Nothing can tell: NEAR silent and 1Click silent. Past the deadline and the grace it lapses.
+  // The salt retired and 1Click never saw the deposit (it turned the bytes away): it lapses, and
+  // the USDC still on T converts in the same run.
   const c = await bench();
   setBalance(c.chain, c.t, BASE_USDC, 1_000_000n);
   c.chain.oneclick.submitAnswer = 'error';
   const deaf: MoneyNet = { ...c.net, sleep: async () => Promise.reject(new Error('killed')) };
   assert.equal((await c.run(['convert'], [PASS, 'yes'], deaf)).code, 1);
-  c.chain.offline = true;
-  const mute = oneclickOn(c.chain);
-  const silent: MoneyNet = { ...c.net, oneclick: { ...mute, status: async () => Promise.reject(new Error('1click status failed: 503')), submitIntent: async () => Promise.reject(new Error('503')) } };
-  const lapsed = await c.run(['convert'], [PASS], silent);
+  c.chain.mac += 2 * 86_400_000;
+  c.chain.chain += 2 * 86_400_000;
+  c.chain.oneclick.submitAnswer = 'ok';
+  const retired: MoneyNet = { ...c.net, verifier: { ...c.net.verifier, isValidSalt: async () => false } };
+  const lapsed = await c.run(['convert'], [PASS, 'yes'], retired);
+  assert.equal(lapsed.code, 0, text(lapsed));
   assert.equal(converts(c)[0]?.state, 'failed');
   assert.match(converts(c)[0]?.detail ?? '', /^The signed convert can never run now: its deadline passed long ago/);
-  assert.ok(!lapsed.out.some((l) => /can still run, so nothing new was signed/.test(l)), text(lapsed));
+  assert.equal(converts(c)[1]?.state, 'done');
+});
+
+test('one failed read of the nonce is no answer: a convert 1Click is still delivering stays pending, holds up the next one, and sweep never calls T empty', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING'; // T's transfer runs; 1Click is still working on it
+  const v = b.net.verifier;
+  let sent = false;
+  const inner = oneclickOn(b.chain);
+  const net: MoneyNet = {
+    ...b.net,
+    verifier: { ...v, nonceUsed: async (a, n, at) => (sent ? null : v.nonceUsed(a, n, at)) },
+    oneclick: { ...inner, submitIntent: async (s) => ((sent = true), inner.submitIntent(s)) },
+  };
+  const r = await b.run(['convert'], [PASS, 'yes'], net);
+  assert.equal(r.code, 1);
+  const [move] = converts(b);
+  assert.equal(move?.state, 'pending', 'never failed while it may still land');
+  assert.equal(move?.oneclickSaid, undefined);
+  setBalance(b.chain, b.t, BASE_USDC, 500_000n);
+  const next = await b.run(['convert'], [PASS], net);
+  assert.ok(next.out.includes('A convert signed in an earlier run can still run, so nothing new was signed. Run convert again in a few minutes.'), text(next));
+  assert.equal(runnable(b).length, 1);
 });
 
 test('an RPC that runs the rehearsal it was handed and goes silent: the book follows the shared nonce and says converted, not nothing moved', async () => {
@@ -658,4 +689,22 @@ test("1Click's word for what it credited never exceeds what went in", async () =
   assert.equal(r.code, 0, text(r));
   assert.equal(converts(b)[0]?.creditedOut, '1000000');
   assert.ok(r.out.some((l) => l.includes('$1.00 of NEAR USDC credited to T')), text(r));
+});
+
+test("1Click's word that it refunded a convert closes it only once the refund shows on T", async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING'; // 1Click is still working on it
+  const inner = oneclickOn(b.chain);
+  const liar: MoneyNet = { ...b.net, oneclick: { ...inner, status: async (h) => ({ ...(await inner.status(h)), status: 'REFUNDED', reported: 'REFUNDED', refundedAmount: '1.00' }) } };
+  const r = await b.run(['convert'], [PASS, 'yes'], liar);
+  assert.equal(r.code, 1);
+  assert.ok(r.out.includes('$1.00 USDC on Base: 1Click says it refunded it, and the refund does not show on T yet. Run convert again in a few minutes.'), text(r));
+  assert.equal(converts(b)[0]?.state, 'pending', 'never closed on that word alone');
+  // The real end: 1Click delivers, and the next run closes it as converted.
+  b.chain.oneclick.outcome = 'SUCCESS';
+  const next = await b.run(['convert'], [PASS]);
+  assert.equal(next.code, 0, text(next));
+  assert.equal(converts(b)[0]?.state, 'done');
+  assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
 });
