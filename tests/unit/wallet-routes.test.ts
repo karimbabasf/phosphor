@@ -245,6 +245,31 @@ test('creating a wallet returns the words once and leaves it unlocked', async ()
   }
 });
 
+/* The first run shows the words a create returned and then asks for three of them back, so the
+   create leaves what a reveal leaves for that check (src/vault/phrase-proof.ts). It left nothing,
+   and Prove it answered "Show your words once more with Back it up" on a screen with no Back it
+   up. The check also holds over a lock, since writing the words down is when the idle lock or
+   the screen lock lands: unlock, then prove. */
+test('three of the words a create returned prove the backup, after a lock and an unlock too', async () => {
+  const b = await boot();
+  try {
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const words: string[] = made.json.mnemonic;
+    const typed = (at: number[]) => at.map((index) => ({ index, word: words[index] }));
+    await b.post('/api/lock', { token: b.token, whenIdle: true, reason: 'screen' });
+    assert.equal(b.keystore.state(), 'locked');
+    assert.equal((await b.post('/api/unlock', { token: b.token, password: PASSWORD })).json.ok, true);
+
+    const wrong = await b.post('/api/vault/backup-proven', { token: b.token, words: [{ index: 0, word: 'notaword' }, ...typed([4, 9])] });
+    assert.equal(wrong.json.code, 'wrong_words');
+    const right = await b.post('/api/vault/backup-proven', { token: b.token, words: typed([2, 6, 11]) });
+    assert.equal(right.json.ok, true, JSON.stringify(right.json));
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
+  } finally {
+    await b.close();
+  }
+});
+
 test('lock and unlock move the state, and a wrong password does not', async () => {
   const b = await boot();
   try {

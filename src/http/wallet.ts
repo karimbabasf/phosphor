@@ -274,6 +274,9 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     // The words are audited by their absence: the line says a wallet exists and names the
     // address, which is the fact a log is for. The phrase is returned once, here, and never
     // written anywhere this process controls.
+    // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
+    // run's next step.
+    if (made.addresses.evm !== null) rememberPhrase(made.mnemonic.split(' '), made.addresses.evm);
     ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
     ctx.session.touch();
     announce(ctx);
