@@ -68,7 +68,7 @@ core-foundation = "0.10"
 # The plugin's own minisign verifier, for the update tests to prove a bundle they build passes
 # the check the plugin runs. Already in the tree under tauri-plugin-updater.
 [dev-dependencies]
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 
 [profile.release]
 codegen-units = 1
