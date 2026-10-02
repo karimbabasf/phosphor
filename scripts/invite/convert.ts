@@ -216,13 +216,15 @@ function creditedOf(status: OneClickStatus, move: Move): bigint | null {
    convert 1Click is still delivering, and the proof's sweep would call T empty. */
 async function refundShows(move: Move, status: OneClickStatus, net: MoneyNet): Promise<boolean> {
   const variant = variantOf(move.assetId);
-  if (variant === undefined || status.refundedAmount === undefined) return false;
-  let refunded: bigint;
+  if (variant === undefined) return false;
+  let refunded = 0n;
   try {
-    refunded = decimalToBaseUnits(status.refundedAmount, variant.decimals);
+    if (status.refundedAmount !== undefined) refunded = decimalToBaseUnits(status.refundedAmount, variant.decimals);
   } catch {
-    return false;
+    refunded = 0n;
   }
+  // No figure (1Click's status can leave it out, read as 0): what went in, less the most a convert may lose.
+  if (refunded <= 0n) refunded = (BigInt(move.legs[0]?.amountBase ?? '0') * BigInt(10_000 - CONVERT_MAX_LOSS_BPS)) / 10_000n;
   const held = refunded > 0n ? await net.verifier.balance(move.signer, variant.assetId).catch(() => null) : null;
   return held !== null && held >= refunded;
 }
@@ -234,34 +236,38 @@ async function oneclickSays(move: Move, api: IntentsApiPort, net: MoneyNet): Pro
   return status === null ? null : { kind: 'running', said: status.status };
 }
 
-// NEAR Intents' answers that will never become a proof: a nonce that is not V1, its life over,
-// its salt retired. A read that failed (no answer, the salt unanswered) is asked again instead.
-const NEVER_PROVEN: ReadonlySet<string> = new Set(['not_the_verifiers', 'nonce_life_over', 'salt_retired']);
-
 /* One look: the nonce first, then 1Click. A spent nonce is T's transfer done, and 1Click says how
-   the far side ended. A read that failed is no answer and the convert stays open (review N1: one
-   failed read once closed a convert 1Click was still delivering). Only a nonce NEAR Intents can
-   never answer for goes to 1Click: SUCCESS or REFUNDED closes it, a deposit 1Click has seen keeps
-   it pending without holding up the next convert, and a deposit 1Click never saw lapses once its
-   latest deadline is RELAY_DEADLINE_GRACE_MS behind this Mac's clock (the rule src/relay/fate.ts
-   falls back on), because no block can run it after that. */
+   the far side ended. A read that failed, NEAR's or 1Click's, is no answer and decides nothing
+   (reviews N1 and A: one failed read once closed a convert 1Click was still delivering).
+
+   Two nonces NEAR Intents can never prove spent or dead from here. A V1 nonce past its life or
+   with its salt retired can no longer run, but a spent one reads unspent once pruned, so 1Click's
+   word decides: SUCCESS or a refund that shows on T closes it, a deposit 1Click has seen keeps it
+   pending without holding up the next convert, and one 1Click never saw lapses once its deadline is
+   RELAY_DEADLINE_GRACE_MS behind this Mac's clock (the rule src/relay/fate.ts falls back on). A nonce
+   that is not V1 is asked directly: spent goes to 1Click as above, unspent stays open while its
+   bytes can run, and after that is dead unless 1Click saw the deposit (review C). */
 async function judge(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
   const deadline = move.signed?.deadline ?? move.rehearsalDeadline;
+  const over = net.now() > Date.parse(deadline ?? '') + RELAY_DEADLINE_GRACE_MS;
   const fate = await transferFate(fateReads(net), { account: move.signer, nonce: move.nonce ?? '', deadline }, net.now()).catch(() => null);
   if (fate?.ran === false) return fate.dead !== null ? { kind: 'dead' } : { kind: 'open' };
-  let ran = fate?.ran === true;
-  // A nonce that is not V1 can still be asked whether it was spent, as the claim's Plan B asks it;
-  // a read that fails is no answer here too.
-  if (fate?.ran === null && fate.why === 'not_the_verifiers') {
+  if (fate?.ran === true) return (await oneclickSays(move, api, net)) ?? { kind: 'running', said: 'nothing' };
+  if (fate === null) return { kind: 'open' };
+  if (fate.why === 'not_the_verifiers') {
     const used = await net.verifier.nonceUsed(move.signer, move.nonce ?? '').catch(() => null);
     if (used === null) return { kind: 'open' };
-    ran = used;
+    if (used) return (await oneclickSays(move, api, net)) ?? { kind: 'running', said: 'nothing' };
+    if (!over) return { kind: 'open' };
+    const said = await oneclickSays(move, api, net);
+    if (said === null) return { kind: 'running', said: 'nothing' };
+    return said.kind === 'running' && said.said === 'PENDING_DEPOSIT' ? { kind: 'dead' } : said;
   }
-  if (ran) return (await oneclickSays(move, api, net)) ?? { kind: 'running', said: 'nothing' };
-  if (fate === null || fate.ran !== null || !NEVER_PROVEN.has(fate.why)) return { kind: 'open' };
+  if (fate.why !== 'nonce_life_over' && fate.why !== 'salt_retired') return { kind: 'open' };
   const said = await oneclickSays(move, api, net);
-  if (said !== null && (said.kind !== 'running' || said.said !== 'PENDING_DEPOSIT')) return said;
-  return net.now() > Date.parse(deadline ?? '') + RELAY_DEADLINE_GRACE_MS ? { kind: 'lapsed' } : { kind: 'open' };
+  if (said === null) return { kind: 'running', said: 'nothing' };
+  if (said.kind !== 'running' || said.said !== 'PENDING_DEPOSIT') return said;
+  return over ? { kind: 'lapsed' } : { kind: 'open' };
 }
 
 async function watch(move: Move, net: MoneyNet, api: IntentsApiPort): Promise<Verdict> {
@@ -305,7 +311,7 @@ function close(ledger: Ledger, move: Move, verdict: Verdict, net: MoneyNet, io: 
       verdict.kind === 'refunded'
         ? '1Click refunded it to T as the same USDC. Run convert again to try once more.'
         : verdict.kind === 'dead'
-          ? `${signed} passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.`
+          ? `${signed} passed its deadline with its nonce unspent: it never ran and never can. T still holds that USDC.`
           : `${signed} can never run now: its deadline passed long ago. NEAR Intents can no longer say whether its nonce was spent and 1Click did not say, so T's balances show what happened; convert reads them again.`;
     trySave(ledger);
     io.say(`${what}: not converted. ${move.detail}`);
@@ -425,6 +431,7 @@ async function convertOne(ledger: Ledger, plan: Planned, net: MoneyNet, api: Int
     if (parts !== null && parts.deadlineMs <= net.now() + SIGNED_DEADLINE_MS + FATE_FLOOR_MS) {
       return "1Click's payload carries a nonce whose life ends before NEAR Intents could prove the convert spent or dead, so nothing was signed";
     }
+    if (parts === null && !/^[A-Za-z0-9+/]{43}=$/.test(nonce)) return "1Click's payload carries a nonce that is not 32 bytes, so nothing was signed";
     const fresh: Move = {
       id: idOf(net),
       kind: 'convert',

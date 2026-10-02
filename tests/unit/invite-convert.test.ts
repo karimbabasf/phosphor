@@ -268,7 +268,7 @@ test('while a convert signed earlier can still run, nothing new is signed; once 
     ['failed', '1000000'],
     ['done', '1500000'],
   ]);
-  assert.match(converts(b)[0]!.detail ?? '', /^The signed convert passed its deadline with its nonce unspent, on the chain clock: it never ran and never can/);
+  assert.match(converts(b)[0]!.detail ?? '', /^The signed convert passed its deadline with its nonce unspent: it never ran and never can/);
   assert.equal(runnable(b).length, 2, 'one signature per convert');
   assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 1_499_700n);
 });
@@ -387,7 +387,7 @@ test('a rehearsal the verifier refuses stops the convert with only the rehearsal
   b.chain.chain += 60_000;
   const next = await b.run(['convert'], [PASS, 'yes']);
   assert.equal(next.code, 0, text(next));
-  assert.ok(next.out.includes('$1.00 USDC on Base: not converted. Only its rehearsal was signed, and that passed its deadline with its nonce unspent, on the chain clock: it never ran and never can. T still holds that USDC.'), text(next));
+  assert.ok(next.out.includes('$1.00 USDC on Base: not converted. Only its rehearsal was signed, and that passed its deadline with its nonce unspent: it never ran and never can. T still holds that USDC.'), text(next));
   assert.deepEqual(converts(b).map((m) => m.state), ['failed', 'done']);
   assert.equal(runnable(b).length, 1);
 });
@@ -719,4 +719,62 @@ test("1Click's word that it refunded a convert closes it only once the refund sh
   assert.equal(next.code, 0, text(next));
   assert.equal(converts(b)[0]?.state, 'done');
   assert.equal(balanceOf(b.chain, b.t, INVITE_ASSET_ID), 999_800n);
+});
+
+test('with its nonce pruned, a convert 1Click is still delivering is never lapsed on a failed status read', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING';
+  const dying: MoneyNet = { ...b.net, sleep: async () => Promise.reject(new Error('killed')) };
+  assert.equal((await b.run(['convert'], [PASS, 'yes'], dying)).code, 1);
+  b.chain.mac += 2 * 86_400_000;
+  b.chain.chain += 2 * 86_400_000;
+  const inner = oneclickOn(b.chain);
+  const pruned: MoneyNet = {
+    ...b.net,
+    verifier: { ...b.net.verifier, isValidSalt: async () => false, nonceUsed: async () => false },
+    oneclick: { ...inner, status: async () => Promise.reject(new Error('1click status failed: 503')) },
+  };
+  await b.run(['convert'], [PASS], pruned);
+  assert.equal(converts(b)[0]?.state, 'pending', 'no lapse while 1Click may still deliver');
+});
+
+test('a refund 1Click reports with no figure closes the convert once what went in shows back on T', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'REFUNDED';
+  const inner = oneclickOn(b.chain);
+  const bare: MoneyNet = { ...b.net, oneclick: { ...inner, status: async (h) => ({ ...(await inner.status(h)), refundedAmount: '0' }) } };
+  const r = await b.run(['convert'], [PASS, 'yes'], bare);
+  assert.equal(r.code, 1);
+  assert.equal(converts(b)[0]?.state, 'failed');
+  assert.equal(converts(b)[0]?.oneclickSaid, 'REFUNDED');
+});
+
+test('a nonce that is not V1 and reads unspent is never closed on 1Click\'s word while its bytes can run', async () => {
+  const b = await bench();
+  setBalance(b.chain, b.t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.payloadAs = (p) => {
+    p['nonce'] = Buffer.alloc(32, 9).toString('base64');
+  };
+  b.chain.oneclick.submitAnswer = 'error';
+  const dying: MoneyNet = { ...b.net, sleep: async () => Promise.reject(new Error('killed')) };
+  assert.equal((await b.run(['convert'], [PASS, 'yes'], dying)).code, 1);
+  const inner = oneclickOn(b.chain);
+  const forged: MoneyNet = {
+    ...b.net,
+    oneclick: { ...inner, status: async (h) => ({ ...(await inner.status(h)), status: 'SUCCESS', reported: 'SUCCESS', settledAmountOut: '1.00' }) },
+    sleep: async () => Promise.reject(new Error('killed')),
+  };
+  await b.run(['convert'], [PASS], forged);
+  assert.equal(converts(b)[0]?.state, 'pending', 'unspent and alive: open, whatever 1Click says');
+
+  const malformed = await bench();
+  setBalance(malformed.chain, malformed.t, BASE_USDC, 1_000_000n);
+  malformed.chain.oneclick.payloadAs = (p) => {
+    p['nonce'] = 'not-a-nonce';
+  };
+  const m = await malformed.run(['convert'], [PASS, 'yes']);
+  assert.match(text(m), /1Click's payload carries a nonce that is not 32 bytes, so nothing was signed/);
+  assert.equal(malformed.signed.length, 0);
 });
