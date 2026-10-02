@@ -283,10 +283,13 @@ Before it proposes, your assistant can ask what can be swapped and what a swap w
 The amount is "all", which means every last unit you hold, or an exact amount; more than you hold
 is refused before any price is asked. The app asks for a price once per swap and sets the floor,
 the least you will get, one percent under that quote. A floor you name yourself is kept, but a
-floor of zero, or one more than 20 percent below the app's quote, is refused. Under the click
+floor of zero, or one more than 20 percent below the app's quote, is refused. By default the
+price comes from the solver relay, which signs nothing it quotes, so the app checks it against a
+quote 1Click signs for the same swap. Under the click
 threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
 page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
-started outside Phosphor and is not allowed yet, or the swap spends a coin the app cannot price;
+started outside Phosphor and is not allowed yet, the swap spends a coin the app cannot price, or
+the relay's price could not be checked against a quote 1Click signed;
 above it, the card shows what you pay and what you get at least, and waits for your click. See
 [Policy](policy.md#the-click-threshold).
 
@@ -458,9 +461,10 @@ The app refuses a move that loses too much of itself to fees, and names the fee 
 - A Hyperliquid deposit is refused under 7 USDC and when the fee is above 5 percent.
 - A Hyperliquid withdrawal is refused under 5 USDC.
 - A swap floor more than 20 percent below the app's quote is refused as no floor at all.
-- A swap may give up at most 3 percent of its value to fees and price, by the swap service's own
-  dollar figures for both sides. When the swap service gives no dollar figure for a coin there is
-  nothing to measure by, and no cap applies. A quote whose request carries a fee, a field or a
+- A swap may give up at most 3 percent of its value to fees and price, by the dollar figures
+  1Click signs for both sides, on the solver relay and on 1Click alike. When 1Click gives no
+  dollar figure for a coin there is nothing to measure by, and no cap applies; on the solver
+  relay such a swap waits for your click. A quote whose request carries a fee, a field or a
   value the app did not ask for is refused before anything is signed.
 - A move runs with the coins its card was priced with. If the swap service's coin list names a
   different coin, or counts one in different decimals, when you click, nothing is signed and you

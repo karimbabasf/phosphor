@@ -124,14 +124,16 @@ account modes accept, or refuses before any quote and names the most it can send
 Quotes come from 1Click and, for swaps by default, from the solver relay. 1Click does not sign
 the field that names its fee, and the relay signs nothing it quotes. The app checks what it can:
 a 1Click quote must come back as it was sent, a fee line may pay only 1Click, and the quote must
-carry 1Click's signature; and what a move gives up is held to a floor. Inside that floor a fee
-hidden from the app is not caught.
+carry 1Click's signature; a relay price is checked against a quote 1Click signed for the same
+swap; and what a move gives up is held to a floor. Inside that floor a fee hidden from the app is
+not caught.
 
 What it means: someone who can change a quote between your Mac and the venue, which takes
-breaking HTTPS or being the venue, can take up to 3 percent of a swap, 1 percent
+breaking HTTPS or being the venue, can take up to 3 percent of a swap on either route, 1 percent
 of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent
 of a Hyperliquid withdrawal, or 1 percent of an invite claim that goes through 1Click. A swap of a
-coin 1Click puts no dollar figure on has no cap at all. The same strict check cuts the other way:
+coin 1Click puts no dollar figure on has no cap at all; on the relay route such a swap waits for
+your click. The same strict check cuts the other way:
 if 1Click starts sending back a field the app does not know, every quote is refused until
 Phosphor is updated, and nothing moves.
 

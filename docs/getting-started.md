@@ -155,9 +155,11 @@ positions at the market price and stops every plan. Nothing can move your money 
 unfreeze."
 
 Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
-proposal is refused until you unfreeze, whatever its size. The app also cancels the orders its own
-plans have resting, closes every open position on your Hyperliquid account when it can reach the
-venue, including one you opened somewhere else, and ends every plan whose position closed. An
+proposal is refused until you unfreeze, whatever its size, and a move already on its way stops
+at its last step, before it is signed; one signed before you pressed Freeze still lands. The app
+also cancels the orders its own plans have resting, closes every open position on your
+Hyperliquid account when it can reach the venue, including one you opened somewhere else, and
+ends every plan whose position closed. An
 order you placed on Hyperliquid yourself stays on the book: cancel it there. Closing a position
 takes the trading key; when the app has none in reach, the positions stay open and the window
 says so. Money does not leave the app. Check the Trade tab afterwards, see [Trading](trading.md).

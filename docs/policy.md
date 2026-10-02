@@ -48,7 +48,8 @@ size, and the policy engine never executes them on its own:
   removed.
 
 Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
-spends a coin the app cannot price or one whose listed price nothing in the quote can check (see
+spends a coin the app cannot price, one whose listed price nothing in the quote can check, or a
+price from the solver relay it could not check against a quote 1Click signed (see
 [Money](money.md#swap)), and every move an agent proposes after it read text from outside
 Phosphor (see below).
 

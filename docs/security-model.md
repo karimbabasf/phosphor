@@ -50,7 +50,9 @@ The agent cannot:
 A small move still waits for your click when its agent read text from outside Phosphor in that
 session (a page, the news, a chain read, a venue's words the app does not know, or words a marked
 agent wrote), when its agent was started outside Phosphor and you have not allowed it, when the
-agent asked for it on its own after a move failed, or when it spends a coin the app cannot price.
+agent asked for it on its own after a move failed, when it spends a coin the app cannot price, or
+when it is a swap on the solver relay whose price the app could not check against a quote 1Click
+signed.
 
 ### What it defends against, and the test that proves it
 
@@ -112,6 +114,10 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
+- **The solver relay prices a swap badly.** The relay signs nothing it quotes, so its price is
+  checked against a quote 1Click signed for the same swap. A swap that gives up more than 3
+  percent of that is refused, and one with no signed price to check it by waits for your click.
+  Proof: `intents-relay.test.ts`.
 - **The coin list changes under a card before you click.** A card's coins are pinned when it
   lands. A list that names another coin at the click refuses the move, and nothing is signed.
   Proof: `asset-pins.test.ts`.
@@ -124,6 +130,9 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   wallet opens it for that move alone, and your rules run again after the touch, before anything
   signs. Proof: `vault-routes.test.ts` (the address and the phrase),
   `approve-touch-lease.test.ts`, `touch-recheck.test.ts`.
+- **Freeze is pressed while a move is on its way.** Freeze is checked again at the last step
+  before any signature, so a move that passed its checks before you pressed it signs nothing.
+  Proof: `freeze-last-step.test.ts`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other
@@ -148,10 +157,10 @@ your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
   can sign. A program able to read that process's memory has it; the hardened runtime is there to
-  refuse that. The lock drops the key, but copies a signature or an unlock made can stay in memory
-  until it is reused. What closes it: the chip vault, where the Secure Enclave signs NEAR Intents
-  moves itself, so that key never exists as bytes. It is planned, not built. Until then, lock the
-  wallet when you step away.
+  refuse that. The lock drops the key, and anything a reveal still holds for the window, but
+  copies a signature or an unlock made can stay in memory until it is reused. What closes it: the
+  chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key never exists
+  as bytes. It is planned, not built. Until then, lock the wallet when you step away.
 - **A Touch ID while the app starts can re-arm a locked plan.** For up to 20 seconds after the
   app starts, its plan check waits for Hyperliquid's first answer. If a Touch ID approves a move on
   the locked wallet in that time, and the check lands while that move holds the key, every waiting
@@ -178,11 +187,13 @@ your money.
   usual.
 - **A fee can hide inside fixed floors.** 1Click does not sign its fee field, and the solver relay
   signs nothing it quotes. Someone who can change a quote on its way, which takes breaking HTTPS
-  or being the venue, can take up to a move's loss floor: 3 percent of a swap, 1 percent of a
-  send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4 percent of a
-  Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. A swap of a coin 1Click
-  puts no dollar figure on has no cap at all. What closes it: the venues signing what they quote,
-  the fee included.
+  or being the venue, can take up to a move's loss floor: 3 percent of a swap on either route, 1
+  percent of a send, 3 percent of a payout, 5 percent of a Hyperliquid deposit, 0.25 USDC plus 0.4
+  percent of a Hyperliquid withdrawal, and 1 percent of an invite claim through 1Click. On the
+  relay route the 3 percent is measured by a quote 1Click signed for the same swap. A swap of a
+  coin 1Click puts no dollar figure on has no cap at all: on the relay route it waits for your
+  click, and the amount on its card is the only check. What closes it: the venues signing what
+  they quote, the fee included.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
