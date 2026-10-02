@@ -508,6 +508,15 @@ pub fn mint_token() -> Result<String, String> {
     Err("Phosphor's desktop shell needs a random source and only supports unix today".to_string())
 }
 
+/// A boot nonce for a test, minted as Handshake::mint mints one. A test never writes one out: a
+/// literal passed to a parameter named `nonce` is what the code scanner reports as a hard-coded
+/// secret (CodeQL rust/hard-coded-cryptographic-value), and a test that holds for any nonce is the
+/// stronger test.
+#[cfg(test)]
+pub fn test_nonce() -> String {
+    mint_token().expect("a random source")
+}
+
 /// The four secrets this shell mints per boot and hands to the backend down one pipe.
 ///
 /// `token` is the approval token, injected into the control webview and checked on every write.
@@ -1154,7 +1163,7 @@ mod tests {
     /// The backend's half of the challenge, as src/http/respond.ts answers it: the proof for the
     /// challenge the request carried, under `nonce`, and the fixed word when it carried none.
     /// `upper` sends the proof upper-cased, as a header value may arrive.
-    fn prover(nonce: &'static str, upper: bool) -> u16 {
+    fn prover(nonce: String, upper: bool) -> u16 {
         let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
         let port = listener.local_addr().expect("read the bound port").port();
         std::thread::spawn(move || {
@@ -1164,7 +1173,7 @@ mod tests {
                 let n = sock.read(&mut scratch).unwrap_or(0);
                 let asked = String::from_utf8_lossy(&scratch[..n]).to_ascii_lowercase();
                 let value = header_value(&asked, "x-phosphor-challenge:")
-                    .map(|challenge| identity_proof(nonce, challenge).unwrap())
+                    .map(|challenge| identity_proof(&nonce, challenge).unwrap())
                     .unwrap_or_else(|| "control".to_string());
                 let value = if upper { value.to_ascii_uppercase() } else { value };
                 let res = format!("HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nX-Phosphor: {value}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
@@ -1183,20 +1192,21 @@ mod tests {
             "it is still Phosphor-shaped, which is what names a process to quit"
         );
         assert!(
-            !phosphor_is_listening(port, Some("a1b2c3d4")),
+            !phosphor_is_listening(port, Some(&test_nonce())),
             "but it is not the backend this shell started, so no window may open onto it"
         );
     }
 
     #[test]
     fn only_the_backend_holding_this_spawns_nonce_answers_its_challenge() {
-        let port = prover("a1b2c3d4", false);
-        assert!(phosphor_is_listening(port, Some("a1b2c3d4")));
-        assert!(!phosphor_is_listening(port, Some("a1b2c3d5")), "a backend keyed by another nonce is not this spawn's");
+        let nonce = test_nonce();
+        let port = prover(nonce.clone(), false);
+        assert!(phosphor_is_listening(port, Some(&nonce)));
+        assert!(!phosphor_is_listening(port, Some(&test_nonce())), "a backend keyed by another nonce is not this spawn's");
         assert!(phosphor_is_listening(port, None), "and to the survey it is Phosphor-shaped");
-        let loud = prover("a1b2c3d4", true);
+        let loud = prover(nonce.clone(), true);
         assert!(
-            phosphor_is_listening(loud, Some("a1b2c3d4")),
+            phosphor_is_listening(loud, Some(&nonce)),
             "header values are compared case-insensitively, as the names are"
         );
     }
@@ -1269,7 +1279,7 @@ mod tests {
         let key = read_key(&token).unwrap();
         let (port, seen) = squatter();
         let _ = get_health(port, &token);
-        let challenge = Challenge::new("a1b2c3d4").unwrap();
+        let challenge = Challenge::new(&test_nonce()).unwrap();
         let raw = request(port, &challenged_read_head(port, "/api/log?limit=5&for=report", &token, &challenge), None).unwrap();
         assert!(!identity_matches(&raw, Some(&challenge)), "and its answer is still refused");
         let heads: Vec<String> = seen.try_iter().collect();
@@ -1288,14 +1298,14 @@ mod tests {
         let port = listener.local_addr().expect("read the bound port").port();
         drop(listener);
         assert!(!phosphor_is_listening(port, None));
-        assert!(!phosphor_is_listening(port, Some("a1b2c3d4")));
+        assert!(!phosphor_is_listening(port, Some(&test_nonce())));
     }
 
     #[test]
     fn a_response_with_no_marker_at_all_is_never_a_match() {
         let res = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n";
         assert!(!identity_matches(res, None));
-        assert!(!identity_matches(res, Some(&Challenge::new("a1b2c3d4").unwrap())));
+        assert!(!identity_matches(res, Some(&Challenge::new(&test_nonce()).unwrap())));
         let in_the_body = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\nx-phosphor: control";
         assert!(!identity_matches(in_the_body, None), "a body line is never taken for the header");
     }

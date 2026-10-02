@@ -268,6 +268,7 @@ fn base64_encode(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod relay_tests {
     use super::*;
+    use crate::backend::test_nonce;
 
     #[test]
     fn the_transport_key_crosses_as_base64_of_its_bytes() {
@@ -279,13 +280,14 @@ mod relay_tests {
 
     #[test]
     fn only_a_2xx_carrying_this_boots_nonce_is_read() {
-        let challenge = Challenge::new("abc").unwrap();
+        let nonce = test_nonce();
+        let challenge = Challenge::new(&nonce).unwrap();
         let ok = format!("HTTP/1.1 200 OK\r\nX-Phosphor: {}\r\n\r\n{{\"request\":null}}", challenge.expected());
         assert_eq!(body_of_ours(&ok, &challenge), Some(serde_json::json!({ "request": null })));
-        let other = Challenge::new("def").unwrap();
+        let other = Challenge::new(&test_nonce()).unwrap();
         assert_eq!(body_of_ours(&ok, &other), None, "an answer under another nonce is not read");
-        let replayed = "HTTP/1.1 200 OK\r\nX-Phosphor: abc\r\n\r\n{\"request\":{\"op\":\"unwrap\"}}";
-        assert_eq!(body_of_ours(replayed, &challenge), None, "the nonce itself is no answer to a challenge");
+        let replayed = format!("HTTP/1.1 200 OK\r\nX-Phosphor: {nonce}\r\n\r\n{{\"request\":{{\"op\":\"unwrap\"}}}}");
+        assert_eq!(body_of_ours(&replayed, &challenge), None, "the nonce itself is no answer to a challenge");
         let forbidden = format!("HTTP/1.1 403 Forbidden\r\nX-Phosphor: {}\r\n\r\n{{}}", challenge.expected());
         assert_eq!(body_of_ours(&forbidden, &challenge), None);
         let bare = "HTTP/1.1 200 OK\r\n\r\n{}";

@@ -1595,9 +1595,8 @@ mod tests {
         ALTERED, ALTERED_TITLE, DOWNLOAD_URL, EXITED_STARTING, MCP_COPIED, NOT_BACK, NOT_RESTARTED, NO_WINDOW, OLD_SESSION, OTHER_PHOSPHOR,
         PORT_TAKEN, RESTARTED, START_BLOCKED, STOPPED_TWICE, TAKEN_ON_RESTART, TOO_SLOW,
     };
+    use crate::backend::test_nonce;
     use std::time::Duration;
-
-    const NONCE: &str = "abc123";
 
     fn answer(identity: Option<&str>, body: &str) -> String {
         let header = identity.map(|n| format!("x-phosphor: {n}\r\n")).unwrap_or_default();
@@ -1606,7 +1605,8 @@ mod tests {
 
     #[test]
     fn the_copied_line_comes_only_from_this_boots_backend() {
-        let challenge = Challenge::new(NONCE).unwrap();
+        let nonce = test_nonce();
+        let challenge = Challenge::new(&nonce).unwrap();
         let proof = challenge.expected().to_string();
         let body = r#"{"agent":"codex","command":"codex mcp add phosphor --env PHOSPHOR_PORT=4177 -- node /x/src/mcp.ts"}"#;
         assert_eq!(
@@ -1618,8 +1618,8 @@ mod tests {
         // The nonce itself (what an older backend served to any caller), an answer to another
         // challenge, the fixed marker any server can send, and no marker at all are all a stranger
         // on the port: refused before the body is read.
-        assert!(connection_line_from(&answer(Some(NONCE), body), &challenge).unwrap_err().contains("Something else is answering"));
-        let earlier = Challenge::new(NONCE).unwrap();
+        assert!(connection_line_from(&answer(Some(&nonce), body), &challenge).unwrap_err().contains("Something else is answering"));
+        let earlier = Challenge::new(&nonce).unwrap();
         assert!(connection_line_from(&answer(Some(earlier.expected()), body), &challenge).is_err(), "a replayed answer");
         assert!(connection_line_from(&answer(Some("control"), body), &challenge).is_err());
         assert!(connection_line_from(&answer(None, body), &challenge).is_err());
@@ -1627,7 +1627,7 @@ mod tests {
 
     #[test]
     fn a_command_that_is_not_one_printable_line_is_never_copied() {
-        let challenge = Challenge::new(NONCE).unwrap();
+        let challenge = Challenge::new(&test_nonce()).unwrap();
         let ours = |body: &str| answer(Some(challenge.expected()), body);
         let two_lines = r#"{"command":"codex mcp add phosphor\nrm -rf ~"}"#;
         assert!(connection_line_from(&ours(two_lines), &challenge).unwrap_err().contains("not one line"));
@@ -1660,7 +1660,7 @@ mod tests {
 
     #[test]
     fn the_log_copy_takes_only_an_answer_that_carries_this_boots_nonce() {
-        let challenge = Challenge::new("abcdef0123").unwrap();
+        let challenge = Challenge::new(&test_nonce()).unwrap();
         let proof = challenge.expected().to_ascii_uppercase();
         let body = r#"[{"ts":"t1","type":"tool_call","msg":"a"}]"#;
         let ours = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: {proof}\r\n\r\n{body}");
@@ -1694,7 +1694,7 @@ mod tests {
             let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\nX-Phosphor: control\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes());
         });
         let token = "f00d".repeat(16);
-        assert_eq!(super::fetch_log_tail(port, 5, NONCE, &token), None);
+        assert_eq!(super::fetch_log_tail(port, 5, &test_nonce(), &token), None);
         let head = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert!(!head.contains(&token), "the window token reached the squatter: {head}");
         assert!(head.contains(&format!("x-phosphor-read: {}\r\n", crate::backend::read_key(&token).unwrap())), "{head}");
