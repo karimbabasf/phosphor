@@ -46,6 +46,16 @@ test('every command in the release notes prints exactly the line the notes promi
       assert.equal(printed, promised, `${command} prints what the notes promise`);
     }
     assert.deepEqual(pairs.map((pair) => pair.promised).sort(), sums.split(/(?<=\n)/).filter(Boolean).sort(), 'each SHA256SUMS line is promised once');
+    // With --repo alone the provenance check passes for a file any workflow in the repository
+    // attested, on any branch, so the notes pin the release workflow and this version's tag.
+    assert.ok(
+      notes.includes(
+        'gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \\\n' +
+          '  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \\\n' +
+          `  --source-ref refs/tags/v${version}\n`,
+      ),
+      'the attestation command pins the workflow and the tag',
+    );
   } finally {
     fs.rmSync(home, { recursive: true, force: true });
   }

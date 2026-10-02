@@ -56,10 +56,13 @@ and this must print the same one:
 shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg
 ```
 
-To check it was built from this repository's code, at the commit it prints (0.10.1 and later):
+To check it was built by this repository's release workflow from the tag of its version, at the
+commit it prints (0.10.2 and later; use the tag of the version you downloaded):
 
 ```sh
-gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor
+gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
+  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
+  --source-ref refs/tags/v0.10.13
 ```
 
 The app and the disk image are signed with an Apple Developer ID and notarised by Apple, so

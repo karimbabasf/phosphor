@@ -53,7 +53,10 @@
 #
 #   No secret: build provenance. Every release asset gets a Sigstore-signed statement that it
 #   came out of this workflow at the tagged commit of karimbabasf/phosphor, logged in the public
-#   Rekor transparency log. `gh attestation verify <file> --repo karimbabasf/phosphor` checks it.
+#   Rekor transparency log. `gh attestation verify <file> --repo karimbabasf/phosphor
+#   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml --source-ref
+#   refs/tags/v<version>` checks it; with `--repo` alone it also passes for a file any other
+#   workflow in the repository attested, on any branch.
 #   This ties the checksum to the source, which a checksum alone cannot: whoever controls the
 #   release page could post a new file and a new checksum together, not a new attestation.
 #
@@ -410,10 +413,12 @@ jobs:
             echo "**Check where it was built.** With the GitHub CLI (\`brew install gh\`):"
             echo
             echo '```'
-            echo "gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor"
+            echo "gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \\"
+            echo "  --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \\"
+            echo "  --source-ref refs/tags/v$VERSION"
             echo '```'
             echo
-            echo "It passes only for a file this repository's release workflow built, and it prints the commit it was built from, so you can read the exact code in the file you hold."
+            echo "It passes only for a file this repository's release workflow built from the tag v$VERSION, and it prints the commit it was built from, so you can read the exact code in the file you hold."
             echo
             echo "Installed copies are offered this version automatically; the update is signed and the app refuses one that is not. Only download Phosphor from this page or from https://phosphor.money."
           } > "$RELEASE_DIR/notes.md"
