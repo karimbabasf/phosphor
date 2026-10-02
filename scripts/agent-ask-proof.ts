@@ -182,6 +182,30 @@ async function deposit(who: Record<string, unknown>, amount: number): Promise<Js
 
 const H1 = '(function(){var s=document.getElementById("screen-firstrun");if(!s||s.hidden||getComputedStyle(s).display==="none")return null;var h=s.querySelector(".screen-body h1")||s.querySelector("h1");return h?h.textContent:null})()';
 
+/* The two functions below run in the page. page.evaluate sends a function's source and its
+   argument apart, so what the page showed (the words) and what this script chose (the password, a
+   key's label) reach it as values and never become code. */
+
+// The first run's fields, filled in order with `values`, or each by its number from `byNumber`.
+function fillFields(arg: { values?: string[]; byNumber?: string[] }): void {
+  const fields: Json[] = Array.from((globalThis as Json).document.querySelectorAll('#screen-firstrun .screen-body input.input'));
+  fields.forEach((field, i) => {
+    const value = arg.byNumber === undefined ? arg.values?.[i] : arg.byNumber[Number(field.dataset.index)];
+    if (value !== undefined) field.value = value;
+  });
+  fields.forEach((field) => field.dispatchEvent(new (globalThis as Json).Event('input', { bubbles: true })));
+}
+
+// The last shown, enabled key in `scope` whose words match the label, pressed.
+function pressKey(arg: { scope: string; source: string; flags: string }): boolean {
+  const label = new RegExp(arg.source, arg.flags);
+  const keys: Json[] = Array.from((globalThis as Json).document.querySelectorAll(arg.scope));
+  const shown = keys.filter((b) => b.offsetParent !== null && !b.disabled && label.test((b.querySelector('.btn-label') || b).textContent.trim()));
+  if (!shown.length) return false;
+  shown[shown.length - 1].click();
+  return true;
+}
+
 /* The first run to the main window, each step by its own fields and its main key: the invite step
    is skipped, the password set, the words read off the page and typed back by their number. */
 async function firstRun(page: Json): Promise<void> {
@@ -202,11 +226,11 @@ async function firstRun(page: Json): Promise<void> {
       continue;
     }
     if (title === 'Set a password') {
-      await page.evaluate(`(function(){var f=document.querySelectorAll('#screen-firstrun .screen-body input.input');f[0].value='${PASSWORD}';f[1].value='${PASSWORD}';f.forEach(function(x){x.dispatchEvent(new Event('input',{bubbles:true}))})})()`);
+      await page.evaluate(fillFields, { values: [PASSWORD, PASSWORD] });
     } else if (title === 'Save your recovery words') {
       words = (await page.evaluate('Array.from(document.querySelectorAll("#screen-firstrun .screen-body .word-text")).map(function (n) { return n.textContent; })')) as string[];
     } else if (title === 'Prove it') {
-      await page.evaluate(`(function(w){var f=document.querySelectorAll('#screen-firstrun .screen-body input.input');f.forEach(function(x){x.value=w[Number(x.dataset.index)]});f.forEach(function(x){x.dispatchEvent(new Event('input',{bubbles:true}))})})(${JSON.stringify(words)})`);
+      await page.evaluate(fillFields, { byNumber: words });
     }
     await page.evaluate(`(function(){document.querySelectorAll('#screen-firstrun .screen-body input[type="checkbox"]').forEach(function(c){if(!c.checked)c.click()})})()`);
     await sleep(150);
@@ -268,7 +292,7 @@ async function shoot(page: Json, name: string): Promise<Json> {
 
 async function press(page: Json, scope: string, label: RegExp): Promise<boolean> {
   // A key's words are its label: a key that was pending also holds its pending words.
-  return page.evaluate(`(function(){var bs=Array.from(document.querySelectorAll(${JSON.stringify(scope)})).filter(function(b){return b.offsetParent!==null&&!b.disabled&&${label}.test((b.querySelector('.btn-label')||b).textContent.trim())});if(!bs.length)return false;bs[bs.length-1].click();return true})()`);
+  return page.evaluate(pressKey, { scope, source: label.source, flags: label.flags });
 }
 
 async function waitFor(page: Json, expression: string, timeout = 15_000): Promise<boolean> {
