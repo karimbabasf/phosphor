@@ -56,7 +56,9 @@ export function sleep(ms: number): Promise<void> {
 }
 
 export function tmpDir(prefix: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `phos-attack-${prefix}-`));
+  // Never `phos-` and a separator: with a random suffix that holds two digits, the invite guard reads
+  // such a path in the console as a code (one boot in four), and 13-invite-no-leak reports a leak.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), `phosphor-attack-${prefix}-`));
   TEMPS.add(dir);
   return dir;
 }
@@ -133,6 +135,12 @@ export interface Backend {
   port: number;
   base: string;
   token: string;
+  // The app's own seat secret (the third handshake line), which only the agents the app starts
+  // carry. A case that plays the app's own agent posts with it; an outside process has only the
+  // file secret in <dataDir>/agent.secret.
+  seat: string;
+  // The boot nonce (the second handshake line), so a case can play the shell's identity check.
+  nonce: string;
   dataDir: string;
   home: string;
   // A read as the window makes it, with the window token. { headers: { 'x-phosphor-token': null } }
@@ -230,6 +238,8 @@ export async function bootBackend(opts: BootOpts = {}): Promise<Backend> {
     port,
     base,
     token,
+    seat,
+    nonce,
     dataDir,
     home,
     get: api.get,

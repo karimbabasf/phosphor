@@ -66,7 +66,7 @@ export function needlesOf(c: TestCode): Record<string, string> {
 
 // [needle name] hits in one surface (case-insensitive), plus a hit on anything the app's own guard
 // reads as a code: the shape and two literal digits, which every issued code has (CONTRACTS.md, Code
-// shape). The shape alone reads prose, this suite's own phos-attack-* temp paths included.
+// shape). The shape alone reads prose such as "phosphorus is used in fertilizer and in matches".
 export function scan(surface: string, needles: Record<string, string>): string[] {
   const hay = surface.toLowerCase();
   const hits = Object.entries(needles)
