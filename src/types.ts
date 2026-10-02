@@ -558,7 +558,8 @@ export type SimulationResult = {
   // The coins this simulation priced, which the proposal pins into its draft (MovedAssets).
   assets?: MovedAssets;
   // A passed simulation the rail could not fully check, as the one sentence that says so: the
-  // proposal waits for a click whatever its size (src/proposals/draft.ts proposeRail).
+  // proposal waits for a click whatever its size, and its card says why at every size
+  // (src/proposals/draft.ts proposeRail).
   ask?: string;
 };
 

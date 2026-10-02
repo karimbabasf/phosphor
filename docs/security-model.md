@@ -205,9 +205,10 @@ your money.
   fee included.
 - **A relay swap with no signed price has no cap once you click it.** When no quote 1Click signed
   for the same swap comes back (1Click did not answer in time, or someone who breaks HTTPS dropped
-  its answer), a relay swap waits for your click whatever its size. Once you click, it runs at the
-  relay's price, held only to what its card says you get at least, so the card is the only check.
-  What closes it: the relay signing what it quotes.
+  its answer), a relay swap waits for your click whatever its size, and its card says Phosphor
+  could not check the price. Once you click, it runs at the relay's price, held only to what its
+  card says you get at least, so the card is the only check. What closes it: the relay signing
+  what it quotes.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.

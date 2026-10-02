@@ -132,7 +132,8 @@ What closes it: the venues signing what they quote, the fee included.
 
 A relay price is checked against a quote 1Click signed for the same swap. When that quote does not
 come back, because 1Click did not answer in time or someone who breaks HTTPS dropped its answer,
-the swap waits for your click whatever its size.
+the swap waits for your click whatever its size, and its card says Phosphor could not check the
+price.
 
 What it means: once you click such a swap, it runs at the relay's price, held only to what its card
 says you get at least. Nothing measures it against 1Click's prices, so read that number before you
