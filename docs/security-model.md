@@ -72,8 +72,10 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   it names itself. Proof: attacks `06-agent-door`, `15-seat-id-dodge`.
 - **A page, a token name, a memo or a venue's error text talks the agent into a small move.** The
   read marks that agent until its session ends, and any agent that reads its words is marked too.
-  Every move a marked agent asks for waits for your click. Proof: attacks `07-stranger-text`,
-  `16-mark-laundering`; `stranger-relay.test.ts`, `venue-words-mark.test.ts`.
+  Every move a marked agent asks for waits for your click. A venue refusal the app knows reaches
+  the agent as the app's own sentence, built from its numbers alone, and marks nothing. Proof:
+  attacks `07-stranger-text`, `16-mark-laundering`; `stranger-relay.test.ts`,
+  `venue-words-mark.test.ts`, `venue-refusals.test.ts`.
 - **A page gets your data sent out in a web address.** A page is read only at an address a search
   returned or you typed. An address that carries your wallet's address or balances, or points at
   this Mac or your network, is refused. Proof: attacks `05-web-gate-addresses`,
@@ -664,6 +666,14 @@ sandboxed iframe, a browser extension's native host with no shell, a process und
 account, and any local process that did not go looking in the app's own data directory or in a
 running agent's environment. Loopback TCP has no peer identity, and this is the credential in its
 place until the door moves to a socket that has one.
+
+**A venue's words are data, and a refusal the app knows is said in the app's words.** A venue's
+text reaches an agent quoted and labeled, and the agent's door marks the seat it reaches
+(`src/http/mcp.ts`, `venueWordsFor`), unless it is a refusal on that venue's list
+(`src/venue-words/`), matched whole, with only its numbers changing: that reaches the agent as
+Phosphor's own sentence (`src/venue-words.ts`, `inAppWords`) and marks nothing, while the window
+keeps the venue's words. A status or reason word off the venue's list, and an account or token
+name a venue echoed back, are quoted and mark too.
 
 **Every read takes a credential too.** Every `GET` under `/api/` (`src/http/read-gate.ts`, deny by
 default, so a route added later is covered) answers 401 unless it carries the window token in the

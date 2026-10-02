@@ -45,13 +45,16 @@ labels: a label the agent writes after a web read keeps the mark across a quit, 
 that reads that label back is marked as if it had read the page itself. Plan notes and highlight
 notes carry it the same way, and so do Phosphor's own reads that hand over a stranger's words:
 news headlines, the token names and memos in the chain reads, and a venue's own words on a move
-(an error from 1Click, the solver relay, Hyperliquid or a chain's node, a refund reason, the NEAR
-Intents status page's title), in a read, a reply or a refusal. So does what one agent hands
+that Phosphor does not know (an error from 1Click, the solver relay, Hyperliquid or a chain's node,
+a refund reason or status word off the venue's list, an account or token name a venue echoed back,
+the NEAR Intents status page's title), in a read, a reply or a refusal. So does what one agent hands
 another through Phosphor: a board post or a worker's report written after such a read marks the
 agent that reads it, a worker started by a marked agent starts marked, and the raw audit log
 (`log_tail`) marks whoever reads it. A concept the agent records as
 one you learned (`profile_learned`) after such a read is kept on your Mac and never handed to a
-later agent.
+later agent. An ordinary refusal Phosphor knows, matched whole with only its numbers changing,
+reaches the agent in Phosphor's own sentence instead and marks nothing; the window keeps the
+venue's exact words.
 
 An agent you start outside Phosphor (in your terminal, in another app) reads with its own tools,
 where Phosphor cannot look, so it starts marked: the window asks once whether to allow it, and
@@ -267,8 +270,8 @@ waits for your click until you allow it. Three things follow, stated rather than
 The web-read mark has an edge too. The app sees the web searches and page reads of the agent it
 runs in the chat. An agent in your terminal reads the web with its own tools, out of the app's
 sight, so once you allow it, its moves follow your click threshold as usual unless it reads outside
-text through Phosphor (the news, a chain read, a venue's error text on a move) or words a marked
-agent wrote: a chart label, a
+text through Phosphor (the news, a chain read, a venue's error text Phosphor does not know) or
+words a marked agent wrote: a chart label, a
 board post, a worker's report, the name of an agent you have not allowed, or the raw audit log.
 
 The whole list, with what closes each item, is [Known limits](known-limits.md). Two more limits

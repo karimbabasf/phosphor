@@ -64,9 +64,10 @@ tab, or ask your assistant to set it to zero: at zero every move waits for a per
 ### After a web page
 
 Once the agent in the chat has searched the web, read a page, or read a stranger's words through
-Phosphor (news headlines, token names and memos on a chain, or a venue's own words: an error from
-1Click, the solver relay, Hyperliquid or a chain's node, a refund reason, the NEAR Intents status
-page's title), every money move it proposes in that chat waits for your click, whatever its size, until the chat starts a new session (the agent
+Phosphor (news headlines, token names and memos on a chain, or a venue's own words that Phosphor
+does not know: an error from 1Click, the solver relay, Hyperliquid or a chain's node, a refund
+reason or status word off the venue's list, the NEAR Intents status page's title), every money
+move it proposes in that chat waits for your click, whatever its size, until the chat starts a new session (the agent
 restarts, or you start a new chat). The card says why under its head: "This chat read text
 from outside Phosphor, so this move waits for your OK." A chart label, a plan note or a
 highlight the agent writes after a web read carries the same mark, and an agent that later reads
@@ -74,6 +75,10 @@ one is marked too. So do a board post and a worker's report, and a worker that a
 starts begins marked. A move
 that would have been refused is still refused; the mark only turns a move that would have run on
 its own into one that asks. [Security](security.md#a-web-page-is-not-an-instruction) says why.
+
+An ordinary refusal Phosphor knows (too little margin, an order under the venue's minimum, a price
+too far from the market, an amount under a route's minimum) reaches the agent in Phosphor's own
+words and changes nothing; the card still shows the venue's exact words.
 
 ### An agent you started outside Phosphor
 

@@ -65,9 +65,12 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   its agent was started outside Phosphor, says why on its card, and a cancelled card's Details say
   when you said no. A concept your agent records after reading outside text stays on your Mac and
   is not handed to later agents.
-- An agent that reads a venue's own words (an error from 1Click, the solver relay, Hyperliquid or a
-  chain's node, a refund reason, the NEAR Intents status page) waits for your click on every move
-  after that, the way it does after reading a web page.
+- An agent that reads a venue's own words that Phosphor does not know (an error from 1Click, the
+  solver relay, Hyperliquid or a chain's node, a refund reason, the NEAR Intents status page) waits
+  for your click on every move after that, the way it does after reading a web page. An ordinary
+  refusal Phosphor knows (too little margin, an order under the minimum, a price too far out, an
+  amount under a route's minimum) reaches the agent in Phosphor's own words instead and changes
+  nothing; the card still shows the venue's words.
 - A second agent that repeats a move is told which move it repeats, never where that move was paid.
   An agent that reads how a move is going sees the first six and last four characters of the
   address 1Click made for it; the card in the window shows it whole.

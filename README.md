@@ -91,8 +91,8 @@ The first run asks which agent you use and registers Phosphor with it. To do it 
 paths filled in. Run it in the directory you want the agent to work from. An agent you start
 yourself like this asks once in the window, "Allow this agent?", and until you allow it every move
 it proposes waits for your click. Any agent that reads a web page or a stranger's words through
-Phosphor (a token name, a memo, a venue's error text) waits for your click on every move after
-that, until its session ends.
+Phosphor (a token name, a memo, a venue's error text Phosphor does not know) waits for your click
+on every move after that, until its session ends.
 
 Then ask it things.
 

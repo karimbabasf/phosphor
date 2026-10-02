@@ -107,9 +107,10 @@ tools. Pages are read by `web_read`, and only at an address that came back in a 
 chat or that you gave, word for word, never one the agent wrote: a page cannot get your figures
 sent out in an address. Grok holds no web search, so it reads a page from a link you give. After a
 search, a page, a read that carries a stranger's words (`research`, the chain reads), or any answer
-that quotes a venue's own words (an error from 1Click, the solver relay, Hyperliquid or a chain's
-node), every move the agent proposes in that chat waits for your click, whatever the size, see
-[Policy](policy.md#after-a-web-page). An agent in your terminal brings whatever tools its own
+that quotes a venue's own words other than a refusal Phosphor knows (an error from 1Click, the
+solver relay, Hyperliquid or a chain's node), every move the agent proposes in that chat waits for
+your click, whatever the size, see [Policy](policy.md#after-a-web-page). A refusal Phosphor knows
+reaches the agent in Phosphor's own words. An agent in your terminal brings whatever tools its own
 setup gives it, and the app cannot see them.
 
 ## What is not here
