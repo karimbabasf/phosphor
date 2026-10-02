@@ -72,8 +72,8 @@ copy against this repository's source yourself, follow
 ## Invite codes
 
 Someone may send you an invite code, `PHOS-` and 27 letters and digits, usually as a link to
-phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Got an invite
-code? step, or later under Have an invite code? in Add money, and the money moves into your wallet
+phosphor.money/invite. It holds USDC for a new wallet. Paste it on the first run's Have an invite
+code? step, or later under the same question in Add money, and the money moves into your wallet
 once the wallet exists. Never paste a code into the chat: the app keeps it from your agent. How a
 claim works: [docs/money.md](docs/money.md#invite-codes). To hand codes out yourself, see
 [Issuing invite codes](docs/money.md#issuing-invite-codes).
@@ -121,6 +121,7 @@ npm test         # unit, injection and lockdown suites
 npm run typecheck
 npm run eval     # scores the agent against the behaviour rubric
 npm run sweep    # the secret sweep CI runs over the tree and the history a push publishes
+npm run attack   # plays a hostile program on this Mac against the app npm run app:build made
 ```
 
 ## Docs

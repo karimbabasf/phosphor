@@ -245,7 +245,7 @@ the page draft beside the phrase and password, and wiped in `close()` (`firstrun
 the same pattern as the recovery phrase (`screenImport`, 894-923).
 
 Copy:
-- Step: "Got an invite code?" / "Paste it and $5 lands in your wallet once it's made." /
+- Step: "Have an invite code?" / "Paste it and $5 lands in your wallet once it's made." /
   "Use code", "Skip".
 - Valid: "Nice. $5 is waiting for you."
 - Typo: "That code has a typo. Check it and try again."

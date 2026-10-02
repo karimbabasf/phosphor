@@ -10,35 +10,58 @@ without a git tag say so.
 Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of writing.
 
 - Invite codes. Someone can send you a code, or a link to phosphor.money/invite, that holds USDC
-  for a new wallet, usually $5. Paste it on the new step after the terms, Got an invite code?, or
-  later under Have an invite code? in Add money. The app checks it on your Mac first and says
-  what is waiting, that it has a typo, or that it was already used. No code? Press Skip.
+  for a new wallet, usually $5. Paste it on the new step after the terms, Have an invite code?, or
+  later under the same question in Add money. The app checks it on your Mac first and says what is
+  waiting, that it has a typo, or that it has nothing left in it. No code? Press Skip.
 - The money lands right after your wallet is made, or when you open it. A claim signs one
   transfer with the code's own key to your wallet's address, and your wallet key signs nothing.
   The app calls it done only when NEAR Intents shows the code's one-time number spent, and
   Activity shows "Invite: +5 USDC". If you moved on before it lands, a note on Basic says so.
+- A claim that did not come through cannot be missed: the note on Basic stays until you close it,
+  and Add money keeps saying it until you open the field. A used or taken-back code says it has
+  nothing left in it, a held code says it can't pay out, and both say to ask for a new one. After a
+  code that cannot pay, Use code stays off until you change the field, and when the app could not
+  check, the key says Try again.
 - If the solver relay turns a claim away, the app sends it through 1Click instead, for about 0.25
   percent less, and a 1Click refund goes back to the code. A claim cut short by a quit is finished
   at the next start.
-- An invite code never reaches your assistant. One pasted in the chat is taken out of the box and
-  opened in Add money, the app turns away any chat message that still carries one before the
-  assistant sees it, and the log tail and the agent's log read cut every code.
+- Before a claim is signed, the app rehearses it with a copy that expires a millisecond after a
+  recent block, so the outside server it checks with never holds a claim it could run later. Every
+  signature is written down before it is made, the code's key is let go as soon as it can sign
+  nothing more, and a claim stops, moving nothing, when your Mac's clock is more than two minutes
+  behind NEAR's.
+- An invite code never reaches your assistant. One pasted in the chat leaves the box on its own,
+  your other words stay, and the code opens in Add money. The app turns away any chat message that
+  still carries one before the assistant sees it, and the log tail and the agent's log read cut
+  every code. All of them catch a code an editor or a chat app changed: hyphens turned into
+  dashes, invisible spaces, full-width letters, a first group cut short or PHOS left off. The
+  invite field reads all of those.
 - The invite page on phosphor.money shows the code with Copy and the download, takes it out of
   the address bar before anything else runs, sends it nowhere and loads no analytics.
 - The terms card comes back once. The terms now carry the invite code rules (one claim per code,
   no purchase needed, not for sale, the author can end the promotion, taxes are yours), so their
   version is 2026-10-01 and the card has a fifth fact.
 - An agent started outside Phosphor, such as Claude Code in a terminal, asks once in the window:
-  "Allow this agent?". Until you allow it, every move it proposes waits for your click. Allow holds
-  for that connection, and the app's own assistant never asks.
+  "Allow this agent?". Until you allow it, every move it proposes waits for your click, however it
+  names itself. Allow holds for that connection, and the app's own assistant never asks. The Allow
+  card sits in the conversation under the agents it is about, so it never covers your balances or
+  the Freeze key. It says how many more agents are waiting and that moves already asked for still
+  wait for your OK. Not now is now Ask each time, and an agent you put off keeps a Change on its
+  row.
 - A page is read only at an address a web search returned or that you typed yourself. One that
   appeared only in the agent's own search words or the search model's notes is refused, and so is
   a page name that answers with an IPv4 address hidden inside IPv6.
 - A worker's web search that carries your wallet's address or figures closes its page reading, as
   the chat's does.
 - A move that waits after a chain read, the news or a page says "This chat read text from outside
-  Phosphor, so this move waits for your OK." A concept your agent records after reading such text
-  stays on your Mac and is not handed to later agents.
+  Phosphor, so this move waits for your OK." So does a move from an agent that read words another
+  agent wrote after reading such text (a board post, a worker's report, the name an agent you have
+  not allowed gave itself), or that read the raw log. A small move that waits for this, or because
+  its agent was started outside Phosphor, says why on its card, and a cancelled card's Details say
+  when you said no. A concept your agent records after reading outside text stays on your Mac and
+  is not handed to later agents.
+- Try again on a failed swap names the coins only when they are plain tickers, and a coin name
+  with a space or a web address in it is refused.
 - Grok asks you for a link instead of searching the web.
 - The agent profiles name the built-in tools they allow in full (web search for the chat's
   assistant, Read for the operator), so a tool a later Claude Code adds never reaches them, and
@@ -47,13 +70,43 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - Only the app itself, on its own data folder, adds Phosphor to your agents' settings. A test,
   `npm run app` or a copy on a scratch folder shows the line to paste instead and leaves Claude
   Code, Codex, Grok and Hermes untouched.
-- The wallet locks when your screen locks or your Mac switches to another user. A move waiting for
-  your click stays on its card.
+- The wallet shuts at once when your screen locks or your Mac switches to another user: a move
+  already being signed gets its signature, then the key goes. A move waiting for your click stays
+  on its card. The lock screen says why Phosphor locked (your screen locked, your Mac switched
+  users or slept, or the minutes you picked went by) and how many moves wait for your OK, without
+  saying what they are, and the Vault's lock timer says the window also locks with your screen.
 - The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault
   stays, and the app now waits the time you picked; before, it always waited 15 minutes.
+- Approving with Touch ID checks your limits and Freeze once more right before anything is signed,
+  and opens the wallet for that one move only. Showing your deposit address or your recovery
+  phrase no longer opens the wallet.
+- Freeze over a damaged policy file still stops every plan and says the switch could not be saved,
+  and Unfreeze waits until the file is fixed. Freeze tells you when it could not close your trading
+  positions.
+- Proving your backup asks for three different words and asks you to show them again after five
+  misses. Finishing an interrupted migration counts wrong passwords like every other password
+  check.
+- A quote changed on its way to 1Click (a fee paying someone else, a field the app never sent, a
+  value it never chose) is refused before anything is signed, and a swap gives up at most 3
+  percent of its value by 1Click's own figures.
+- A swap, send, payout or Hyperliquid deposit moves exactly the coins its card showed. If the coin
+  list names another coin or other decimals by the time you click, the move is refused and nothing
+  is signed.
+- Reading your balances, policy and waiting moves takes a key that only Phosphor's window, the app
+  itself and a program you run from its data folder hold. Another account on this Mac, or a
+  sandboxed app, learns only that Phosphor is running and its version.
+- The Keys row says plainly that the Touch ID key is bound to this Mac rather than to Phosphor, on
+  every build so far.
 - Phosphor checks its own files before it starts its backend. If any changed since the release
-  was built, it starts nothing and asks you to install a fresh copy. The security docs show how to
-  check a release yourself.
+  was built, it starts nothing and asks you to install a fresh copy, with Details that fit the
+  window. The security docs show how to check a release yourself.
+- Phosphor's window knows its own backend by a question only that backend can answer. If the
+  backend stops, its window closes at once and its keys go with it, and a fresh window opens when
+  the backend is back. A program that stopped the backend and took its place gets nothing it can
+  use, and Phosphor will not open onto it.
+- The Secure Enclave helper, the bundled runtime and the hand-over at launch each accept only the
+  signed Phosphor app, not any other program from its team, and the backend loads code only from
+  inside the installed app.
 - The process that holds your key starts with no debugger signal, no NODE_OPTIONS from your Mac,
   no add-ons and no eval, runs only on a runtime signed by Phosphor's team, and loads only 14
   reviewed packages.
@@ -61,17 +114,23 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
 - After an update, a backend the old version left running is found and stopped.
 - An update installs only when its code signature is Phosphor's own: Apple's Developer ID,
   Phosphor's identifier and its team. One that fails is refused, the app stays as it was, and the
-  update window says the update did not pass its check.
+  update window says the update did not pass its check and where to get that version. While the
+  signature is checked the window says Checking the update, and Installing only once the swap
+  starts. A failed install no longer says "try again later" next to its Try again button.
 - Releases are built in a job that holds no secret. The job that signs and notarizes installs and
   builds nothing, deletes its keychain as soon as notarizing ends, and signs the update with Node
   alone. Release secrets live in a protected environment that waits for an approval and lets in
   only version tags, and the Release workflow has a dry run that builds, signs and notarizes and
-  publishes nothing.
+  publishes nothing. A release stops unless the app it signs is the tagged source file for file,
+  with the committed entitlements on every program inside, checked before signing and again on the
+  disk image and the update.
 - For whoever hands out invite codes: `npm run invite` makes a treasury, funds up to ten codes with
   one signature, shows their links once on the terminal, takes unused codes back, withdraws to an
-  address you type back, and shows where every code stands without ever showing a code. It runs
-  only in a real terminal, from a file encrypted under a passphrase of at least 20 characters, and
-  rehearses every move with a signature no block can run before it signs the real one.
+  address you confirm by its first six and last six characters, and shows where every code stands
+  without ever showing a code. It runs only in a real terminal, from a file encrypted under a
+  passphrase of at least 20 characters, and rehearses every move with a signature no block can run
+  before it signs the real one. A dry run keeps its codes in the file as void, and status lists it
+  as one. The script says plainly that the passphrase is what keeps the file shut.
 - `scripts/invite-proof.ts` checks both claim routes with your own money on throwaway accounts,
   records what NEAR Intents says about each, and sweeps the rest back.
 - For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
@@ -80,6 +139,10 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   history a push can publish (HEAD, the remote branches and the tags), takes `--history=all` or a
   revision, and fails a shallow clone. CI runs it on every push and pull request, over the full
   history and every pull request head, and checks every installed package's registry signature.
+- For people who build Phosphor: `npm run attack` plays a hostile program on your Mac against the
+  app `npm run app:build` made and proves each defence holds, 26 cases including the three serious
+  findings of this release's audit; `-- --app <Phosphor.app>` adds the checks that need a signed
+  build. `scripts/xpc-attack.sh` compiles again, and ip-address is 10.7.2 (four advisories closed).
 
 ## 0.10.12
 
