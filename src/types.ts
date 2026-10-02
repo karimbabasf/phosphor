@@ -199,9 +199,12 @@ export type PolicyPatch = {
    Only on a policy_change verdict, and only for the axes that actually moved. */
 export type PolicyAxisChange = { axis: string; before: number; after: number; factor: number | null };
 
+/* `why`, on a move the app itself held for a click: the card's "Why it asks", one line each. The
+   policy's own rule first when it asked anyway, then every reason the app added (also in
+   `reasons`), so a second one never hides the first (src/proposals/draft.ts heldFor). */
 export type Verdict =
   | { outcome: 'allow'; reasons: string[]; reasonCodes?: string[] }
-  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[]; changes?: PolicyAxisChange[] }
+  | { outcome: 'needs_approval'; reasons: string[]; reasonCodes?: string[]; changes?: PolicyAxisChange[]; why?: string[] }
   | { outcome: 'refuse'; reasons: string[]; rule: string; reasonCodes?: string[] };
 
 // ---------- Writes ----------
