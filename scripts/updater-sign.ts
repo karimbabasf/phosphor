@@ -130,9 +130,10 @@ export function verifyFile(data: Buffer, sig: string, pub: string): boolean {
   return crypto.verify(null, Buffer.concat([signature, Buffer.from(comment.slice(TRUSTED.length), 'utf8')]), key, global);
 }
 
-/* The key id the way minisign prints it, which is how the public key's comment names it. */
+/* The key id the way minisign prints it, which is how the public key's comment names it: the
+   little-endian u64 in upper-case hex with no leading zeros, so one id in 16 has 15 digits. */
 export function keyIdHex(keyId: Buffer): string {
-  return Buffer.from(keyId).reverse().toString('hex').toUpperCase();
+  return keyId.readBigUInt64LE(0).toString(16).toUpperCase();
 }
 
 function shippedPublicKey(): string {

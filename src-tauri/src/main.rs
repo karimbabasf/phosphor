@@ -168,7 +168,7 @@ pub(crate) fn payload_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// and they differed. The backend is the one builder now (src/agents-catalog.ts, per agent, with
 /// the environment in every mode), and GET /api/connection answers with the line for the agent
 /// the person picked. Nothing secret in the answer (a path already on this disk, this app's port
-/// and data directory), and the window token on the request like every read (backend::challenged_read_head).
+/// and data directory), and the read key on the request like every read, never the token (backend::challenged_read_head).
 /// The bundled runtime is still checked first so a broken bundle fails with the same sentence it
 /// always did, before the port is asked.
 ///
@@ -1672,6 +1672,29 @@ mod tests {
         assert_eq!(log_from_response(&fixed_marker, &challenge), None, "the old fixed marker any server can send is refused");
         let refused = format!("HTTP/1.1 401 Unauthorized\r\nX-Phosphor: {proof}\r\n\r\n{body}");
         assert_eq!(log_from_response(&refused, &challenge), None);
+    }
+
+    /// Help, then Copy Log, while a process squats on the port: nothing is copied, and the request
+    /// it read carried the read key, never the window token (the port takeover, round 2).
+    #[test]
+    fn copy_log_against_a_squatter_copies_nothing_and_hands_it_no_token() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Some(Ok(mut sock)) = listener.incoming().next() else { return };
+            let mut scratch = [0u8; 4096];
+            let n = sock.read(&mut scratch).unwrap_or(0);
+            let _ = tx.send(String::from_utf8_lossy(&scratch[..n]).into_owned());
+            let body = r#"[{"ts":"t1","type":"tool_call","msg":"a squatter's line"}]"#;
+            let _ = sock.write_all(format!("HTTP/1.1 200 OK\r\nX-Phosphor: control\r\nContent-Length: {}\r\n\r\n{body}", body.len()).as_bytes());
+        });
+        let token = "f00d".repeat(16);
+        assert_eq!(super::fetch_log_tail(port, 5, NONCE, &token), None);
+        let head = rx.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert!(!head.contains(&token), "the window token reached the squatter: {head}");
+        assert!(head.contains(&format!("x-phosphor-read: {}\r\n", crate::backend::read_key(&token).unwrap())), "{head}");
     }
 
     #[test]

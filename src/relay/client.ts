@@ -14,7 +14,7 @@
 // answers and a deadline that fires while it does leaves an intent that may be live.
 
 import { readTimeout, venueWriteTimeout, withTimeout } from '../net.ts';
-import { oneLine, venueSaid } from '../intents.ts';
+import { oneLine, venueReason, venueSaid, venueValue } from '../venue-words.ts';
 
 export const RELAY_URL = 'https://solver-relay-v2.chaindefuser.com/rpc';
 
@@ -165,7 +165,7 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     // `null` is the relay's word for "no solver answered", and it is an empty list here rather
     // than an error: nothing is wrong with the request, there is no price for it right now.
     if (result === null || result === undefined) return [];
-    if (!Array.isArray(result)) throw new Error(`relay quote returned ${oneLine(result, 80)} instead of a list`);
+    if (!Array.isArray(result)) throw new Error(`relay quote returned ${venueValue('The solver relay', result, 80)} instead of a list`);
     const quotes: RelayQuote[] = [];
     for (const raw of result) {
       const q = readQuote(raw);
@@ -184,7 +184,7 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
       },
       venueWriteTimeout(),
     );
-    if (result === null || typeof result !== 'object') throw new Error(`relay publish_intent returned ${oneLine(result, 80)}`);
+    if (result === null || typeof result !== 'object') throw new Error(`relay publish_intent returned ${venueValue('The solver relay', result, 80)}`);
     const r = result as Record<string, unknown>;
     const status = r['status'];
     if (status === 'OK') {
@@ -193,14 +193,15 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
       return { status: 'OK', intentHash };
     }
     if (status === 'FAILED') {
-      return { status: 'FAILED', reason: text(r['reason'], 300) ?? 'no reason given' };
+      const why = text(r['reason'], 300);
+      return { status: 'FAILED', reason: why === null ? 'no reason given' : venueReason('The solver relay', why, 300) };
     }
-    throw new Error(`relay publish_intent answered with status ${oneLine(status, 40)}, which this app does not know`);
+    throw new Error(`relay publish_intent answered with status ${venueValue('The solver relay', status, 40)}, which this app does not know`);
   }
 
   async function status(intentHash: string): Promise<RelayStatus> {
     const result = await call('get_status', { intent_hash: intentHash }, readTimeout());
-    if (result === null || typeof result !== 'object') throw new Error(`relay get_status returned ${oneLine(result, 80)}`);
+    if (result === null || typeof result !== 'object') throw new Error(`relay get_status returned ${venueValue('The solver relay', result, 80)}`);
     const r = result as Record<string, unknown>;
     const word = text(r['status'], 60);
     if (word === null) throw new Error('relay get_status answered with no status word');
@@ -210,7 +211,8 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     const filledAmounts = Array.isArray(filled) ? filled.map((v) => digits(v)).filter((v): v is string => v !== null) : [];
     return {
       intentHash: hash(r['intent_hash'], 8, 120) ?? intentHash,
-      status: word,
+      // The relay's word, said as it is when it is one; anything longer is its sentence, quoted.
+      status: venueReason('The solver relay', word),
       statusDetails: text(r['status_details'], 300),
       nearTxHash,
       filledAmounts,

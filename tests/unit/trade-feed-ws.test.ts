@@ -12,6 +12,7 @@ import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { createTradeFeed, type FeedSocket } from '../../src/trade/feed-ws.ts';
 import type { InfoClient } from '../../src/hl/info.ts';
+import { VENUE_WORDS_LABEL } from '../../src/venue-words.ts';
 
 const USER = '0x1111111111111111111111111111111111111111';
 const WS = 'wss://test.invalid/ws';
@@ -623,4 +624,6 @@ test('nothing is reported until the venue has said something', async (t) => {
   // A venue-side error names itself in the status a human reads.
   socks.last().deliver({ channel: 'error', data: 'Invalid subscription {"type":"nope"}' });
   assert.match(String(feed.status().lastError), /Invalid subscription/);
+  // In the venue's own words, quoted as data: trade_read hands this to an agent (src/venue-words.ts).
+  assert.ok(String(feed.status().lastError).includes(VENUE_WORDS_LABEL));
 });

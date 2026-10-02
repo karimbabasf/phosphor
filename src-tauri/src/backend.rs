@@ -570,24 +570,38 @@ pub fn request_within(port: u16, head: &str, body: Option<&str>, read_timeout: D
     Some(String::from_utf8_lossy(&out).into_owned())
 }
 
+/// The read key for a token: HMAC-SHA256 of "phosphor read key" under the token, in hex, as
+/// src/http/auth.ts (readKeyFor) computes it. It opens every GET and nothing else.
+pub fn read_key(token: &str) -> Option<String> {
+    hmac_sha256(token.as_bytes(), b"phosphor read key").ok().map(|mac| crate::payload::hex(&mac))
+}
+
+/// The credential line of a read: the read key, never the token. A request goes to whatever holds
+/// the port before its answer's challenge can be checked, and a process squatting on the port must
+/// learn nothing that approves, unlocks or moves anything (least privilege).
+fn read_credential(token: &str) -> String {
+    read_key(token).map_or_else(String::new, |key| format!("x-phosphor-read: {key}\r\n"))
+}
+
 /// A read this shell asks of its backend. Every GET under /api/ needs the window token or the
-/// read key (src/http/read-gate.ts), and the shell holds the token, so it sends it in its header.
+/// read key (src/http/read-gate.ts); the shell sends the read key.
 pub fn read_head(port: u16, path: &str, token: &str) -> String {
-    format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-phosphor-token: {token}\r\nConnection: close\r\n\r\n")
+    format!("GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}Connection: close\r\n\r\n", read_credential(token))
 }
 
 /// The same read for an answer the shell acts on (a line for the clipboard, the log copy): it
 /// carries a challenge too, and the answer counts only with its proof (identity_matches).
 pub fn challenged_read_head(port: u16, path: &str, token: &str, challenge: &Challenge) -> String {
     format!(
-        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nx-phosphor-token: {token}\r\n{}Connection: close\r\n\r\n",
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n{}{}Connection: close\r\n\r\n",
+        read_credential(token),
         challenge.header()
     )
 }
 
 /// The backend's health answer, parsed. Health answers anyone that the app is alive and its
-/// version; the wallet's half (locked, executing, the last error) comes back only with the
-/// token, which is why this takes it.
+/// version; the wallet's half (locked, executing, the last error) comes back only with a read
+/// credential, which is why this takes the token it derives the read key from.
 pub fn get_health(port: u16, token: &str) -> Option<serde_json::Value> {
     let raw = request(port, &read_head(port, "/api/health", token), None)?;
     let body = raw.split_once("\r\n\r\n").map(|(_, b)| b)?;
@@ -1214,6 +1228,58 @@ mod tests {
         let b = Challenge::new(&nonce).unwrap();
         assert_ne!(a.header(), b.header(), "every challenge is fresh");
         assert!(a.header().starts_with("x-phosphor-challenge: ") && a.header().ends_with("\r\n") && a.header().len() == 22 + 64 + 2);
+    }
+
+    /// The squatter of the port takeover (npm run attack, 17): answers every request 200 with a
+    /// proof it cannot have, and hands back the head of each request it was sent.
+    fn squatter() -> (u16, std::sync::mpsc::Receiver<String>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).expect("bind a loopback port");
+        let port = listener.local_addr().expect("read the bound port").port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().take(8) {
+                let Ok(mut sock) = stream else { continue };
+                let mut scratch = [0u8; 4096];
+                let n = sock.read(&mut scratch).unwrap_or(0);
+                let _ = tx.send(String::from_utf8_lossy(&scratch[..n]).into_owned());
+                let body = "{\"ok\":true,\"locked\":false}";
+                let res = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Phosphor: control\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                let _ = sock.write_all(res.as_bytes());
+                let _ = sock.shutdown(Shutdown::Both);
+            }
+        });
+        (port, rx)
+    }
+
+    #[test]
+    fn the_read_key_is_the_one_the_backend_derives() {
+        // What Node gives for createHmac('sha256', token).update('phosphor read key') (src/http/auth.ts).
+        assert_eq!(read_key(&"f00d".repeat(16)).unwrap(), "6c06cb123fcf6903ddd78df2a8ab62b9b5a4cfb58bb031186751a07701b97eb1");
+    }
+
+    /// The port takeover, round 2: a read leaves before its answer's challenge can be checked, so
+    /// whatever holds the port reads its head. The head carries the read key, which opens only a
+    /// read of a backend that is gone, and never the window token, which approves and unlocks.
+    #[test]
+    fn a_squatter_on_the_port_reads_the_read_key_and_never_the_token() {
+        let token = "f00d".repeat(16);
+        let key = read_key(&token).unwrap();
+        let (port, seen) = squatter();
+        let _ = get_health(port, &token);
+        let challenge = Challenge::new("a1b2c3d4").unwrap();
+        let raw = request(port, &challenged_read_head(port, "/api/log?limit=5&for=report", &token, &challenge), None).unwrap();
+        assert!(!identity_matches(&raw, Some(&challenge)), "and its answer is still refused");
+        let heads: Vec<String> = seen.try_iter().collect();
+        assert_eq!(heads.len(), 2, "{heads:?}");
+        for head in &heads {
+            assert!(!head.contains(&token), "the window token reached the squatter: {head}");
+            assert!(!head.to_ascii_lowercase().contains("x-phosphor-token"), "{head}");
+            assert!(head.contains(&format!("x-phosphor-read: {key}\r\n")), "{head}");
+        }
+        assert!(heads[1].contains(&challenge.header()), "the challenge still rides on the read the shell acts on");
     }
 
     #[test]

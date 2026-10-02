@@ -318,7 +318,7 @@ async function farewell(): Promise<void> {
     await fetch(`${BASE_URL}/api/mcp`, {
       method: 'POST',
       headers: POST_HEADERS,
-      body: JSON.stringify({ op: 'bye', session: SESSION }),
+      body: JSON.stringify({ op: 'bye', session: SESSION, secret: seat(), key: SEAT_KEY }),
       signal: AbortSignal.timeout(1_000),
     });
   } catch {

@@ -108,8 +108,23 @@ test('the script writes a .sig only when it verifies against the key it was told
   }
 });
 
-test('the shipped public key is a minisign key the check can read', () => {
+test('a key id prints the way minisign prints it, with no leading zeros', () => {
+  // A key id is a little-endian u64 that minisign and tauri print as `{:X}`. Seen from tauri
+  // signer generate: the id 0x0C8B6D7C134FFF23 is "minisign public key: C8B6D7C134FFF23".
+  const id = (hex: string) => Buffer.from(hex.padStart(16, '0'), 'hex').reverse();
+  assert.equal(keyIdHex(id('0C8B6D7C134FFF23')), 'C8B6D7C134FFF23');
+  assert.equal(keyIdHex(id('00AB2B2A5CAE6A6F')), 'AB2B2A5CAE6A6F');
+  assert.equal(keyIdHex(id('AB2B2A5CAE6A6FB9')), 'AB2B2A5CAE6A6FB9');
+  assert.equal(keyIdHex(id('0')), '0');
+});
+
+test('the shipped public key is a minisign key the check can read, its comment naming its own id', () => {
   const conf = JSON.parse(fs.readFileSync(new URL('src-tauri/tauri.conf.json', root), 'utf8'));
   const text = Buffer.from(conf.plugins.updater.pubkey, 'base64').toString('utf8');
-  assert.match(text, /^untrusted comment: minisign public key: [0-9A-F]{16}\n[A-Za-z0-9+/]{56}\n?$/);
+  const [, named, line] = text.match(/^untrusted comment: minisign public key: ([0-9A-F]{1,16})\n([A-Za-z0-9+/]{56})\n?$/) ?? [];
+  assert.ok(line, text);
+  const pk = Buffer.from(line, 'base64');
+  assert.equal(pk.toString('latin1', 0, 2), 'Ed');
+  assert.equal(keyIdHex(pk.subarray(2, 10)), named);
+  assert.equal(named, 'AB2B2A5CAE6A6FB9');
 });

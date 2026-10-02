@@ -34,6 +34,7 @@ import { handleSetViewMode } from './mutation.ts';
 import { LEAD_ONLY_READ_TOOLS, READ_TOOLS, STRANGER_TEXT_READS } from './context.ts';
 import type { Ctx, ReadTable } from './context.ts';
 import { markWebRead } from '../web-read.ts';
+import { carriesVenueWords } from '../venue-words.ts';
 
 /* A stranger's text marks the seat it is handed to (STRANGER_TEXT_READS, audit finding 5). The
    mark is set inside writeHead, so it is in place before the first byte of the answer leaves: a
@@ -74,6 +75,21 @@ const READS: ReadTable = markStrangerReads({
   ...swapReads,
   ...webReads,
 });
+
+/* A VENUE'S OWN WORDS MARK THE SEAT THEY REACH, through any op on this door (fix round 2,
+   2026-10-01). An error body, a refund reason, the status page's title: text 1Click, the solver
+   relay, Hyperliquid, an RPC node or the status page wrote, which a read, a reply or a refusal can
+   carry (a move's details, the wallet's stale reason, a plan's end, a refused quote). Every quote
+   of one carries VENUE_WORDS_LABEL (src/venue-words.ts), so the answer is read for it as it goes
+   out and the seat is marked before a byte of it leaves, as a stranger's read marks it above. */
+function markVenueWords(res: http.ServerResponse, seat: string): void {
+  const end = res.end.bind(res);
+  res.end = ((...args: Parameters<typeof end>) => {
+    const chunk: unknown = args[0];
+    if ((typeof chunk === 'string' || chunk instanceof Uint8Array) && carriesVenueWords(chunk)) markWebRead(seat);
+    return end(...args);
+  }) as typeof res.end;
+}
 
 // The table's own keys, for the test that holds READ_TOOLS and this in step. A tool listed in
 // the refusal message and missing from the table is a tool an agent is told it has and cannot
@@ -307,11 +323,16 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   }
 
   // A clean shutdown, which is what makes the light go out the moment an agent is
-  // terminated rather than one TTL later. Only the holder can free its own seat.
+  // terminated rather than one TTL later. Only the holder can free its own seat: a bye takes
+  // the person's Allow with it, so it is bound to the seat's key like every other op.
   if (op === 'bye') {
-    const freed = ctx.agents.release(body.session);
-    if (freed !== null) {
-      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.client, since: freed.since });
+    const freed = ctx.agents.release(body);
+    if (!freed.ok) {
+      rejectSeat(ctx, freed.error, body, res, false, true);
+      return;
+    }
+    if (freed.member !== null) {
+      ctx.audit.append('agent_disconnected', 'the agent disconnected', { client: freed.member.client, since: freed.member.since });
       ctx.sse.broadcastState();
     }
     sendJson(res, 200, { ok: true });
@@ -335,6 +356,7 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
      markIfCarried, is the id the roster checked. A call with no session is the seat it was given. */
   body.session = seat.member.session;
   logged.session = seat.member.session;
+  markVenueWords(res, seat.member.session);
   if (seat.edge) {
     ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
     // An agent that joined on its first op (no hello) is connected NOW. Push state so

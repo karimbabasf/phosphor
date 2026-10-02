@@ -52,7 +52,7 @@ for (const v of VARIANTS) {
     const m = makeCtx({ rails: [swapRail(executed)], intentsUsdc: 1000 });
     const h = await bootChartServer({ proposals: m.svc, handSeat: HAND });
     // The fixture seats 'unnamed-session' as the app's own; a caller with no session takes it here.
-    if (v.raw === undefined) h.agents.release('unnamed-session');
+    if (v.raw === undefined) h.agents.release({ session: 'unnamed-session' });
     const as = (body: Record<string, unknown>) =>
       h.post('/api/mcp', { client: 'claude-code', secret: HAND, key: KEY, ...(v.raw === undefined ? {} : { session: v.raw }), ...body });
     try {

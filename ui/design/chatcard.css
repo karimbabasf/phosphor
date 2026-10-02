@@ -125,6 +125,15 @@
   font-weight: 500;
 }
 
+/* Which chain's coin a send takes, when the person holds the coin from more than one: a quiet
+   phrase on the figure's baseline, the place a balance row names under its symbol. */
+.mcard-place {
+  font-size: var(--fs-13);
+  font-weight: 400;
+  color: var(--text-3);
+  white-space: nowrap;
+}
+
 .mcard-arrow {
   flex: 0 0 auto;
   align-self: center;

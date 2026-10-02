@@ -10,13 +10,14 @@ import type http from 'node:http';
 import type { ChainId, ClientKey, Proposal } from '../types.ts';
 import { CLIENT_KEY_PATTERN, CLIENT_KEY_WINDOW_MS } from '../types.ts';
 import { fingerprint } from '../duplicates.ts';
-import { amountAsk } from '../intents.ts';
+import { amountAsk, venueReason } from '../intents.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
 import { NO_MEMO, memoKeys } from '../rails/pay-rules.ts';
 import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
+import { agentView } from './read/wallet.ts';
 
 /* THE REPLY IS THE DECISION, NEVER THE SETTLEMENT.
    This used to wait up to twenty seconds for the rail before answering, so the card in the
@@ -46,9 +47,24 @@ function sendProposal(ctx: Ctx, res: http.ServerResponse, proposal: Proposal): v
     verdict: proposal.verdict,
     simulation: proposal.simulation === null ? null : simulation,
     view: ctx.proposals.view(proposal),
-    ...(proposal.result === undefined ? {} : { result: proposal.result }),
+    ...(proposal.result === undefined ? {} : { result: agentResult(proposal.result) }),
     ...sendFacts(proposal),
   });
+}
+
+/* The row's result as its proposer reads it: the venue's reason and stage words as one word or
+   quoted as data, like every other place a venue's words reach an agent (src/venue-words.ts). */
+function agentResult(result: NonNullable<Proposal['result']>): NonNullable<Proposal['result']> {
+  const evidence = result.evidence;
+  if (evidence === undefined || (evidence.refundReason === undefined && evidence.providerStage === undefined)) return result;
+  return {
+    ...result,
+    evidence: {
+      ...evidence,
+      ...(evidence.refundReason === undefined ? {} : { refundReason: venueReason('1Click', evidence.refundReason) }),
+      ...(evidence.providerStage === undefined ? {} : { providerStage: venueReason('The swap service', evidence.providerStage) }),
+    },
+  };
 }
 
 /* The reply carries no draft, and a send card in the conversation has to draw the address the
@@ -65,6 +81,7 @@ function sendFacts(proposal: Proposal): { send?: Record<string, unknown> } {
       where: 'network' in draft ? draft.network : 'intents',
       to: draft.to,
       symbol: draft.symbol,
+      ...(draft.fromChain === undefined ? {} : { fromChain: draft.fromChain }),
       amount: draft.amount,
       amountUsd: draft.amountUsd,
       recipient: r === undefined ? null : { known: r.known, count: r.count, lastAt: r.lastAt, ownAddress: r.ownAddress },
@@ -274,8 +291,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     });
     // An empty id means the proposal is still being drafted, which is exactly the race this
     // guard exists for. There is nothing to read yet, so the sentence does not offer. When the
-    // row exists, its status and result ride on the refusal so the caller sees what its repeat
-    // would have doubled without a second call.
+    // row exists, its status and view ride on the refusal so the caller sees what its repeat
+    // would have doubled without a second call: the view proposal_status hands back, never the
+    // row's result, whose quote holds the deposit address 1Click minted for the first move.
     const existing = clash.id === '' ? undefined : ctx.proposals.get(clash.id);
     const names = clash.id === '' ? '' : ` (proposal ${clash.id})`;
     // An unconfirmed first move is the incident's exact shape: the money may be live at the
@@ -292,7 +310,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       unconfirmed ? lead : `${lead} Read it with proposal_status before repeating anything.`,
       {
         duplicate: clash.id,
-        ...(existing === undefined ? {} : { status: existing.status, ...(existing.result === undefined ? {} : { result: existing.result }) }),
+        ...(existing === undefined ? {} : { status: existing.status, view: agentView(ctx, existing) }),
       },
     );
     return;

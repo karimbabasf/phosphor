@@ -32,6 +32,7 @@ import { floorUnderQuote } from '../rails/slippage.ts';
 import { INTENTS_SEND_COUNTERPARTY, intentsAccountProblem, minReceivedForSend } from '../rails/intents-send.ts';
 import { INTENTS_PAY_COUNTERPARTY, minReceivedForPay, payRefusal } from '../rails/intents-pay.ts';
 import { payAddress } from '../rails/pay-rules.ts';
+import { networkByVenue } from '../rails/intents-address.ts';
 import { scanNetworkOf } from '../chainscan/index.ts';
 import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
@@ -370,22 +371,24 @@ export async function proposeHlWithdraw(ctx: PCtx, params: HlWithdrawParams): Pr
 
 // The flavor of `symbol` the verifier holds for us: the largest matching balance. It refuses
 // where it is certain and lets the contract answer otherwise, for the reason the deposit
-// builder gives. Shared by both send drafts.
-function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, verb: string, problems: string[]): string {
+// builder gives. Shared by both send drafts. `fromChain` names the chain that flavor came in on
+// when the symbol is held from more than one: "send 1 USDC" took a Base row with no sign of it on
+// the card (Karim, 2026-10-01).
+function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, verb: string, problems: string[]): { assetId: string; fromChain?: string } {
   const read = ctx.ledger.intents();
   if (read === undefined || !read.ok) {
     problems.push(
       `The balance inside intents.near could not be read${read?.error ? ` (${read.error})` : ''}, so this cannot tell ` +
         `which ${symbol} it would ${verb}. Read the wallet again and propose once it shows.`,
     );
-    return '';
+    return { assetId: '' };
   }
   const held = read.holdings
     .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   if (held.length === 0) {
     problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
-    return '';
+    return { assetId: '' };
   }
   if (held[0].amount < amount) {
     problems.push(
@@ -393,7 +396,9 @@ function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, ver
         `than the ${amount} this would ${verb}.`,
     );
   }
-  return held[0].assetId;
+  const chains = new Set(held.map((h) => h.originChain));
+  const fromChain = chains.size > 1 ? networkByVenue(held[0].originChain)?.id : undefined;
+  return { assetId: held[0].assetId, ...(fromChain === undefined ? {} : { fromChain }) };
 }
 
 // What the book and the chain know about the receiver. The book is read here, on the app's
@@ -453,11 +458,12 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
     } else {
       to = receiver.id;
     }
-    const originAsset = heldFlavor(ctx, from, symbol, params.amount, 'send', problems);
+    const flavor = heldFlavor(ctx, from, symbol, params.amount, 'send', problems);
     const draft: IntentsSendDraft = {
       kind: 'intents_send',
       symbol,
-      originAsset,
+      originAsset: flavor.assetId,
+      ...(flavor.fromChain === undefined ? {} : { fromChain: flavor.fromChain }),
       amount: params.amount,
       amountUsd: usdOf(ctx, symbol, params.amount, snapshot),
       minReceived: minReceivedForSend(params.amount),
@@ -497,11 +503,12 @@ export async function proposeSend(ctx: PCtx, params: SendParams): Promise<Propos
   // Our own wallet on that chain is allowed (it is what the old withdraw did) and named as
   // such. The comparison is EVM only: the key signs on no other chain.
   const ownAddress = to !== '' && /^0x/i.test(to) && to.toLowerCase() === from;
-  const originAsset = heldFlavor(ctx, from, symbol, params.amount, 'pay out', problems);
+  const flavor = heldFlavor(ctx, from, symbol, params.amount, 'pay out', problems);
   const draft: IntentsPayDraft = {
     kind: 'intents_pay',
     symbol,
-    originAsset,
+    originAsset: flavor.assetId,
+    ...(flavor.fromChain === undefined ? {} : { fromChain: flavor.fromChain }),
     network,
     amount: params.amount,
     amountUsd: usdOf(ctx, symbol, params.amount, snapshot),

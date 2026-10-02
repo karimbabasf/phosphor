@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { RELAY_API_KEY_ENV, RELAY_URL, relayClient } from '../../src/relay/client.ts';
 import { INTENTS_API_KEY_ENV } from '../../src/rails/intents-native.ts';
 import { READ_TIMEOUT_MS, VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
+import { venueSaid } from '../../src/venue-words.ts';
 
 const USDC = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
 const USDT = 'nep141:usdt.tether-token.near';
@@ -103,7 +104,8 @@ test('publishIntent sends the signed bytes untouched under a write deadline and 
   assert.ok(t.calls[0].signal instanceof AbortSignal);
   assert.equal(VENUE_WRITE_TIMEOUT_MS, 30_000);
 
-  assert.deepEqual(await client.publishIntent(req), { status: 'FAILED', reason: 'error simulating intents: insufficient balance' });
+  // The relay's sentence is its own words, quoted as data: the rail repeats it to the agent.
+  assert.deepEqual(await client.publishIntent(req), { status: 'FAILED', reason: venueSaid('The solver relay', 'error simulating intents: insufficient balance', 300) });
   await assert.rejects(() => client.publishIntent(req), /status MAYBE, which this app does not know/);
 });
 

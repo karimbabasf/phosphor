@@ -16,9 +16,9 @@ import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
 import { depositRoute } from '../wallet.ts';
 import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
-import { baseUnitsToDecimal, oneLine, plainDecimal } from '../../intents.ts';
+import { baseUnitsToDecimal, oneLine, plainDecimal, venueReason } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
-import type { Proposal, WalletRow, WriteDraft } from '../../types.ts';
+import type { Proposal, ProposalView, WalletRow, WriteDraft } from '../../types.ts';
 import { markIfCarried, seatWordsStamp } from '../../web-read.ts';
 import type { Ctx } from '../context.ts';
 
@@ -27,6 +27,33 @@ import type { Ctx } from '../context.ts';
    a person should read it from. */
 export function fingerprint(address: string): string {
   return address.length > 12 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
+}
+
+/* The address 1Click minted for one move, the quote's and the handle a rail names it by. On the
+   relay rail the handle is the intent's hash, and a hash is evidence, never a destination. */
+function mintedAddresses(p: Proposal): string[] {
+  const evidence = p.result?.evidence;
+  const handle = evidence?.handle;
+  const hashes = new Set([...(p.result?.txids ?? []), evidence?.quote?.correlationId]);
+  return [evidence?.quote?.depositAddress, handle !== undefined && !hashes.has(handle) ? handle : undefined].filter(
+    (a): a is string => typeof a === 'string' && a.length > 12,
+  );
+}
+
+function withoutMinted(text: string, minted: string[]): string {
+  return minted.reduce((out, address) => out.split(address).join(fingerprint(address)), text);
+}
+
+/* A row's view as an agent reads it: the move's minted address fingerprinted wherever the view
+   carries it, since a rail's sentence names its handle ("handle 0x..."), exactly as diagnose
+   fingerprints its own fields. The window's card keeps it whole. A second agent repeating a move
+   was handed the first one's deposit address (fix round 2, 2026-10-01), and an agent never needs
+   it whole: the app pays it, and support is asked by the correlation id. */
+export function agentView(ctx: Ctx, p: Proposal, now?: number): ProposalView {
+  const view = ctx.proposals.view(p, now);
+  const minted = mintedAddresses(p);
+  if (minted.length === 0) return view;
+  return JSON.parse(JSON.stringify(view), (_key, value: unknown) => (typeof value === 'string' ? withoutMinted(value, minted) : value)) as ProposalView;
 }
 
 /* The other spellings an agent reaches for: the chain's full name, the ticker it is known by
@@ -386,7 +413,7 @@ export const walletReads: ReadTable = {
       return;
     }
     markIfCarried(body.session, carriedWords(ctx, [proposal]));
-    sendJson(res, 200, ctx.proposals.view(proposal));
+    sendJson(res, 200, agentView(ctx, proposal));
   },
   /* The list, because until now nothing enumerated and proposal_status needed an id. An agent
      asked "show me my last deposit" had to find one in the audit log or ask the person for it,
@@ -402,7 +429,7 @@ export const walletReads: ReadTable = {
       .sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))
       .slice(0, limit);
     markIfCarried(body.session, carriedWords(ctx, rows));
-    sendJson(res, 200, { proposals: rows.map((p) => ctx.proposals.view(p, now)) });
+    sendJson(res, 200, { proposals: rows.map((p) => agentView(ctx, p, now)) });
   },
   /* Everything about ONE move in one call, for the question "why is my deposit not there yet".
      Four things an agent had no way to line up: the view, the audit lines for this row alone
@@ -427,21 +454,24 @@ export const walletReads: ReadTable = {
       evidence === undefined
         ? null
         : {
-            stage: evidence.providerStage ?? null,
+            // The venue's words, as one word or quoted (src/venue-words.ts): rows written before
+            // the relay's word was held to that are read the same way.
+            stage: evidence.providerStage === undefined ? null : venueReason('The swap service', evidence.providerStage),
             handleFingerprint: evidence.handle === undefined ? null : fingerprint(evidence.handle),
             correlationId: evidence.quote?.correlationId ?? null,
             deadline: evidence.deadline ?? null,
             settledAmountOut: evidence.settledAmountOut ?? null,
             refundedAmount: evidence.refundedAmount ?? null,
-            refundReason: evidence.refundReason ?? null,
+            refundReason: evidence.refundReason === undefined ? null : venueReason('1Click', evidence.refundReason),
           };
     // The far side of a Hyperliquid move, as the ledger last read it. Null for every other kind:
     // a swap and a send have no venue account, and answering with one anyway would be noise
     // somebody could mistake for evidence about their own move.
     const venue = proposal.kind === 'hl_deposit' || proposal.kind === 'hl_withdraw' ? (ctx.ledger.hyperliquid() ?? null) : null;
     const isCredential = credentialCheck(ctx);
+    const minted = mintedAddresses(proposal);
     sendJson(res, 200, {
-      view: ctx.proposals.view(proposal),
+      view: agentView(ctx, proposal),
       /* THIS ROW'S LINES, by the id the app wrote into the event, never by the id appearing
          somewhere in the sentence. A substring match handed back another row's history whenever
          one line happened to mention this one, which is the opposite of what a tool called
@@ -455,7 +485,7 @@ export const walletReads: ReadTable = {
         // The same wall the tail routes have (src/http/log-tail.ts): a credential never leaves
         // through a row's own lines either.
         .map((e) => redactEvent(e, isCredential))
-        .map((e) => withoutAddresses(`${e.ts} ${e.type}: ${e.msg}`)),
+        .map((e) => withoutAddresses(withoutMinted(`${e.ts} ${e.type}: ${e.msg}`, minted))),
       provider,
       venue,
     });
