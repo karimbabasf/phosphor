@@ -250,7 +250,15 @@ export type SwapDraft = {
   to: string;
   counterparty: string; // the contract funds are handed to; must be on the policy allowlist
   quote: LegQuote | null;
+  assets?: MovedAssets; // pinned when the card was priced; absent until then, and on rows from before 0.10.13
 };
+
+/* A coin by the venue's own id and the decimals its amounts are counted in, as the card was
+   priced with them. Both come off 1Click's token list, which nothing signs, so the card's pair is
+   pinned into the draft when it lands (src/proposals/draft.ts) and execute signs for exactly that,
+   refusing a list that has changed since (src/rails/asset-pin.ts). */
+export type AssetPin = { assetId: string; decimals: number };
+export type MovedAssets = { origin: AssetPin; destination: AssetPin };
 
 // Collateral entering a Hyperliquid perps account. The kind is older than the mechanism: it
 // meant an ERC-20 transfer to Hyperliquid's Bridge2 contract, then a NEAR Intents route from a
@@ -272,6 +280,7 @@ export type HlDepositDraft = {
   from: string; // our account id inside intents.near: the EVM address, lowercased
   hlAccount: string; // the Hyperliquid account credited: an EVM address we hold the key for
   counterparty: string; // must be on the policy allowlist
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 // Collateral leaving a Hyperliquid perps account and landing back in the intents balance. The
@@ -310,6 +319,7 @@ export type IntentsSendDraft = {
   to: string; // the receiver's intents account id, as the verifier keys it
   counterparty: string; // must be on the policy allowlist
   recipient?: SendRecipient; // absent on rows written before the recipients book existed
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 // A balance inside intents.near paid out to an address on a real chain: a friend's wallet on
@@ -339,6 +349,7 @@ export type IntentsPayDraft = {
   toGiven?: string;
   counterparty: string; // must be on the policy allowlist
   recipient: SendRecipient;
+  assets?: MovedAssets; // pinned when the card was priced (SwapDraft.assets)
 };
 
 export type HlWithdrawDraft = {
@@ -534,6 +545,8 @@ export type SimulationResult = {
   error?: string;
   // Why it did not pass, as one code from src/rails/reasons.ts, when the rail knows.
   reason?: string;
+  // The coins this simulation priced, which the proposal pins into its draft (MovedAssets).
+  assets?: MovedAssets;
 };
 
 // The asset a swap draft spends, resolved, and what the verifier holds of it for us.

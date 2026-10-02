@@ -51,6 +51,7 @@ import {
   oneClickClient,
   quoteEchoProblems,
   oneLine,
+  refuseUnsentRequest,
   resolveAsset,
   toBaseUnits,
   truncateToBaseUnits,
@@ -72,6 +73,7 @@ import { describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, s
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import { noReply, submitSignedIntent } from './intents-submit.ts';
 import { pickOrExplain, swapSummary } from './asset-words.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { networkByVenue } from './intents-address.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
 import { watchOneClick } from './watch.ts';
@@ -178,6 +180,28 @@ export function intentNonce(raw: string): string | undefined {
    2026-09-23, one over a 0.009% move. At half a percent the price has to fall about half a
    percent before a check refuses, which is a real reason to stop. */
 export const QUOTE_SLIPPAGE_BPS = 50;
+
+/* HOW MUCH OF ITS VALUE A SWAP MAY GIVE UP, fee and price together, by 1Click's own dollar figures
+   for the two sides: three percent. Honest quotes gave up 0.03 to 0.85 percent on 2026-10-01 (27
+   dry quotes: USDC, ETH, SOL, wNEAR, ZEC, BOME and AURORA, $5 to $2,000). The floor cannot catch a
+   fee added to the request on the wire, because it is cut under a quote that already carries the
+   fee; these two figures are inside 1Click's signature, so the fee shows here even when the echo
+   was rewritten to hide its line. A coin 1Click prices at nothing has no figure to check by, and
+   such a swap is valued off the quote and always waits for a click (src/proposals/draft.ts). */
+export const SWAP_MAX_LOSS_BPS = 300;
+
+// The value a quote gives up past SWAP_MAX_LOSS_BPS, as one sentence; null when within it or unpriced.
+export function swapLossProblem(quote: Pick<OneClickQuote, 'amountInUsd' | 'amountOutUsd'>): string | null {
+  const inUsd = Number(quote.amountInUsd);
+  const outUsd = Number(quote.amountOutUsd);
+  if (!(inUsd > 0) || !(outUsd > 0) || !Number.isFinite(inUsd) || !Number.isFinite(outUsd)) return null;
+  const lostBps = ((inUsd - outUsd) / inUsd) * 10_000;
+  if (lostBps <= SWAP_MAX_LOSS_BPS) return null;
+  return (
+    `this swap gives up ${(lostBps / 100).toFixed(1)} percent of its value ($${inUsd.toFixed(2)} in, $${outUsd.toFixed(2)} out ` +
+    `by 1Click's own prices), more than the ${SWAP_MAX_LOSS_BPS / 100} percent a swap may lose to fees and price`
+  );
+}
 
 // ---------- base58, for the signature field ----------
 
@@ -358,6 +382,7 @@ export function intentsApi(deps: {
     const payload = await readJson(res, '1click quote', (status, message) => new QuoteRefusal(status, message));
     const quoteField = payload['quote'] as OneClickQuote | undefined;
     if (!quoteField || typeof quoteField !== 'object') throw new Error('no quote in 1click response');
+    refuseUnsentRequest(payload, body);
     return { quote: quoteField, raw: payload };
   }
 
@@ -878,7 +903,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     // deposit ETH and no swap could ever spend it.
     const list = await (api as IntentsApiPort).tokens();
     const origin = originIn(draft, list);
-    const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
+    const dest = heldToPin(
+      draft.assets?.destination,
+      pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain),
+      `${draft.toSymbol} on ${draft.toChain}`,
+    );
     if (origin.assetId === dest.assetId) {
       throw new ReasonError('invalid_request', `${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
@@ -897,9 +926,10 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  // The asset a draft spends, off the one resolver, with its decimals.
+  // The asset a draft spends, off the one resolver, with its decimals: the pinned one once the card has priced it.
   function originIn(draft: SwapDraft, list: OneClickToken[]): { assetId: string; decimals: number } {
-    return pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const listed = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    return heldToPin(draft.assets?.origin, listed, `${draft.fromSymbol} on ${draft.chain}`);
   }
 
   /* WHAT THE DRAFT SPENDS AND HOW MUCH OF IT IS HELD, for the builder: "all" becomes this exact
@@ -991,6 +1021,9 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         code: 'simulation_failed',
       });
     }
+
+    const lost = swapLossProblem(quote);
+    if (lost !== null) problems.push({ text: lost, code: 'simulation_failed' });
 
     return problems;
   }
@@ -1100,7 +1133,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         `execution signs one intent with the EVM key and transfers nothing; the balance must already be ` +
           `inside ${INTENTS_VERIFIER}`,
       );
-      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap };
+      const assets = { origin: { assetId: p.originAsset, decimals: p.originDecimals }, destination: { assetId: p.destinationAsset, decimals: p.destDecimals } };
+      return { ok: true, summary: swapSummary(swap, p.destSymbol, p.destNetwork), developer: lines.join('\n'), swap, assets };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-native simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
@@ -1110,6 +1144,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     requireVenue(draft);
     requireUsable();
+    pinnedAssets(draft.assets);
     const client = api as IntentsApiPort;
 
     const p = await plan(draft);
@@ -1451,6 +1486,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       if (reasonOf(err) === 'no_price') return null;
       throw err;
     }
+    const lost = swapLossProblem(response.quote);
+    if (lost !== null) throw new ReasonError('simulation_failed', lost);
     const out = response.quote.amountOut;
     if (typeof out !== 'string' || !/^\d+$/.test(out)) return null;
     return Number(formatUnits(BigInt(out), p.destDecimals));
@@ -1462,6 +1499,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   async function facts(draft: SwapDraft): Promise<SwapQuoteFacts> {
     const p = await plan(draft, true);
     const q = (await dryQuote(p, draft.from, false)).quote;
+    const lost = swapLossProblem(q);
+    if (lost !== null) throw new ReasonError('simulation_failed', lost);
     const out = baseUnits(q.amountOut, 'amountOut');
     const inUsd = Number(q.amountInUsd);
     const outUsd = Number(q.amountOutUsd);

@@ -67,6 +67,7 @@ import { reasonOf } from './reasons.ts';
 import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUrl, payTarget, scanNetworkOf } from '../chainscan/index.ts';
 import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { intentsDepositAddress, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
 import type { PayFamily, PoaToken } from './intents-address.ts';
 import { depositFloorOf, needsTarget, ownDepositChain, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
@@ -382,16 +383,19 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       );
     }
     refuseContractForNative(draft, destination.native);
-    const listed = list.find((t) => t.assetId === destination.assetId);
+    // The two coins the card priced, once it has (src/rails/asset-pin.ts).
+    const origin = heldToPin(draft.assets?.origin, { assetId: held.assetId, decimals: held.decimals }, draft.symbol);
+    const paid = heldToPin(draft.assets?.destination, { assetId: destination.assetId, decimals: destination.decimals }, `${draft.symbol} on ${payLabel(draft.network)}`);
+    const listed = list.find((t) => t.assetId === paid.assetId);
     return {
       chain,
-      originAsset: held.assetId,
-      destinationAsset: destination.assetId,
+      originAsset: origin.assetId,
+      destinationAsset: paid.assetId,
       native: destination.native,
       tokenId: destination.native ? null : (tokens[chain as ChainId]?.[draft.symbol.toUpperCase()]?.tokenId ?? null),
-      decimals: held.decimals,
-      amountBase: toBaseUnits(draft.amount, held.decimals),
-      minReceivedBase: toBaseUnits(draft.minReceived, destination.decimals),
+      decimals: origin.decimals,
+      amountBase: toBaseUnits(draft.amount, origin.decimals),
+      minReceivedBase: toBaseUnits(draft.minReceived, paid.decimals),
       to,
       given,
       issuer: destination.native ? null : (listed?.contractAddress ?? null) || null,
@@ -619,7 +623,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
           `and if it cannot, the money comes back to your balance inside ${INTENTS_VERIFIER}`,
       );
       lines.push('this payout always waits for your click and, on an enclave wallet, a Touch ID that names the receiver');
-      return { ok: true, summary: lines.join('\n'), send };
+      const assets = { origin: { assetId: p.originAsset, decimals: p.decimals }, destination: { assetId: p.destinationAsset, decimals: p.decimals } };
+      return { ok: true, summary: lines.join('\n'), send, assets };
     } catch (err) {
       const message = errText(err);
       const closed = closedWords(draft, err);
@@ -644,6 +649,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   }
 
   async function execute(draft: IntentsPayDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+    pinnedAssets(draft.assets);
     const p = await plan(draft);
     const owner = requireOwner(draft);
     const label = payLabel(draft.network);

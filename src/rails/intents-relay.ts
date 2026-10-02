@@ -60,6 +60,7 @@ import type { VerifierPort } from '../relay/verifier.ts';
 import { MAX_SLIPPAGE_BPS, QUOTE_REUSE_MS, floorTooLow, floorUnderQuote } from './slippage.ts';
 import { noReply } from './intents-submit.ts';
 import { pickOrExplain, swapSummary } from './asset-words.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { networkByVenue } from './intents-address.ts';
 import { ReasonError, reasonOf } from './reasons.ts';
 import { FIRST_POLL_MS, pollUntil } from './watch.ts';
@@ -248,11 +249,16 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
        the floor will be set under (quote below); it never reaches a signature. */
     if (!floorless && !(draft.minAmountOut > 0)) throw new ReasonError('invalid_request', 'minAmountOut is 0: refusing to swap with no slippage floor');
 
-    // The same registry the 1Click rail reads (resolveAsset): the asset ids are pinned into
-    // the plan here at propose time and compared again against the quote before signing.
+    // The same registry the 1Click rail reads (resolveAsset). Once the card has priced the swap
+    // the draft carries its two coins, the list has to agree with them, and the quote is
+    // compared against them again before signing.
     const list = await client.tokens();
     const origin = originIn(draft, list);
-    const dest = pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain);
+    const dest = heldToPin(
+      draft.assets?.destination,
+      pickOrExplain(resolveAsset(draft.toChain, draft.toSymbol, tokens, list), draft.toSymbol, draft.toChain),
+      `${draft.toSymbol} on ${draft.toChain}`,
+    );
     if (origin.assetId === dest.assetId) {
       throw new ReasonError('invalid_request', `${draft.fromSymbol} on ${draft.chain} and ${draft.toSymbol} on ${draft.toChain} are the same asset inside the verifier`);
     }
@@ -270,8 +276,10 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     };
   }
 
+  // The pinned coin once the card has priced it (src/rails/asset-pin.ts).
   function originIn(draft: SwapDraft, list: OneClickToken[]): { assetId: string; decimals: number } {
-    return pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    const listed = pickOrExplain(resolveAsset(draft.chain, draft.fromSymbol, tokens, list), draft.fromSymbol, draft.chain);
+    return heldToPin(draft.assets?.origin, listed, `${draft.fromSymbol} on ${draft.chain}`);
   }
 
   // What the draft spends and how much of it the verifier holds for us; null is an unread
@@ -450,7 +458,8 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
       keepForClick(p, draft.from, quote);
       const bought = p.list.find((t) => t.assetId === p.assetOut);
       const network = networkByVenue(bought?.blockchain ?? '')?.name;
-      return { ok: true, summary: swapSummary(swap, bought?.symbol ?? draft.toSymbol, network), developer: lines.join('\n'), swap };
+      const assets = { origin: { assetId: p.assetIn, decimals: p.inDecimals }, destination: { assetId: p.assetOut, decimals: p.outDecimals } };
+      return { ok: true, summary: swapSummary(swap, bought?.symbol ?? draft.toSymbol, network), developer: lines.join('\n'), swap, assets };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: '', developer: `intents-relay simulation failed: ${message}`, error: message, reason: reasonOf(err) ?? 'simulation_failed' };
@@ -479,6 +488,7 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   }
 
   async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+    pinnedAssets(draft.assets);
     const p = await plan(draft);
 
     // The draft names the account a human approved, and the account id inside the verifier IS

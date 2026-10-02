@@ -143,7 +143,14 @@ allowlist for a receiver. What stands in for one is four things that cannot be s
    against the draft on the dry quote at simulate time and again on the live quote a moment before
    the key is touched (`src/rails/intents-spend.ts`): recipient, `recipientType`
    (`DESTINATION_CHAIN` for a payout, `INTENTS` for a send), both assets and the amount. No echo,
-   no signature.
+   no signature. Both quote clients also hold every echo to the exact request they sent
+   (`requestEchoProblems` in `src/intents.ts`), on every quote, dry or live: each field sent comes
+   back as sent, a field not sent comes back only as 1Click's own default, and `appFees` may pay
+   only 1Click's fee account. A position on the wire that adds a fee line paying itself is refused
+   before anything is signed. `appFees` sits outside 1Click's signature, so a position that also
+   strips its line from the echo is caught by what the fee takes, which is signed: a swap may give
+   up at most 3 percent of its value by 1Click's own dollar figures (`SWAP_MAX_LOSS_BPS`), and a
+   send, a payout and a deposit are held to their loss floors (1, 3 and 5 percent).
 
 The card (`ui/screens/cards.js`, its question in `ui/screens/decision.js`) is what the person reads before the click: the amount, the
 route from their balance through the bridge to the destination, the full address in groups of
@@ -547,7 +554,13 @@ the Solana and NEAR keys its mnemonic derived, and nothing reads them.
 
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
-signature (`src/quote-signature.ts`) before it is trusted.
+signature (`src/quote-signature.ts`) before it is trusted. The coins it names are the coins the
+card was priced with. A coin's 1Click id and its decimals come off 1Click's token list, which
+nothing signs, so the proposal pins both into the draft when it lands (`src/proposals/draft.ts`),
+execute signs for exactly those, and a list that names another id or other decimals for them at
+the click refuses the move with nothing signed (`src/rails/asset-pin.ts`). The registry's own coins
+carry 1Click's id in `data/tokens.json`, and a list that files one under another id is refused
+before the card is priced.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside
@@ -568,8 +581,9 @@ signature, rehearsals included, is in the pending claim record before the key ma
 record of a claim that stops early stays open until the next start proves each signature spent or
 dead, whatever the RPC said. The one weaker
 path is Plan B through 1Click: there the code signs a transfer to 1Click's handle, the receiver
-is held by the quote echo and 1Click's quote signature rather than by the code's signature, and
-the claim rests on 1Click delivering. The code is written nowhere: not an audit line,
+is held by the quote echo and 1Click's quote signature rather than by the code's signature (a fee
+line added to the request on the wire is refused by the same echo, and a hidden one by the claim's
+1 percent floor), and the claim rests on 1Click delivering. The code is written nowhere: not an audit line,
 `/api/state`, an SSE frame, the claim record (`state/invites.json`) or an error. No agent tool
 reaches it. Its 16 secret bytes are wiped as soon as the key is derived, and the key is dropped
 the moment it can sign nothing more: once the relay has answered, or right after Plan B's one

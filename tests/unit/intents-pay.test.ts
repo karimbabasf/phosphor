@@ -11,9 +11,9 @@ import assert from 'node:assert/strict';
 import { getAddress } from 'viem';
 import type { Address } from 'viem';
 
-import type { IntentsPayDraft, SendRecipient } from '../../src/types.ts';
+import type { IntentsPayDraft, MovedAssets, SendRecipient } from '../../src/types.ts';
 import type { AddressActivity, AddressSummary } from '../../src/chainscan/index.ts';
-import { QuoteRefusal } from '../../src/intents.ts';
+import { QuoteRefusal, resolveAsset } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken, TokensFile } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import {
@@ -137,7 +137,27 @@ function recipientOf(over: Partial<SendRecipient> = {}): SendRecipient {
   return { known: false, count: 0, lastAt: null, activity: activityOf(), ownAddress: false, ...over };
 }
 
+/* The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts): the held
+   flavor spent, and the coin the receiver is paid in, as the rail resolves it off these fixtures. */
+function pinsOf(draft: IntentsPayDraft): MovedAssets | undefined {
+  const held = apiTokens.find((t) => t.assetId === draft.originAsset);
+  let paid: ReturnType<typeof resolveAsset>;
+  try {
+    paid = resolveAsset(draft.network, draft.symbol.toUpperCase(), registry, apiTokens);
+  } catch {
+    return undefined;
+  }
+  if (held === undefined || paid.kind !== 'one') return undefined;
+  return { origin: { assetId: held.assetId, decimals: held.decimals }, destination: { assetId: paid.assetId, decimals: paid.decimals } };
+}
+
 function draftOf(over: Partial<IntentsPayDraft> = {}): IntentsPayDraft {
+  const draft = unpinnedDraftOf(over);
+  const assets = pinsOf(draft);
+  return assets === undefined ? draft : { assets, ...draft };
+}
+
+function unpinnedDraftOf(over: Partial<IntentsPayDraft> = {}): IntentsPayDraft {
   return {
     kind: 'intents_pay',
     symbol: 'ETH',
@@ -183,6 +203,8 @@ type Overrides = {
   // receiver; null: a bridge that did not answer), and its minimum deposit for the paid token.
   own?: { address: string; memo: string | null } | null;
   floor?: DepositFloor | null;
+  // The token list as 1Click answers it at each read: a list that changes between the card and the click.
+  tokens?: (list: OneClickToken[]) => OneClickToken[];
 };
 
 const OUR_DEPOSIT = '0x248f' + '0'.repeat(32) + 'ace7';
@@ -194,7 +216,7 @@ function summaryOf(balance: string): AddressSummary {
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
   const calls: ApiCalls = { quotes: [], generated: [], submitted: [] };
   const api: IntentsApiPort = {
-    tokens: async () => apiTokens,
+    tokens: async () => over.tokens?.(apiTokens) ?? apiTokens,
     async quote(params) {
       calls.quotes.push(params);
       if (over.quoteThrows !== undefined) throw new QuoteRefusal(400, over.quoteThrows);
@@ -761,4 +783,42 @@ test('a payout to our own deposit address is refused right before the signature 
   assert.equal(calls.generated.length, 1, 'the refusal came before the intent was generated, not right before the signature');
   assert.equal(calls.submitted.length, 0);
   assert.deepEqual(asked.map((a) => `${a.direction}:${a.maxAgeMs}`), ['out:10000', 'in:10000', 'out:10000', 'in:10000']);
+});
+
+// ---------- the coin the card priced is the coin that pays ----------
+
+test('a token list that files the payout coin under another id after the click refuses it before any live quote', async () => {
+  // USDC paid out on Ethereum. At the click the list carries a row for the same contract under a
+  // cheap token's id, ahead of the real one: the old lookup took the first and paid in that.
+  let swapped = false;
+  const JUNK = 'nep141:junk-listed-token.near';
+  const { rail, calls } = railOf({
+    tokens: (list) => (swapped ? [{ assetId: JUNK, decimals: 6, blockchain: 'eth', symbol: 'USDC', contractAddress: '0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48' }, ...list] : list),
+  });
+  const draft = draftOf({ symbol: 'USDC', originAsset: USDC_ETH_ASSET, amount: 10, amountUsd: 10, minReceived: minReceivedForPay(10) });
+  assert.deepEqual(draft.assets?.destination, { assetId: USDC_ETH_ASSET, decimals: 6 });
+  swapped = true;
+  await assert.rejects(() => rail.execute(draft), /coin list now gives USDC on Ethereum as nep141:junk-listed-token\.near, not the nep141:eth-0xa0b8/);
+  assert.equal(calls.quotes.filter((q) => q.dry === false).length, 0, 'no live quote is asked for');
+  assert.equal(calls.generated.length, 0);
+});
+
+test('a token list that counts a listed coin in other decimals after the click refuses the payout', async () => {
+  // ETH on Optimism is a coin only the list describes, on both sides, so the two sides agreeing
+  // with each other proves nothing: 18 on the card and 16 at the click would pay a hundredth.
+  let changed = false;
+  const { rail, calls } = railOf({ tokens: (list) => (changed ? list.map((t) => (t.assetId === ETH_OP_ASSET ? { ...t, decimals: 16 } : t)) : list) });
+  const draft = draftOf({ originAsset: ETH_OP_ASSET, network: 'op' });
+  assert.deepEqual(draft.assets, { origin: { assetId: ETH_OP_ASSET, decimals: 18 }, destination: { assetId: ETH_OP_ASSET, decimals: 18 } });
+  changed = true;
+  await assert.rejects(() => rail.execute(draft), /counts ETH in 16 decimals, not the 18 this move was priced and approved with/);
+  assert.equal(calls.quotes.filter((q) => q.dry === false).length, 0);
+  assert.equal(calls.generated.length, 0);
+});
+
+test('a payout approved before its coins were pinned is not run', async () => {
+  const { rail, calls } = railOf();
+  const { assets: _pinned, ...unpinned } = draftOf();
+  await assert.rejects(() => rail.execute(unpinned), /approved before Phosphor pinned the coins it moves/);
+  assert.equal(calls.quotes.length, 0);
 });

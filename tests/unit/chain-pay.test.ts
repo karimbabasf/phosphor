@@ -119,6 +119,9 @@ function draftOf(coin: Coin, to: string, amount: number, over: Partial<IntentsPa
     toChecksum: null,
     counterparty: INTENTS_PAY_COUNTERPARTY,
     recipient: { known: false, count: 0, lastAt: null, activity: null, ownAddress: false, ...recipient },
+    // The coin the card priced, pinned when the proposal landed (src/proposals/draft.ts): the
+    // held flavor is the coin the receiver is paid in on these chains.
+    assets: { origin: { assetId: coin.asset, decimals: coin.decimals }, destination: { assetId: coin.asset, decimals: coin.decimals } },
     ...over,
   };
 }
