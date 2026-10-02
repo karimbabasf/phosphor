@@ -197,7 +197,8 @@ The defences in this document are checked by an attack suite the repository ship
 runs the app this checkout builds (`npm run app:build` makes the ad-hoc bundle it boots), plays the
 hostile local process against each defence on a throwaway data dir and home, prints a table, and
 exits non-zero on any that does not hold. Add `-- --app <Phosphor.app>` to include the checks that
-need a Developer ID build.
+need a Developer ID build. No check changes the bundle it is handed, so a notarized build raises no
+"damaged" alert and the run needs nobody at the keyboard.
 
 ## The lock
 
