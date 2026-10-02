@@ -343,8 +343,12 @@ function json(body: unknown, status = 200): Response {
 /* The same 1Click on the wire, for the real clients (src/rails/intents-native.ts intentsApi): it
    prices what arrives, fee lines included, echoes the request with the defaults the live API adds
    and its own fee line, and signs. `rewrite` edits a request after the app sent it, `hide` an echo
-   after 1Click signed it, the way a position on the wire would. A dry quote carries no handle. */
-export function oneclickFetchOn(chain: Chain, wire: { rewrite?: (body: Record<string, any>) => void; hide?: (echo: Record<string, any>) => void } = {}): typeof fetch {
+   after 1Click signed it and `forge` the whole answer, its signature included, the way a position
+   on the wire would. A dry quote carries no handle. */
+export function oneclickFetchOn(
+  chain: Chain,
+  wire: { rewrite?: (body: Record<string, any>) => void; hide?: (echo: Record<string, any>) => void; forge?: (answer: Record<string, any>) => void } = {},
+): typeof fetch {
   return async (url, init) => {
     const u = new URL(String(url));
     if (u.pathname === '/v0/tokens') return json([{ assetId: INVITE_ASSET_ID, decimals: 6, blockchain: 'near', symbol: 'USDC' }]);
@@ -368,6 +372,7 @@ export function oneclickFetchOn(chain: Chain, wire: { rewrite?: (body: Record<st
       const echo = { depositMode: 'SIMPLE', ...body, confidentiality: 'public', quoteWaitingTimeMs: 0, insured: false, appFees: [{ recipient: ONECLICK_FEE_ACCOUNT, fee: 1 }, ...fees] };
       const answer = signQuote({ quoteRequest: echo, quote });
       wire.hide?.(answer['quoteRequest'] as Record<string, any>);
+      wire.forge?.(answer);
       return json(answer);
     }
     if (u.pathname === '/v0/generate-intent') return json({ intent: { standard: 'erc191', payload: generated(chain, body['signerId'], body['depositAddress']) } }, 201);
