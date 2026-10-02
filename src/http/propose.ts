@@ -17,6 +17,7 @@ import { asRecord, errText, fail, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { CHAINS, PROPOSE_KINDS } from './context.ts';
 import type { Ctx } from './context.ts';
+import { agentView } from './read/wallet.ts';
 
 /* THE REPLY IS THE DECISION, NEVER THE SETTLEMENT.
    This used to wait up to twenty seconds for the rail before answering, so the card in the
@@ -274,8 +275,9 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
     });
     // An empty id means the proposal is still being drafted, which is exactly the race this
     // guard exists for. There is nothing to read yet, so the sentence does not offer. When the
-    // row exists, its status and result ride on the refusal so the caller sees what its repeat
-    // would have doubled without a second call.
+    // row exists, its status and view ride on the refusal so the caller sees what its repeat
+    // would have doubled without a second call: the view proposal_status hands back, never the
+    // row's result, whose quote holds the deposit address 1Click minted for the first move.
     const existing = clash.id === '' ? undefined : ctx.proposals.get(clash.id);
     const names = clash.id === '' ? '' : ` (proposal ${clash.id})`;
     // An unconfirmed first move is the incident's exact shape: the money may be live at the
@@ -292,7 +294,7 @@ export async function handlePropose(ctx: Ctx, body: JsonBody, res: http.ServerRe
       unconfirmed ? lead : `${lead} Read it with proposal_status before repeating anything.`,
       {
         duplicate: clash.id,
-        ...(existing === undefined ? {} : { status: existing.status, ...(existing.result === undefined ? {} : { result: existing.result }) }),
+        ...(existing === undefined ? {} : { status: existing.status, view: agentView(ctx, existing) }),
       },
     );
     return;
