@@ -202,20 +202,51 @@ test('a list that files a registry coin under another id is refused when the coi
   assert.equal(pick.kind === 'one' ? pick.assetId : null, DEST);
 });
 
-test('every id data/tokens.json pins is the id 1Click files that contract under', () => {
+test('every id data/tokens.json pins is the id 1Click files that contract under, and every row pins one or says none', () => {
   let pinned = 0;
+  let none = 0;
   for (const [chain, rows] of Object.entries(shipped)) {
     if (chain === '_comment') continue;
-    for (const [symbol, row] of Object.entries(rows as Record<string, { tokenId: string; assetId?: string }>)) {
-      if (row.assetId === undefined) continue;
+    for (const [symbol, row] of Object.entries(rows as Record<string, { tokenId: string; assetId?: string | null }>)) {
+      // A row with no word either way would be taken off the list on first sight (re-audit R-L4).
+      assert.notEqual(row.assetId, undefined, `${symbol} on ${chain} pins no id and does not say it has none`);
+      if (row.assetId === null) {
+        none += 1;
+        continue;
+      }
       pinned += 1;
       const id = row.tokenId.toLowerCase();
       // The id shapes 1Click lists (read off its list on 2026-10-01): a bridged EVM contract,
       // a NEAR contract itself, and a Solana mint under a 20 byte hash 1Click derives.
       const expected = chain === 'near' ? `nep141:${row.tokenId}` : chain === 'sol' ? /^nep141:sol-[0-9a-f]{40}\.omft\.near$/ : `nep141:${chain}-${id}.omft.near`;
       if (typeof expected === 'string') assert.equal(row.assetId, expected, `${symbol} on ${chain}`);
-      else assert.match(row.assetId, expected, `${symbol} on ${chain}`);
+      else assert.match(row.assetId!, expected, `${symbol} on ${chain}`);
     }
   }
   assert.equal(pinned, 11);
+  assert.equal(none, 6, 'the six coins 1Click did not list on 2026-10-01 or 2026-10-02');
+});
+
+/* First sight (re-audit R-L4): a list that files a native coin, or a registry coin 1Click did not
+   list when the rows were pinned, under an id of its own was trusted, and the card then priced, and
+   the pins locked in, that id under the coin's name. Each now has to agree with a pin or is refused. */
+test('a list that files native ETH, or a registry coin pinned to no id, under an id of its own is refused before anything is priced', () => {
+  const forged = [
+    { assetId: 'nep141:junk-native.near', decimals: 18, blockchain: 'eth', symbol: 'ETH' },
+    { assetId: 'nep141:junk-usds.near', decimals: shipped.eth.USDS!.decimals, blockchain: 'eth', symbol: 'USDS', contractAddress: shipped.eth.USDS!.tokenId },
+  ] as OneClickToken[];
+  assert.throws(() => resolveAsset('eth', 'ETH', shipped, forged), /files ETH on eth as nep141:junk-native\.near, not the nep141:eth\.omft\.near this app pins/);
+  assert.throws(() => resolveAsset('eth', 'USDS', shipped, forged), /no 1Click id pinned for USDS on eth, so it is not quoted/);
+
+  // The honest list still resolves every gas asset to its pinned id.
+  const honest = [
+    { assetId: 'nep141:eth.omft.near', decimals: 18, blockchain: 'eth', symbol: 'ETH' },
+    { assetId: 'nep141:base.omft.near', decimals: 18, blockchain: 'base', symbol: 'ETH' },
+    { assetId: 'nep141:arb.omft.near', decimals: 18, blockchain: 'arb', symbol: 'ETH' },
+    { assetId: 'nep141:sol.omft.near', decimals: 9, blockchain: 'sol', symbol: 'SOL' },
+  ] as OneClickToken[];
+  for (const [chain, symbol, id] of [['eth', 'ETH', 'nep141:eth.omft.near'], ['base', 'ETH', 'nep141:base.omft.near'], ['arb', 'ETH', 'nep141:arb.omft.near'], ['sol', 'SOL', 'nep141:sol.omft.near']] as const) {
+    const pick = resolveAsset(chain, symbol, shipped, honest);
+    assert.equal(pick.kind === 'one' ? pick.assetId : null, id, `${symbol} on ${chain}`);
+  }
 });

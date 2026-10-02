@@ -49,7 +49,9 @@ export const ONECLICK_COUNTERPARTY = 'oneclick:1click.chaindefuser.com';
 
 // Token registry shape loaded from data/tokens.json: chain -> symbol -> contract/mint id + decimals,
 // and 1Click's own id for the coin where the registry pins one (resolveAsset holds the list to it).
-export type TokensFile = Record<ChainId, Record<string, { tokenId: string; decimals: number; assetId?: string }>>;
+// assetId is 1Click's id for the row, pinned; null is a coin 1Click did not list when the row was
+// pinned, and it is never quoted (resolveAsset). data/tokens.json says one or the other for every row.
+export type TokensFile = Record<ChainId, Record<string, { tokenId: string; decimals: number; assetId?: string | null }>>;
 
 // One entry from 1Click's GET /v0/tokens list.
 export type OneClickToken = {
@@ -120,7 +122,8 @@ export function assetIdFor(
 // money goes, so "the answer was not unique" has to be a refusal and not a coin flip.
 export function nativeAssetIdFor(chain: string, list: OneClickToken[]): string | null {
   const matches = nativeAssetMatches(chain, list);
-  return matches.length === 1 ? matches[0].assetId : null;
+  const pinned = NATIVE_ASSET[chain as ChainId]?.assetId;
+  return matches.length === 1 && (pinned === undefined || matches[0].assetId === pinned) ? matches[0].assetId : null;
 }
 
 // Every entry claiming to be the gas asset of a chain. Exposed beside the single-answer form so
@@ -141,12 +144,14 @@ function nativeAssetMatches(chain: string, list: OneClickToken[]): OneClickToken
 // The gas asset per chain. A table in this repo, not a lookup on the wire: an agent naming
 // a symbol must not be able to make the app treat some other token as the thing it spends.
 // Decimals are the chain's own and are never read from the remote list either, because they
-// scale the amount that leaves the wallet.
-export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: number }>> = {
-  eth: { symbol: 'ETH', decimals: 18 },
-  base: { symbol: 'ETH', decimals: 18 },
-  arb: { symbol: 'ETH', decimals: 18 },
-  sol: { symbol: 'SOL', decimals: 9 },
+// scale the amount that leaves the wallet. The ids are 1Click's, pinned as the registry's are,
+// read off its token list on 2026-10-02 (re-audit R-L4: a list that filed ETH under another id
+// was trusted on first sight). NEAR has none: 1Click lists no native NEAR, only wNEAR.
+export const NATIVE_ASSET: Partial<Record<ChainId, { symbol: string; decimals: number; assetId?: string }>> = {
+  eth: { symbol: 'ETH', decimals: 18, assetId: 'nep141:eth.omft.near' },
+  base: { symbol: 'ETH', decimals: 18, assetId: 'nep141:base.omft.near' },
+  arb: { symbol: 'ETH', decimals: 18, assetId: 'nep141:arb.omft.near' },
+  sol: { symbol: 'SOL', decimals: 9, assetId: 'nep141:sol.omft.near' },
   near: { symbol: 'NEAR', decimals: 24 },
 };
 
@@ -234,6 +239,10 @@ export function resolveAsset(
   const symbol = canonicalSymbol(network, asked);
   const registry = tokens[network as ChainId]?.[symbol];
   if (registry !== undefined) {
+    // A row pinned to no id is never taken off the list on first sight (re-audit R-L4).
+    if (registry.assetId === null) {
+      throw new ReasonError('unsupported_asset', `this app has no 1Click id pinned for ${symbol} on ${network}, so it is not quoted`);
+    }
     const assetId = assetIdFor(network, registry.tokenId, list, registry.decimals);
     if (assetId === null) throw new ReasonError('unsupported_asset', `1click does not list ${symbol} on ${network}`);
     /* The list is signed by nobody, so a list that files this contract under another id would
@@ -255,6 +264,13 @@ export function resolveAsset(
     if (matches.length === 0) throw new ReasonError('unsupported_asset', `1click lists no native ${symbol} on ${network}`);
     if (matches.length > 1) {
       throw new ReasonError('ambiguous_asset', `1click lists ${matches.length} native ${symbol} on ${network}, so the app cannot tell which one is the coin`);
+    }
+    // The gas asset's id is pinned like a registry row's, so a list that files it elsewhere prices nothing.
+    if (spec.assetId !== undefined && matches[0]!.assetId !== spec.assetId) {
+      throw new ReasonError(
+        'simulation_failed',
+        `1click's coin list files ${symbol} on ${network} as ${oneLine(matches[0]!.assetId, 90)}, not the ${spec.assetId} this app pins, so nothing is quoted`,
+      );
     }
     return { kind: 'one', assetId: matches[0]!.assetId, decimals: spec.decimals, native: true, priceUsd: priceOf(matches[0]!) };
   }
