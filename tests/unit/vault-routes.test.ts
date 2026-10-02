@@ -32,6 +32,15 @@ import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK } from '../../src/preflight/route-health.ts';
 import type { RouteAsk, RouteHealth } from '../../src/preflight/route-health.ts';
+import { EventEmitter } from 'node:events';
+import type { ChildProcess } from 'node:child_process';
+import { useKeystore } from '../../src/keystore/index.ts';
+import { readApiWalletKey } from '../../src/runner/keys.ts';
+import { createRunnerHost } from '../../src/runner/host.ts';
+import { createSession } from '../../src/keystore/session.ts';
+import { createPlanStore } from '../../src/trade/plans.ts';
+import type { PlanRow } from '../../src/trade/plans.ts';
+import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -626,5 +635,125 @@ test('with no shell relaying, the enclave verbs say so and the password path is 
     assert.equal(status.enclave.ready, false);
   } finally {
     await new Promise<void>((r) => server.close(() => r()));
+  }
+});
+
+// ---------- a touch opens only what it was asked for ----------
+
+/* The runner the way src/main.ts wires it: an unlock the keystore announces starts reconcile,
+   which re-arms a plan whose signing session ended while locked and forks a child with the
+   trading key. The child here is a stand-in that records the key it was handed. */
+class RecordingChild extends EventEmitter {
+  connected = true;
+  stderr = null;
+  readonly keys: string[] = [];
+  readonly stdin = Object.assign(new EventEmitter(), {
+    write: (text: string): boolean => {
+      this.keys.push(String(text).trim());
+      return true;
+    },
+    end: (): void => {},
+  });
+  send(message: unknown): boolean {
+    const m = message as ToChild;
+    if (m.cmd === 'arm') setImmediate(() => this.emit('message', { ev: 'armed', seq: m.seq, id: m.plan.id } satisfies FromChild));
+    return true;
+  }
+  kill(): boolean {
+    this.connected = false;
+    return true;
+  }
+}
+
+const TRADING_KEY = `0x${'7a'.repeat(32)}` as const;
+
+async function walletWithLockedPlan(b: Awaited<ReturnType<typeof boot>>) {
+  assert.equal((await b.post('/api/vault/create', {})).json.ok, true);
+  b.keystore.updatePayload((p) => ({ ...p, hyperliquidAgents: { mainnet: { privateKey: TRADING_KEY, address: '0x3333333333333333333333333333333333333333' } } }));
+  b.keystore.lock();
+  useKeystore(b.keystore);
+  const store = createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-plans-')));
+  const at = new Date().toISOString();
+  store.put({
+    id: 'p1', symbol: 'SOL', side: 'long', sizeUsd: 100, leverage: 2, entry: { type: 'market', maxSlippageBps: 30 }, stop: 90,
+    when: [{ type: 'time', after: '2999-01-01T00:00:00.000Z' }], expiresAt: new Date(Date.now() + 3 * 86_400_000).toISOString(),
+    status: 'waiting', locked: true, hash: 'hash-p1', cloids: {}, gen: 0, createdAt: at, updatedAt: at,
+  } as PlanRow);
+  const children: RecordingChild[] = [];
+  const session = createSession({ isUnlocked: () => b.keystore.isUnlocked(), lock: () => b.keystore.lock() });
+  const runner = createRunnerHost({
+    apiWalletKey: async () => await readApiWalletKey(b.keysPath),
+    baseUrl: 'https://api.hyperliquid.xyz',
+    user: '0x2222222222222222222222222222222222222222',
+    killSwitch: () => false,
+    onEvent: () => {},
+    session,
+    store,
+    meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),
+    mark: () => 100,
+    free: () => 1000,
+    replyMs: 500,
+    forkImpl: (() => {
+      const child = new RecordingChild();
+      children.push(child);
+      return child as unknown as ChildProcess;
+    }) as never,
+  });
+  runner.onAccount({ atMs: Date.now(), freeUsd: 1000, positions: [], orders: [], fills: [] });
+  b.keystore.onChange((state) => {
+    if (state === 'unlocked') void runner.reconcile(1_000).catch(() => undefined);
+  });
+  return { runner, session, store, children };
+}
+
+test('"Show your deposit address" verifies the address and re-arms nothing: no runner, no trading key, no session', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await walletWithLockedPlan(b);
+    const shown = await b.post('/api/vault/unlock', { purpose: 'address' });
+    assert.equal(shown.json.ok, true, JSON.stringify(shown.json));
+    assert.ok(b.seen.includes('unwrap:Show your deposit address'));
+    assert.equal(b.keystore.addressReport().verified, true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(b.keystore.state(), 'locked');
+    assert.equal(b.keystore.keyHeld(), false, 'the touch read the payload once and kept nothing');
+    assert.equal(w.children.length, 0, 'no runner was started');
+    assert.equal(w.store.get('p1')?.locked, true, 'the plan still waits for an unlock');
+    assert.deepEqual(w.session.armed(), [], 'no signing session opened');
+    w.runner.stop();
+
+    // The unlock the person asks for is the one that re-arms it.
+    assert.equal((await b.post('/api/vault/unlock', {})).json.ok, true);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.deepEqual(w.children.map((c) => c.keys), [[TRADING_KEY]]);
+    assert.equal(w.store.get('p1')?.locked, undefined);
+  } finally {
+    useKeystore(null);
+    await b.close();
+  }
+});
+
+test('"Reveal your recovery phrase" shows the words and leaves a locked wallet locked, and the proof still works', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await walletWithLockedPlan(b);
+    const revealed = await b.post('/api/vault/reveal', {});
+    assert.equal(revealed.json.ok, true, JSON.stringify(revealed.json));
+    assert.equal(revealed.json.words.length, 12);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    assert.equal(b.keystore.state(), 'locked');
+    assert.throws(() => b.keystore.evmPrivateKey(), /locked/, 'no signature can be made off a reveal');
+    assert.equal(b.releases(), 0);
+    assert.equal(w.children.length, 0);
+    w.runner.stop();
+
+    const words: string[] = revealed.json.words;
+    const right = await b.post('/api/vault/backup-proven', { words: [{ index: 2, word: words[2] }, { index: 5, word: words[5] }, { index: 9, word: words[9] }] });
+    assert.equal(right.json.ok, true, 'proven against what the reveal left, with the wallet still locked');
+    const again = await b.post('/api/vault/backup-proven', { words: [{ index: 2, word: words[2] }, { index: 5, word: words[5] }, { index: 9, word: words[9] }] });
+    assert.equal(again.json.code, 'reveal_again', 'one reveal, one proof');
+  } finally {
+    useKeystore(null);
+    await b.close();
   }
 });

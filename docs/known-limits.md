@@ -21,7 +21,9 @@ Touch ID. But while the vault is open the unsealed key sits in the app's memory,
 what signs the moves you approved and the small ones your rules allow. The lock wipes it, and the
 lock comes after five minutes with nobody at the window (or the time you set in the Vault
 tab), when the Mac sleeps, when the screen locks or the Mac switches to another user, when you
-close the window, and when you press Lock now.
+close the window, and when you press Lock now. When the screen locks, the Mac switches user or the
+window closes, a move that has not been signed yet gets its signature first, two minutes at most,
+while nothing new starts.
 
 What it means: a program that can read the app's memory while the vault is open has the key.
 On macOS that takes a process running as you with the right to attach to another process, which

@@ -81,3 +81,10 @@ export function evmAddress(keysPath: string): `0x${string}` {
 export function isLocked(): boolean {
   return active !== null && active.state() === 'locked';
 }
+
+/* Whether a signature can still be made: true while open, and while a lock waits for signatures
+   already under way (Keystore.lockWhen), when isLocked() already answers true to everything that
+   would start something new. */
+export function keyHeld(): boolean {
+  return active !== null && active.keyHeld();
+}

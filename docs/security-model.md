@@ -38,7 +38,10 @@ section says exactly what that is.
 
 - **refuse**: nothing happens. The verdict carries a rule name and the reasons, both logged.
 - **needs_approval**: the proposal is persisted as pending and rendered in the approval gate with
-  its simulation result. Execution happens only after a human click.
+  its simulation result. Execution happens only after a human click. The engine runs again at the
+  click and, on an enclave wallet, once more when the Touch ID lands, right before anything signs:
+  a kill switch turned on while the dialog was up, a policy file that stopped loading, or other
+  approvals that spent the day's cap first refuse it then (`src/proposals/lifecycle.ts`).
 - **allow**: inside every cap and at or below the click threshold, so the app executes it and logs
   the verdict that permitted it.
 

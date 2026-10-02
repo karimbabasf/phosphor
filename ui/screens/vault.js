@@ -42,11 +42,13 @@
   var ASK_CHOICES = [25, 100, 500, 1000];
   var PROVE_COUNT = 3;
 
-  /* What the freeze does, from the code that runs it (src/main.ts setKill and
+  /* What the freeze does, from the code that runs it (src/kill.ts and
      src/runner/host.ts stopAll): every open position on the trading account is
      closed at the market price, every plan stops, and every write is refused
-     until it is turned off. The bar's panel (ui/screens/shell.js) says the same
-     thing, so the two ways to the same switch never disagree. */
+     until it is turned off. A position needs the trading key to close, and when
+     none is in reach the answer says which stayed open (doFreeze). The bar's
+     panel (ui/screens/shell.js) says the same thing, so the two ways to the same
+     switch never disagree. */
   var FREEZE = {
     off: {
       line: 'Stops every move at once.',
@@ -404,7 +406,12 @@
   function doFreeze(on) {
     window.PhosphorShell.setPending(refs.freezeGo, true);
     api.kill(on)
-      .then(function () { return window.PhosphorShell.refresh({}); })
+      .then(function (answer) {
+        /* A freeze with no trading key in reach closes no position, and
+           the answer says which stayed open (src/kill.ts). */
+        if (answer && answer.note) window.PhosphorToast.show(answer.note);
+        return window.PhosphorShell.refresh({});
+      })
       .then(function () { closeFreeze(true); })
       .catch(function (err) { say(refs.freezeError, net.readable(err)); })
       .finally(function () { window.PhosphorShell.setPending(refs.freezeGo, false); });
@@ -839,6 +846,14 @@
       api.vaultBackupProven(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            /* The words in this row were shown long enough ago that the app no
+               longer holds them to check against (or it restarted): the row
+               closes and Back it up shows them again. */
+            if (answer.code === 'reveal_again') {
+              wipePhrase();
+              window.PhosphorToast.show(answer.error || 'Show your words once more with Back it up, then type three of them back.');
+              return;
+            }
             if (answer.code === 'wrong_words') {
               misses += 1;
               if (misses >= 2) {

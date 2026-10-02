@@ -98,12 +98,17 @@ key until that session ends, so a bot that outlives a lock holds trading authori
 It can place the entry it was armed for and its exits; it cannot move money out.
 
 A plan whose session has ended while the wallet is locked waits as Needs unlock and re-arms when
-you unlock. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
+you unlock. Only Unlock re-arms it: showing an address, revealing the phrase or approving a move
+with Touch ID does not. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
 nothing fires until they are back.
 
 Freeze everything in the top bar ends all of it: every plan is finished, resting orders are
 cancelled, and every open position on the account is closed at the market price when the venue
-can be reached. A position that does not close keeps its stop and target resting.
+can be reached. A position that does not close keeps its stop and target resting. Closing takes
+the trading key, which a running plan holds and an open wallet hands over: with neither (the
+wallet locked and no plan running, or no trading key for the account) nothing on Hyperliquid can
+be closed, the freeze still stops everything else, and the window says the positions are still
+open.
 See [Getting started](getting-started.md#freeze-everything).
 
 ## Reading the account

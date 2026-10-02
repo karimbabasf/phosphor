@@ -1,8 +1,9 @@
-// The lock the shell takes on its way out: POST /api/lock with whenIdle, which the backend
-// decides in one step, locking only while no move is being sent.
+// The lock the shell takes on its way out and when the person steps away: POST /api/lock with
+// whenIdle, which the backend decides in one step: at once, unless a move has not signed yet, and
+// then the wallet is shut and the key goes the moment that signature is made.
 //
-// A rail mid-flight reads the key through keystore.keys(), which throws once the wallet is
-// locked, so a lock landing under it cuts the move partway: the one thing the drain in
+// A rail mid-flight reads the key from the keystore, which refuses once the wallet is locked, so
+// a lock landing before its signature cuts the move partway: the one thing the drain in
 // src/shutdown.ts exists to prevent. Two paths put a lock there. The quit read /api/health and
 // then posted the lock, two requests with room between them for a move to start; and the window
 // closing while a quit drained posted a plain lock with no check at all. Here the route is
@@ -21,7 +22,7 @@ import type { Ctx } from '../../src/http/context.ts';
 const TOKEN = 't'.repeat(64);
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 
-type World = { rows: Array<Record<string, unknown>>; locks: number; audit: string[] };
+type World = { rows: Array<Record<string, unknown>>; locks: number; audit: string[]; closing: string[] };
 
 function ctxOf(world: World): Ctx {
   let state: 'locked' | 'unlocked' = 'unlocked';
@@ -36,6 +37,13 @@ function ctxOf(world: World): Ctx {
         state = 'locked';
         return was;
       },
+      // The real one is tests/unit/lock-when-signed.test.ts; this records the ask.
+      lockWhen: (key: string) => {
+        world.closing.push(key);
+        state = 'locked';
+        return true;
+      },
+      isUnlocked: () => state === 'unlocked',
       state: () => state,
     },
     sse: { broadcastLock: () => {}, broadcastState: () => {} },
@@ -58,22 +66,34 @@ async function lock(world: World, body: Record<string, unknown>): Promise<{ stat
   }
 }
 
-const row = (id: string, status: string) => ({ id, kind: 'swap', status, createdAt: '2026-09-25T10:00:00Z' });
+const row = (id: string, status: string, result?: Record<string, unknown>) => ({ id, kind: 'swap', status, createdAt: '2026-09-25T10:00:00Z', ...(result === undefined ? {} : { result }) });
 
-test('a lock asked for when idle is refused while a move is being sent, and the wallet keeps its key', async () => {
-  const world: World = { rows: [row('p-1', 'executing'), row('p-2', 'executed')], locks: 0, audit: [] };
+test('a lock asked for when idle while a move has not signed yet shuts the wallet and waits for that signature', async () => {
+  const world: World = { rows: [row('p-1', 'executing'), row('p-2', 'executed')], locks: 0, audit: [], closing: [] };
   const answer = await lock(world, { reason: 'quitting', whenIdle: true });
   assert.equal(answer.status, 200, 'a refusal is an answer, the way every custody refusal is');
   assert.equal(answer.json.ok, false);
-  assert.equal(answer.json.code, 'busy');
+  assert.equal(answer.json.code, 'busy', 'a quit still waits on its drain');
   assert.equal(answer.json.executing, 1);
-  assert.match(answer.json.error, /being sent/);
-  assert.equal(world.locks, 0, 'the keystore was never asked to lock under the move');
-  assert.deepEqual(world.audit, []);
+  assert.match(answer.json.error, /being signed/);
+  assert.equal(world.locks, 0, 'the key is not wiped under the signature');
+  assert.deepEqual(world.closing, ['when-idle'], 'the wallet closes behind it instead of staying open');
+  assert.equal(world.audit.length, 1);
+  assert.match(world.audit[0], /^the wallet was shut \(quitting\); its key goes as soon as the move already signing has a signature/);
+});
+
+test('a lock asked for when idle locks at once while a move only waits for its delivery', async () => {
+  const watching = row('p-1', 'executing', { ok: false, detail: 'submitted, waiting for the venue', txids: ['0xabc'] });
+  const world: World = { rows: [watching, row('p-2', 'executed'), row('p-3', 'pending')], locks: 0, audit: [], closing: [] };
+  const answer = await lock(world, { reason: 'the screen locked', whenIdle: true });
+  assert.equal(answer.json.ok, true);
+  assert.equal(world.locks, 1);
+  assert.deepEqual(world.closing, []);
+  assert.deepEqual(world.audit, ['the wallet was locked (the screen locked)']);
 });
 
 test('a lock asked for when idle locks once nothing is being sent, with its reason in the log', async () => {
-  const world: World = { rows: [row('p-2', 'executed'), row('p-3', 'pending')], locks: 0, audit: [] };
+  const world: World = { rows: [row('p-2', 'executed'), row('p-3', 'pending')], locks: 0, audit: [], closing: [] };
   const answer = await lock(world, { reason: 'quitting', whenIdle: true });
   assert.equal(answer.json.ok, true);
   assert.equal(world.locks, 1);
@@ -81,7 +101,7 @@ test('a lock asked for when idle locks once nothing is being sent, with its reas
 });
 
 test('the person\'s own Lock is never refused, move or no move', async () => {
-  const world: World = { rows: [row('p-1', 'executing')], locks: 0, audit: [] };
+  const world: World = { rows: [row('p-1', 'executing')], locks: 0, audit: [], closing: [] };
   const answer = await lock(world, {});
   assert.equal(answer.json.ok, true);
   assert.equal(world.locks, 1);

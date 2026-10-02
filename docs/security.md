@@ -88,6 +88,13 @@ login password, and each click on a proposal ends in a Touch ID dialog whose sen
 composes from the proposal's numbers: the amount, the receiver shortened to eight characters at
 each end (a NEAR name whole), the chain. No agent-written text reaches that dialog. Read it before you confirm.
 
+A Touch ID or a password opens only what it was asked for. "Show your deposit address" verifies
+the address, and "Reveal your recovery phrase", or the password typed to see the words, shows the
+words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
+nothing waiting for an unlock runs. The Touch ID that approves a move on a locked wallet opens it
+for that move alone: nothing else can start while it signs, and the key goes as soon as it has.
+Only Unlock opens the wallet for the session.
+
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows;
 the lock wipes it. And every build so far, the signed releases included, binds the enclave key to
@@ -182,7 +189,9 @@ node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --st
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab
 offers 5 minutes, 15 minutes or 1 hour), when the Mac sleeps, when the screen locks or the Mac
-switches to another user, and when you close the window. A move being sent finishes first, and a
+switches to another user, and when you close the window. When the screen locks, nothing new can
+start from that moment; a move that has not been signed yet gets its signature first (two minutes
+at most), and then the key goes. A move the venue is still delivering does not hold the lock, and a
 move waiting for your click stays on its card. Locked, the key is gone from memory and the window is frosted. Reads still work. A proposal made
 while locked is drafted, priced and checked, and its card says Unlock to decide; when you
 unlock, it is decided again and lands as something to click. An unlock is never an approval,

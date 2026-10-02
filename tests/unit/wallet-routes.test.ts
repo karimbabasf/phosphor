@@ -655,21 +655,26 @@ test('a wrong password on a backup still refuses, and still counts toward the ba
   }
 });
 
-test('a reveal from behind the lock announces the unlock and releases what was queued', async () => {
+/* A password typed to see the words shows the words and opens nothing. The reveal used to be a
+   full unlock, announced, releasing the queue: the wallet then stayed open for signing until the
+   idle lock on a password the window asked for in order to show twelve words. */
+test('a reveal from behind the lock shows the words and leaves the wallet locked, releasing nothing', async () => {
   const b = await boot();
   try {
-    await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
+    const made = await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
     await b.post('/api/lock', { token: b.token });
 
     const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'mnemonic' });
     assert.equal(start.json.ok, true);
-    assert.equal(b.keystore.state(), 'unlocked', 'the handshake needs the wallet open, and it says so');
-    assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
+    assert.equal(b.keystore.state(), 'locked', 'the password proved the person, and opened nothing');
+    assert.equal((await b.get('/api/state')).json.lock.state, 'locked');
 
-    // The queue is released in the background: this response carries a nonce that dies in
-    // thirty seconds, and releasing a queue means sending a rail apiece.
-    await waitFor(() => b.releases() === 1, 'the queue behind the lock was never released');
-    assert.equal(b.releases(), 1);
+    const words = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(words.status, 200, 'the material was read under the password, so the GET needs no open wallet');
+    assert.deepEqual(words.json.mnemonic, made.json.mnemonic);
+    assert.equal(b.keystore.state(), 'locked');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(b.releases(), 0, 'nothing queued behind the lock was released');
   } finally {
     await b.close();
   }

@@ -261,7 +261,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
     vaultMigrate: (password: string) => { calls.push({ route: '/api/vault/migrate', password }); return Promise.resolve(answer.migrate); },
     vaultPrefs: (prefs: Any) => { calls.push(Object.assign({ route: '/api/vault/prefs' }, prefs)); return Promise.resolve(answer.prefs); },
-    kill: (on: boolean) => { calls.push({ route: '/api/kill', on }); return answer.kill ? Promise.reject(new Error(answer.kill)) : Promise.resolve({ ok: true }); },
+    kill: (on: boolean) => { calls.push({ route: '/api/kill', on }); return answer.kill ? Promise.reject(new Error(answer.kill)) : Promise.resolve(answer.killAnswer || { ok: true }); },
     lock: () => { calls.push({ route: '/api/lock' }); return Promise.resolve({ ok: true }); },
     revealStart: (password: string, what: string) => { calls.push({ route: '/api/wallet/reveal', password, what }); return Promise.resolve(answer.revealStart); },
     revealFetch: (nonce: string) => { calls.push({ route: '/api/wallet/reveal/' + nonce }); return Promise.resolve(answer.revealFetch); },
@@ -424,6 +424,22 @@ test('frozen, the row reads frozen before a word is read, and its way back is pl
   assert.ok(go, 'no Unfreeze in the step');
   assert.ok(!go.className.includes('btn-danger'), 'the way back is red');
   assert.ok(find(step, 'button').some((b: Any) => b.textContent === 'Keep frozen'));
+});
+
+/* A position needs the trading key to close. A freeze with none in reach still freezes, and the
+   answer's note (src/kill.ts) is said once, so the step that promised the close is not the last
+   word on positions that stayed open. */
+test('a freeze that could not close the trading positions says so once it lands', async () => {
+  const world = build();
+  const note = 'Frozen. Your trading positions are still open, because Phosphor has no trading key for this account; close them on Hyperliquid.';
+  world.answer.killAnswer = { ok: true, killSwitch: true, note };
+  const freeze = row(world, 'freeze');
+  buttonNamed(find(freeze, '.vault-row-act')[0], 'Freeze everything').click();
+  find(find(freeze, '.vault-confirm')[0], 'button')[1].click();
+  await flush();
+  await flush();
+  assert.deepEqual(world.toasts, [note]);
+  assert.ok(world.calls.some((c) => c.route === 'refresh'));
 });
 
 test('a freeze the app refuses says why in the step, in words', async () => {
@@ -726,6 +742,25 @@ test('Done, a lock, or leaving the tab wipes the words', async () => {
   assert.equal(find(flow(world), '.word').length, 24);
   world.put({ lock: { state: 'locked', idleLocksInSec: null } });
   assert.equal(find(flow(world), '.word').length, 0, 'the words stayed on a locked window');
+});
+
+/* The reveal opens nothing, so the proof is checked against what the reveal left in the app for
+   half an hour. Past that (or after a restart) the backend says to show the words again: the row
+   closes so Back it up is there to press, and the sentence says so once. */
+test('a proof the app can no longer check closes the row and says to show the words again', async () => {
+  const world = build();
+  world.answer.proven = () => ({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote them down').click();
+  const panel = flow(world);
+  find(panel, 'input').forEach((input: Any) => { input.value = WORDS[Number(input.dataset.index)]; });
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
+  assert.equal(find(flow(world), '.word').length, 0);
+  assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
+  assert.ok(backup(world).startsWith('Not backed up yet.'));
 });
 
 test('a cancelled Touch ID on the reveal shows nothing and says nothing', async () => {

@@ -98,6 +98,8 @@ On an enclave wallet the phrase is not shown at first run. Open the Vault tab: u
 Recovery phrase row has Back it up. Touch ID shows the words in that row only. Write them down
 somewhere that is not this Mac, click I wrote them down, then Prove it and type three of the
 words back by their number. Only that turns the row's line from Not backed up yet to Backed up.
+Showing the words does not open the wallet. Type them back within half an hour; after that, Back
+it up shows them again first.
 
 Until then a line at the foot of the window says Recovery phrase not backed up, with Back it up
 beside it, and the first deposit that lands reminds you once more. The Vault tab refuses to
@@ -147,8 +149,13 @@ unfreeze."
 Frozen, the button reads Frozen and the policy reads "KILL SWITCH ON: all writes refused." Every
 proposal is refused until you unfreeze, whatever its size. The app also cancels resting orders,
 ends every plan, and closes every open position on your Hyperliquid account when it can reach the
-venue, including one you opened somewhere else. Money does not leave the app. Check the Trade tab
-afterwards, see [Trading](trading.md).
+venue, including one you opened somewhere else. Closing a position takes the trading key; when
+the app has none in reach, the positions stay open and the window says so. Money does not leave
+the app. Check the Trade tab afterwards, see [Trading](trading.md).
+
+If the policy file cannot be read, Freeze still stops every plan, and every move is refused anyway
+while the file is unreadable; the window says the switch itself was not saved. Unfreeze is refused
+until the file is fixed.
 
 ## The Help menu
 
