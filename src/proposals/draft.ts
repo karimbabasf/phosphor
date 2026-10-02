@@ -263,7 +263,7 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
 
   if (ask !== undefined && ask !== null && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, ask] };
 
-  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
+  if (verdict.outcome === 'refuse') return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 
   if (rail === null) {
     return land(ctx, 
@@ -304,7 +304,24 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     );
   }
 
-  return land(ctx, newProposal(kind, draft, simulation, verdict, origin));
+  return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
+}
+
+/* THE COINS THE CARD WAS PRICED WITH, pinned into the draft that lands. The rail reads 1Click's
+   token list again at execute, and that list is signed by nobody: execute signs for the coins
+   pinned here and refuses a list that names anything else for them (src/rails/asset-pin.ts). */
+function pinned(draft: RailDraft, simulation: SimulationResult | null): RailDraft {
+  const assets = simulation?.ok === true ? simulation.assets : undefined;
+  if (assets === undefined) return draft;
+  switch (draft.kind) {
+    case 'swap':
+    case 'intents_send':
+    case 'intents_pay':
+    case 'hl_deposit':
+      return { ...draft, assets };
+    default:
+      return draft;
+  }
 }
 
 /* Why a simulation did not pass, as the rail named it: the price moved, nobody quoted, the

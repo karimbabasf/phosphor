@@ -55,6 +55,11 @@ function draft(over: Partial<HlDepositDraft> = {}): HlDepositDraft {
     from: ACCOUNT,
     hlAccount: SELF,
     counterparty: HYPERCORE_COUNTERPARTY,
+    // The coins the card priced, pinned when the proposal landed (src/proposals/draft.ts).
+    assets: {
+      origin: { assetId: over.originAsset ?? ETH_USDC, decimals: 6 },
+      destination: { assetId: HYPERCORE_USDC_ASSET_ID, decimals: HYPERCORE_USDC_DECIMALS },
+    },
     ...over,
   };
 }
@@ -122,6 +127,8 @@ type ApiOverrides = {
   // Applied to the quote response AFTER it is signed: what a proxy between this app and the
   // API would do to it. Left out, the response arrives as signed.
   tamper?: (signed: Record<string, unknown>) => Record<string, unknown>;
+  // The token list as 1Click answers it at each read: a list that changes between the card and the click.
+  tokens?: (list: OneClickToken[]) => OneClickToken[];
 };
 
 type ApiCalls = { quotes: IntentsQuoteParams[]; generated: unknown[]; signed: string[]; submitted: unknown[] };
@@ -135,7 +142,7 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
       : [{ assetId: HYPERCORE_USDC_ASSET_ID, decimals: over.assetDecimals ?? HYPERCORE_USDC_DECIMALS, blockchain: 'hypercore', symbol: 'USDC' }]),
   ];
   const api: IntentsApiPort = {
-    tokens: async () => list,
+    tokens: async () => over.tokens?.(list) ?? list,
     async quote(params) {
       calls.quotes.push(params);
       const unsigned: Record<string, unknown> = { quote: quoteOf(over.quote) };
@@ -919,4 +926,31 @@ test('a generate-intent error that says "not available" keeps its own words, and
   assert.notEqual(result.reason, 'route_closed');
   assert.match(result.detail, /generate-intent failed: intents are not available for this signer\. Nothing was signed\./);
   assert.equal(calls.signed.length, 0);
+});
+
+// ---------- the coin the card priced is the coin that moves ----------
+
+test('a token list that counts the spent coin in other decimals after the click refuses the deposit before any live quote', async () => {
+  // 6 decimals on the card; 8 at the click would sign a transfer of a hundred times the amount.
+  let changed = false;
+  const { rail: r, calls } = rail({ tokens: (list) => (changed ? list.map((t) => (t.assetId === ETH_USDC ? { ...t, decimals: 8 } : t)) : list) });
+  const d = draft();
+  const sim = await r.simulate(d);
+  assert.equal(sim.ok, true, sim.summary);
+  assert.deepEqual(sim.assets, d.assets, 'the card priced exactly the coins the proposal pins');
+  changed = true;
+  const out = await r.execute(d);
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /counts USDC in 8 decimals, not the 6 this move was priced and approved with, so nothing was signed/);
+  assert.equal(calls.quotes.filter((q) => q.dry === false).length, 0, 'no live quote is asked for');
+  assert.equal(calls.signed.length, 0);
+});
+
+test('a deposit approved before its coins were pinned is not run', async () => {
+  const { rail: r, calls } = rail();
+  const { assets: _pinned, ...unpinned } = draft();
+  const out = await r.execute(unpinned);
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /approved before Phosphor pinned the coins it moves/);
+  assert.equal(calls.quotes.length, 0);
 });

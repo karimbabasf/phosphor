@@ -47,6 +47,7 @@ import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '..
 import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
+import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { describeHeld, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { isNearAccountId, nearChainSpec } from '../chain/near.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
@@ -185,7 +186,8 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
     requireVenue(draft);
     const owner = requireOwner(draft);
     const to = requireReceiver(draft, owner);
-    const asset = findAsset(await api.tokens(), draft);
+    const listed = findAsset(await api.tokens(), draft);
+    const asset = heldToPin(draft.assets?.origin, { assetId: listed.assetId, decimals: listed.decimals }, draft.symbol);
     return {
       asset: asset.assetId,
       decimals: asset.decimals,
@@ -297,7 +299,8 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
       }
       lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the receiver inside the verifier');
       lines.push(`the receiver ${p.to} is named by the draft and shown in full on the card; this send always waits for your click`);
-      return { ok: true, summary: lines.join('\n'), send };
+      const coin = { assetId: p.asset, decimals: p.decimals };
+      return { ok: true, summary: lines.join('\n'), send, assets: { origin: coin, destination: coin } };
     } catch (err) {
       const message = errText(err);
       return { ok: false, summary: `intents send simulation failed: ${message}`, error: message };
@@ -305,6 +308,7 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
   }
 
   async function execute(draft: IntentsSendDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+    pinnedAssets(draft.assets);
     const p = await plan(draft);
     const owner = requireOwner(draft);
     const before = await receiverBalance(p.to, p.asset);
