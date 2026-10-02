@@ -103,7 +103,8 @@ async function startApp(): Promise<Backend> {
   const until = Date.now() + 40_000;
   while (Date.now() < until) {
     try {
-      const res = await fetch(`${base}/api/state`);
+      // Every read needs a credential since the read gate (src/http/read-gate.ts); this one carries the window's.
+      const res = await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } });
       if (res.ok) return backend;
     } catch {
       // not listening yet
