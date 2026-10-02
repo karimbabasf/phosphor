@@ -1359,7 +1359,8 @@ fn watch(app: tauri::AppHandle, paths: Paths, port: u16) {
                         }
                     });
                     start_enclave_relay(&app, port, &hand, generation);
-                    session_watch::backend_up(port, &hand.token);
+                    let up = app.clone();
+                    session_watch::backend_up(port, &hand.token, move || up.state::<Backend>().alive(generation));
                 } else {
                     let back = app.clone();
                     let _ = back.clone().run_on_main_thread(move || {
@@ -1467,8 +1468,10 @@ fn start(app: &tauri::AppHandle, found: Launch) -> Result<(), Failure> {
                 });
                 update::schedule(&handle);
                 start_enclave_relay(&handle, port, &hand, generation);
-                // From here a screen lock or a switch to another user locks the wallet.
-                session_watch::backend_up(port, &hand.token);
+                // From here a screen lock or a switch to another user locks the wallet, posted only
+                // while this spawn still runs.
+                let up = handle.clone();
+                session_watch::backend_up(port, &hand.token, move || up.state::<Backend>().alive(generation));
                 watch(handle, paths, port);
                 return;
             }
