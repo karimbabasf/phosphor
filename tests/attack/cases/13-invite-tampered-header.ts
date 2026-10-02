@@ -9,10 +9,10 @@
 // Everything runs in demo mode against the in-memory invite world; the attacker key is throwaway.
 
 import fs from 'node:fs';
+import path from 'node:path';
 
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
-import { tmpDir, fakeHome } from '../harness.ts';
 import { makeCode, writeWorld, bootInvite, waitFor, inviteState, findKeystore, claimRecords, filesUnder } from '../invite-kit.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
@@ -33,8 +33,11 @@ export const attack: AttackCase = {
     const attacker = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
     const codeA = makeCode();
     const codeB = makeCode();
-    const home = fakeHome();
-    const dataDir = tmpDir('data');
+    // Both boots share these, in the case's scratch: the runner removes it on a pass, keeps it on a FAIL.
+    const home = path.join(ctx.scratch, 'home');
+    const dataDir = path.join(ctx.scratch, 'data');
+    fs.mkdirSync(home);
+    fs.mkdirSync(dataDir);
     const rows: string[] = [];
     const problems: string[] = [];
 

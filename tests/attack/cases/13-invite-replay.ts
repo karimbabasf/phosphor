@@ -8,8 +8,9 @@
 //   4. a restart on the same data dir re-signs nothing: the done record is left as it was.
 // The verifier-side half (a signed claim replayed with any field changed) is 13-invite-replay-sim.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { makeCode, writeWorld, bootInvite, waitFor, inviteState, claimRecords, filesUnder } from '../invite-kit.ts';
-import { tmpDir, fakeHome } from '../harness.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
 export const attack: AttackCase = {
@@ -18,8 +19,11 @@ export const attack: AttackCase = {
   timeoutMs: 150_000,
   async run(ctx: AttackCtx): Promise<AttackResult> {
     const c = makeCode();
-    const home = fakeHome();
-    const dataDir = tmpDir('data');
+    // Both boots share these, in the case's scratch: the runner removes it on a pass, keeps it on a FAIL.
+    const home = path.join(ctx.scratch, 'home');
+    const dataDir = path.join(ctx.scratch, 'data');
+    fs.mkdirSync(home);
+    fs.mkdirSync(dataDir);
     const rows: string[] = [];
     const problems: string[] = [];
     const body = (app: { token: string }) => ({ token: app.token, code: c.code });

@@ -511,7 +511,11 @@ from is a place money can be sent and stranded.
 The wallet locks after five minutes with nobody at the window (or the time picked in the Vault
 tab), when the machine wakes from a sleep of more than a minute (the backend's fifteen-second tick
 sees the gap; the key stays in memory while the Mac sleeps), when the screen locks or the Mac
-switches to another user, when the window closes, and on demand. `/api/state` says why on its lock slice: `lock.reason` is one of
+switches to another user, when the window closes, and on demand. The shell hears the screen lock
+as macOS's `com.apple.screenIsLocked`, and also as
+`com.karimbabasf.phosphor.test.screenIsLocked.<its pid>`, the same signal addressed to that one
+shell, which tests post so no other app hears it (any process that can post one can post the
+other, and both only lock). `/api/state` says why on its lock slice: `lock.reason` is one of
 `screen`, `switch`, `idle` or `sleep`, or null for Lock now, a quit, the window closing and the
 app's start, and `lock.waiting` counts the moves waiting for a person. The words a caller sent
 with its lock are never kept. Locked, every read still works, and every write proposal an

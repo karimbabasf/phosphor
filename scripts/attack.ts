@@ -4,6 +4,9 @@
 //   npm run attack                 the ad-hoc build this repo makes; SIGNED-ONLY cases skipped
 //   npm run attack -- --app <.app> add a Developer ID build for the SIGNED-ONLY cases
 //   npm run attack -- --only 06    run one case (prefix match on the id)
+//   npm run attack -- --real-screen-lock
+//                                  10-screen-lock-shell posts com.apple.screenIsLocked, which every
+//                                  app on this Mac receives, instead of the shell's own name for it
 //
 // Each case boots a real app on a throwaway data dir and a throwaway HOME, plays the hostile local
 // process, and reports expected vs observed with one evidence line. Exit 1 on any unexpected result.

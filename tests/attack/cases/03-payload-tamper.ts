@@ -11,7 +11,7 @@
 import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-import { launchShell } from '../harness.ts';
+import { launchShell, teamOf } from '../harness.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
 function digestVerdict(app: string): { different: boolean; out: string } {
@@ -32,6 +32,15 @@ export const attack: AttackCase = {
   async run(ctx: AttackCtx): Promise<AttackResult> {
     const src = ctx.builtApp ?? ctx.signedApp;
     if (!src) return { expected: '', observed: '', pass: true, evidence: '', skipped: 'no build' };
+    if (teamOf(src)) {
+      return {
+        expected: '',
+        observed: '',
+        pass: true,
+        evidence: '',
+        skipped: 'the only build here is Developer ID signed, and macOS answers a changed copy of it with a "damaged" alert that waits for a person; npm run app:build makes the ad-hoc build this case tampers',
+      };
+    }
 
     const copy = path.join(ctx.scratch, 'Phosphor.app');
     const cp = spawnSync('/bin/cp', ['-R', src, copy], { encoding: 'utf8' });

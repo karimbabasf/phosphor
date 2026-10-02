@@ -371,9 +371,12 @@ jobs:
             ${{ env.RELEASE_DIR }}/Phosphor-macOS-arm64.dmg
             ${{ env.RELEASE_DIR }}/Phosphor_${{ env.VERSION }}_aarch64.app.tar.gz
 
-      # The release page's text, written here so the publish job needs no checkout.
+      # The release page's text, written here so the publish job needs no checkout. Each command
+      # hashes one file by its bare name, so what it prints is that file's SHA256SUMS line exactly.
       - name: Write the release notes
         run: |
+          sum() { awk -v name="$1" '$2 == name { print; found = 1 } END { exit !found }' "$RELEASE_DIR/SHA256SUMS"; }
+          tarball="Phosphor_${VERSION}_aarch64.app.tar.gz"
           {
             echo "## Phosphor $VERSION for Mac (Apple silicon)"
             echo
@@ -383,13 +386,25 @@ jobs:
             echo "**Verify the download** before opening it. In Terminal:"
             echo
             echo '```'
-            echo "shasum -a 256 ~/Downloads/Phosphor-macOS-arm64.dmg"
+            echo "cd ~/Downloads && shasum -a 256 Phosphor-macOS-arm64.dmg"
             echo '```'
             echo
             echo "It must print exactly:"
             echo
             echo '```'
-            cat "$RELEASE_DIR/SHA256SUMS"
+            sum Phosphor-macOS-arm64.dmg
+            echo '```'
+            echo
+            echo "The update archive, the file installed copies download, has its own line. To check it, download it from this page too, then:"
+            echo
+            echo '```'
+            echo "cd ~/Downloads && shasum -a 256 $tarball"
+            echo '```'
+            echo
+            echo "It must print exactly:"
+            echo
+            echo '```'
+            sum "$tarball"
             echo '```'
             echo
             echo "**Check where it was built.** With the GitHub CLI (\`brew install gh\`):"

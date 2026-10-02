@@ -127,13 +127,17 @@ test('every lock the shell sends on its way out is the backend\'s own when-idle 
 /* The person stepping away locks the wallet: macOS's screen lock and a switch to another user,
    watched by the shell (src-tauri/src/session_watch.m) and sent as the same when-idle lock. The
    chain itself runs end to end in cargo test against the staged backend; this holds the names
-   the app watches for, which that test swaps for a name of its own. */
+   the app watches for. Beside the system's, the shell hears the same signal addressed to its own
+   process id, which that test and the attack suite post so no other app on the Mac hears it. */
 test('a screen lock and a switch to another user send the when-idle lock, from the moment the backend answers', () => {
   const watch = read('../../src-tauri/src/session_watch.rs');
   const objc = read('../../src-tauri/src/session_watch.m');
   const shell = read('../../src-tauri/src/main.rs');
+  const attack = read('../attack/cases/10-screen-lock-shell.ts');
   assert.match(watch, /pub const SCREEN_LOCKED: &str = "com\.apple\.screenIsLocked";/);
-  assert.match(watch, /watch_for\(SCREEN_LOCKED\)/);
+  assert.match(watch, /watch_for\(SCREEN_LOCKED, &screen_locked_here\(std::process::id\(\)\)\)/);
+  assert.match(watch, /format!\("com\.karimbabasf\.phosphor\.test\.screenIsLocked\.\{pid\}"\)/);
+  assert.match(attack, /'com\.karimbabasf\.phosphor\.test\.screenIsLocked\.'/, 'the attack suite posts the name the shell hears');
   assert.match(watch, /post_lock_when_idle\(port, token, reason\)/);
   assert.match(objc, /addObserverForName:NSWorkspaceSessionDidResignActiveNotification/);
   assert.match(objc, /NSDistributedNotificationCenter defaultCenter\] addObserverForName:name/);
