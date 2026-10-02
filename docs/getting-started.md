@@ -81,7 +81,11 @@ use, see [Connect an agent](connect-an-agent.md).
 Without an enclave, the app asks you to make a new wallet or bring one in with its recovery
 words. Set a password of at least eight characters. Nobody can reset it, not the app and not your
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
-by their number before it goes on.
+by their number before it goes on. Take as long as writing them down takes. If Phosphor locks
+meanwhile, after five quiet minutes or when your screen locks, the lock card covers the words;
+unlock and you are back on the same step. Prove it checks your three words however long ago the
+words were shown: past half an hour, or after five wrong tries, it reads them again from the
+wallet with the password you just set.
 
 Near the end, When should it ask you? sets the click threshold for this wallet: type an amount,
 or pick $25, $100, $500 or $1,000. The shipped default is $100. You can change it any time in the

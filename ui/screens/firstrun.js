@@ -981,9 +981,10 @@
     return out.sort(function (a, b) { return a - b; });
   }
 
-  /* 4. Prove it: three words typed back and checked by the app against the
-     phrase it holds, the check that marks the wallet backed up. A miss says
-     so; two misses show the words again with a line that says why. */
+  /* 4. Prove it: three words typed back and checked by the app against what
+     showing them left behind (src/vault/phrase-proof.ts), the check that
+     marks the wallet backed up. A miss says so; two misses show the words
+     again with a line that says why. */
   function screenProve() {
     card.appendChild(dom.el('h1', 'title', 'Prove it'));
     card.appendChild(dom.el('p', 'body dim', 'Type three of your words back, by their number.'));
@@ -1016,7 +1017,7 @@
       }
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
-      api.vaultBackupProven(words)
+      proveWords(words)
         .then(function (answer) {
           if (answer && answer.ok === false) {
             if (answer.code !== 'wrong_words') return fail(error, answer.error || 'That did not work.');
@@ -1034,6 +1035,32 @@
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
     }, { pending: 'Checking' });
+  }
+
+  /* The app keeps what Prove it checks against for half an hour and five
+     misses, and a person writing twenty-four words down slowly can outlast
+     either. It then answers reveal_again, and this card has no Back it up to
+     send them to: the words are read again under the password set two steps
+     back, which leaves a fresh check, and the same three are asked once more.
+     That read is the Vault's own Back it up, password and all, so it gives
+     the check no try that a person without the password could use. */
+  function proveWords(words) {
+    return api.vaultBackupProven(words).then(function (answer) {
+      if (!answer || answer.code !== 'reveal_again' || !draft.password) return answer;
+      return readAgain().then(function (read) {
+        return read && read.ok === false ? read : api.vaultBackupProven(words);
+      });
+    });
+  }
+
+  /* Spent at once, so no reveal waits in the app for its timer; the words it
+     brings back are the ones this card already holds. */
+  function readAgain() {
+    var spent = function () { return { ok: true }; };
+    return api.revealStart(draft.password, 'mnemonic').then(function (answer) {
+      if (!answer || answer.ok === false) return answer || { ok: false };
+      return api.revealFetch(answer.nonce).then(spent, spent);
+    });
   }
 
   /* The import path's own step: the phrase, 12 or 24 words, in a box that

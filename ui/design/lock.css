@@ -34,6 +34,23 @@ body[data-firstrun="true"] #page {
   visibility: hidden;
 }
 
+/* A lock while the first run is up, the idle lock or the screen lock while
+   the words are being written down, puts the lock card in front of it. Both
+   are screens at one height and the first run comes later in the page, so it
+   painted over the card it belongs behind: the words stayed on screen with
+   nobody at the desk, and the unlock field under them held the keyboard.
+   Hidden at once, so no word fades out slowly; it comes back on the step it
+   was on as the card goes. */
+#screen-firstrun {
+  transition: opacity var(--dur-release) var(--ease-out);
+}
+
+#screen-lock:not([hidden]) ~ #screen-firstrun {
+  visibility: hidden;
+  opacity: 0;
+  transition: none;
+}
+
 /* The scrim finishes the job the blur starts: sixty percent of the ground
    over the frosted page, so a 44 px balance is a tint and not a shape. The
    ground's own warm charcoal, never pure black, so the locked window is the

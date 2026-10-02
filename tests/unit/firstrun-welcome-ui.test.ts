@@ -798,3 +798,83 @@ test('two misses on Prove it show the words again with the line that says why', 
   assert.ok(textOf(screen).includes('Two tries did not match. Check your copy, then try again.'));
   assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 2);
 });
+
+/* The app keeps what Prove it checks against for half an hour and five misses. Past either it
+   answers reveal_again, and this card has no Back it up: the words are read again under the
+   password set on the password step, and the same three are asked once more. */
+async function toProve(world: World): Promise<Any> {
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'Continue').click();
+  const fields = find(screen, 'input.input');
+  fields[0].value = 'longenough';
+  fields[1].value = 'longenough';
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const tick = find(screen, 'input').find((n: Any) => n.type === 'checkbox') as Any;
+  tick.checked = true;
+  tick.dispatch('change');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Prove it'));
+  for (const field of find(screen, 'input.input')) field.value = MNEMONIC[Number(field.dataset.index)];
+  return screen;
+}
+
+test('Prove it after the app let its check go reads the words again under the password and asks once more', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  let held = false;
+  api.vaultBackupProven = (words: Any[]) => {
+    world.calls.push({ route: '/api/vault/backup-proven', words });
+    return Promise.resolve(held ? { ok: true } : { ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  };
+  api.revealStart = (password: string, what: string) => {
+    world.calls.push({ route: '/api/wallet/reveal', password, what });
+    held = true;
+    return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 });
+  };
+  api.revealFetch = (nonce: string) => {
+    world.calls.push({ route: '/api/wallet/reveal/:nonce', nonce });
+    return Promise.resolve({ ok: true, what: 'mnemonic', mnemonic: MNEMONIC.slice() });
+  };
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.deepEqual(world.calls.filter((c) => c.route.startsWith('/api/vault/backup-proven') || c.route.startsWith('/api/wallet/reveal')).map((c) => c.route),
+    ['/api/vault/backup-proven', '/api/wallet/reveal', '/api/wallet/reveal/:nonce', '/api/vault/backup-proven']);
+  const read = world.calls.find((c) => c.route === '/api/wallet/reveal') as Any;
+  assert.deepEqual([read.password, read.what], ['longenough', 'mnemonic'], 'the words were not read under the password set two steps back');
+  const proven = world.calls.filter((c) => c.route === '/api/vault/backup-proven') as Any[];
+  assert.deepEqual(proven[1].words, proven[0].words, 'the second check asked for other words');
+  assert.ok(textOf(screen).includes('Your addresses'), 'the first run stayed on Prove it');
+  assert.ok(!textOf(screen).some((t) => t.includes('Back it up')), 'the card sent the person to a Back it up it does not have');
+});
+
+/* A lock between the read's two requests wipes its slot (src/http/wallet.ts wipeReveals) and the
+   GET answers 404; the check the POST left behind is what counts, so the words are asked again. */
+test('a read again whose words a lock wiped before they were fetched still asks the check once more', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  let held = false;
+  api.vaultBackupProven = () => Promise.resolve(held ? { ok: true } : { ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => { held = true; return Promise.resolve({ ok: true, nonce: 'n1', expiresInSec: 30 }); };
+  api.revealFetch = () => Promise.reject(Object.assign(new Error('that reveal has already been used, or was never issued'), { status: 404 }));
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Your addresses'));
+});
+
+test('a read again that the app refuses says why and stays on Prove it', async () => {
+  const world = firstRun(SOFTWARE);
+  const api = world.sandbox.PhosphorApi;
+  api.vaultBackupProven = () => Promise.resolve({ ok: false, error: 'Show your words once more with Back it up, then type three of them back.', code: 'reveal_again' });
+  api.revealStart = () => Promise.resolve({ ok: false, error: 'Too many tries. Wait 30 seconds and try again.', code: 'locked_out', retryInSec: 30 });
+  api.revealFetch = () => { throw new Error('a refused read has no nonce to spend'); };
+  const screen = await toProve(world);
+  buttonNamed(screen, 'Continue').click();
+  for (let i = 0; i < 6; i += 1) await flush();
+  assert.ok(textOf(screen).includes('Too many tries. Wait 30 seconds and try again.'));
+  assert.ok(textOf(screen).includes('Prove it'));
+});
