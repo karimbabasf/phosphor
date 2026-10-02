@@ -383,7 +383,7 @@ test('the matcher leaves prose alone, the app name included', () => {
   ]) {
     assert.equal(containsInviteCode(prose), false, `took prose for a code: ${prose}`);
   }
-  // One source of truth for the shape: what CONTRACTS.md quotes and the composer mirrors.
+  // One source of truth for the shape: what src/invite/code.ts writes and the composer mirrors.
   assert.equal(inviteCodePattern().source, INVITE_CODE_SOURCE);
   assert.equal(inviteCodePattern().flags, 'gi');
 });

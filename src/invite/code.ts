@@ -22,7 +22,8 @@
 // redacts every match, and over-redacting is fine there. The composer guard (looksLikeInviteCode)
 // adds one rule every issued code meets and prose almost never does: at least two literal digits
 // in the match. "phosphorus is used in fertilizer and in matches" has the shape and no digit. Both
-// read every match, overlapping ones included. CONTRACTS.md, "Code shape", pins both.
+// read every match, overlapping ones included. docs/security-model.md, "What signs, and with
+// what", states both.
 
 import crypto from 'node:crypto';
 
@@ -202,7 +203,8 @@ export function parseCode(input: unknown): ParsedCode {
 /* The prefixed shape, on folded text: the prefix, then a separator, five data characters in a
    row or a digit (every code starts with one, so a first group cut short is still a code, and the
    word "Phosphor" is still not), then 27 data characters with any separators between them, and no
-   data character straight after the last one. Case-insensitive. CONTRACTS.md pins it. */
+   data character straight after the last one. Case-insensitive. docs/security-model.md, "What
+   signs, and with what", says it in words. */
 export const INVITE_CODE_SOURCE = String.raw`PH[O0]S(?:[^0-9A-Za-z]+|(?=[0-9A-Za-z]{5})|(?=[0-9]))[0-9A-Za-z](?:[^0-9A-Za-z]*[0-9A-Za-z]){26}(?![0-9A-Za-z])`;
 
 export function inviteCodePattern(): RegExp {
@@ -288,7 +290,8 @@ export function containsInviteCode(text: string): boolean {
    least two literal digits in it, counted as typed with no O, I or L mapping, the zero of a PH0S
    prefix included. Every code the generator issues has two in its secret characters alone. The
    window's codeIn (ui/core/invite.js) is the same function, and tests/fixtures/invite-code-texts.ts
-   holds both to one corpus (CONTRACTS.md); change both or neither. */
+   holds both to one corpus (docs/security-model.md, "What signs, and with what"); change both or
+   neither. */
 export function findInviteCode(text: string): string | null {
   const hit = inviteMatches(text).find((m) => m.digits >= MIN_CODE_DIGITS);
   return hit === undefined ? null : text.slice(hit.from, hit.to);

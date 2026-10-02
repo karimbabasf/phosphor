@@ -713,7 +713,7 @@ async function closeCode(ledger: Ledger, code: InviteCode, result: MoveResult, n
     code.state = 'reclaimed';
     code.closedAt = nowIso(net);
     ledger.save();
-    io.say(`${shortAddress(code.address)}: reclaimed to T. Its link now says it was already used.`);
+    io.say(`${shortAddress(code.address)}: reclaimed to T. The app now says this code has nothing left in it.`);
     return true;
   }
   if (result.kind === 'unconfirmed' || result.kind === 'held') {

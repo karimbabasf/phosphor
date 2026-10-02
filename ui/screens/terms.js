@@ -188,7 +188,7 @@
 
     var facts = dom.el('ul', 'firstrun-facts terms-facts');
     facts.appendChild(fact('It moves real money, and it is alpha.', 'Transactions are final. Put in only what you can afford to lose.'));
-    facts.appendChild(fact('Your keys are yours alone.', 'Nobody can reset, recover or freeze your wallet: not the author, not your assistant.'));
+    facts.appendChild(fact('Your keys are yours alone.', 'Nobody can reset or recover your wallet: not the author, not your assistant. The issuers of some coins can freeze them.'));
     facts.appendChild(fact('The venues are not ours.', 'NEAR Intents and Hyperliquid set their own rules and fees, and they can fail.'));
     facts.appendChild(fact('You are 18 or older.', 'And allowed to use these services where you live.'));
     facts.appendChild(fact('An invite code is free and pays out once.', 'Codes are not for sale. The author can end them and take back what unclaimed ones hold, and any tax on what you claim is yours.'));

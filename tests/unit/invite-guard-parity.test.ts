@@ -1,6 +1,7 @@
 // The chat's invite code guard has two copies: the backend's findInviteCode and looksLikeInviteCode
 // (src/invite/code.ts, which also turns away a chat prompt carrying a code) and the window's codeIn
-// (ui/core/invite.js). CONTRACTS.md says the window mirrors the backend, nothing looser or tighter.
+// (ui/core/invite.js). The window mirrors the backend, nothing looser or tighter
+// (docs/security-model.md, "What signs, and with what").
 // Both copies run here over one corpus (tests/fixtures/invite-code-texts.ts), over codes the
 // generator really makes, and over generated text built to sit on the shape's edges, and they must
 // give the same answer on every one: the same verdict and the same stretch of text. The log tail's

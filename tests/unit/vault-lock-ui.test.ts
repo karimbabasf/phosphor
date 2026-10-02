@@ -407,7 +407,7 @@ test('the fine print says what really runs while the app is locked, for both kin
     const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody }) }, [LOCK]);
     world.sandbox.PhosphorLock.boot();
     const fine = find(world.nodes['screen-lock'], '.lock-fine')[0].textContent;
-    assert.ok(fine.includes('Nothing new is sent while Phosphor is locked; orders already on the exchange still run.'), `${custody}: ${fine}`);
+    assert.ok(fine.includes('Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.'), `${custody}: ${fine}`);
     assert.doesNotMatch(fine, /nothing moves|cannot be reset/i, `${custody}: a promise the lock cannot keep`);
   }
 });

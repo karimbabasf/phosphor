@@ -380,7 +380,7 @@
     form.appendChild(unlock);
     card.appendChild(form);
 
-    finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked; orders already on the exchange still run.');
+    finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
 
     /* A forgotten password is not the end of the wallet: the recovery phrase
        brings it back. Restoring puts it behind Touch ID, so the way is offered
@@ -585,7 +585,7 @@
     actions.appendChild(unlock);
     actions.appendChild(error);
     card.appendChild(actions);
-    finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked; orders already on the exchange still run.');
+    finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
 
     /* One dialog at a time. The request answers when the person has touched the
        sensor or cancelled, which can be most of the 150 s the backend allows, so

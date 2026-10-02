@@ -1,5 +1,5 @@
-// The two invite routes: check a code, and claim it into this wallet. The contract is
-// CONTRACTS.md's "Invite API contract"; the work is src/invite/claim.ts.
+// The two invite routes: check a code, and claim it into this wallet. docs/reference.md, "First
+// run", describes them; the work is src/invite/claim.ts.
 //
 // Window only. Both carry the window token through guarded() like the custody routes, neither is
 // an op on /api/mcp, and neither is a read tool: no agent reaches either, and tests/tool-surface.ts

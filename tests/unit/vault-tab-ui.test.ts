@@ -869,7 +869,7 @@ test('the Keys row says which binding is live in plain words, and the software c
   const text = textOf(custody);
   assert.ok(text.includes('Touch ID'), 'the row does not say what opens the keys');
   assert.ok(text.includes('Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Made on Sep 14, 2026.'), JSON.stringify(text));
-  assert.ok(text.includes('Bound to this Mac rather than to Phosphor. The vault service answers only Phosphor, but another app running as you could ask to use this key with a Touch ID prompt of its own.'), JSON.stringify(text));
+  assert.ok(text.includes('Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'), JSON.stringify(text));
   // Every release so far is signed and still binds the key to the Mac: the row follows the
   // binding, and a signature is never offered as the protection (the 0.10.13 audit).
   assert.doesNotMatch(JSON.stringify(text), /signed/i, 'the row ties the binding to a signature');

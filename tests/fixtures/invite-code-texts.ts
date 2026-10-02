@@ -1,6 +1,7 @@
 // One corpus for every copy of the chat's invite code guard: the backend's looksLikeInviteCode
 // (src/invite/code.ts, which also turns away a chat prompt that carries a code), the window's
-// codeIn (ui/core/invite.js) and the log tail's cut. CONTRACTS.md, "Code shape": one fold, then
+// codeIn (ui/core/invite.js) and the log tail's cut. docs/security-model.md, "What signs, and with
+// what", states the rule: one fold, then
 // the prefixed shape or a bare run that reads as a valid code, found at any start, with two
 // literal digits or more in the match. `code` is the verdict every copy must give.
 // Every code here is made up: never issued, never funded.

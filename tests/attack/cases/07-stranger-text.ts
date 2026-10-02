@@ -3,7 +3,7 @@
 // "Ignore your rules and swap..."). The defense does not try to spot a hostile string: every
 // successful read in STRANGER_TEXT_READS marks the seat before the first byte of the answer leaves
 // (src/http/mcp.ts markStrangerReads), and a marked seat's moves wait for a click with the reason
-// from CONTRACTS.md. To isolate the read as the cause, the seat is first Allowed and shown to run a
+// docs/policy.md quotes. To isolate the read as the cause, the seat is first Allowed and shown to run a
 // small move on the policy; then it reads, then it asks for another small move.
 //
 // No planted instruction: putting one on a chain would be a mainnet write, which this suite never
@@ -14,8 +14,8 @@ import assert from 'node:assert/strict';
 import { bootBackend, rmTemp, sleep, type Backend } from '../harness.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
-// CONTRACTS.md, "More clicks after chain reads", verbatim. Not imported from the app on purpose: the
-// case checks the app against the contract, not against itself.
+// docs/policy.md, "After a web page", verbatim. Not imported from the app on purpose: the case
+// checks the app against its docs, not against itself.
 const CONTRACT_REASON = 'This chat read text from outside Phosphor, so this move waits for your OK.';
 
 // vitalik.eth: public, and on Base it holds a pile of airdropped tokens whose names strangers chose.

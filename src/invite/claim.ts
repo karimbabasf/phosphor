@@ -93,7 +93,7 @@ import type { KeySigner } from './signer.ts';
 import { createClaimStore } from './store.ts';
 import type { ClaimAttempt, ClaimRecord, ClaimRoute, ClaimStore } from './store.ts';
 
-// The answers the two routes give, as CONTRACTS.md spells them.
+// The answers the two routes give (docs/reference.md, "First run"); ui/core/invite.js reads them.
 export type InviteReason = 'typo' | 'empty' | 'offline' | 'locked' | 'busy' | 'wallet-locked';
 export type CheckAnswer =
   | { ok: true; amount: string; asset: string; route: ClaimRoute; net: string }

@@ -30,7 +30,7 @@ type Any = Record<string, any>;
 /* A code the shape of a real one. Never funded, never issued. */
 const CODE = 'PHOS-2X9QK-M7RTB-0HVFD-K3WPZ-A8GN4CJ';
 const BARE = '2X9QKM7RTB0HVFDK3WPZA8GN4CJ';
-/* The sentences the contract's shape and its digit rule are tested on (CONTRACTS.md, Code shape). */
+/* The sentences the code's shape and its digit rule are tested on (src/invite/code.ts). */
 const PHOSPHOR = 'how does phosphor handle swaps between eth and near';
 const PHOSPHORUS = 'phosphorus is used in fertilizer and in matches';
 /* Prose with the shape and two digits: the guard holds it back, as the contract's rule does. */
@@ -374,7 +374,7 @@ test('the field opens on the tab the person is on when it has Add money, and on 
 test('the matcher is the contract\'s composer guard: the canonical shape and two digits in the whole match', () => {
   const world = build();
   const codeIn = world.win.PhosphorInviteApi.codeIn;
-  // Exactly the shape CONTRACTS.md and src/invite/code.ts write, with its flags.
+  // Exactly the shape src/invite/code.ts writes, with its flags.
   const CANONICAL = INVITE_CODE_SOURCE;
   assert.ok(ADAPTER.includes(`/${CANONICAL}/gi`), 'ui/core/invite.js does not carry the canonical regex exactly');
   const shape = new RegExp(CANONICAL, 'i');
