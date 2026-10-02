@@ -62,7 +62,9 @@ import { ReasonError } from './reasons.ts';
 export type IntentsSpendDeps = {
   api: IntentsApiPort;
   signer: IntentsSignerPort;
-  keysPath: string;
+  // The wallet's key file, for the keystore's signer. A port that holds its own key (an invite
+  // code's in the claim's Plan B, the treasury's in scripts/invite/convert.ts) needs none.
+  keysPath?: string;
   now: () => number;
   sleep: (ms: number) => Promise<void>;
   pollIntervalMs: number;
@@ -256,7 +258,7 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   const deadline = intentDeadline(payload) ?? 'unknown';
   const refused = deps.beforeSign === undefined ? null : await deps.beforeSign();
   if (refused !== null) throw new ReasonError('route_closed', refused);
-  const signature = await deps.signer.signErc191(deps.keysPath, payload);
+  const signature = await deps.signer.signErc191(deps.keysPath ?? '', payload);
   tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
 
   const sent = await submitSignedIntent(deps.api, { payload, signature });

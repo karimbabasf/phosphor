@@ -4,8 +4,9 @@
 
      POST /api/invite/check  { token, code }  what the code holds, or why it cannot pay
      POST /api/invite/claim  { token, code }  202 and an opaque claim id; runs on its own
-     frame { type: 'invite', claim, status, amount?, asset? }  how a claim ended
-     state.invite { claim, status, amount }  the latest claim, for a window opened late
+     frame { type: 'invite', claim, status, amount?, asset?, reason? }  how a claim ended
+     state.invite { claim, status, amount, reason? }  the latest claim, for a window opened late
+     (reason is 'clock' on a claim that failed because this Mac's clock is behind, else absent)
 
    The code is held by the screen that asked, for as long as the ask takes. Nothing here
    keeps it, prints it or puts it in an error, and no answer from the app ever quotes it. */
@@ -70,7 +71,9 @@
       claim: id,
       status: raw.status,
       amount: amountOf(raw.amount),
-      asset: typeof raw.asset === 'string' && raw.asset ? raw.asset : ''
+      asset: typeof raw.asset === 'string' && raw.asset ? raw.asset : '',
+      /* The one end a person can fix: a Mac clock set wrong. Anything else reads as no reason. */
+      reason: raw.status === 'failed' && raw.reason === 'clock' ? 'clock' : ''
     };
   }
 

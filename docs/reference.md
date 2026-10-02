@@ -336,7 +336,10 @@ nothing: a good code is kept in the first run's draft beside the password and th
 wiped with them when the card closes. The claim is `POST /api/invite/claim`, fired once on the
 addresses step, the first moment there is a wallet that exists and is open. Its end arrives as an
 `invite` frame on the event stream: the addresses step shows it in place, and a person who has
-moved on gets a toast on Basic; a failed one stays until its close key is pressed. Both calls live in `ui/core/invite.js`.
+moved on gets a toast on Basic; a failed one stays until its close key is pressed. A claim that
+failed because this Mac's clock is behind carries `reason: 'clock'` on its frame and in
+`/api/state`, and the window says to set the clock to automatic. Both calls live in
+`ui/core/invite.js`.
 
 Both routes take the window token and neither is an agent op. Each claim is a record in
 `state/invites.json` (mode 0600: the code's account, the nonce, the intent hash and the amount,
@@ -664,7 +667,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     scripts/keygen.ts  raw keypairs for developers, written outside the working copy
     scripts/sweep.ts   secret sweep over the tracked tree and the git history
     scripts/invite.ts  invite codes for whoever hands them out: treasury, issue, reclaim, withdraw,
-                       status, over an encrypted file outside the working copy (scripts/invite/)
+                       convert, status, over an encrypted file outside the working copy
+                       (scripts/invite/)
     scripts/invite-proof.ts  both claim routes run with real money on throwaway accounts, the
                        invite spec's Proof step 0
     ui/                one window, four screens, no framework, no build

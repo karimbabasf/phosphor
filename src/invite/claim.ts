@@ -101,11 +101,12 @@ export type CheckAnswer =
 export type ClaimAnswer = { ok: true; claim: string } | { ok: false; reason: InviteReason };
 
 export type InviteStatus = 'running' | 'landed' | 'failed';
-// The latest claim, for /api/state: never the code.
-export type InviteState = { claim: string; status: InviteStatus; amount: string };
+/* The latest claim, for /api/state: never the code. `reason` rides on a failed claim only when the
+   person can fix it: 'clock', this Mac's clock behind NEAR's by more than FATE_AHEAD_MAX_MS. */
+export type InviteState = { claim: string; status: InviteStatus; amount: string; reason?: 'clock' };
 
 // Why a claim that was accepted did not land, one word, for the audit line and the record.
-export type FailReason = 'offline' | 'empty' | 'locked' | 'expired' | 'refused' | 'refunded' | 'unconfirmed';
+export type FailReason = 'offline' | 'empty' | 'locked' | 'expired' | 'refused' | 'refunded' | 'unconfirmed' | 'clock';
 
 export const INVITE_FRAME = 'invite';
 
@@ -192,6 +193,7 @@ const FAIL_SENTENCES: Record<FailReason, string> = {
   refused: 'the claim was refused before anything moved.',
   refunded: '1Click refunded the claim to the code, so the money is back on it.',
   unconfirmed: 'the network stopped answering before the claim could be proven. It is checked again at the next start.',
+  clock: "this Mac's clock is more than two minutes behind NEAR's, so the claim was never signed. The money is still on the code; setting the clock to automatic fixes it.",
 };
 
 function errText(err: unknown): string {
@@ -363,7 +365,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
     const slot: HoldSlot = { release: null };
     let outcome: Outcome;
     try {
-      outcome = relayRefused ? { kind: 'fallback', detail: 'the relay turned an earlier claim away' } : await relayRoute(record, signer, slot);
+      outcome = relayRefused ? await straightToPlanB(record) : await relayRoute(record, signer, slot);
       if (outcome.kind === 'fallback') {
         relayRefused = true;
         outcome = await oneclickRoute(record, signer, slot, outcome.detail);
@@ -374,6 +376,15 @@ export function createInviteService(deps: InviteDeps): InviteService {
       signer.drop();
     }
     settle(record, outcome.kind === 'fallback' ? failed('refused', outcome.detail, false) : outcome, slot, true);
+  }
+
+  /* Plan B with no relay attempt first (the relay turned an earlier claim away) reads no block
+     before it signs, so the clock is asked here, as the relay route asks it: a deadline three
+     minutes past a clock that far behind could be past already. An unread block is no answer, and
+     Plan B goes on as it always has. */
+  async function straightToPlanB(record: ClaimRecord): Promise<Outcome> {
+    const block = verifier.finalBlock === undefined ? null : await verifier.finalBlock().catch(() => null);
+    return (block === null ? null : clockBehind(record, block)) ?? { kind: 'fallback', detail: 'the relay turned an earlier claim away' };
   }
 
   /* The deposit watch's hold, opened once, right before anything can credit the wallet, with the
@@ -401,11 +412,15 @@ export function createInviteService(deps: InviteDeps): InviteService {
       verifier.finalBlock === undefined ? Promise.resolve(null) : verifier.finalBlock().catch(() => null),
     ]);
     if (salt === null || block === null) return stopped(record, 'offline', 'the verifier did not answer with its salt and its clock, so the claim was never signed');
+    return clockBehind(record, block) ?? { kind: 'clock', salt, block };
+  }
+
+  /* A final block stamped more than FATE_AHEAD_MAX_MS ahead of this Mac: a Mac clock behind (the
+     person can fix that, and the window says how) or an RPC that is not telling the time. */
+  function clockBehind(record: ClaimRecord, block: FinalBlock): Failed | null {
     const ahead = block.atMs - now();
-    if (ahead > FATE_AHEAD_MAX_MS) {
-      return stopped(record, 'refused', `NEAR's final block is stamped ${Math.round(ahead / 1000)} s ahead of this Mac's clock, so the claim was never signed: this clock is behind, or the RPC is not telling the time`);
-    }
-    return { kind: 'clock', salt, block };
+    if (ahead <= FATE_AHEAD_MAX_MS) return null;
+    return stopped(record, 'clock', `NEAR's final block is stamped ${Math.round(ahead / 1000)} s ahead of this Mac's clock, so the claim was never signed: this clock is behind, or the RPC is not telling the time`);
   }
 
   /* The claim's one transfer, its deadline `lifeMs` past the chain's final block, read back as a
@@ -741,7 +756,7 @@ export function createInviteService(deps: InviteDeps): InviteService {
         // the record stays pending and the next start asks again
       }
     }
-    if (live) announce({ claim: record.claim, status: 'failed', amount: formatUsdc(BigInt(record.amountBase)) });
+    if (live) announce({ claim: record.claim, status: 'failed', amount: formatUsdc(BigInt(record.amountBase)), ...(outcome.reason === 'clock' ? { reason: 'clock' as const } : {}) });
   }
 
   function reconcile(): void {

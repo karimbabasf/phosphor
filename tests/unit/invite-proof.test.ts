@@ -13,12 +13,13 @@ import { INVITE_ASSET_ID } from '../../src/invite/payload.ts';
 import { takeLock } from '../../scripts/invite/file.ts';
 import { proofMain } from '../../scripts/invite-proof.ts';
 import type { ProofFile, ProofNet } from '../../scripts/invite-proof.ts';
-import { freshChain, netOn, oneclickOn } from './helpers/invite-chain.ts';
+import { balanceOf, freshChain, netOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const SINK = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
+const BASE_USDC = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 
 type Run = { code: number; out: string[]; err: string[] };
 
@@ -65,6 +66,12 @@ test('init makes a 0600 proof file outside the repo, prints the two addresses an
   const proof = b.proof();
   assert.ok(r.out.includes(`Treasury T: ${proof.book.treasury.address}`));
   assert.ok(r.out.includes(`Throwaway receiver: ${proof.receiver.address}`));
+  assert.ok(
+    r.out.includes(
+      `Any USDC sent inside NEAR Intents works. If it lands as USDC on Base or another chain, run turns it into NEAR USDC through 1Click first and says so; node scripts/invite-proof.ts convert --file ${b.file} does that step alone.`,
+    ),
+    r.out.join('\n'),
+  );
   assertNothingSpendable(r.out.join('\n'), proof);
 
   const before = fs.readFileSync(b.file);
@@ -307,4 +314,105 @@ test('a sweep left unproven is resent as the same bytes to where it was signed t
   ]);
   const fromT = b.chain.published.filter((p) => (JSON.parse(p.payload) as Body).signer_id === t);
   assert.equal(new Set(fromT.map((p) => p.signature)).size, 1, 'one signature out of T');
+});
+
+test('convert turns USDC on Base in the proof treasury into NEAR USDC and writes it into the report, with no key and no code', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+
+  const r = await b.run(['convert', '--file', b.file]);
+  assert.equal(r.code, 0, [...r.out, ...r.err].join('\n'));
+  assert.ok(r.out.includes('  $1.00 USDC on Base to about $0.9998 of NEAR USDC, at least $0.99'), r.out.join('\n'));
+  assert.ok(r.out.includes(`Next: node scripts/invite-proof.ts run --file ${b.file}`));
+  assert.equal(balanceOf(b.chain, t, BASE_USDC), 0n);
+  assert.equal(balanceOf(b.chain, t, INVITE_ASSET_ID), 999_800n);
+  assert.equal(b.chain.oneclick.submitted.length, 1);
+
+  const [convert] = b.proof().results.convert ?? [];
+  assert.equal(convert?.['state'], 'done');
+  assert.equal(convert?.['asset'], BASE_USDC);
+  assert.equal(convert?.['amountBase'], '1000000');
+  assert.equal(convert?.['creditedOut'], '999800');
+  assert.equal(convert?.['oneclick'], 'SUCCESS');
+  const report = await b.run(['report', '--file', b.file]);
+  assert.match(report.out.join('\n'), /"convert": \[/);
+  assertNothingSpendable([...r.out, ...report.out].join('\n'), b.proof());
+});
+
+test('run with the $1 landed as USDC on Base converts it first and says so, then issues and claims as always', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  let polls = 0;
+  const net: ProofNet = {
+    ...b.net,
+    sleep: async (ms) => {
+      b.chain.mac += ms;
+      b.chain.chain += ms;
+      polls += 1;
+      if (polls === 3) setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+    },
+  };
+  const r = await b.run(['run', '--file', b.file, '--wait-minutes', '5'], {}, net);
+  assert.equal(r.code, 0, [...r.out, ...r.err].join('\n'));
+  assert.ok(
+    r.out.includes(
+      `T holds $1.00 USDC on Base inside NEAR Intents and not enough NEAR USDC, the USDC a code holds, so this run converts it through 1Click first, as \`node scripts/invite-proof.ts convert --file ${b.file}\` does.`,
+    ),
+    r.out.join('\n'),
+  );
+  const proof = b.proof();
+  assert.equal(proof.results.convert?.[0]?.['state'], 'done');
+  assert.equal(proof.results.funding?.treasuryBefore, '999800');
+  assert.equal(proof.results.issue?.pass, true);
+  assert.equal(proof.results.relayClaim?.pass, true);
+  assert.equal(proof.results.planBClaim?.pass, true);
+  assert.equal(balanceOf(b.chain, t, BASE_USDC), 0n);
+});
+
+test('release-code with the money landed as another USDC says what arrived and to run convert, without waiting or converting', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 5_030_000n);
+  const r = await b.run(['release-code', '--file', b.file]);
+  assert.equal(r.code, 1);
+  assert.deepEqual(r.err, [
+    `T holds $5.03 USDC on Base inside NEAR Intents and less than $5.00 of NEAR USDC, the USDC a code holds. Run \`node scripts/invite-proof.ts convert --file ${b.file}\` to turn it into NEAR USDC, then run this again.`,
+  ]);
+  assert.equal(b.chain.oneclick.quotes, 0);
+  assert.equal(b.proof().book.moves.length, 0);
+});
+
+test('sweep says what other USDC it leaves on T, and does not call that swept', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 250_000n);
+  const r = await b.run(['sweep', '--file', b.file, '--to', SINK]);
+  assert.equal(r.code, 1);
+  assert.ok(r.out.includes(`T still holds $0.25 USDC on Base inside NEAR Intents, which sweep does not move. Run \`node scripts/invite-proof.ts convert --file ${b.file}\`, then sweep again.`), r.out.join('\n'));
+  assert.equal(r.out.at(-1), 'Some accounts were not swept. Run sweep again.');
+});
+
+test('sweep never calls the proof file done while a convert is unfinished or a balance of T did not read', async () => {
+  const b = bench();
+  assert.equal((await b.run(['init', '--file', b.file])).code, 0);
+  const t = b.proof().book.treasury.address;
+  setBalance(b.chain, t, BASE_USDC, 1_000_000n);
+  b.chain.oneclick.outcome = 'PENDING'; // T's transfer runs, and 1Click is still working
+  assert.equal((await b.run(['convert', '--file', b.file])).code, 1);
+  const r = await b.run(['sweep', '--file', b.file, '--to', SINK]);
+  assert.equal(r.code, 1);
+  assert.ok(r.out.includes(`The convert of $1.00 USDC on Base is not finished, so NEAR USDC may still reach T. Run \`node scripts/invite-proof.ts convert --file ${b.file}\` to finish it, then sweep again.`), r.out.join('\n'));
+  assert.ok(!r.out.some((l) => /Every proof account is empty/.test(l)));
+
+  const c = bench();
+  assert.equal((await c.run(['init', '--file', c.file])).code, 0);
+  const verifier = { ...c.net.verifier, balance: async (account: string, asset: string) => (asset === BASE_USDC ? null : c.net.verifier.balance(account, asset)) };
+  const blind = await c.run(['sweep', '--file', c.file, '--to', SINK], {}, { ...c.net, verifier });
+  assert.equal(blind.code, 1);
+  assert.ok(blind.out.includes("Couldn't read what T holds of USDC on Base, so T may not be empty. Run sweep again."), blind.out.join('\n'));
 });

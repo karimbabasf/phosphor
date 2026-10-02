@@ -4,9 +4,10 @@
 //
 // A move is one signed payload out of one account inside intents.near: a batch (the treasury `T`
 // funding up to ten codes), a reclaim (one code paying its balance back to T), a withdraw (T
-// paying a typed address), or a sweep (the proof script emptying its throwaway accounts). The
-// signed bytes are written down before they are published and are the only bytes ever sent for
-// that move: a move that got no answer is resent as the same bytes, never signed again.
+// paying a typed address), a sweep (the proof script emptying its throwaway accounts), or a
+// convert (T handing one other USDC to 1Click, which credits T with NEAR USDC). The signed bytes
+// are written down before they are published and are the only bytes ever sent for that move: a
+// move that got no answer is resent as the same bytes, never signed again.
 //
 // The book is checked whole every time it is read. The file is authenticated (AES-256-GCM in
 // scripts/invite/file.ts), so a book that does not hold together is a bug rather than an edit,
@@ -36,7 +37,7 @@ export type InviteCode = {
   closedAt?: string;
 };
 
-export type MoveKind = 'batch' | 'reclaim' | 'withdraw' | 'sweep';
+export type MoveKind = 'batch' | 'reclaim' | 'withdraw' | 'sweep' | 'convert';
 
 export type SignedMove = {
   payload: string; // the exact string that was signed and is the only one ever sent
@@ -64,6 +65,19 @@ export type Move = {
   printedAt?: string; // a batch's links, shown once, at this time
   // A batch an `issue --simulate-only` rehearsed: never published, its codes void from the start.
   dryRun?: true;
+  /* A convert's own (scripts/invite/convert.ts). Every other move moves NEAR USDC; a convert moves
+     `assetId` to 1Click's `handle` (its one leg), for a quote that credits T. `nonce` is the one its
+     rehearsals and its signature share, `rehearsalDeadline` the latest rehearsal's. NEAR USDC in
+     base units: `quotedOut` the quote's figure, `minOut` the least it could deliver, `creditedOut`
+     what 1Click says arrived. `oneclickSaid` is 1Click's last status word. */
+  assetId?: string;
+  handle?: string;
+  nonce?: string;
+  rehearsalDeadline?: string;
+  quotedOut?: string;
+  minOut?: string;
+  creditedOut?: string;
+  oneclickSaid?: string;
 };
 
 export type Treasury = { address: string; key: Hex; createdAt: string };
@@ -80,7 +94,9 @@ export function newBook(treasury: Treasury): InviteBook {
 }
 
 const CODE_STATES: readonly string[] = ['pending', 'open', 'claimed', 'reclaimed', 'void'];
-const MOVE_KINDS: readonly string[] = ['batch', 'reclaim', 'withdraw', 'sweep'];
+const MOVE_KINDS: readonly string[] = ['batch', 'reclaim', 'withdraw', 'sweep', 'convert'];
+const CONVERT_TEXT = ['assetId', 'handle', 'nonce', 'rehearsalDeadline', 'oneclickSaid'] as const;
+const CONVERT_AMOUNTS = ['quotedOut', 'minOut', 'creditedOut'] as const;
 const MOVE_STATES: readonly string[] = ['pending', 'done', 'failed'];
 
 function bad(what: string): never {
@@ -182,6 +198,17 @@ export function readBook(value: unknown): InviteBook {
     }
     if (m['sends'] !== undefined && !(typeof m['sends'] === 'number' && Number.isInteger(m['sends']) && m['sends'] >= 0)) bad(`${at} has a count of sends that is not a count`);
     if (m['dryRun'] !== undefined && (m['dryRun'] !== true || m['kind'] !== 'batch' || m['state'] !== 'failed')) bad(`${at} is a dry run that is not a failed batch`);
+    for (const field of CONVERT_TEXT) {
+      if (!optionalStr(m[field])) bad(`${at} has a ${field} that is not text`);
+      if (m[field] !== undefined && m['kind'] !== 'convert') bad(`${at} carries a convert's ${field}`);
+    }
+    for (const field of CONVERT_AMOUNTS) {
+      if (m[field] !== undefined && (!baseUnits(m[field]) || m['kind'] !== 'convert')) bad(`${at} has a ${field} that is not a convert's amount`);
+    }
+    if (m['kind'] === 'convert') {
+      if (!str(m['assetId']) || !str(m['handle']) || !str(m['nonce']) || m['assetId'] === '' || m['handle'] === '' || m['nonce'] === '') bad(`${at} is a convert with no asset, handle or nonce`);
+      if (legs.length !== 1 || legs[0]!.receiverId !== m['handle']) bad(`${at} is a convert that does not pay its handle`);
+    }
     const move: Move = {
       id: m['id'],
       kind: m['kind'] as MoveKind,
@@ -196,6 +223,10 @@ export function readBook(value: unknown): InviteBook {
     }
     if (typeof m['sends'] === 'number') move.sends = m['sends'];
     if (m['dryRun'] === true) move.dryRun = true;
+    for (const field of [...CONVERT_TEXT, ...CONVERT_AMOUNTS]) {
+      if (typeof m[field] === 'string') move[field] = m[field] as string;
+    }
+    if (move.kind === 'convert' && move.signed !== undefined && move.signed.nonce !== move.nonce) bad(`${at} is a convert signed under another nonce`);
     return move;
   });
 

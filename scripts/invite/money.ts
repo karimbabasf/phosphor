@@ -2,6 +2,7 @@
 // T, reclaim open codes back to T, withdraw T to a typed address, and say where every code stands.
 // Spec: docs/superpowers/specs/2026-10-01-invite-codes-design.md, "The money path". The terminal
 // side is scripts/invite.ts; the proof script (scripts/invite-proof.ts) drives the same moves.
+// Turning other USDC that reached T into NEAR USDC is scripts/invite/convert.ts, through 1Click.
 //
 // ONE SIGNATURE THAT CAN RUN. A move is one transfer payload out of one account
 // (src/invite/payload.ts), rehearsed (below), signed only after everything it pays is on disk, and
@@ -58,6 +59,7 @@ import {
 } from '../../src/invite/payload.ts';
 import { keySigner } from '../../src/invite/signer.ts';
 import type { KeySigner } from '../../src/invite/signer.ts';
+import type { IntentsApiPort } from '../../src/rails/intents-native.ts';
 import { intentsAccountProblem } from '../../src/rails/intents-send.ts';
 import type { RelayClient, RelayStatus } from '../../src/relay/client.ts';
 import { FATE_AHEAD_MAX_MS, RELAY_DEADLINE_GRACE_MS, transferFate } from '../../src/relay/fate.ts';
@@ -66,6 +68,7 @@ import { simulationOf, simulationRefusal } from '../../src/relay/verifier.ts';
 import type { FinalBlock, SignedIntent, Simulation, VerifierPort } from '../../src/relay/verifier.ts';
 import { codesOf, pendingMoves, unfinishedBatch } from './book.ts';
 import type { InviteBook, InviteCode, Move, SignedMove, Treasury } from './book.ts';
+import { asInviteBase, heldList, otherUsdc } from './usdc.ts';
 
 export type MoneyNet = {
   verifier: VerifierPort;
@@ -79,6 +82,10 @@ export type MoneyNet = {
   /* simulate_intents run at one block, by its hash, for a dry run. Null when it did not answer.
      Without it no dry run is signed at all. */
   simulateAt?: (signed: SignedIntent[], blockHash: string) => Promise<Simulation | null>;
+  // 1Click, for convert alone (scripts/invite/convert.ts): the partner key when one is set. A test
+  // hands in its own, with the key its quotes are signed by.
+  oneclick?: IntentsApiPort;
+  quoteKey?: string;
   firstPollMs?: number;
   pollMs?: number;
 };
@@ -156,11 +163,11 @@ export function shortAddress(address: string): string {
   return address.length > 14 ? `${address.slice(0, 6)}...${address.slice(-4)}` : address;
 }
 
-function nowIso(net: MoneyNet): string {
+export function nowIso(net: MoneyNet): string {
   return new Date(net.now()).toISOString();
 }
 
-function idOf(net: MoneyNet): string {
+export function idOf(net: MoneyNet): string {
   return Buffer.from(net.random(8)).toString('hex');
 }
 
@@ -193,7 +200,7 @@ export function newTreasury(net: Pick<MoneyNet, 'random' | 'now'>): Treasury {
   }
 }
 
-function treasurySigner(book: InviteBook, net: MoneyNet): KeySigner {
+export function treasurySigner(book: InviteBook, net: MoneyNet): KeySigner {
   const signer = (net.signerOf ?? keySigner)(book.treasury.key);
   if (signer.address !== book.treasury.address) {
     signer.drop();
@@ -218,7 +225,7 @@ function signerForCode(code: InviteCode, net: MoneyNet): KeySigner {
   return signer;
 }
 
-function fateReads(net: MoneyNet): FateReads {
+export function fateReads(net: MoneyNet): FateReads {
   const v = net.verifier;
   return {
     nonceUsed: (account, nonce, at) => v.nonceUsed(account, nonce, at),
@@ -227,7 +234,7 @@ function fateReads(net: MoneyNet): FateReads {
   };
 }
 
-const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
+export const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
   empty: 'The paying account holds less than the move pays.',
   locked: 'NEAR Intents has locked the paying account, so nothing can be signed out of it.',
   expired: 'The signed move would reach the verifier after its deadline.',
@@ -236,7 +243,7 @@ const REFUSALS: Record<ReturnType<typeof simulationVerdict>, string> = {
 
 type Built = { ok: true; signed: SignedMove; block: FinalBlock } | { ok: false; detail: string };
 
-async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8Array; block: FinalBlock } | string> {
+export async function chainClock(net: MoneyNet, aheadMs: number): Promise<{ salt: Uint8Array; block: FinalBlock } | string> {
   const [salt, block] = await Promise.all([
     net.verifier.currentSalt().catch(() => null),
     net.verifier.finalBlock === undefined ? Promise.resolve(null) : net.verifier.finalBlock().catch(() => null),
@@ -479,8 +486,17 @@ export async function issueBatch(ledger: Ledger, net: MoneyNet, req: IssueReques
       return 1;
     }
     if (held < total) {
-      io.say(`T holds $${formatUsdc(held)} and this batch needs $${formatUsdc(total)}. Nothing was written or signed.`);
-      io.say(`Send at least $${fundingFor(total - held)} to T, ${book.treasury.address}, with the app's Send, then run this again.`);
+      /* Money that came as another USDC is said exactly, and where it goes from here. Never
+         converted here: issue does not talk to 1Click, `convert` does, after its own yes. */
+      const other = (await otherUsdc(net, book.treasury.address)).held;
+      const otherBase = other.reduce((sum, h) => sum + asInviteBase(h.base, h.variant.decimals), 0n);
+      io.say(`T holds $${formatUsdc(held)}${other.length > 0 ? ' of NEAR USDC' : ''} and this batch needs $${formatUsdc(total)}. Nothing was written or signed.`);
+      if (other.length > 0) {
+        io.say(`T also holds ${heldList(other)} inside NEAR Intents, and a code holds NEAR USDC only. Run \`npm run invite -- convert\` to turn it into NEAR USDC through 1Click, then run this again.`);
+      }
+      if (held + otherBase < total) {
+        io.say(`Send at least $${fundingFor(total - held - otherBase)}${other.length > 0 ? ' more' : ''} to T, ${book.treasury.address}, with the app's Send, then run this again.`);
+      }
       return 1;
     }
     const ok = await io.confirm(`Issue ${req.count} code${plural} of $${formatUsdc(req.amountBase)} for "${label}", $${formatUsdc(total)} in all, from T (holds $${formatUsdc(held)})?`);
@@ -954,6 +970,8 @@ export async function statusLines(book: InviteBook, net: MoneyNet): Promise<stri
   const out: string[] = [];
   const held = await net.verifier.balance(book.treasury.address, INVITE_ASSET_ID).catch(() => null);
   out.push(`Treasury T  ${book.treasury.address}  ${held === null ? 'balance unread' : `$${formatUsdc(held)}`}`);
+  const other = (await otherUsdc(net, book.treasury.address)).held;
+  if (other.length > 0) out.push(`T also holds ${heldList(other)} inside NEAR Intents. \`npm run invite -- convert\` turns it into NEAR USDC, which codes hold.`);
   const batches = book.moves.filter((m) => m.kind === 'batch');
   if (batches.length === 0) out.push('No codes issued yet.');
   for (const batch of batches) {

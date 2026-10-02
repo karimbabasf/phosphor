@@ -743,6 +743,46 @@ test('a window that opens while a claim runs says how it ends; one already over 
   assert.equal(world.toasts[1]?.words, 'Your $5 didn\'t come through. Add the code again from Add money.');
 });
 
+test("a claim that failed because this Mac's clock is behind says how to fix it: on the addresses step, on the Add money line, as a toast and from the state", async () => {
+  const CLOCK_ELSEWHERE = "Your Mac's clock is off, so the code wasn't used. Set date and time to automatic in System Settings, then add it again from Add money.";
+  const CLOCK_ON_LINE = "Your Mac's clock is off, so the code wasn't used. Set date and time to automatic in System Settings, then paste it again.";
+
+  // The first run's addresses step, in place, with the warning glyph, never red.
+  const world = build();
+  const screen = await toAddresses(world);
+  await flush();
+  world.emit('invite', { type: 'invite', kind: 'invite', claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC', reason: 'clock' });
+  assert.equal(claimLine(screen), CLOCK_ELSEWHERE);
+  assert.equal(find(screen, '.firstrun-claim')[0].getAttribute('data-tone'), 'warn');
+  assert.equal(world.toasts.length, 0, 'said in place, not again as a toast');
+
+  // The Add money line, in the line's own words.
+  const money = build({ money: true });
+  const { host } = fold(money);
+  buttonNamed(host, 'Have an invite code?').click();
+  lineField(host).value = CODE;
+  lineField(host).dispatch('input');
+  lineKey(host).click();
+  await flush();
+  lineKey(host).click();
+  await flush();
+  money.emit('invite', { claim: 'c-1', status: 'failed', amount: '5.00', asset: 'USDC', reason: 'clock' });
+  assert.equal(lineSaid(host), CLOCK_ON_LINE);
+  assert.equal(money.toasts.length, 0);
+
+  // A window opened while the claim ran reads the end off the state, as a toast.
+  const late = build();
+  late.store.put({ ...late.store.get(), invite: { claim: 'c-4', status: 'running', amount: '5.00' } });
+  late.store.put({ ...late.store.get(), invite: { claim: 'c-4', status: 'failed', amount: '5.00', reason: 'clock' } });
+  assert.deepEqual(late.toasts, [{ words: CLOCK_ELSEWHERE, tone: 'down', stay: true }]);
+
+  // Any other word on a failed frame is the plain failed line: only the clock is the person's to fix.
+  const other = build();
+  other.store.put({ ...other.store.get(), invite: { claim: 'c-5', status: 'running', amount: '5.00' } });
+  other.emit('invite', { claim: 'c-5', status: 'failed', amount: '5.00', asset: 'USDC', reason: 'refused' });
+  assert.deepEqual(other.toasts, [{ words: "Your $5 didn't come through. Add the code again from Add money.", tone: 'down', stay: true }]);
+});
+
 /* ---------- the code goes nowhere ---------- */
 
 test('close() wipes the code with the phrase and the password, and nothing else ever held it', async () => {

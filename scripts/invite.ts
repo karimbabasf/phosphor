@@ -8,6 +8,7 @@
 //   npm run invite -- issue --resume
 //   npm run invite -- reclaim [--label <label>] [--address <code address>] [--simulate-only]
 //   npm run invite -- withdraw --to <address> [--simulate-only]
+//   npm run invite -- convert
 //   npm run invite -- status
 //   --file <path> (or PHOSPHOR_INVITES_FILE) for a file other than ~/.phosphor-invites/invites.enc.json
 //
@@ -26,9 +27,12 @@ import { parseArgs } from 'node:util';
 
 import { decimalToBaseUnits } from '../src/intents.ts';
 import { INVITE_ASSET_DECIMALS, INVITE_ASSET_ID, formatUsdc } from '../src/invite/payload.ts';
+import { INTENTS_API_KEY_ENV, intentsApi } from '../src/rails/intents-native.ts';
 import { relayClient } from '../src/relay/client.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
 import { newBook } from './invite/book.ts';
+import { convertTreasury } from './invite/convert.ts';
+import { heldList, otherUsdc } from './invite/usdc.ts';
 import { MIN_PASSPHRASE_CHARS, createInviteFile, inviteFilePath, openInviteFile, passphraseChars, takeLock } from './invite/file.ts';
 import type { FileLock, InviteFile } from './invite/file.ts';
 import { fundingFor, issueBatch, liveSimulateAt, newTreasury, reclaimCodes, resumeBatch, statusLines, withdrawTreasury } from './invite/money.ts';
@@ -45,6 +49,7 @@ export const USAGE = [
   '  npm run invite -- issue --resume',
   '  npm run invite -- reclaim [--label <label>] [--address <code address>] [--simulate-only]',
   '  npm run invite -- withdraw --to <address> [--simulate-only]',
+  '  npm run invite -- convert',
   '  npm run invite -- status',
   'Every command takes --file <path> (or PHOSPHOR_INVITES_FILE) for another invite file.',
 ].join('\n');
@@ -58,6 +63,7 @@ const FLAGS: Record<string, readonly string[]> = {
   issue: ['file', 'count', 'amount', 'label', 'simulate-only', 'resume'],
   reclaim: ['file', 'label', 'address', 'simulate-only'],
   withdraw: ['file', 'to', 'simulate-only'],
+  convert: ['file'],
   status: ['file'],
 };
 
@@ -77,6 +83,8 @@ function liveNet(): MoneyNet {
     verifier: liveVerifier(),
     relay: relayClient(),
     simulateAt: liveSimulateAt(),
+    // The partner key when one is set, as the app does; 1Click's public fee tier without one.
+    oneclick: intentsApi({ apiKey: process.env[INTENTS_API_KEY_ENV] ?? '' }),
     now: Date.now,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     random: (n) => crypto.randomBytes(n),
@@ -158,8 +166,14 @@ async function treasury(file: string, deps: CliDeps, net: MoneyNet): Promise<num
     deps.out(created ? `Made the treasury T and wrote its key to ${file} (mode 0600). It is the only copy of that key.` : `The treasury T in ${file}:`);
     deps.out(`T: ${address}`);
     const held = await net.verifier.balance(address, INVITE_ASSET_ID).catch(() => null);
-    deps.out(`It holds ${held === null ? 'an amount this run could not read' : `$${formatUsdc(held)}`}.`);
+    deps.out(`It holds ${held === null ? 'an amount of NEAR USDC this run could not read' : `$${formatUsdc(held)} of NEAR USDC`}, the USDC a code holds.`);
+    const other = (await otherUsdc(net, address)).held;
+    if (other.length > 0) deps.out(`It also holds ${heldList(other)} inside NEAR Intents: \`npm run invite -- convert\` turns it into NEAR USDC.`);
     deps.out(`To fund a batch, send T count x amount / 0.9975 plus a cent with the app's Send: 10 codes of $5 is $${fundingFor(50_000_000n)}.`);
+    deps.out(
+      'Any USDC sent inside NEAR Intents works. The Send pays out of whichever USDC the wallet holds, so it may land as USDC on Base or ' +
+        'another chain; `npm run invite -- convert` turns that into NEAR USDC first, through 1Click.',
+    );
     return 0;
   } finally {
     opened.close();
@@ -318,6 +332,7 @@ export async function main(argv: string[], deps: CliDeps): Promise<number> {
       }
       return await withdrawTreasury(ledger, net, { to: values['to'], simulateOnly: simulate }, io);
     }
+    if (command === 'convert') return await convertTreasury(ledger, net, io);
     return 2;
   } catch (err) {
     deps.err(err instanceof Error ? err.message : String(err));
