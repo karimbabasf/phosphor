@@ -469,6 +469,9 @@ export type RailResult = {
 export type RailHooks = {
   onEvidence?: (evidence: { txids?: string[]; pocket?: PocketRead } & RailEvidence) => void;
   onPreflight?: (preflight: Preflight) => void;
+  // Who decided the move the rail is running. A rail that could not check a price holds a move
+  // the policy decided, and runs one a person clicked on at the floor that person approved.
+  decidedBy?: DecidedBy;
 };
 
 // ---------- preflight ----------
@@ -551,6 +554,9 @@ export type SimulationResult = {
   reason?: string;
   // The coins this simulation priced, which the proposal pins into its draft (MovedAssets).
   assets?: MovedAssets;
+  // A passed simulation the rail could not fully check, as the one sentence that says so: the
+  // proposal waits for a click whatever its size (src/proposals/draft.ts proposeRail).
+  ask?: string;
 };
 
 // The asset a swap draft spends, resolved, and what the verifier holds of it for us.

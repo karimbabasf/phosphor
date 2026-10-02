@@ -304,6 +304,9 @@ export async function proposeRail(ctx: PCtx, kind: RailKind, draft: RailDraft, o
     );
   }
 
+  // A rail that priced the move and could not check that price says so, and the move waits for a click.
+  if (simulation.ask !== undefined && verdict.outcome === 'allow') verdict = { outcome: 'needs_approval', reasons: [...verdict.reasons, simulation.ask] };
+
   return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
 }
 

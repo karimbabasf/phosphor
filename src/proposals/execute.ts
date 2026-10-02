@@ -341,6 +341,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      before the move rides with the first piece, so a row the boot sweep recovers is judged by
      the balance (judgeSettling below) and never by 1Click's word alone. */
   const hooks: RailHooks = {
+    decidedBy: p.decidedBy,
     onEvidence: (e) => {
       const current = ctx.store.get(p.id) ?? executing;
       if (current.status !== 'executing') return;

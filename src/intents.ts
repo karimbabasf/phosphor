@@ -18,7 +18,7 @@
 
 import { parseUnits } from 'viem';
 import type { ChainId } from './types.ts';
-import { readTimeout, venueWriteTimeout } from './net.ts';
+import { readTimeout, venueWriteTimeout, withTimeout } from './net.ts';
 import { spendNetworkOf } from './rails/intents-address.ts';
 import { ReasonError } from './rails/reasons.ts';
 import { oneLine, venueReason, venueSaid, venueValue } from './venue-words.ts';
@@ -581,6 +581,9 @@ export type OneClickQuoteParams = {
   recipientType?: OneClickEndpointType;
   refundType?: OneClickEndpointType;
   depositType?: OneClickEndpointType;
+  // A deadline for this one call in place of the venue-write budget, for a dry quote with an
+  // answer line to keep (the relay rail's price check). Left out, the venue-write budget applies.
+  timeoutMs?: number;
 };
 
 /* ---------- the quote echo, checked once for every rail ----------
@@ -832,7 +835,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body),
-      signal: venueWriteTimeout(),
+      signal: params.timeoutMs === undefined ? venueWriteTimeout() : withTimeout(params.timeoutMs),
     });
     const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
 
