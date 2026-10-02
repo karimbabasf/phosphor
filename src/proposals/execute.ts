@@ -17,7 +17,7 @@ import { APP_TURN_REASON } from '../app-turn.ts';
 import type { PCtx } from './lifecycle.ts';
 import { TERMINAL, deadlineAtOf, stageOf } from './view.ts';
 import type { ProposalStage } from './view.ts';
-import { reasonOf } from '../rails/reasons.ts';
+import { ReasonError, reasonOf } from '../rails/reasons.ts';
 
 // Single exit for a freshly evaluated proposal. This is the only place a proposal can become
 // executed without a human, and only on verdict allow.
@@ -64,6 +64,19 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
   // so nobody may be at the window to see what it files (src/app-turn.ts). The row's own stamp.
   if (p.verdict.outcome === 'allow' && p.appTurn === true) {
     p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, APP_TURN_REASON] } };
+  }
+  /* AND FREEZE IS READ AGAIN FOR AN ALLOW, with nothing awaited between this and the executing
+     write. The verdict a caller hands in was taken before its simulation, seconds of quotes and
+     reads, and Freeze pressed in those seconds used to let the move run on the old answer
+     (re-audit R-L1). The two rules every allow answers to, whoever ruled it (the engine, or
+     landFree for a change that only takes risk off). */
+  if (p.verdict.outcome === 'allow') {
+    const policy = loadPolicy(ctx.dataDir);
+    if (policy === null) {
+      p = { ...p, verdict: { outcome: 'refuse', reasons: [...p.verdict.reasons, 'The policy file became unreadable while this was checked, so nothing was sent.'], rule: 'policy_unreadable' } };
+    } else if (policy.killSwitch) {
+      p = { ...p, verdict: { outcome: 'refuse', reasons: [...p.verdict.reasons, 'Freeze was pressed while this was checked, so nothing was sent.'], rule: 'kill_switch' } };
+    }
   }
 
   if (p.verdict.outcome === 'refuse') {
@@ -331,6 +344,17 @@ function behind(ctx: PCtx, executing: Proposal, run: Promise<Proposal>): Proposa
   return executing;
 }
 
+/* FREEZE BINDS AT THE SIGNATURE. A rail reads quotes and balances for seconds before its key
+   signs, and Freeze pressed in that time used to let the signature through, on a click, a touch
+   or no click at all (re-audit R-L1). Every rail asks here as its last step before the key
+   (RailHooks.lastCheck), synchronously, so nothing lands between this read and the signature.
+   A policy file that will not load reads as frozen, as the engine reads it. */
+function refuseIfFrozen(ctx: PCtx): void {
+  const policy = loadPolicy(ctx.dataDir);
+  if (policy === null) throw new ReasonError('rules_unreadable', 'Your rules could not be read, so nothing was signed.');
+  if (policy.killSwitch) throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+}
+
 async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, beforeUsd: number | null): Promise<Proposal> {
   /* THE EVIDENCE IS WRITTEN THE MOMENT IT EXISTS. A rail hands back a handle once the quote is
      taken, a hash once the intent is submitted, a nonce once the action is signed, and each one
@@ -342,6 +366,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      the balance (judgeSettling below) and never by 1Click's word alone. */
   const hooks: RailHooks = {
     decidedBy: p.decidedBy,
+    lastCheck: () => refuseIfFrozen(ctx),
     onEvidence: (e) => {
       const current = ctx.store.get(p.id) ?? executing;
       if (current.status !== 'executing') return;

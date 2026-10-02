@@ -25,6 +25,7 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import type { EngineCtx } from '../../src/policy/engine.ts';
 import type { RiskRow, SwapDraft } from '../../src/types.ts';
+import { ReasonError } from '../../src/rails/reasons.ts';
 import { parseStatus } from '../../src/intents.ts';
 import type { OneClickQuote, OneClickToken, TokensFile } from '../../src/intents.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
@@ -1257,4 +1258,45 @@ test('an unsigned quote is refused before anything is signed, and a signed one l
   assert.equal(quote.depositAddress, HANDLE);
   assert.match(quote.signature, /^ed25519:/);
   assert.match(quote.correlationId, /^test-quote-/);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs right before the key; one that throws leaves nothing signed or submitted", async () => {
+  const railFor = (h: ReturnType<typeof harness>) =>
+    intentsNativeRail({
+      keysPath: '/nonexistent/keys.json',
+      quoteKey: TEST_QUOTE_KEY,
+      tokens: tokensFixture,
+      apiKey: '',
+      api: h.api,
+      signer: h.signer,
+      verifierBalance: h.verifierBalance,
+      now: () => NOW,
+      sleepImpl: async () => {},
+      pollIntervalMs: 1,
+      pollTimeoutMs: 5,
+    });
+  const h = harness();
+  let generatedAtCheck = -1;
+  await assert.rejects(
+    () =>
+      railFor(h).execute(draftOf(), 'p1', {
+        lastCheck: () => {
+          generatedAtCheck = h.generated.length;
+          throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+        },
+      }),
+    /Everything is frozen/,
+  );
+  assert.equal(generatedAtCheck, 1, 'asked after the intent was generated, the last step before the key');
+  assert.equal(h.signedPayloads.length, 0);
+  assert.equal(h.submitted.length, 0);
+
+  const open = harness();
+  let checks = 0;
+  const result = await railFor(open).execute(draftOf(), 'p1', { lastCheck: () => void (checks += 1) });
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(checks, 1);
+  assert.equal(open.signedPayloads.length, 1);
 });

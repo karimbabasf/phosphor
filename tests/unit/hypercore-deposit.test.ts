@@ -4,6 +4,7 @@ import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 
 import type { HlDepositDraft } from '../../src/types.ts';
+import { ReasonError } from '../../src/rails/reasons.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
 import { toBaseUnits } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
@@ -953,4 +954,30 @@ test('a deposit approved before its coins were pinned is not run', async () => {
   assert.equal(out.ok, false);
   assert.match(out.detail, /approved before Phosphor pinned the coins it moves/);
   assert.equal(calls.quotes.length, 0);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs before the deposit intent is signed; one that throws leaves nothing signed", async () => {
+  const { rail: r, calls, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }]);
+  const out = await r.execute(draft(), 'p1', { lastCheck: () => { throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.'); } });
+  assert.equal(out.ok, false);
+  assert.equal(out.reason, 'kill_switch');
+  assert.equal(calls.signed.length, 0);
+  assert.equal(calls.submitted.length, 0);
+  assert.equal(exchange.length, 0);
+});
+
+test('Freeze met after the deposit landed on spot leaves it there, signs no move to perp, and says so', async () => {
+  const { rail: r, calls, exchange } = rail({}, [{ perp: 0, spot: 0 }, { perp: 0, spot: 9.6594 }]);
+  let checks = 0;
+  const lastCheck = (): void => {
+    checks += 1;
+    if (checks > 1) throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+  };
+  const out = await r.execute(draft(), 'p1', { lastCheck });
+  assert.equal(calls.signed.length, 1, 'the deposit intent, signed before Freeze');
+  assert.equal(exchange.length, 0, 'no move to perp was signed or posted');
+  assert.match(out.detail, /move to perp threw: Everything is frozen, so nothing was signed/);
+  assert.match(out.detail, /not margin yet; do not deposit again/);
 });

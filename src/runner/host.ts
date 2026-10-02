@@ -168,6 +168,9 @@ export function createRunnerHost(deps: HostDeps) {
      because the process had not started yet is not a kill switch. */
   let generation = 0;
   let killed = false;
+  // Freeze as it stands: the flag kill.ts sets before it writes the file, then the file itself.
+  // Read as the last step before a command the child signs a new order for.
+  const frozen = (): boolean => killed || deps.killSwitch();
 
   const rows = new Map<string, PlanRow>();
   for (const row of deps.store.list()) rows.set(row.id, row);
@@ -510,6 +513,9 @@ export function createRunnerHost(deps: HostDeps) {
         finish(row, 'failed:the API wallet is no longer approved on the venue');
         return;
       }
+      // Freeze pressed while the wallet's approval was read stops the fire here, before the
+      // child signs: tick checked the flag before that wait, and nothing is awaited after this.
+      if (frozen()) return;
       record({ type: 'fired', id: row.id, symbol: row.symbol });
       const reply = await request({ cmd: 'fire', id: row.id, mark });
       if (reply.ev === 'placed') {
@@ -798,6 +804,8 @@ export function createRunnerHost(deps: HostDeps) {
     if (meta === null) return { ok: false, reason: `no venue metadata for ${row.symbol} yet: the trading account has not answered` };
     try {
       await ensureChild();
+      // Asked again after the child started, which takes a moment: a plan never arms frozen.
+      if (frozen()) return { ok: false, reason: 'kill switch is on; nothing can arm' };
       const reply = await request({ cmd: 'arm', plan: planOf(row), cloids: row.cloids, gen: row.gen, meta });
       if (reply.ev !== 'armed') {
         return { ok: false, reason: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };
@@ -1063,6 +1071,8 @@ export function createRunnerHost(deps: HostDeps) {
       if (mark === null) return { ok: false, detail: `no mark price for ${row.symbol}` };
       const armed = await ensureArmed(row);
       if (!armed.ok) return { ok: false, detail: armed.reason };
+      // The new exits are signed by the child, so Freeze is read here, last.
+      if (frozen()) return { ok: false, detail: 'kill switch is on; nothing is changed' };
       const reply = await request({ cmd: 'modify', id, stop: c.stop, target: c.target, cloids: row.cloids, gen: row.gen, mark });
       if (reply.ev !== 'modified') {
         return { ok: false, detail: reply.ev === 'error' ? reply.message : reply.ev === 'refused' ? reply.reason : `unexpected ${reply.ev}` };

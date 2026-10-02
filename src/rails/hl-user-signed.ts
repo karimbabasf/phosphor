@@ -333,6 +333,8 @@ export type HlUserSignedDeps = {
   sign?: HlSignPort;
   fetchImpl?: typeof fetch;
   now?: () => number;
+  // The executor's last check (RailHooks.lastCheck), run with nothing awaited before the key signs.
+  lastCheck?: () => void;
 };
 
 async function info<T>(deps: HlUserSignedDeps, body: Record<string, unknown>): Promise<T> {
@@ -559,6 +561,7 @@ export async function usdClassTransfer(
     nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
+  deps.lastCheck?.();
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
@@ -667,6 +670,7 @@ export async function sendAsset(
     nonce: params.nonce ?? (deps.now ?? Date.now)(),
   });
 
+  deps.lastCheck?.();
   const signature = await sign.signTypedData(deps.keysPath, typedData);
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };

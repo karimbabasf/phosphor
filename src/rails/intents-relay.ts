@@ -698,7 +698,9 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
     });
     if (problems.length > 0) throw new Error(`refusing to sign the payload this app built: ${problems.join('; ')}`);
 
-    // Signed exactly as built: the string above is the string sent, byte for byte.
+    // Signed exactly as built: the string above is the string sent, byte for byte. The executor's
+    // last check (Freeze) runs first, with nothing awaited between it and the key.
+    hooks?.lastCheck?.();
     const signature = await signer.signErc191(keysPath, payload);
     signedNonces.add(nonce);
     const relayQuote = { quoteHash: quote.quoteHash, amountIn: quote.amountIn, amountOut: quote.amountOut, expiration: quote.expirationTime };

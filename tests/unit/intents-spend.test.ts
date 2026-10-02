@@ -6,6 +6,7 @@ import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../.
 import { spendFromIntents } from '../../src/rails/intents-spend.ts';
 import type { IntentsSpendOutcome, IntentsSpendRequest } from '../../src/rails/intents-spend.ts';
 import type { RailEvidence } from '../../src/types.ts';
+import { ReasonError } from '../../src/rails/reasons.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 
 // The step every rail that spends the intents balance shares: quote, check the echo, ask
@@ -516,4 +517,24 @@ test('a preflight that throws is a refusal before the signature, not a signed mo
   const h = harness();
   await assert.rejects(() => spendFromIntents({ ...depsOf(h), preflight: async () => { throw new Error('arbitrum rpc down'); } }, requestOf()), /arbitrum rpc down/);
   assert.equal(h.calls.signed.length, 0);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs after the route read and right before the key; one that throws leaves nothing signed", async () => {
+  const h = harness();
+  const deps = { ...depsOf(h), beforeSign: async () => (h.calls.order.push('route'), null) };
+  const frozen = () => {
+    h.calls.order.push('check');
+    throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+  };
+  await assert.rejects(() => spendFromIntents(deps, requestOf(), { lastCheck: frozen }), /Everything is frozen/);
+  assert.deepEqual(h.calls.order.slice(-2), ['route', 'check']);
+  assert.equal(h.calls.signed.length, 0);
+  assert.equal(h.calls.submitted.length, 0);
+
+  const open = harness();
+  const out = submittedOf(await spendFromIntents(depsOf(open), requestOf(), { lastCheck: () => void open.calls.order.push('check') }));
+  assert.equal(out.intentHash, 'HASH1');
+  assert.deepEqual(open.calls.order.slice(0, 2), ['check', 'sign']);
 });

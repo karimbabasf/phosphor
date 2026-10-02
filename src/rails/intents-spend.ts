@@ -258,6 +258,8 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   const deadline = intentDeadline(payload) ?? 'unknown';
   const refused = deps.beforeSign === undefined ? null : await deps.beforeSign();
   if (refused !== null) throw new ReasonError('route_closed', refused);
+  // The executor's last check (Freeze), after the route read and with nothing awaited before the key.
+  hooks?.lastCheck?.();
   const signature = await deps.signer.signErc191(deps.keysPath ?? '', payload);
   tell(hooks, { handle: depositAddress, deadline, quote: signedQuote });
 

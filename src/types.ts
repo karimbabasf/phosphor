@@ -472,6 +472,9 @@ export type RailHooks = {
   // Who decided the move the rail is running. A rail that could not check a price holds a move
   // the policy decided, and runs one a person clicked on at the floor that person approved.
   decidedBy?: DecidedBy;
+  // Called by a rail as the last step before its key signs, with nothing awaited between this
+  // call and the signature. Throws when the move may no longer sign (Freeze), and then nothing is.
+  lastCheck?: () => void;
 };
 
 // ---------- preflight ----------

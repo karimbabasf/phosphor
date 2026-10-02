@@ -1238,6 +1238,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     const payload = shortened as string;
     const deadline = intentDeadline(payload) ?? 'unknown';
     const nonce = intentNonce(payload);
+    // The executor's last check (Freeze), with nothing awaited between it and the key.
+    hooks?.lastCheck?.();
     const signature = await signer.signErc191(keysPath, payload);
     tell(hooks, { handle: depositAddress, deadline, ...(nonce === undefined ? {} : { nonce }), quote: signedQuote });
 

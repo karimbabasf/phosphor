@@ -34,7 +34,7 @@ import {
   intentsRelayRail,
   settleTolerance,
 } from '../../src/rails/intents-relay.ts';
-import { reasonOf } from '../../src/rails/reasons.ts';
+import { ReasonError, reasonOf } from '../../src/rails/reasons.ts';
 import { relayClient } from '../../src/relay/client.ts';
 import { liveVerifier } from '../../src/relay/verifier.ts';
 import type { IntentsRelayRailDeps } from '../../src/rails/intents-relay.ts';
@@ -1051,4 +1051,26 @@ test('a fee hidden in 1Click\'s own answer moves its amount and its dollar figur
   const refused = await lying.rail.simulate(draftOf({ minAmountOut: 0.99 }));
   assert.equal(refused.ok, false);
   assert.match(refused.error ?? '', /gives up 50\.0 percent/);
+});
+
+// ---------- Freeze at the signature (re-audit R-L1) ----------
+
+test("the executor's last check runs after every read and right before the key; one that throws leaves nothing signed", async () => {
+  const h = harness();
+  const asked: string[] = [];
+  const frozen = (): never => {
+    asked.push(`check after ${h.saltReads} salt reads, ${h.signed.length} signatures`);
+    throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
+  };
+  await assert.rejects(() => h.rail.execute(draftOf(), 'p1', { ...h.hooks, lastCheck: frozen }), (err: Error) => reasonOf(err) === 'kill_switch');
+  assert.deepEqual(asked, ['check after 1 salt reads, 0 signatures']);
+  assert.equal(h.signed.length, 0);
+  assert.equal(h.publishes.length, 0);
+
+  const open = harness();
+  let checks = 0;
+  const result = await open.rail.execute(draftOf(), 'p1', { ...open.hooks, lastCheck: () => void (checks += 1) });
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(checks, 1);
+  assert.equal(open.signed.length, 1);
 });
