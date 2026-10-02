@@ -7,7 +7,8 @@ without a git tag say so.
 
 ## 0.10.13
 
-Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of writing.
+Built 2026-10-01 and 2026-10-02, the invite codes and safety pass. Not tagged at the time of
+writing.
 
 - Invite codes. Someone can send you a code, or a link to phosphor.money/invite, that holds USDC
   for a new wallet, usually $5. Paste it on the new step after the terms, Have an invite code?, or
@@ -95,8 +96,13 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   on its card. The lock screen says why Phosphor locked (your screen locked, your Mac switched
   users or slept, or the minutes you picked went by) and how many moves wait for your OK, without
   saying what they are, and the Vault's lock timer says the window also locks with your screen.
+- A lock while you write your recovery words down in the first run puts the lock card in front of
+  them: the words leave the screen, the unlock field takes the keyboard, and unlocking brings you
+  back to the same step. The moving lines behind the first run stop drawing while the card is up.
 - Any lock, yours or the app's, wipes a key or recovery phrase you asked to see and had not read
-  yet, and one you never read is wiped when it expires.
+  yet, and one you never read is wiped when it expires. The window's read cache no longer keeps a
+  copy of a recovery phrase you asked to see; before, it held one after the Vault tab had closed
+  the phrase's row.
 - The wallet locks after 5 idle minutes by default instead of 15. A time you picked in the Vault
   stays, and the app now waits the time you picked; before, it always waited 15 minutes. The one
   exception is 15 minutes picked before this version: the app cannot tell it from the old default,
@@ -112,14 +118,23 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   and Unfreeze waits until the file is fixed. Freeze tells you when it could not close your trading
   positions.
 - Proving your backup asks for three different words. After two misses the window shows the words
-  again; after five, the check stops until you show the words again with Back it up. Finishing an
-  interrupted migration counts wrong passwords like every other password check.
+  again; after five, the Vault's check stops until you show the words again with Back it up. In
+  the first run, Prove it checks your words however long writing them down took: past half an
+  hour, or after five wrong tries, it reads them again with the password you just set and asks
+  once more. Finishing an interrupted migration counts wrong passwords like every other password
+  check.
 - A quote changed on its way to 1Click (a fee paying someone else, a field the app never sent, a
   value it never chose) is refused before anything is signed, and a swap gives up at most 3
-  percent of its value by the dollar figures 1Click signs. A swap on the solver relay is held to
-  the same 3 percent, judged by a quote 1Click signed for the same swap; with no signed price to
-  check it by, it waits for your click. A swap 1Click puts no dollar figure on waits for your
-  click on either route.
+  percent of its value by the dollar figures 1Click signs, so the cap trusts 1Click's prices. A
+  swap on the solver relay is held to the same 3 percent, judged by a quote 1Click signed for the
+  same swap. With no signed price to check it by, a relay swap waits for your click whatever its
+  size and its card says Phosphor could not check the price; once you click it, what the card says
+  you get at least is the only check. A swap 1Click puts no dollar figure on waits for your click
+  on either route, and its card says why.
+- A swap that waits because an earlier swap of the same coin may still go through, or because only
+  1Click's list prices it, says why on its card at every size; above your click threshold the card
+  used to give the threshold as its only reason. When a swap waits for more than one reason the
+  app adds about its price or an earlier swap, its card's Why it asks says each on its own line.
 - A swap, send, payout or Hyperliquid deposit moves exactly the coins its card showed. If the coin
   list names another coin or other decimals by the time you click, the move is refused and nothing
   is signed. Native ETH and SOL are pinned to 1Click's ids like the registry's coins, and a registry
@@ -195,12 +210,15 @@ Built 2026-10-01, the invite codes and safety pass. Not tagged at the time of wr
   yourself. What stays open names, each with a Known limits section: the two seconds after the
   backend stops, names a venue lists that do not mark the agent, disk image files nobody checks,
   the fee room on a Hyperliquid withdrawal and on an invite claim through 1Click, a claim that
-  looks failed until the next start, an agent that can stop another's worker, and a release that
-  rests on one GitHub account. It also covers the invite tools: what `npm run invite` guards and
-  trusts, the tests behind it, and what stays open (the terminal rule is a speed bump; the
-  passphrase is the wall).
+  looks failed until the next start, an agent that can stop another's worker, a relay swap you
+  click with no signed 1Click price beside it, and a release that rests on one GitHub account. It
+  also covers the invite tools: what `npm run invite` guards and trusts, the tests behind it, and
+  what stays open (the terminal rule is a speed bump; the passphrase is the wall).
 - For people who build Phosphor: the update signer names its key the way minisign does, so a test
   that failed about one run in sixteen passes every time.
+- For people who build Phosphor: a trading runner built without being told whether the wallet is
+  open reads it as locked, so a waiting plan never arms on a missing wire, and the type check
+  stops a caller that leaves it out.
 - For people who build Phosphor: the secret sweep passes again. All 51 values it stopped on were
   public (transactions and addresses the chain reader reads live, deposit addresses, test
   receivers, one curve constant), each now excused by its exact value. `npm run sweep` reads the

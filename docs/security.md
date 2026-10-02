@@ -106,8 +106,9 @@ A Touch ID or a password opens only what it was asked for. "Show your deposit ad
 the address, and "Reveal your recovery phrase", or the password typed to see the words, shows the
 words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
 nothing waiting for an unlock runs. The Vault tab drops the words when their row closes or the
-wallet locks, and the window's read cache never keeps them. The Touch ID that approves a move on a locked wallet opens it
-for that move alone: nothing else can start while it signs, and the key goes as soon as it has.
+wallet locks, and the window's read cache never keeps them. The Touch ID that approves a move on a
+locked wallet opens it for that move alone: nothing else can start while it signs, and the key
+goes as soon as it has.
 Only Unlock opens the wallet for the session, and waiting trading plans re-arm only while the
 wallet is open, never on a touch for one move.
 

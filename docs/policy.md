@@ -47,12 +47,12 @@ size, and the policy engine never executes them on its own:
 - A policy change, because a rule the human did not click is how every other guarantee gets
   removed.
 
-Two more cases wait for a click whatever their size: a swap the app cannot measure, because it
+Three more cases wait for a click whatever their size: a swap the app cannot measure, because it
 spends a coin the app cannot price, one whose listed price nothing in the quote can check, a
 coin 1Click puts no dollar figure on, or a price from the solver relay it could not check against
 a quote 1Click signed (see
-[Money](money.md#swap)), and every move an agent proposes after it read text from outside
-Phosphor (see below).
+[Money](money.md#swap)); a swap while an earlier swap of the same coin may still go through; and
+every move an agent proposes after it read text from outside Phosphor (see below).
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
 arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On an

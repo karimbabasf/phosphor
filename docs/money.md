@@ -289,9 +289,11 @@ quote 1Click signs for the same swap. Under the click
 threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
 page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
 started outside Phosphor and is not allowed yet, the swap spends a coin the app cannot price,
-1Click puts no dollar figure on one of its coins, or the relay's price could not be checked
-against a quote 1Click signed;
-above it, the card shows what you pay and what you get at least, and waits for your click. See
+1Click puts no dollar figure on one of its coins, the relay's price could not be checked
+against a quote 1Click signed, or an earlier swap of the same coin may still go through;
+above it, the card shows what you pay and what you get at least, and waits for your click. A
+swap held for its price or for an earlier swap of the same coin says so on its card at every
+size, each reason on its own line. See
 [Policy](policy.md#the-click-threshold).
 
 Every coin the swap service lists has a price in your balance. A swap that spends a coin priced
