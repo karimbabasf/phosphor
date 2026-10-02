@@ -171,10 +171,11 @@ your money.
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
   can sign. A program able to read that process's memory has it; the hardened runtime is there to
   refuse that. A lock by any door drops the key and every key or phrase you asked to see and the
-  window has not read yet, and an unread one also goes when it expires, but copies a signature or
-  an unlock made can stay in memory until it is reused. What closes it: the chip vault, where the
-  Secure Enclave signs NEAR Intents moves itself, so that key never exists as bytes. It is
-  planned, not built. Until then, lock the wallet when you step away.
+  window has not read yet, and an unread one also goes when it expires, but copies left by a
+  signature, an unlock, a new wallet or words shown to you can stay in memory until it is reused,
+  and the check behind Prove it outlives a lock. What closes it: the chip vault, where the Secure
+  Enclave signs NEAR Intents moves itself, so that key never exists as bytes. It is planned, not
+  built. Until then, lock the wallet when you step away.
 - **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
   to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
   started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
