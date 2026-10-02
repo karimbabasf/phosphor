@@ -198,9 +198,10 @@ runs the app this checkout builds (`npm run app:build` makes the ad-hoc bundle i
 hostile local process against each defence on a throwaway data dir and home, prints a table, and
 exits non-zero on any that does not hold. Add `-- --app <Phosphor.app>` to include the checks that
 need a Developer ID build. No check changes the bundle it is handed, so a notarized build raises no
-"damaged" alert and the run needs nobody at the keyboard. The screen-lock check posts the lock
-signal to the one shell it started; `-- --real-screen-lock` posts macOS's own instead, which every
-app on the Mac receives.
+"damaged" alert and the run needs nobody at the keyboard; a check that cannot run says SKIP and
+why. The screen-lock check posts the lock signal to the one shell it started; `-- --real-screen-lock`
+posts macOS's own instead, which every app on the Mac receives. The apps it starts keep their
+window and WebKit state in the throwaway home, not in the installed app's `~/Library`.
 
 ## The lock
 

@@ -103,6 +103,17 @@ export function cliApp(): string | null {
   return null;
 }
 
+// The Team ID a bundle is signed with, null when it is ad-hoc. A Developer ID build is notarized,
+// and macOS checks a notarized bundle's seal when code inside it first runs: a changed copy of one
+// gets the "damaged" alert, which waits for a person.
+export function teamOf(app: string): string | null {
+  const r = spawnSync('/usr/bin/codesign', ['-dv', app], { encoding: 'utf8' });
+  const team = /^TeamIdentifier=(.+)$/m.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`)?.[1]?.trim();
+  return team && team !== 'not set' ? team : null;
+}
+
+const LSREGISTER = '/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister';
+
 function cleanEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) if (typeof v === 'string') out[k] = v;
@@ -406,6 +417,10 @@ export async function launchShell(opts: ShellOpts): Promise<Shell> {
   const env: Record<string, string> = {
     ...cleanEnv(),
     HOME: home,
+    // CoreFoundation takes the home from this, not HOME, so the shell's AppKit and WebKit state
+    // (website data, caches) lands in the throwaway home and not in the ~/Library the installed
+    // app uses. The shell hands it to no backend (BACKEND_ENV in backend.rs).
+    CFFIXED_USER_HOME: home,
     PHOSPHOR_PORT: String(port),
     PHOSPHOR_MODE: opts.mode ?? 'demo',
     ACC_MODE: opts.mode ?? 'demo',
@@ -520,6 +535,9 @@ export async function launchShell(opts: ShellOpts): Promise<Shell> {
       await sleep(400);
       // One more sweep in case a sidecar reparented to launchd.
       spawnSync('/usr/bin/pkill', ['-9', '-f', path.join(app, 'Contents', 'MacOS', 'node')]);
+      // A launched app registers itself with LaunchServices under Phosphor's identifier. A copy
+      // this suite made is about to be deleted, so its record goes too.
+      if ([...TEMPS].some(dir => app.startsWith(dir + path.sep))) spawnSync(LSREGISTER, ['-u', app]);
       LIVE.delete(child);
       rmTemp(home);
       rmTemp(path.dirname(keysPath));

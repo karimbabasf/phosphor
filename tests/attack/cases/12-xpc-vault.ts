@@ -17,7 +17,7 @@
 
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
-import { ROOT } from '../harness.ts';
+import { ROOT, teamOf } from '../harness.ts';
 import type { AttackCase, AttackCtx, AttackResult } from '../types.ts';
 
 function runProbe(app: string): { status: number; out: string } {
@@ -42,12 +42,6 @@ function verdict(label: string, probe: { status: number; out: string }, signed: 
   return { pass, line, short: `${label} exit ${probe.status}, ${refused.length} REFUSED, ${fails.length} FAIL` };
 }
 
-function signedBy(app: string): string | null {
-  const r = spawnSync('/usr/bin/codesign', ['-dv', app], { encoding: 'utf8' });
-  const team = /^TeamIdentifier=(.+)$/m.exec(`${r.stdout ?? ''}${r.stderr ?? ''}`)?.[1]?.trim();
-  return team && team !== 'not set' ? team : null;
-}
-
 export const attack: AttackCase = {
   id: '12-xpc-vault',
   title: 'the enclave XPC service answers only the Phosphor shell: every other caller is refused',
@@ -62,7 +56,7 @@ export const attack: AttackCase = {
     const parts: string[] = [];
     const shorts: string[] = [];
     for (const app of apps) {
-      const team = signedBy(app);
+      const team = teamOf(app);
       developerId ||= team !== null;
       const v = verdict(team ? `Developer ID (${team})` : 'ad-hoc', runProbe(app), team !== null);
       pass &&= v.pass;
