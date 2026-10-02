@@ -14,20 +14,22 @@ typedef void (*phosphor_session_event)(int kind);
 enum { PHOSPHOR_SCREEN_LOCKED = 1, PHOSPHOR_SESSION_RESIGNED = 2 };
 
 // `screen_locked` is the distributed notification macOS posts to every app when the screen
-// locks. The app passes com.apple.screenIsLocked; a test passes a name of its own, so a test run
-// never tells every app on the Mac that the screen locked.
-void phosphor_watch_session(const char *screen_locked, phosphor_session_event on_event) {
+// locks, com.apple.screenIsLocked. `addressed` is the same signal addressed to this one shell by
+// its process id: a test posts that one, so a test run never tells every app on the Mac that the
+// screen locked.
+void phosphor_watch_session(const char *screen_locked, const char *addressed, phosphor_session_event on_event) {
     NSOperationQueue *queue = [[NSOperationQueue alloc] init];
     queue.maxConcurrentOperationCount = 1;
     queue.name = @"com.karimbabasf.phosphor.session-watch";
-    NSString *name = [NSString stringWithUTF8String:screen_locked];
-    [[NSDistributedNotificationCenter defaultCenter] addObserverForName:name
-                                                                 object:nil
-                                                                  queue:queue
-                                                             usingBlock:^(NSNotification *note) {
-                                                               (void)note;
-                                                               on_event(PHOSPHOR_SCREEN_LOCKED);
-                                                             }];
+    for (NSString *name in @[ [NSString stringWithUTF8String:screen_locked], [NSString stringWithUTF8String:addressed] ]) {
+        [[NSDistributedNotificationCenter defaultCenter] addObserverForName:name
+                                                                     object:nil
+                                                                      queue:queue
+                                                                 usingBlock:^(NSNotification *note) {
+                                                                   (void)note;
+                                                                   on_event(PHOSPHOR_SCREEN_LOCKED);
+                                                                 }];
+    }
     [[[NSWorkspace sharedWorkspace] notificationCenter] addObserverForName:NSWorkspaceSessionDidResignActiveNotification
                                                                      object:nil
                                                                       queue:queue

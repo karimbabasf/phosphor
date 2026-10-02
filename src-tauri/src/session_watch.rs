@@ -18,6 +18,13 @@ use crate::backend::{post_lock_when_idle, LockAnswer};
 /// What macOS posts to every app when the screen locks.
 pub const SCREEN_LOCKED: &str = "com.apple.screenIsLocked";
 
+/// The same signal addressed to the one shell with this process id, which a test posts so that
+/// only the shell it runs hears it (`npm run attack`, 10-screen-lock-shell). It gives no process
+/// anything new: whoever can post it can post SCREEN_LOCKED, and both only ever lock.
+pub fn screen_locked_here(pid: u32) -> String {
+    format!("com.karimbabasf.phosphor.test.screenIsLocked.{pid}")
+}
+
 /// How long the shell keeps asking while the backend answers busy. The first ask already shuts the
 /// wallet: locked to anything new at once, and the backend wipes the key itself the moment the
 /// moves already signing have their signatures, or at its own cap (CLOSE_GRACE_MS in
@@ -48,26 +55,33 @@ pub fn backend_down() {
 
 #[cfg(target_os = "macos")]
 extern "C" {
-    fn phosphor_watch_session(screen_locked: *const std::ffi::c_char, on_event: extern "C" fn(c_int));
+    fn phosphor_watch_session(
+        screen_locked: *const std::ffi::c_char,
+        addressed: *const std::ffi::c_char,
+        on_event: extern "C" fn(c_int),
+    );
 }
 
 /// Starts watching, once, for the life of the app.
 #[cfg(target_os = "macos")]
 pub fn watch() {
-    watch_for(SCREEN_LOCKED);
+    watch_for(SCREEN_LOCKED, &screen_locked_here(std::process::id()));
 }
 
 #[cfg(not(target_os = "macos"))]
 pub fn watch() {}
 
 #[cfg(target_os = "macos")]
-fn watch_for(screen_locked: &str) {
-    let Ok(name) = std::ffi::CString::new(screen_locked) else {
+fn watch_for(screen_locked: &str, addressed: &str) {
+    let (Ok(name), Ok(here)) = (
+        std::ffi::CString::new(screen_locked),
+        std::ffi::CString::new(addressed),
+    ) else {
         return;
     };
-    // SAFETY: the name is NUL-terminated and only read during the call; the callback is a plain
+    // SAFETY: both names are NUL-terminated and only read during the call; the callback is a plain
     // function that lives as long as the process.
-    unsafe { phosphor_watch_session(name.as_ptr(), on_event) };
+    unsafe { phosphor_watch_session(name.as_ptr(), here.as_ptr(), on_event) };
 }
 
 // Called on the watch's own queue, never the main thread. Nothing may unwind into Objective-C.
@@ -185,8 +199,9 @@ mod tests {
 
     /// The whole chain on the real backend the bundle stages, in demo mode on a throwaway home:
     /// an open wallet with a policy change waiting for a click; a screen lock posted from another
-    /// process, as loginwindow posts it, under a name of this test's own; the wallet locks and the
-    /// change is still waiting; the person unlocks; a switch to another user locks it again.
+    /// process, as loginwindow posts it, under the name addressed to this process alone, through
+    /// the same watch() the shell starts; the wallet locks and the change is still waiting; the
+    /// person unlocks; a switch to another user locks it again.
     #[cfg(target_os = "macos")]
     #[test]
     fn a_screen_lock_and_a_user_switch_each_lock_the_wallet_and_keep_the_move_waiting_for_a_click() {
@@ -242,8 +257,8 @@ mod tests {
             assert!(!locked(port, &hand.token), "the wallet is open before anyone steps away");
 
             backend_up(port, &hand.token);
-            let name = format!("com.karimbabasf.phosphor.test.screenIsLocked.{}", std::process::id());
-            watch_for(&name);
+            watch();
+            let name = screen_locked_here(std::process::id());
             let posted = Command::new("/usr/bin/osascript")
                 .args(["-l", "JavaScript", "-e"])
                 .arg(format!(
