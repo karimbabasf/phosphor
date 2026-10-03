@@ -16,7 +16,7 @@ import path from 'node:path';
 
 import { canonical } from '../../src/keystore/envelope.ts';
 import { seUnwrapWithSoftwareKey, seWrap } from '../../src/keystore/sewrap.ts';
-import { createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
+import { createKeystore, keystorePathFor, readHeader, stagedPathFor } from '../../src/keystore/store.ts';
 import type { EnclaveRef, Keystore } from '../../src/keystore/store.ts';
 import { tempDir } from './helpers/tmp.ts';
 
@@ -217,4 +217,22 @@ test('forget shreds the file and leaves no wallet', () => {
   assert.equal(store.state(), 'no_wallet');
   assert.equal(store.custody(), null);
   assert.deepEqual(store.addressReport().addresses, { evm: null, solana: null, near: null, nearPublicKey: null });
+});
+
+/* audit1b AU1B-03: the staged file is checked with lstat and then read. A link put in its place
+   between the two used to be followed by the read. Made to happen every time here: the check is
+   answered with a regular file's stat while a link to another wallet's staged file sits there. */
+test('a link swapped in for the staged file after its check is not followed', (t) => {
+  const keysPath = tmpKeys();
+  const store = createKeystore({ keysPath, mode: 'live', kdf: FAST_KDF });
+  const elsewhere = tmpKeys();
+  createKeystore({ keysPath: elsewhere, mode: 'live', kdf: FAST_KDF }).stageNew(fakeEnclave().ref);
+  const target = stagedPathFor(elsewhere);
+  const link = stagedPathFor(keysPath);
+  fs.symlinkSync(target, link);
+  assert.equal(store.stagedOnDisk(), 'unreadable', 'a link seen by the check');
+  const lstat = fs.lstatSync.bind(fs);
+  const regular = lstat(target);
+  t.mock.method(fs, 'lstatSync', ((p: fs.PathLike) => (String(p) === link ? regular : lstat(p))) as typeof fs.lstatSync);
+  assert.equal(store.stagedOnDisk(), 'unreadable', 'the read followed a link put there after the check');
 });

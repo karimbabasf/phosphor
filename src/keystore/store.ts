@@ -1076,10 +1076,11 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   function stagedOnDisk(): { staged: StagedFile; installed: boolean } | 'unreadable' | null {
     let bytes: string;
     try {
-      // A key file this app wrote is a regular file of a couple of kilobytes.
+      // A key file this app wrote is a regular file of a couple of kilobytes, and the read follows no
+      // link put in its place after this check.
       const stat = fs.lstatSync(stagedPath);
       if (!stat.isFile() || stat.size > 256 * 1024) return 'unreadable';
-      bytes = fs.readFileSync(stagedPath, 'utf8');
+      bytes = fs.readFileSync(stagedPath, { encoding: 'utf8', flag: fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW });
     } catch (err) {
       return (err as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable';
     }
