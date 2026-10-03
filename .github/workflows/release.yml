@@ -20,10 +20,11 @@
 #             release gate checks everything an installed copy and Gatekeeper will check.
 #   smoke     no secret, no permission, no checkout. On each Apple silicon macOS that GitHub
 #             hosts, the vault service in the signed DMG and in the signed update is run by hand
-#             and must reach xpc_main, so a service an older macOS refuses stops the release
-#             here instead of on a person's Mac.
+#             and must reach xpc_main, so a service a macOS refuses stops the release here
+#             instead of on a person's Mac. macOS 14 reports without holding the release until
+#             GitHub retires it.
 #   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry
-#             run, and only once the service started on every macOS in the smoke job.
+#             run, and only once the service started on macOS 15 and 26.
 #   site      environment `release-site`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs
 #             its own lockfile and puts the DMG behind https://phosphor.money/download/mac.
 #
@@ -458,18 +459,22 @@ jobs:
           compression-level: 0
 
   # The signed files, on each Apple silicon macOS that GitHub hosts. The build is aarch64 alone,
-  # so the -intel and -large runners (x64) cannot run it. macos-14 is the oldest left: no runner
-  # has macOS 13, so 13.5, the floor in tauri.conf.json, is held by the release check's minimum
-  # version rule and not run here. GitHub retires macos-14 on 2026-11-02 and fails its jobs in
-  # brownout windows before then (actions/runner-images#13518): a run in a window fails here, so
-  # run the job again once the window ends, and take the label out when it retires.
+  # so the -intel and -large runners (x64) cannot run it. macos-15 and macos-26 hold the release:
+  # publish needs them. macos-14 is the oldest left and runs without holding it, because GitHub
+  # fails its jobs in brownout windows until it retires it on 2026-11-02
+  # (actions/runner-images#13518), and a brownout must never fail a release. No runner has macOS
+  # 13, so 13.5, the floor in tauri.conf.json, is held by the release check's minimum version rule.
   smoke:
     name: The vault service starts on ${{ matrix.os }}
     needs: [build, sign]
+    continue-on-error: ${{ matrix.os == 'macos-14' }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-14, macos-15, macos-26]
+        os:
+          - macos-15
+          - macos-26
+          - macos-14 # 2026-10-03: does not hold the release. Delete this line after 2026-11-02, when GitHub retires macos-14.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions: {}

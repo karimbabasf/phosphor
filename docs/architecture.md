@@ -293,11 +293,13 @@ reproducible build could. The release build also does not run `npm audit signatu
 key-process package test again: CI runs both on pushes to main and on pull requests, so a release
 is only as checked as the CI run on its commit. The smoke job holds no secret and no permission:
 it takes the signed files, checks them against the sign job's digests, and on each Apple silicon
-macOS that GitHub hosts (14, 15 and 26) runs the vault service by hand, from the app in the DMG and
-the app in the update. Each must reach `xpc_main`, which aborts with 134 and says it cannot be run
-directly; 137, a dyld error or any other answer fails the release before anything is published,
-because the publish job needs every one. No runner has macOS 13, so the floor of 13.5 is held by
-the release check above, not by a run. The publish
+macOS that GitHub hosts (15 and 26, and 14 until GitHub retires it on 2026-11-02) runs the vault
+service by hand, from the app in the DMG and the app in the update. Each must reach `xpc_main`,
+which aborts with 134 and says it cannot be run directly. On 15 and 26, 137, a dyld error or any
+other answer fails the release before anything is published, because the publish job needs them;
+the macOS 14 leg reports without holding the release, since GitHub fails that runner's jobs in
+brownout windows until it retires it. No runner has macOS 13, so the floor of 13.5 is held by the
+release check above, not by a run. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone,
 in its own `release-site` environment, which lets only `v*` tags in and asks no approval. It
 starts only after the sign job the maintainer approved, so a release asks for one approval, and

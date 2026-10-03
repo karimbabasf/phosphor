@@ -21,7 +21,8 @@ import { parseWorkflow, type Yaml } from './helpers/workflow-yaml.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const root = new URL('../../', import.meta.url);
-const workflow = parseWorkflow(fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8'));
+const source = fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8');
+const workflow = parseWorkflow(source);
 
 type Step = { name?: string; uses?: string; run?: string; if?: string; env?: Record<string, string>; with?: Record<string, Yaml>; 'working-directory'?: string; id?: string };
 type Job = {
@@ -33,6 +34,7 @@ type Job = {
   outputs?: Record<string, string>;
   env?: Record<string, string>;
   'runs-on'?: string;
+  'continue-on-error'?: string;
   strategy?: { 'fail-fast'?: boolean; matrix?: Record<string, Yaml> };
 };
 
@@ -221,7 +223,7 @@ test('the signed service is started on each Apple silicon macOS GitHub hosts, by
     if (step.uses) assert.match(step.uses, /^actions\/download-artifact@[0-9a-f]{40}$/, `smoke: ${step.name}`);
   }
   // The build is aarch64 alone and the -intel and -large labels are x64, so every leg is a plain
-  // macos-<n> label: the one the sign job checked on and at least one older, each run to the end.
+  // macos-<n> label, each run to the end.
   assert.equal(jobs.build.env?.TARGET, 'aarch64-apple-darwin');
   assert.equal(smoke['runs-on'], '${{ matrix.os }}');
   const labels = smoke.strategy?.matrix?.os;
@@ -231,12 +233,21 @@ test('the signed service is started on each Apple silicon macOS GitHub hosts, by
     assert.ok(found, `${label} is not an Apple silicon runner`);
     return Number(found[1]);
   };
-  const signedOn = major(jobs.sign['runs-on'] ?? '');
-  assert.ok(labels.map(major).includes(signedOn), 'the macOS the sign job checked on');
-  assert.ok(labels.map(major).some((version) => version < signedOn), 'and an older one');
   assert.equal(smoke.strategy?.['fail-fast'], false, 'every leg reports');
+  // One leg, the oldest, runs without holding the release: GitHub fails a retiring runner's jobs
+  // in brownout windows, and a brownout must never fail a release. Its line says when it goes.
+  const retiring = /^\$\{\{ matrix\.os == '(macos-\d+)' \}\}$/.exec(smoke['continue-on-error'] ?? '')?.[1];
+  assert.ok(retiring !== undefined && labels.includes(retiring), 'one named leg does not hold the release');
+  assert.equal(Math.min(...labels.map(major)), major(retiring), 'and it is the oldest');
+  const line = new RegExp(String.raw`^ +- ${retiring} # (\d{4}-\d{2}-\d{2}): .*Delete this line after (\d{4}-\d{2}-\d{2})`, 'm').exec(source);
+  assert.ok(line !== null && line[1] < line[2], `the ${retiring} line says the date to delete it`);
+  // The rest hold it: the macOS the sign job checked on and a newer one.
+  const holding = labels.filter((label) => label !== retiring).map(major);
+  const signedOn = major(jobs.sign['runs-on'] ?? '');
+  assert.ok(holding.includes(signedOn), 'the macOS the sign job checked on');
+  assert.ok(holding.some((version) => version > signedOn), 'and a newer one');
   assert.ok([smoke.needs].flat().includes('sign'));
-  assert.ok([jobs.publish.needs].flat().includes('smoke'), 'publishing waits for every leg');
+  assert.ok([jobs.publish.needs].flat().includes('smoke'), 'publishing waits for the legs that hold it');
   // Both apps that ship: the one in the DMG and the one in the update.
   const run = runs(smoke);
   assert.match(run, /^smoke "\$RUNNER_TEMP\/dmg\/Phosphor\.app" "the DMG" \|\| failed=1$/m);

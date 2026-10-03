@@ -594,8 +594,9 @@ that signed), each path's entitlements, that the service run by hand gets past A
 the update; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
 Node's own crypto. Then the smoke job, which holds no secret, runs the service by hand from both
-signed apps on each Apple silicon macOS GitHub hosts (14, 15 and 26), and nothing is published
-until it reaches `xpc_main` on every one. The same chain, all but the smoke job, runs on
+signed apps on each Apple silicon macOS GitHub hosts, and nothing is published until it reaches
+`xpc_main` on macOS 15 and 26 (macOS 14 runs too, without holding the release, until GitHub
+retires it on 2026-11-02). The same chain, all but the smoke job, runs on
 a Mac, checks included, with nothing published:
 
     npm run notarize:local
