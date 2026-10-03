@@ -8,9 +8,9 @@
 //
 // Three votes per screenshot, cast at once against one prompt, the median standing, which is
 // scripts/eval.ts's JUDGE_VOTES rule: one vision read is the least repeatable thing in a run.
-// The judge is probed once per run, in the order the builder prompt gives: a vision model on
-// NEAR AI Cloud (credentials in ~/.config/jev-browse/env), then anthropic/claude-sonnet-5 through
-// OpenRouter, then `claude -p` the way scripts/eval.ts judges. The first that answers valid JSON
+// The judge is probed once per run: a vision model on NEAR AI Cloud (credentials in
+// ~/.config/jev-browse/env), then `claude -p` the way scripts/eval.ts judges. No OpenRouter leg:
+// Karim's OpenRouter account runs Jev and nothing else. The first that answers valid JSON
 // for an image plus text is the run's judge and is named in every summary. Nothing but the
 // screenshot and the reply text is sent, and no key is ever printed.
 
@@ -129,7 +129,7 @@ export function rowVerdict(totals: number[], failureRow: boolean): RowVerdict {
 
 // ---------- the providers ----------
 
-export type JudgeName = 'nearai' | 'openrouter' | 'claude-p';
+export type JudgeName = 'nearai' | 'claude-p';
 
 export type Judge = {
   name: JudgeName;
@@ -155,9 +155,9 @@ function imageDataUrl(file: string): string {
   return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
 }
 
-/* One OpenAI-compatible chat completion carrying the image and the prompt. NEAR AI Cloud and
-   OpenRouter both speak this shape. Reasoning is left to the model's defaults; the answer is
-   the message content, JSON only. */
+/* One OpenAI-compatible chat completion carrying the image and the prompt, the shape NEAR AI
+   Cloud speaks. Reasoning is left to the model's defaults; the answer is the message content,
+   JSON only. */
 async function chatWithImage(baseUrl: string, apiKey: string, model: string, screenshot: string, reply: string, extra: Record<string, string> = {}): Promise<string> {
   const res = await fetch(`${baseUrl.replace(/\/$/, '')}/chat/completions`, {
     method: 'POST',
@@ -271,15 +271,6 @@ export async function probeJudge(screenshot: string, env: Env = readJevEnv(), lo
         return null;
       }
       return wrap('nearai', model, (shot, reply) => chatWithImage(base, key, model, shot, reply));
-    },
-    async () => {
-      const key = env.OPENROUTER_API_KEY ?? '';
-      if (key === '') {
-        tried.push({ name: 'openrouter', model: 'anthropic/claude-sonnet-5', ok: false, note: 'no OPENROUTER_API_KEY in the env file' });
-        return null;
-      }
-      const model = 'anthropic/claude-sonnet-5';
-      return wrap('openrouter', model, (shot, reply) => chatWithImage('https://openrouter.ai/api/v1', key, model, shot, reply, { 'x-title': 'phosphor anxiety eval' }));
     },
     async () => wrap('claude-p', 'claude -p (machine default)', claudeP),
   ];
