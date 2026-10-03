@@ -35,7 +35,9 @@ test('a key tauri wrote opens with its password, from its contents or its path, 
     const opened = decodeSecretKey(fs.readFileSync(key, 'utf8'), 'correct horse');
     const line = Buffer.from(pub, 'base64').toString('utf8').split('\n')[1];
     assert.equal(Buffer.concat([Buffer.from('Ed'), opened.keyId, opened.publicKey]).toString('base64'), line);
-    assert.match(Buffer.from(pub, 'base64').toString('utf8'), new RegExp(`minisign public key: ${keyIdHex(opened.keyId)}`));
+    // Tauri's CLI pads the id to 16 digits since 2.12.0, where minisign and older CLIs print no
+    // leading zeros: either spelling names the same key.
+    assert.match(Buffer.from(pub, 'base64').toString('utf8'), new RegExp(`minisign public key: 0*${keyIdHex(opened.keyId)}\n`));
     assert.ok(decodeSecretKey(key, 'correct horse').publicKey.equals(opened.publicKey));
     assert.throws(() => decodeSecretKey(key, 'wrong horse'), /did not open/);
     assert.throws(() => decodeSecretKey('not a key', ''), /not a password-protected minisign key/);
@@ -109,8 +111,9 @@ test('the script writes a .sig only when it verifies against the key it was told
 });
 
 test('a key id prints the way minisign prints it, with no leading zeros', () => {
-  // A key id is a little-endian u64 that minisign and tauri print as `{:X}`. Seen from tauri
-  // signer generate: the id 0x0C8B6D7C134FFF23 is "minisign public key: C8B6D7C134FFF23".
+  // A key id is a little-endian u64 that minisign prints as `{:X}`. Seen from tauri signer
+  // generate before 2.12.0: the id 0x0C8B6D7C134FFF23 is "minisign public key: C8B6D7C134FFF23"
+  // (2.12.0 writes "0C8B6D7C134FFF23").
   const id = (hex: string) => Buffer.from(hex.padStart(16, '0'), 'hex').reverse();
   assert.equal(keyIdHex(id('0C8B6D7C134FFF23')), 'C8B6D7C134FFF23');
   assert.equal(keyIdHex(id('00AB2B2A5CAE6A6F')), 'AB2B2A5CAE6A6F');
