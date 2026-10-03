@@ -688,10 +688,9 @@ own text names the file's path, so it never reaches a window; the audit line kee
 system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`), and an audit file
 the disk refuses as well loses that line, never the sentence. A sentence the app writes on purpose
 may still name what a person needs, such as the file a step left alone. Once the password create,
-import, migration or encrypted copy has written its file, the step has happened, so a failure after
-it (most likely its audit line) says what was saved, never that nothing changed:
-`create_unfinished` (the recovery phrase was not shown, so back it up from the Vault tab),
-`import_unfinished`, `migrate_unfinished` and `export_unfinished`.
+import, migration or encrypted copy has written its file, the step has happened and the route gives
+its usual answer (a create shows the new wallet's words): its audit line and the broadcast after the
+write are bookkeeping, and one the disk refuses is lost to stderr, never put in the answer's place.
 
 A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
 it said) and every custody step after it settle it by the service's answer about it, never by the

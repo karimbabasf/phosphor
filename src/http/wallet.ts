@@ -211,12 +211,6 @@ const REFUSALS: Record<string, string> = {
   // copies, so a disk that stops it may have done the first half: not "nothing changed" either.
   migrate_failed: 'Phosphor could not finish encrypting your keys on this Mac. Check that the Mac has free space, then try again.',
   export_failed: 'Phosphor could not save the encrypted copy there, and your wallet is unchanged. Check that you can save to that folder and that the disk has free space, then try again.',
-  // The password routes after their file is written (afterSave): the step happened, so each says
-  // what was saved, never that nothing changed (verify-ra1b VRA1B-02).
-  create_unfinished: 'Your new wallet is saved, but Phosphor could not show its recovery phrase. Check that the Mac has free space, then reopen Phosphor and back it up from the Vault tab.',
-  import_unfinished: 'Your wallet is saved, but Phosphor could not finish. Check that the Mac has free space, then reopen Phosphor and unlock it.',
-  migrate_unfinished: 'Your keys are encrypted, but Phosphor could not finish. Check that the Mac has free space, then reopen Phosphor and unlock it with your new password.',
-  export_unfinished: 'The encrypted copy is saved there and your wallet is unchanged, but Phosphor could not finish. Check that the Mac has free space.',
 };
 
 /* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
@@ -251,17 +245,19 @@ function auditSafely(ctx: Pick<Ctx, 'audit'>, type: 'app_start' | 'error', msg: 
   }
 }
 
-/* AFTER THE KEY FILE IS WRITTEN the step has happened: the wallet is made or imported, the keys are
-   encrypted, the copy is saved. A failure from there on (most likely its audit line, on the same
-   disk) is said in the table's words for what was saved, never "nothing changed" (verify-ra1b
-   VRA1B-02). */
-function afterSave(ctx: Ctx, res: http.ServerResponse, step: string, code: 'create_unfinished' | 'import_unfinished' | 'migrate_unfinished' | 'export_unfinished', finish: () => void): void {
+/* AFTER THE KEY FILE IS WRITTEN the step has happened, and the route gives its usual answer: the
+   wallet is made (its words are shown on that answer alone), imported or encrypted. What follows the
+   write is bookkeeping, its audit line (on the disk that may be full) and the broadcast, and a
+   failure there is logged where it can be and never takes the answer's place: a create never leaves
+   a wallet whose words nobody has seen, and nothing says "nothing changed" (verify-ra1b VRA1B-02). */
+function afterSave(ctx: Ctx, line: string, data: Record<string, unknown>): void {
+  auditSafely(ctx, 'app_start', line, data);
   try {
-    finish();
+    ctx.session.touch();
+    announce(ctx);
   } catch (err) {
     const os = osError(err);
-    auditSafely(ctx, 'error', `${step}, then the step did not finish (${os === null ? errText(err) : `${os.code} on ${os.syscall}`})`, os ?? undefined);
-    if (!res.headersSent) sendJson(res, 200, refusal(code));
+    auditSafely(ctx, 'error', `${line}, but the window was not told (${os === null ? errText(err) : `${os.code} on ${os.syscall}`})`, os ?? undefined);
   }
 }
 
@@ -400,18 +396,14 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     if (disk !== null) return sendJson(res, 200, disk);
     return fail(res, 400, errText(err));
   }
-  afterSave(ctx, res, 'a new wallet was made', 'create_unfinished', () => {
-    // The words are audited by their absence: the line says a wallet exists and names the
-    // address, which is the fact a log is for. The phrase is returned once, here, and never
-    // written anywhere this process controls.
-    // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
-    // run's next step.
-    const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
-    ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
-  });
+  // The words are audited by their absence: the line says a wallet exists and names the
+  // address, which is the fact a log is for. The phrase is returned once, here, and never
+  // written anywhere this process controls.
+  // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
+  // run's next step.
+  const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
+  afterSave(ctx, 'a new wallet was created in the window', { evm: made.addresses.evm });
+  sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
 }
 
 export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -436,14 +428,10 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     if (disk !== null) return sendJson(res, 200, disk);
     return fail(res, 400, errText(err));
   }
-  afterSave(ctx, res, 'a wallet was imported', 'import_unfinished', () => {
-    ctx.audit.append('app_start', `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, addresses: out.addresses });
+  afterSave(ctx, `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
+    evm: out.addresses.evm,
   });
+  sendJson(res, 200, { ok: true, addresses: out.addresses });
 }
 
 /* Whether this Mac keeps a Phosphor-only wallet, any data folder's, asked of the vault service now
@@ -491,21 +479,17 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
     if (disk !== null) return sendJson(res, 200, disk);
     return fail(res, 400, errText(err));
   }
-  afterSave(ctx, res, 'the readable key file was encrypted', 'migrate_unfinished', () => {
-    ctx.audit.append('app_start', `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
-      destroyed: out.destroyed.map((p) => path.basename(p)),
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, {
-      ok: true,
-      destroyed: out.destroyed,
-      addresses: out.addresses,
-      // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
-      // system that keeps snapshots, and the only complete answer is a fresh wallet.
-      note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
-    });
+  afterSave(ctx, `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
+    destroyed: out.destroyed.map((p) => path.basename(p)),
+    evm: out.addresses.evm,
+  });
+  sendJson(res, 200, {
+    ok: true,
+    destroyed: out.destroyed,
+    addresses: out.addresses,
+    // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
+    // system that keeps snapshots, and the only complete answer is a fresh wallet.
+    note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
   });
 }
 
@@ -537,10 +521,9 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
     if (disk !== null) return sendJson(res, 200, disk);
     return fail(res, 400, errText(err));
   }
-  afterSave(ctx, res, 'an encrypted copy was saved', 'export_unfinished', () => {
-    ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
-    sendJson(res, 200, { ok: true, path: target });
-  });
+  // The copy is saved: its audit line is bookkeeping, as in afterSave.
+  auditSafely(ctx, 'app_start', 'an encrypted backup of the wallet was written', { to: target });
+  sendJson(res, 200, { ok: true, path: target });
 }
 
 // ---------- reveal ----------
