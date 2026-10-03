@@ -1930,6 +1930,21 @@
       openSteps = null;
       var cardKind = cards.kindFor(event.name, event.data);
       if (cardKind === 'move') {
+        /* A PROPOSE ANSWERED WITH AN ERROR AND NO ROW OF ITS OWN FILED NOTHING: a field the app
+           refused at the door, or a repeat of a move still in flight. The proxy hands that answer
+           back as the call's result, not as a failed call, and the card took it for its row and
+           said "Swapping" for good (2026-10-02). It ends the way a call that never reached the
+           wallet ends. */
+        var body = event.data;
+        if (bareName(event.name).indexOf('propose_') === 0 && body !== null && typeof body === 'object' && typeof body.error === 'string' && typeof body.id !== 'string') {
+          var refused = openPlaceholder(event.name);
+          if (refused) {
+            refused.data = { placeholder: true, failed: true, kind: refused.data.kind };
+            refused.rev = (refused.rev || 0) + 1;
+          }
+          if (!replay) renderAll();
+          return;
+        }
         /* A move already on the thread is updated where it stands: its placeholder, or the
            card an earlier read or the state frame drew. One card per move, for life. */
         var shown = moveBlockFor(event.data) || openPlaceholder(event.name);

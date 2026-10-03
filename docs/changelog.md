@@ -17,6 +17,9 @@ Built 2026-10-02. Tagged v0.10.14 on 2026-10-02.
   assistant typed in lower case reads the same as it will once the move is filed.
 - Activity and receipts name every coin by its ticker, and a payment's Details name the coin it
   swaps on the way by where it came from ("the USDC from Ethereum"), never by an id.
+- A move the app turned away before filing it, such as an amount below zero or a repeat of a swap
+  that is still running, now says it did not go through and that nothing moved. Its card used to
+  say Swapping for good.
 - Your wallet, your keys and your settings stay as they were.
 
 ## 0.10.13

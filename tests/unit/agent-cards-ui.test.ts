@@ -1702,3 +1702,40 @@ test('every kind\'s first frame names its coin the way its row will, whatever ca
     assert.ok(marksOf(card).every((m) => m.monogram === null), `${c.name}: ${JSON.stringify(marksOf(card))}`);
   }
 });
+
+/* A PROPOSE ANSWERED WITH AN ERROR FILED NOTHING (2026-10-02). The proxy hands the app's { error }
+   back as the call's answer, not as a failed call, so the card took it for its row and said
+   "Swapping" for good. A repeat of a move still in flight comes back the same way, with the first
+   move's view beside it. Both end in the calm words of a call that never reached the wallet, and
+   the first move's own card is left as it was. */
+test('a propose answered with an error and no row of its own ends calmly, and never works on', () => {
+  const world = build();
+  world.ask('swap -1 usdc to sol');
+  const bad = { fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: -1 };
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input: bad, words: { fromSymbol: 'USDC', toSymbol: 'SOL' } });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: bad, data: { error: 'amountIn must be above zero' } });
+  let card = world.cardNodes('move')[0];
+  assert.equal(card.getAttribute('data-state'), 'didnt_go_through');
+  assert.equal(stateWord(card), "Didn't go through");
+  assert.ok(faceOf(card).includes('This did not reach your wallet. Nothing moved.'), faceOf(card));
+  assert.match(faceOf(card), /^Swap -1 USDC to SOL/, faceOf(card));
+
+  const first = withView({ id: 'p1', kind: 'swap', status: 'executing', createdAt: new Date().toISOString(), decidedAt: new Date().toISOString(), decidedBy: 'human', draft: SWAP_DRAFT, verdict: { outcome: 'needs_approval', reasons: [] }, simulation: { ok: true, summary: 'swap' } });
+  const input = { fromSymbol: 'SOL', toSymbol: 'USDC', amountIn: 0.05 };
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: first });
+  world.proposals([first]);
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: { error: 'this swap is still in flight, so a repeat of it is refused rather than sending it twice.', duplicate: 'p1', status: 'executing', view: first.view } });
+  world.emit({ kind: 'turn_end', error: false, turns: 3 });
+  const cards = world.cardNodes('move');
+  assert.equal(cards.length, 3);
+  assert.deepEqual(cards.map((c: Any) => c.getAttribute('data-state')), ['didnt_go_through', 'working', 'didnt_go_through']);
+  assert.equal(stateWord(cards[1]), 'Swapping', 'the first move lost its own card');
+  assert.ok(faceOf(cards[2]).includes('This did not reach your wallet. Nothing moved.'), faceOf(cards[2]));
+  card = cards[2];
+  assert.equal(card.id || '', '', 'the refused repeat took the first move\'s id');
+});
