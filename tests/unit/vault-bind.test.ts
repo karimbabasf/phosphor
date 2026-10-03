@@ -827,20 +827,24 @@ test('every refusal the bind can give is said in plain words', () => {
   assert.ok(BIND_REASON.length <= 120 && /^[A-Z]/.test(BIND_REASON));
 });
 
-test('no shipped source names the test double or its switches', () => {
-  const shipped = ['src', 'src-tauri/src', 'src-tauri/se-helper', 'scripts', 'ui'];
+test('no shipped source, and no script that builds or signs what ships, names the test double or its switches', async () => {
+  // What the app carries: the payload (scripts/payload-digest.ts), the shell and the service.
+  const { PAYLOAD } = await import('../../scripts/payload-digest.ts');
+  const shipped = [...(PAYLOAD as string[]).filter((p) => fs.existsSync(path.join(ROOT, p)) && fs.statSync(path.join(ROOT, p)).isDirectory()), 'src-tauri/src', 'src-tauri/se-helper'];
+  const builders = ['scripts/build-se-helper.sh', 'scripts/bundle-payload.ts', 'scripts/notarize-mac.sh', 'scripts/sign-and-notarize-local.sh'];
+  const named = /vault-double|VaultTestPlatform|PHOSPHOR_TEST_STORE|PHOSPHOR_TESTSEAM|tests\/swift/;
   const offenders: string[] = [];
   const walk = (dir: string): void => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
-      else if (/\.(ts|js|rs|swift|sh|c|h)$/.test(entry.name)) {
-        const text = fs.readFileSync(full, 'utf8');
-        if (/vault-double|VaultTestPlatform|PHOSPHOR_TEST_STORE|PHOSPHOR_TESTSEAM/.test(text) && !full.endsWith('main.swift')) offenders.push(path.relative(ROOT, full));
+      else if (/\.(ts|js|rs|swift|sh|c|h|json|plist)$/.test(entry.name) && named.test(fs.readFileSync(full, 'utf8')) && !full.endsWith('se-helper/main.swift')) {
+        offenders.push(path.relative(ROOT, full));
       }
     }
   };
   for (const dir of shipped) walk(path.join(ROOT, dir));
+  for (const script of builders) if (fs.existsSync(path.join(ROOT, script)) && named.test(fs.readFileSync(path.join(ROOT, script), 'utf8'))) offenders.push(script);
   assert.deepEqual(offenders, []);
   // main.swift names the flag in one #if, and builds the stand-in nowhere else (vault-service.test.ts holds the rest).
   assert.equal(fs.readFileSync(path.join(ROOT, 'src-tauri/se-helper/main.swift'), 'utf8').split('PHOSPHOR_TESTSEAM').length, 3);
