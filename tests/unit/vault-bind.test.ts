@@ -1607,7 +1607,7 @@ test('a copy that cannot read the keychain home keeps its wallet working, and le
     const touches = double.touches().length;
     const migrated = await c.post('/api/wallet/migrate', { password: 'a long enough password' });
     assert.deepEqual(migrated.json, refusal('plaintext_unchecked'));
-    assert.match(String(migrated.json.error), /^This copy of Phosphor cannot tell whether this Mac keeps a Phosphor-only wallet, so it did not open this key file, and nothing changed\./);
+    assert.equal(migrated.json.error, 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.');
     assert.ok(!RAW.test(String(migrated.json.error)), String(migrated.json.error));
     assert.equal(fs.readFileSync(c.keysPath, 'utf8'), before, 'the readable file is untouched');
     assert.equal(fs.existsSync(c.live), false, 'nothing was encrypted from it');

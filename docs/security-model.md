@@ -228,7 +228,8 @@ your money.
   and found no Phosphor-only wallet. Everywhere else it leaves the file closed (served unverified,
   never encrypted): on a Mac where any wallet is Phosphor-only, where the lock card points to the
   backup, and in a copy whose vault service cannot read the keychain (the development shell,
-  `npm run tauri dev`, or a copy built without the Developer ID), which cannot tell. The one
+  `npm run tauri dev`, or a copy built without the Developer ID), which cannot tell and points to
+  the downloaded app or the backup. The one
   exception is the bare backend (`npm run app`): it has no vault service to ask, so it reads the
   file as your wallet, as it always has.
 - **A program running as you can read and propose.** It can read the read key and the agent's

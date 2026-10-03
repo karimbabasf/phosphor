@@ -200,7 +200,7 @@ const REFUSALS: Record<string, string> = {
   // A readable key file on a Mac that keeps a Phosphor-only wallet (reaudit1b RA1B-01).
   plaintext_refused: 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file, and nothing changed. If the file is your wallet, restore it from your backup.',
   // The same file, in a copy whose vault service cannot read the keychain home (verify-ra1b VRA1B-01).
-  plaintext_unchecked: 'This copy of Phosphor cannot tell whether this Mac keeps a Phosphor-only wallet, so it did not open this key file, and nothing changed. Open it in the Phosphor app you downloaded instead.',
+  plaintext_unchecked: 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.',
   // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
   proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
   write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',

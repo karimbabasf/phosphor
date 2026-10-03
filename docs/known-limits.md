@@ -131,7 +131,8 @@ you could have put its own wallet where the Phosphor-only file was. The lock car
 stayed closed and offers Restore from your backup, and Phosphor will not encrypt the file. A copy of
 Phosphor that cannot read its keychain (the development shell, `npm run tauri dev`, or a copy built
 without the Developer ID) cannot tell whether the Mac keeps one, so it does not open the file
-either: Encrypt now says so and points to the Phosphor app you downloaded. On a Mac with no
+either: Encrypt now says so, and the card points to the Phosphor app you downloaded and offers
+Restore from your backup. On a Mac with no
 Phosphor-only wallet, the Phosphor app still reads the file as your wallet and offers to encrypt it,
 as it always has. The one exception is the bare backend (`npm run app`), which has no vault service
 to ask: it reads the file as your wallet on any Mac.

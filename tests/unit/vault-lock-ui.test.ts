@@ -845,9 +845,10 @@ test('a migration the backend refuses on such a Mac is said in its sentence on t
 });
 
 /* verify-ra1b VRA1B-01: a copy whose vault service cannot read the keychain home tells the window
-   nothing either way, so the card is the usual one, and Encrypt now is answered in the sentence for
-   that copy. */
-test('a migration a copy that cannot tell refuses is said in its own sentence on the usual card', async () => {
+   nothing either way, so the card is the usual one. Its Encrypt now is refused for good, so the card
+   becomes the closed card: the table's sentence, which names the downloaded app and the backup, and
+   the backup way itself. */
+test('on a copy that cannot check, Encrypt now turns the card into the closed card, in the table\'s sentence, with the backup way', async () => {
   const state = readableKeyFile(null);
   state.lock.verified = false;
   state.vault.enclave.capability.keychainHome = false;
@@ -867,10 +868,31 @@ test('a migration a copy that cannot tell refuses is said in its own sentence on
   await flush();
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/wallet/migrate'));
-  const said = find(screen, '.lock-card-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
-  assert.deepEqual(said, [refused.error], JSON.stringify(said));
-  assert.match(refused.error as string, /^This copy of Phosphor cannot tell whether this Mac keeps a Phosphor-only wallet/);
-  assert.ok(!RAW.test(refused.error as string), refused.error as string);
+  assert.equal(refused.error, 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.');
+  assert.deepEqual(shownText(screen), ['This key file stayed closed', refused.error, 'Restore from your backup']);
+  assert.equal(find(screen, 'input').length, 0, 'a password field on a file this copy will not open');
+  assert.equal(buttonNamed(screen, 'Encrypt now'), undefined);
+  const way = find(screen, 'button.lock-forgot')[0];
+  assert.equal(way.focused, true, 'focus did not land on the way back');
+
+  // The same state drawn again keeps the closed card: nothing brings Encrypt now back.
+  world.put(state);
+  assert.deepEqual(shownText(screen), ['This key file stayed closed', refused.error, 'Restore from your backup']);
+
+  // The way it names works from here: the backup restores, behind the second press.
+  find(screen, 'button.lock-forgot')[0].click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.equal(step.hidden, false);
+  find(step, 'textarea')[0].value = PHRASE;
+  const go = buttonNamed(step, 'Restore');
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press restored');
+  go.click();
+  await flush();
+  await flush();
+  assert.equal(world.calls.find((c) => c.route === '/api/vault/restore')?.mnemonic, PHRASE);
+  for (const said of [...shownText(screen), ...textOf(step)]) assert.ok(!RAW.test(said), said);
 });
 
 /* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put

@@ -548,7 +548,8 @@ the file. A backend the shell started serves the file unverified until the servi
 one it did not start has no service to ask and vouches for it as before. A service with no keychain
 home (`npm run tauri dev`, a copy built without the Developer ID) cannot read the markers, so its
 answer settles nothing: there a developer's readable `keys.json` stays unverified,
-`phosphorOnlyHere` stays null, and Encrypt now is refused with `plaintext_unchecked`.
+`phosphorOnlyHere` stays null, and Encrypt now is refused with `plaintext_unchecked`, which turns
+the lock card into the closed card with that sentence and Restore from your backup.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and

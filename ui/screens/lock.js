@@ -764,14 +764,20 @@
      pins such a file to the wallet Phosphor keeps, so a program running as the
      owner could have put its own wallet where the Phosphor-only file was:
      Phosphor neither opens it nor offers to encrypt it (reaudit1b RA1B-01).
-     The backup brings back the person's wallet, whichever one this file is. */
-  function buildHeld() {
+     The backup brings back the person's wallet, whichever one this file is.
+     `said` is the backend's sentence when Encrypt now was refused on a copy
+     that cannot check (verify-ra1b VRA1B-01); it names both ways out itself. */
+  function buildHeld(said) {
     var card = shell();
     card.appendChild(dom.el('h1', 'title', 'This key file stayed closed'));
-    card.appendChild(dom.el('p', 'body dim', 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open the readable key file it found here, and nothing moved.'));
-    var next = dom.el('p', 'body dim', 'If this file is your wallet, restore it from your backup: your recovery phrase, or your private key if it has no phrase.');
-    card.appendChild(next);
-    var way = restoreWay(card, [next], {
+    var next = null;
+    if (said) card.appendChild(dom.el('p', 'body dim', said));
+    else {
+      card.appendChild(dom.el('p', 'body dim', 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open the readable key file it found here, and nothing moved.'));
+      next = dom.el('p', 'body dim', 'If this file is your wallet, restore it from your backup: your recovery phrase, or your private key if it has no phrase.');
+      card.appendChild(next);
+    }
+    var way = restoreWay(card, next ? [next] : [], {
       either: true,
       label: 'Restore from your backup',
       intro: 'Type your recovery phrase, 12 or 24 words, or your private key, 64 characters. Phosphor opens your wallet from it here, behind Touch ID.',
@@ -842,6 +848,11 @@
       window.PhosphorShell.setPending(go, true);
       api.walletMigrate(first.value)
         .then(function (answer) {
+          // A copy that cannot check leaves the file closed for good: the closed card, with the backup.
+          if (answer && answer.code === 'plaintext_unchecked') {
+            buildHeld(reason(answer, 'This copy of Phosphor left this key file closed, and nothing changed.'));
+            return;
+          }
           if (answer && answer.ok === false) {
             fail(error, reason(answer, 'That did not finish, so nothing changed. Try again.'));
             return;
