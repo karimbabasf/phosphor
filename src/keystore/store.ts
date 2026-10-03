@@ -171,9 +171,11 @@ export type UnlockResult =
     };
 
 /* What the shell's relay needs to ask the enclave to unwrap this wallet: the key blob, the wrap,
-   and the AAD the wrap was sealed under. All of it is on disk already; none of it opens anything
-   without the enclave and the owner. */
-export type EnclaveUnwrapRequest = { keyBlob: string; ephemeralPublicKey: string; ciphertext: string; aad: string };
+   the AAD the wrap was sealed under, and the header's addresses as stored (base64 of their
+   canonical JSON). All of it is on disk already; none of it opens anything without the enclave and
+   the owner. A Developer ID service checks all five against the pin it committed for that key
+   before it asks for a touch (src-tauri/se-helper/main.swift, THE PIN). */
+export type EnclaveUnwrapRequest = { keyBlob: string; ephemeralPublicKey: string; ciphertext: string; aad: string; addresses: string };
 
 /* The addresses plus how much they can be believed, which is a different fact and used to be
    silently missing.
@@ -748,6 +750,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       ephemeralPublicKey: wrap.ephemeralPublicKey,
       ciphertext: wrap.ciphertext,
       aad: proofAad(stored.header).toString('base64'),
+      addresses: Buffer.from(canonical(stored.header.addresses), 'utf8').toString('base64'),
     };
   }
 

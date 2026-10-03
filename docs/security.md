@@ -121,7 +121,8 @@ service answers only the signed Phosphor app; on a copy you build yourself, whic
 hoc, it checks the app's identifier alone, which another app can claim. Either way another app
 running as you could ask to use the key with a Touch ID prompt of its own, and the Keys row in the
 Vault tab says so. Binding the key to Phosphor itself takes a keychain entitlement that no build
-carries yet.
+carries yet. The vault service is ready for it: such a build keeps new keys only in Phosphor's own
+keychain, and refuses a wallet file it did not bind before asking for your finger.
 
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a

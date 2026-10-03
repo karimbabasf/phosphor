@@ -26,7 +26,10 @@ import crypto from 'node:crypto';
 
 import type { EnclaveRef } from '../keystore/store.ts';
 
-export type VaultOp = 'probe' | 'create' | 'unwrap' | 'presence';
+/* The service's ops (src-tauri/se-helper/main.swift, THE PROTOCOL). commit, sweep and status work
+   the keychain home of a Developer ID build: commit binds a wallet file to its key with a marker,
+   sweep deletes keys no marker names, status reads the binding with no dialog. */
+export type VaultOp = 'probe' | 'create' | 'unwrap' | 'presence' | 'commit' | 'sweep' | 'status';
 
 export type VaultRequest = {
   id: string;
@@ -37,15 +40,33 @@ export type VaultRequest = {
   ephemeralPublicKey?: string;
   ciphertext?: string;
   aad?: string;
+  /** Base64 of the canonical JSON of the file header's addresses: part of the file's pin. */
+  addresses?: string;
+  /** A test's per-run tag prefix for create and sweep. The app never sends one. */
+  label?: string;
 };
 
-export type Capability = { secureEnclave: boolean; biometry: string; canAuthenticate: boolean };
+export type Capability = { secureEnclave: boolean; biometry: string; canAuthenticate: boolean; keychainHome: boolean };
+
+/* What status says. `bound`: this Mac holds a marker, so no device-bound key file opens here. `key`
+   and `marker`: the asked keychain key, when one was named. `pinMatches`: when the file's wrap was
+   sent too, whether it is the file committed for that key. */
+export type VaultStatus = {
+  keychainHome: boolean;
+  bound: boolean;
+  key: { present: boolean; fresh: boolean } | null;
+  marker: { at: string | null } | null;
+  pinMatches?: boolean;
+};
 
 export type VaultResult =
   | { ok: true; op: 'unwrap'; dek: Buffer }
   | { ok: true; op: 'create'; enclave: EnclaveRef }
   | { ok: true; op: 'probe'; capability: Capability }
   | { ok: true; op: 'presence' }
+  | { ok: true; op: 'commit'; keyBlob: string; at: string | null }
+  | { ok: true; op: 'sweep'; deleted: number; kept: number }
+  | { ok: true; op: 'status'; status: VaultStatus }
   | { ok: false; error: string; message: string };
 
 /** What the window is told while a request waits on the person: enough to draw, nothing to sign. */
@@ -215,6 +236,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
           secureEnclave: body.secureEnclave === true,
           biometry: typeof body.biometry === 'string' ? body.biometry : 'none',
           canAuthenticate: body.canAuthenticate === true,
+          keychainHome: body.keychainHome === true,
         };
         settle(entry, { ok: true, op: 'probe', capability });
         return { ok: true };
@@ -239,7 +261,39 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
       case 'presence':
         settle(entry, { ok: true, op: 'presence' });
         return { ok: true };
+      case 'commit': {
+        if (typeof body.keyBlob !== 'string' || body.keyBlob !== entry.request.keyBlob) {
+          settle(entry, { ok: false, error: 'garbled', message: 'the enclave answered a commit for another key' });
+          return { ok: true };
+        }
+        settle(entry, { ok: true, op: 'commit', keyBlob: body.keyBlob, at: typeof body.at === 'string' ? body.at : null });
+        return { ok: true };
+      }
+      case 'sweep': {
+        const count = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0);
+        settle(entry, { ok: true, op: 'sweep', deleted: count(body.deleted), kept: count(body.kept) });
+        return { ok: true };
+      }
+      case 'status': {
+        settle(entry, { ok: true, op: 'status', status: statusOf(body) });
+        return { ok: true };
+      }
     }
+  }
+
+  /* Read strictly: anything not plainly true is false, and a shape that is off is null, so a
+     garbled answer can only ever under-claim a binding. */
+  function statusOf(body: Record<string, unknown>): VaultStatus {
+    const record = (v: unknown): Record<string, unknown> | null => (typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+    const key = record(body.key);
+    const marker = record(body.marker);
+    return {
+      keychainHome: body.keychainHome === true,
+      bound: body.bound === true,
+      key: key === null ? null : { present: key.present === true, fresh: key.fresh === true },
+      marker: marker === null ? null : { at: typeof marker.at === 'string' ? marker.at : null },
+      ...(typeof body.pinMatches === 'boolean' ? { pinMatches: body.pinMatches } : {}),
+    };
   }
 
   function waiting(): Waiting | null {

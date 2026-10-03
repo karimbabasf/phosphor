@@ -632,6 +632,11 @@
     }
     if (code === 'no_wallet') return 'There is no wallet on this computer yet.';
     if (code === 'damaged') return 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.';
+    if (code === 'keychain_unavailable') return 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.';
+    if (code === 'blob_refused') return 'This wallet file is an older copy. This Mac opens only the copy Phosphor keeps, so nothing was opened.';
+    if (code === 'pin_mismatch' || code === 'not_committed') {
+      return 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.';
+    }
     return 'That did not work.';
   }
 

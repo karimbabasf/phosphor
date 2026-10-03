@@ -140,6 +140,16 @@ const REFUSALS: Record<string, string> = {
   damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
   locked_out: 'Too many tries. Wait a moment and try again.',
   busy: 'A move is being signed, so the wallet locks the moment its signature is made.',
+  // The keychain home of a Developer ID build (src-tauri/se-helper/main.swift). The service's own
+  // message never reaches the window, so every code it can answer has its sentence here.
+  keychain_unavailable: 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.',
+  blob_refused: 'This wallet file is an older copy. This Mac opens only the copy Phosphor keeps, so nothing was opened.',
+  pin_mismatch: 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.',
+  not_committed: 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.',
+  no_key: 'That did not finish, so nothing changed. Try again.',
+  stale_key: 'That did not finish, so nothing changed. Try again.',
+  marker_exists: 'That did not finish, so nothing changed. Try again.',
+  nothing_bound: 'That did not finish, so nothing changed. Try again.',
 };
 
 export function refusal(code: string, retryInSec?: number): JsonBody {

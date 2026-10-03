@@ -112,7 +112,15 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   requirement); the `update.rs` tests under `cargo test` (the download, the version inside, the
   archive, and a bundle that passes minisign without the Developer ID refused).
 - **Another program asks the Secure Enclave service to open the wallet.** On a signed release
-  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`.
+  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`;
+  `vault-peer-check.test.ts` (a foreign app refused, the app answered).
+- **A wallet file swapped on disk for one wrapped to your enclave key.** Anyone can wrap to that
+  key: its public half is in the file. On a Developer ID build that carries the keychain
+  entitlement, a bound wallet's file is checked against a pin only the vault service can write,
+  before any Touch ID, so a substitute or an edited file is refused, and once a wallet on this Mac
+  is bound, no device-bound key file opens on it. Such a build never falls back to a device key.
+  No released build carries the entitlement yet, so this waits on that release. Proof:
+  `vault-service.test.ts` (the service's own rules against a stand-in keychain).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -184,8 +192,10 @@ your money.
   never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
 - **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
   to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
-  started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
-  keychain entitlement no build carries yet.
+  started in Phosphor, and read its sentence. What closes it: custody binding. The vault service
+  is built for it (keys in Phosphor's own keychain group, a pin per bound wallet file, no device key
+  on a Developer ID build); the signed build that carries the keychain entitlement, and the step
+  that moves an existing wallet over, are not shipped yet.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed

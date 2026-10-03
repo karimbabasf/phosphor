@@ -604,6 +604,20 @@ row says so in one line ("Bound to this Mac rather than to Phosphor"). A build w
 that entitlement keeps the key in the keychain, binds it to the app, and the service is then the
 only process that can reach it.
 
+The service is ready for that build. It reads its own Team ID from its code signature: with one,
+every keychain call names the group `<team>.com.karimbabasf.phosphor.vault`, `create` makes the key
+there or refuses with `keychain_unavailable` (never a device key), and a wallet is bound by
+`commit`, which writes a marker holding a pin of the wallet file: SHA-256 over the key's tag, the
+wrapped data key, the header without its addresses and the header's addresses. Every unwrap is
+checked against it before the Touch ID, so a file wrapped to the same public key by anyone else is
+refused (`pin_mismatch`); while any marker exists a device-bound key file is refused
+(`blob_refused`); a key no marker names opens only while nothing is bound or in its first ten
+minutes (`not_committed`); `sweep` deletes keys no marker names after those ten minutes and never a
+marked one; `status` reads all of this with no dialog. With no Team ID (ad hoc, and the stdin
+development helper whoever signs it) the service keeps the device key path. The shell's relay
+carries these seven ops and no other (`src-tauri/src/enclave.rs`). `vault-service.test.ts` runs the
+rules against a stand-in keychain compiled into the test alone.
+
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
 here. Treat the balance behind these keys as the amount you are willing to lose to something that

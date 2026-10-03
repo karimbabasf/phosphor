@@ -85,9 +85,14 @@ app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for so
 in Phosphor, and read the sentence in it. The Keys row in the Vault tab says the same in one line.
 
 What closes it: a Developer ID provisioning profile that grants the keychain entitlement, so the
-key lives in the keychain where only Phosphor can ask for it. A signed update still verifies either
-way: the updater checks the bundle's own update signature, and then its Developer ID code
-signature against Phosphor's Team ID, before it replaces anything.
+key lives in the keychain where only Phosphor can ask for it. The vault service is built for that
+build: it makes new keys only in Phosphor's own keychain group, never a device key, and a wallet
+bound there carries a pin only the service can write, so a wallet file someone else wrapped to the
+same key, or an edited one, is refused before any Touch ID. Once a wallet on the Mac is bound,
+device-bound key files stop opening there, copies included. Until a release carries the
+entitlement, and the step that moves an existing wallet over ships, this limit stands. A signed
+update still verifies either way: the updater checks the bundle's own update signature, and then
+its Developer ID code signature against Phosphor's Team ID, before it replaces anything.
 
 ## The venues are not ours
 

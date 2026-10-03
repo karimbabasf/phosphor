@@ -120,6 +120,44 @@ test('a request nobody fetches fails on its own clock, and a stopped relay fails
   assert.equal(relay.attached(), false, 'a shell that stopped polling is gone');
 });
 
+test('commit, sweep and status come back typed, read strictly, and probe carries the keychain home', async () => {
+  const relay = createVaultRelay({ transportKey: transport });
+  const answered = async (request: Parameters<typeof relay.ask>[0], body: Record<string, unknown>) => {
+    const asked = relay.ask(request);
+    const handed = await relay.next(1000);
+    assert.equal(handed?.op, request.op);
+    relay.answer({ id: handed!.id, ok: true, ...body });
+    return { handed: handed!, result: await asked };
+  };
+
+  const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
+  const committed = await answered({ op: 'commit', ...material }, { keyBlob: 'keychain:k', at: '2026-10-02T00:00:00Z' });
+  assert.equal(committed.handed.addresses, 'd', 'the addresses travel with the wrap');
+  assert.deepEqual(committed.result, { ok: true, op: 'commit', keyBlob: 'keychain:k', at: '2026-10-02T00:00:00Z' });
+  const elsewhere = await answered({ op: 'commit', ...material }, { keyBlob: 'keychain:other' });
+  assert.equal(!elsewhere.result.ok && elsewhere.result.error, 'garbled', 'a commit answered for another key is no commit');
+
+  assert.deepEqual((await answered({ op: 'sweep', label: 'run-1' }, { deleted: 2, kept: 1 })).result, { ok: true, op: 'sweep', deleted: 2, kept: 1 });
+  assert.deepEqual((await answered({ op: 'sweep' }, { deleted: -4, kept: 'x' })).result, { ok: true, op: 'sweep', deleted: 0, kept: 0 });
+
+  const full = await answered({ op: 'status', ...material }, {
+    keychainHome: true, bound: true, key: { present: true, fresh: false }, marker: { at: '2026-10-02T00:00:00Z' }, pinMatches: true,
+  });
+  assert.deepEqual(full.result, {
+    ok: true, op: 'status',
+    status: { keychainHome: true, bound: true, key: { present: true, fresh: false }, marker: { at: '2026-10-02T00:00:00Z' }, pinMatches: true },
+  });
+  const garbled = await answered({ op: 'status' }, { keychainHome: 'yes', bound: 1, key: 'k', marker: [], pinMatches: 'true' });
+  assert.deepEqual(garbled.result, {
+    ok: true, op: 'status', status: { keychainHome: false, bound: false, key: null, marker: null },
+  }, 'anything not plainly true reads as false, so a garbled answer never claims a binding');
+
+  await answered({ op: 'probe' }, { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true });
+  assert.equal(relay.capability()?.keychainHome, true);
+  await answered({ op: 'probe' }, { secureEnclave: true, biometry: 'touchid', canAuthenticate: true });
+  assert.equal(relay.capability()?.keychainHome, false);
+});
+
 test('the dialog sentence comes from the draft fields and never from agent text', () => {
   const swap = reasonFor({
     draft: {

@@ -1455,6 +1455,7 @@
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
     if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
+    if (code === 'keychain_unavailable') return 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.';
     return walletProblem(code);
   }
 
