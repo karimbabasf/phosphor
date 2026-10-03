@@ -158,6 +158,30 @@ test('commit, sweep and status come back typed, read strictly, and probe carries
   assert.equal(relay.capability()?.keychainHome, false);
 });
 
+/* verify-ra1b VRA1B-01: bound() is what the service read off this Mac's markers. A service with no
+   keychain home (the development shell's, a copy built without the Developer ID) answers bound: false
+   whatever the Mac holds, so that answer never says the Mac keeps no Phosphor-only wallet. */
+test('only a status that read the markers tells the relay whether this Mac keeps a Phosphor-only wallet', async () => {
+  const relay = createVaultRelay({ transportKey: transport });
+  const status = async (body: Record<string, unknown>): Promise<void> => {
+    const asked = relay.ask({ op: 'status' });
+    const handed = await relay.next(1000);
+    relay.answer({ id: handed!.id, ok: true, key: null, marker: null, ...body });
+    assert.equal((await asked).ok, true);
+  };
+  assert.equal(relay.bound(), null, 'nothing said yet');
+  await status({ keychainHome: false, bound: false });
+  assert.equal(relay.bound(), null, 'a service that cannot read the markers said this Mac keeps none');
+  await status({ keychainHome: true, bound: false });
+  assert.equal(relay.bound(), false);
+  await status({ keychainHome: true, bound: true });
+  assert.equal(relay.bound(), true);
+  await status({ keychainHome: false, bound: false });
+  await status({ keychainHome: true, bound: false });
+  assert.equal(relay.bound(), true, 'no op deletes a marker, and no answer takes one back');
+  relay.stop();
+});
+
 /* A demo's relay (src/main.ts: makesKeys only in live mode). The marker a signed release's commit
    writes is for the whole Mac, so a demo never hands the shell create, commit or sweep, whatever
    the service says it is, and has no enclave to make a wallet with. Reads and Touch IDs pass. */

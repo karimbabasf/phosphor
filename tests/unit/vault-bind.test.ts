@@ -1565,6 +1565,61 @@ test('VRA1B-01: a vault service that cannot read the keychain home does not tell
   }
 });
 
+/* VRA1B-01, the copy's own side, on a Mac with no Phosphor-only wallet: a vault service with no
+   keychain home (`npm run tauri dev`, a copy built without the Developer ID) still makes, opens and
+   reads a Touch ID wallet as before. A readable key file is served unverified and is not encrypted
+   there, in a sentence of its own: this copy cannot tell whether the Mac keeps a Phosphor-only wallet. */
+test('a copy that cannot read the keychain home keeps its wallet working, and leaves a readable key file closed in words of its own', { skip }, async () => {
+  const double = new VaultDouble();
+  double.team = '';
+  const b = await boot({ double });
+  try {
+    await settleAtStart({ keystore: b.keystore, vault: b.vault, audit: b.audit });
+    assert.equal((await b.post('/api/vault/create')).json.ok, true);
+    let state = (await b.get('/api/state')).json;
+    assert.equal(state.lock.state, 'unlocked');
+    assert.equal(state.lock.verified, true, 'an encrypted wallet is vouched for by its own file, as before');
+    assert.equal(state.vault.enclave.binding, 'device');
+    assert.equal(state.vault.enclave.phosphorOnlyHere, null);
+    assert.equal((await b.get('/api/receive')).json.verified, true);
+    b.keystore.lock();
+    assert.equal((await b.post('/api/vault/unlock')).json.ok, true);
+    state = (await b.get('/api/state')).json;
+    assert.equal(state.lock.state, 'unlocked');
+    assert.equal(state.lock.verified, true);
+  } finally {
+    await b.close();
+  }
+  assert.equal(double.state().markers.length, 0, 'this Mac keeps no Phosphor-only wallet');
+
+  const key = `0x${'33'.repeat(32)}` as const;
+  const c = await boot({ double });
+  try {
+    fs.mkdirSync(path.dirname(c.keysPath), { recursive: true });
+    fs.writeFileSync(c.keysPath, JSON.stringify({ evm: { address: privateKeyToAccount(key).address, privateKey: key } }) + '\n');
+    await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit });
+    const state = (await c.get('/api/state')).json;
+    assert.equal(state.lock.state, 'needs_migration');
+    assert.equal(state.lock.verified, false);
+    assert.equal(state.vault.enclave.phosphorOnlyHere, null, 'the window is told nothing either way, so its card is the usual one');
+    assert.equal((await c.get('/api/receive')).json.verified, false);
+    const before = fs.readFileSync(c.keysPath, 'utf8');
+    const touches = double.touches().length;
+    const migrated = await c.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.deepEqual(migrated.json, refusal('plaintext_unchecked'));
+    assert.match(String(migrated.json.error), /^This copy of Phosphor cannot tell whether this Mac keeps a Phosphor-only wallet, so it did not open this key file, and nothing changed\./);
+    assert.ok(!RAW.test(String(migrated.json.error)), String(migrated.json.error));
+    assert.equal(fs.readFileSync(c.keysPath, 'utf8'), before, 'the readable file is untouched');
+    assert.equal(fs.existsSync(c.live), false, 'nothing was encrypted from it');
+    assert.equal(double.touches().length, touches, 'no Touch ID was asked');
+    const line = c.audit.tail(20).find((e) => e.msg.includes('a readable key file was not opened'));
+    assert.match(String(line?.msg), /cannot tell whether this Mac keeps a Phosphor-only wallet/);
+    assert.ok(!JSON.stringify(line).includes('33'.repeat(32)), 'the audit line holds no key');
+  } finally {
+    await c.close();
+  }
+});
+
 /* VERIFY-RA1B, VRA1B-02 (INFO). The calm refusal for a disk error first writes its audit line, on the
    same disk, unguarded. Where that write fails too (a data folder the owner can no longer write to, or
    a full disk, the case the sentence itself names), the append throws out of the route and the

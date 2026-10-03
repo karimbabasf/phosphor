@@ -222,9 +222,15 @@ your money.
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
   yourself. What closes it: moving to new keys that never existed outside the keychain, so the
   old key holds nothing. The chip vault plans that; it is not built.
-- **A readable key file is trusted only on a Mac with no Phosphor-only wallet.** Where any wallet
-  on this Mac is Phosphor-only, Phosphor leaves a readable `keys.json` closed and points to the
-  backup; elsewhere it still reads one as a wallet from before encryption, which nothing pins.
+- **A readable key file is trusted only on a Mac known to have no Phosphor-only wallet.** A
+  readable `keys.json` is a wallet from before encryption, which nothing pins. Phosphor reads it as
+  your wallet, and offers to encrypt it, only once its vault service has read this Mac's keychain
+  and found no Phosphor-only wallet. Everywhere else it leaves the file closed (served unverified,
+  never encrypted): on a Mac where any wallet is Phosphor-only, where the lock card points to the
+  backup, and in a copy whose vault service cannot read the keychain (the development shell,
+  `npm run tauri dev`, or a copy built without the Developer ID), which cannot tell. The one
+  exception is the bare backend (`npm run app`): it has no vault service to ask, so it reads the
+  file as your wallet, as it always has.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed

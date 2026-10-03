@@ -545,7 +545,10 @@ wallet is Phosphor-only (`vault.enclave.phosphorOnlyHere`), nothing pins such a 
 served with `verified: false`, the lock card says it stayed closed and offers the restore, and the
 migration route asks the service at the click and refuses with `plaintext_refused` before it reads
 the file. A backend the shell started serves the file unverified until the service has answered;
-one it did not start has no service to ask and vouches for it as before.
+one it did not start has no service to ask and vouches for it as before. A service with no keychain
+home (`npm run tauri dev`, a copy built without the Developer ID) cannot read the markers, so its
+answer settles nothing: there a developer's readable `keys.json` stays unverified,
+`phosphorOnlyHere` stays null, and Encrypt now is refused with `plaintext_unchecked`.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and

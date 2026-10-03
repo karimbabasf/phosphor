@@ -844,6 +844,35 @@ test('a migration the backend refuses on such a Mac is said in its sentence on t
   assert.ok(!RAW.test(refused.error as string), refused.error as string);
 });
 
+/* verify-ra1b VRA1B-01: a copy whose vault service cannot read the keychain home tells the window
+   nothing either way, so the card is the usual one, and Encrypt now is answered in the sentence for
+   that copy. */
+test('a migration a copy that cannot tell refuses is said in its own sentence on the usual card', async () => {
+  const state = readableKeyFile(null);
+  state.lock.verified = false;
+  state.vault.enclave.capability.keychainHome = false;
+  const world = build(state, [LOCK]);
+  const refused = refusal('plaintext_unchecked');
+  world.sandbox.PhosphorApi.walletMigrate = (password: string) => {
+    world.calls.push({ route: '/api/wallet/migrate', password });
+    return Promise.resolve(refused);
+  };
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  assert.ok(textOf(screen).includes('Encrypt now'), JSON.stringify(textOf(screen)));
+  const fields = find(screen, 'input');
+  fields[0].value = 'a long enough password';
+  fields[1].value = 'a long enough password';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/migrate'));
+  const said = find(screen, '.lock-card-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+  assert.deepEqual(said, [refused.error], JSON.stringify(said));
+  assert.match(refused.error as string, /^This copy of Phosphor cannot tell whether this Mac keeps a Phosphor-only wallet/);
+  assert.ok(!RAW.test(refused.error as string), refused.error as string);
+});
+
 /* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
    through the backend's own mapping (src/http/wallet.ts diskRefusal), in each restore the lock card
    offers: the line under the field is the table's one sentence, never the system's text or the key
