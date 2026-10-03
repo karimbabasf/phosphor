@@ -183,7 +183,11 @@ Phosphor-only does what it says, with one Touch ID that checks Phosphor opens yo
 way before anything changes; a cancel changes nothing. The same wallet, the same addresses. The row
 then says Phosphor-only since that day. Copies of your wallet file saved before then (a Time Machine
 backup, a sync folder) still open the old way, so approve a Touch ID prompt only when you started
-it. [Known limits](known-limits.md) says more.
+it. Your backup is the EVM key alone: an older wallet whose file also holds a NEAR key, a Solana key
+or a trading key keeps those only in the Phosphor-only file, behind the one keychain key on this
+Mac, and your backup cannot bring them back if that key is lost (the app never shows or spends from
+those NEAR and Solana addresses, and a trading key is approved again). [Known limits](known-limits.md)
+says more.
 
 Phosphor-only is one rule for the whole Mac, not for one wallet. The first time a signed release
 makes a wallet Phosphor-only, or makes a new wallet, in any folder and from any copy of Phosphor,
