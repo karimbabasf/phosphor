@@ -561,15 +561,14 @@ test('revealing the private keys hands back the EVM key and nothing else', async
     assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
     assert.equal(out.json.groups.join(''), out.json.keys.evm.slice(2));
-    assert.deepEqual(out.json.prove, [], 'a wallet with a phrase backs up its phrase, so its key reveal asks nothing back');
+    assert.equal(out.json.prove, undefined, 'a key reveal asks nothing back: a phrase backs up its phrase, and a key is proven by its whole copy');
   } finally {
     await b.close();
   }
 });
 
-/* A password wallet brought in as a key has no phrase either, so its key reveal leaves the same
-   proof the enclave's does (src/http/vault.ts, reveal-key): three groups, typed back under the
-   window token, mark it backed up. */
+/* A password wallet brought in as a key has no phrase either, so it is proven the way an enclave
+   one is (src/http/vault.ts, key-proven): the whole copy, typed back under the window token. */
 test('a password wallet with no phrase proves its key the way an enclave one does', async () => {
   const b = await boot();
   try {
@@ -579,12 +578,12 @@ test('a password wallet with no phrase proves its key the way an enclave one doe
     const out = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
     assert.equal(out.json.keys.evm, key);
     const groups: string[] = out.json.groups;
-    const asked: number[] = out.json.prove;
     assert.equal(groups.length, 16);
-    assert.equal(new Set(asked).size, 3);
-    const wrong = await b.post('/api/vault/key-proven', { token: b.token, groups: asked.map((index, i) => ({ index, group: i === 0 ? 'zzzz' : groups[index] })) });
-    assert.equal(wrong.json.code, 'wrong_groups');
-    const right = await b.post('/api/vault/key-proven', { token: b.token, groups: asked.map((index) => ({ index, group: groups[index] })) });
+    assert.equal(out.json.prove, undefined, 'a key is proven by its whole copy, so the reveal names no three');
+    const slipped = groups.map((g, i) => (i === 7 ? `${g.slice(0, 3)}${g[3] === 'a' ? 'b' : 'a'}` : g)).join(' ');
+    const wrong = await b.post('/api/vault/key-proven', { token: b.token, key: slipped });
+    assert.equal(wrong.json.code, 'wrong_copy');
+    const right = await b.post('/api/vault/key-proven', { token: b.token, key: groups.join(' ') });
     assert.equal(right.json.ok, true, JSON.stringify(right.json));
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {

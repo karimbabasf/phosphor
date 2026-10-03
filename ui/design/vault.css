@@ -465,6 +465,25 @@
   display: none;
 }
 
+/* The done check pops on the spring as a backup is proven or a wallet made
+   Phosphor-only in this window (chatcard.css mcard-pop, the move card's). */
+[data-pop="true"] > .vault-backup-mark {
+  animation: vault-pop var(--dur-spring) var(--ease-spring) 60ms both;
+}
+
+@keyframes vault-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* A proven backup's two actions stack in the row's action column: Show my
+   key, and Check my copy under it. */
+.vault-row[data-surface="backup"] .vault-row-act {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
 .vault-backup-line[data-backed="true"] {
   color: var(--text);
 }
@@ -880,11 +899,13 @@
     column-gap: var(--s-5);
   }
 
+  /* Each tile keeps its own height: an uneven bottom edge beats an empty
+     card stretched beside a tall one (the Keys row with its card open). */
   .vault-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--s-2);
-    align-items: stretch;
+    align-items: start;
   }
 
   .vault-grid > .vault-row-wide,
@@ -919,6 +940,10 @@
     justify-content: flex-start;
   }
 
+  .vault-row[data-surface="backup"] .vault-row-act {
+    align-items: flex-start;
+  }
+
   .vault-row-act > .btn-quiet:last-child {
     margin-right: 0;
     margin-left: calc(var(--s-3) * -1);
@@ -926,6 +951,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-pop="true"] > .vault-backup-mark {
+    animation: none;
+  }
+
   .vault-row,
   .netsel,
   .netsel .chev-icon,

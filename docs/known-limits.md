@@ -33,8 +33,8 @@ or shown again, after five wrong tries, after half an hour with the Mac awake, o
 quits. It keeps only the three positions it asks for and one slow hash of those three words, the
 same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
 guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
-with no phrase backs up its private key instead, and its check keeps three of the key's sixteen
-groups under the same hash: 281 trillion guesses, and 208 bits of the key still unknown after them.
+with no phrase backs up its private key instead, and its whole copy typed back is the proof, so
+nothing of the key is kept for it.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right

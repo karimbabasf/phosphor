@@ -10,9 +10,10 @@
 // (1680 x 1050), into scripts/scratch/key-backup-proof/ (PROOF_OUT names any other folder):
 //
 //   software-*   a password wallet with no phrase: its row, the password asked in it, its key
-//   key-*        the same wallet moved behind the enclave: the row, the key, Prove it, a group
-//                that cannot be right, a wrong answer, two of them, the notice, Forget waiting
-//   proven-*     the row once three groups are typed back, and the note that says so
+//   key-*        the same wallet moved behind the enclave: the row, the key, the whole copy asked
+//                for once, a character a key never uses, a copy one group off, two of them, the
+//                notice, Forget waiting
+//   proven-*     the row once the whole copy is typed back, its tick popping, no toast
 //   check-*      Check my copy: open, the whole key right, and the same key with one slip
 //   restore-*    Restore from a key: open, a key cut short, the second press, the wallet already
 //                here, and the note naming the wallet a restore brought
@@ -338,7 +339,7 @@ async function main(): Promise<void> {
       await p.waitForSelector(`${ROW('backup')} .vault-key`, { timeout: 10_000 });
       await p.evaluate(`document.querySelector(${JSON.stringify(ROW('backup'))}).scrollIntoView({ block: 'center' })`);
       await shoot(p, size, 'software-key', ROW('backup'));
-      await p.click(button(ROW('backup'), 'Done'));
+      await p.click(button(ROW('backup'), 'Hide key'));
       await p.close();
     }
 
@@ -356,45 +357,43 @@ async function main(): Promise<void> {
       results.checks[`groupsOnScreen-${size.tag}`] = shown.join('') === key.slice(2);
 
       await p.click(button(ROW('backup'), 'I wrote it down'));
-      await p.waitForSelector(`${ROW('backup')} .vault-flow[data-step="prove"]`, { timeout: 10_000 });
+      await p.waitForSelector(`${ROW('backup')} .vault-flow[data-step="prove"] textarea`, { timeout: 10_000 });
       await shoot(p, size, 'key-prove', ROW('backup'));
-      const asked = (await p.evaluate(`Array.from(document.querySelectorAll('${ROW('backup')} input[data-index]')).map(function (n) { return Number(n.dataset.index); })`)) as number[];
-      const fill = async (values: string[]): Promise<void> => {
-        const inputs = await p.$$(`${ROW('backup')} input[data-index]`);
-        for (let at = 0; at < inputs.length; at += 1) await inputs[at].fill(values[at] ?? '');
-      };
-      await fill(['12g', '', '']);
-      await fill(['12g', 'ab', 'abcd']);
-      await p.click(button(ROW('backup'), 'Prove it'));
+      const copy = `${ROW('backup')} textarea`;
+      // An o typed for a 0 in group 6, the likeliest slip off paper.
+      await p.fill(copy, groups.map((g, at) => (at === 5 ? `${g.slice(0, 3)}o` : g)).join(' '));
+      await p.click(button(ROW('backup'), 'Check'));
       await sleep(200);
       await shoot(p, size, 'key-prove-format', ROW('backup'));
-      const wrong = asked.map((at) => (groups[at] === 'ffff' ? '0000' : 'ffff'));
-      await fill(wrong);
-      await p.click(button(ROW('backup'), 'Prove it'));
+      const slipped = groups.map((g, at) => (at === 9 ? (g === 'ffff' ? '0000' : 'ffff') : g)).join(' ');
+      await p.fill(copy, slipped);
+      await p.click(button(ROW('backup'), 'Check'));
       await p.waitForSelector(`${ROW('backup')} .vault-error:not([hidden])`, { timeout: 10_000 });
       await sleep(300);
       await shoot(p, size, 'key-prove-wrong', ROW('backup'));
 
       if (i < SIZES.length - 1) {
-        await p.click(button(ROW('backup'), 'Prove it'));
+        await p.click(button(ROW('backup'), 'Check'));
         await p.waitForSelector(`${ROW('backup')} .vault-flow[data-step="key"]`, { timeout: 10_000 });
         await p.evaluate(`document.querySelector(${JSON.stringify(ROW('backup'))}).scrollIntoView({ block: 'center' })`);
         await shoot(p, size, 'key-two-misses', ROW('backup'));
-        await p.click(button(ROW('backup'), 'Done'));
+        await p.click(button(ROW('backup'), 'Hide key'));
         await toVault(p, ROW('danger'));
         await shoot(p, size, 'key-forget-waits', ROW('danger'));
         await p.close();
         continue;
       }
 
-      // The last size proves it: the right three groups, typed the way a person copies them.
-      await fill(asked.map((at) => `${groups[at]!.slice(0, 2).toUpperCase()} ${groups[at]!.slice(2)}`));
-      await p.click(button(ROW('backup'), 'Prove it'));
+      // The last size proves it: the whole copy, typed the way a person copies it off the sheet.
+      await p.fill(copy, `0x${groups.slice(0, 8).join(' ').toUpperCase()}\n${groups.slice(8).join(' ')}`);
+      await p.click(button(ROW('backup'), 'Check'));
       await p.waitForSelector(`${ROW('backup')} .vault-backup-line[data-backed="true"]`, { timeout: 10_000 });
-      await shoot(p, size, 'proven-toast', '#view-vault');
+      await sleep(700);
+      await shoot(p, size, 'proven-done', '#view-vault');
+      results.checks.provenToasts = (await p.evaluate(`document.querySelectorAll('.toast:not([hidden])').length`)) as number;
       await p.close();
     }
-    results.checks.provenAfterThreeGroups = (await get(a, '/api/vault')).backedUp === true;
+    results.checks.provenByWholeCopy = (await get(a, '/api/vault')).backedUp === true;
 
     for (const size of SIZES) {
       const p = await page(a, size);

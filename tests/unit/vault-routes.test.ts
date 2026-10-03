@@ -814,7 +814,10 @@ async function keyWallet(b: Awaited<ReturnType<typeof boot>>, legacy = true): Pr
   return { key, evm };
 }
 
-const typedGroups = (groups: string[], at: number[]) => at.map((index) => ({ index, group: groups[index] }));
+/* The key as a person types it back off the paper: the sixteen groups with spaces, and one
+   character of group `slipped` changed when given, which is another wallet. */
+const typedCopy = (groups: string[], slipped = -1) =>
+  groups.map((g, i) => (i === slipped ? `${g.slice(0, 3)}${g[3] === 'a' ? 'b' : 'a'}` : g)).join(' ');
 
 test('"Reveal your private key" shows a wallet with no phrase its key in sixteen groups, behind its own touch, and leaves a locked wallet locked', async () => {
   const b = await boot({ mode: 'live' });
@@ -828,19 +831,17 @@ test('"Reveal your private key" shows a wallet with no phrase its key in sixteen
     assert.ok(groups.every((g) => /^[0-9a-f]{4}$/.test(g)), JSON.stringify(groups.map((g) => g.length)));
     assert.equal(`0x${groups.join('')}`, w.key, 'the groups are the key, in order');
     assert.equal(shown.json.address, w.evm, 'and they name the wallet they open');
-    const asked: number[] = shown.json.prove;
-    assert.equal(new Set(asked).size, 3);
-    assert.ok(asked.every((i) => Number.isInteger(i) && i >= 0 && i < 16));
+    assert.equal(shown.json.prove, undefined, 'no three positions: the whole copy is what proves a key');
     assert.equal(shown.json.words, undefined);
     assert.deepEqual(b.seen.filter((s) => s === 'unwrap:Reveal your private key'), ['unwrap:Reveal your private key']);
     await new Promise((resolve) => setTimeout(resolve, 100));
     assert.equal(b.keystore.state(), 'locked', 'a reveal opens nothing');
     assert.equal(b.releases(), 0);
 
-    // An open wallet still takes its own touch, and a reveal made again asks the same three.
+    // An open wallet still takes its own touch.
     assert.equal((await b.post('/api/vault/unlock', {})).json.ok, true);
     const again = await b.post('/api/vault/reveal-key', {});
-    assert.deepEqual(again.json.prove, asked);
+    assert.deepEqual(again.json.groups, groups);
     assert.equal(b.seen.filter((s) => s === 'unwrap:Reveal your private key').length, 2);
     assert.equal((await b.get('/api/vault')).json.backedUp, false, 'shown is not proven');
   } finally {
@@ -848,62 +849,55 @@ test('"Reveal your private key" shows a wallet with no phrase its key in sixteen
   }
 });
 
-test('three groups typed back prove the key; a wrong one says nothing about which, and a proof is spent once', async () => {
+/* A key has no checksum: three groups of sixteen pass a copy with one slipped group 13 times in 16,
+   and the slip is simply another wallet. So the proof is the whole copy, and a copy one character
+   off, in any group, proves nothing. */
+test('the whole copy typed back proves the key; one character off in any group is another wallet and proves nothing', async () => {
   const b = await boot({ mode: 'live' });
   try {
     await keyWallet(b, false);
     const shown = await b.post('/api/vault/reveal-key', {});
     const groups: string[] = shown.json.groups;
-    const asked: number[] = shown.json.prove;
+    const touches = b.seen.length;
 
-    const flip = (g: string) => (g === 'ffff' ? '0000' : 'ffff');
-    for (const bad of [0, 1, 2]) {
-      const answers = typedGroups(groups, asked).map((a, i) => (i === bad ? { ...a, group: flip(a.group!) } : a));
-      const wrong = await b.post('/api/vault/key-proven', { groups: answers });
-      assert.deepEqual(wrong.json, { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' }, 'the answer is the same whichever group was wrong');
+    for (const slipped of [0, 5, 9, 15]) {
+      const wrong = await b.post('/api/vault/key-proven', { key: typedCopy(groups, slipped) });
+      assert.deepEqual(wrong.json, { ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' }, 'the answer is the same whichever group slipped');
     }
-    const elsewhere = groups.map((_, i) => i).filter((i) => !asked.includes(i)).slice(0, 3);
-    const unasked = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, elsewhere) });
-    assert.equal(unasked.json.code, 'wrong_groups', 'right groups at three positions the app did not name proved the key');
-    const tooFew = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked.slice(0, 2)) });
-    assert.equal(tooFew.json.code, 'wrong_groups');
-    const shapeless = await b.post('/api/vault/key-proven', { groups: [...typedGroups(groups, asked.slice(0, 2)), { index: asked[2], word: groups[asked[2]!] }] });
-    assert.equal(shapeless.json.code, 'wrong_groups', 'an answer in the phrase\'s shape is not a group');
+    const short = await b.post('/api/vault/key-proven', { key: groups.slice(0, 15).join(' ') });
+    assert.equal(short.json.code, 'bad_key');
+    const threeGroups = await b.post('/api/vault/key-proven', { groups: [0, 1, 2].map((index) => ({ index, group: groups[index] })) });
+    assert.equal(threeGroups.json.code, 'bad_key', 'three groups no longer prove a key');
     assert.equal((await b.get('/api/vault')).json.backedUp, false);
 
-    // As a person copies four characters off paper: upper case, a space inside.
-    const right = await b.post('/api/vault/key-proven', { groups: asked.map((index) => ({ index, group: ` ${groups[index]!.slice(0, 2).toUpperCase()} ${groups[index]!.slice(2)}` })) });
+    // As a person copies it off paper: upper case, a line break, a 0x in front.
+    const right = await b.post('/api/vault/key-proven', { key: `0X${groups.slice(0, 8).join(' ').toUpperCase()}\n${groups.slice(8).join(' ')}` });
     assert.equal(right.json.ok, true, JSON.stringify(right.json));
     assert.match(right.json.backedUpAt, /^\d{4}-\d{2}-\d{2}T/);
     const vault = (await b.get('/api/vault')).json;
     assert.deepEqual([vault.backedUp, vault.backedUpAt], [true, right.json.backedUpAt]);
     assert.equal((await b.get('/api/state')).json.vault.backedUp, true, 'the state carries the one flag');
-
-    const spent = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) });
-    assert.equal(spent.json.code, 'reveal_again', 'one reveal, one proof');
+    assert.equal(b.seen.length, touches, 'proving the copy asks for no Touch ID');
+    const log = JSON.stringify(b.audit.tail(60));
+    assert.ok(log.includes('the private key was proven backed up: the whole copy typed back opens this wallet'));
+    assert.ok(log.includes('it opens a different wallet, so nothing changed'));
   } finally {
     await b.close();
   }
 });
 
-test('five misses wear the key proof out, and the phrase\'s route never proves a key', async () => {
+test('the phrase\'s route never proves a key, and a key is proven by its copy with no reveal in this run', async () => {
   const b = await boot({ mode: 'live' });
   try {
-    await keyWallet(b, false);
-    let shown = await b.post('/api/vault/reveal-key', {});
-    let groups: string[] = shown.json.groups;
-    let asked: number[] = shown.json.prove;
-    const wrong = typedGroups(groups, asked).map((a, i) => (i === 0 ? { ...a, group: a.group === 'ffff' ? '0000' : 'ffff' } : a));
-    for (let i = 0; i < 5; i += 1) assert.equal((await b.post('/api/vault/key-proven', { groups: wrong })).json.code, 'wrong_groups');
-    assert.equal((await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) })).json.code, 'reveal_again');
-
-    shown = await b.post('/api/vault/reveal-key', {});
-    groups = shown.json.groups;
-    asked = shown.json.prove;
-    const crossed = await b.post('/api/vault/backup-proven', { words: asked.map((index) => ({ index, word: groups[index] })) });
+    const w = await keyWallet(b, false);
+    const groups = w.key.slice(2).match(/.{4}/g) as string[];
+    const crossed = await b.post('/api/vault/backup-proven', { words: [0, 1, 2].map((index) => ({ index, word: groups[index] })) });
     assert.equal(crossed.json.ok, false);
     assert.equal(crossed.json.code, 'reveal_again');
     assert.equal((await b.get('/api/vault')).json.backedUp, false);
+    // The copy is the proof, so a copy written at another time proves it as well.
+    assert.equal((await b.post('/api/vault/key-proven', { key: typedCopy(groups) })).json.ok, true);
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {
     await b.close();
   }
@@ -938,8 +932,7 @@ test('the key reveal is refused without the window token, for a wallet with a ph
     assert.equal(cancelled.json.code, 'user_cancel');
     assert.equal(cancelled.json.groups, undefined);
     c.setMode('answer');
-    const nothing = await c.post('/api/vault/key-proven', { groups: [{ index: 0, group: 'abcd' }, { index: 1, group: 'abcd' }, { index: 2, group: 'abcd' }] });
-    assert.equal(nothing.json.code, 'reveal_again', 'a cancelled reveal left a proof behind');
+    assert.equal((await c.get('/api/vault')).json.backedUp, false, 'a cancelled reveal proved something');
   } finally {
     await c.close();
   }
@@ -954,9 +947,9 @@ test('the key reaches no audit line, no state, no error and no file in the data 
     const w = await keyWallet(b);
     const shown = await b.post('/api/vault/reveal-key', {});
     const groups: string[] = shown.json.groups;
-    const asked: number[] = shown.json.prove;
-    const wrong = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked).map((a, i) => (i === 0 ? { ...a, group: 'zzzz' } : a)) });
-    const right = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) });
+    const wrong = await b.post('/api/vault/key-proven', { key: typedCopy(groups, 3) });
+    assert.equal(wrong.json.code, 'wrong_copy');
+    const right = await b.post('/api/vault/key-proven', { key: typedCopy(groups) });
     assert.equal(right.json.ok, true);
     const refusals = [
       await b.post('/api/vault/restore', { key: w.key.slice(0, 60) }),
@@ -1000,12 +993,12 @@ test('the key reaches no audit line, no state, no error and no file in the data 
    nothing and no screen shows them), so they do not come back. */
 test('restore takes the key back exactly as the backup shows it, and a new data directory holds the same wallet', async () => {
   const first = await boot({ mode: 'live' });
-  let shown: { groups: string[]; address: string; prove: number[] };
+  let shown: { groups: string[]; address: string };
   let evm: string;
   try {
     evm = (await keyWallet(first)).evm;
     shown = (await first.post('/api/vault/reveal-key', {})).json;
-    assert.equal((await first.post('/api/vault/key-proven', { groups: typedGroups(shown.groups, shown.prove) })).json.ok, true);
+    assert.equal((await first.post('/api/vault/key-proven', { key: typedCopy(shown.groups) })).json.ok, true);
   } finally {
     await first.close();
   }
@@ -1077,7 +1070,7 @@ test('a proven backup belongs to its wallet: a different wallet in its place rea
   try {
     await keyWallet(b, false);
     const shown = await b.post('/api/vault/reveal-key', {});
-    assert.equal((await b.post('/api/vault/key-proven', { groups: typedGroups(shown.json.groups, shown.json.prove) })).json.ok, true);
+    assert.equal((await b.post('/api/vault/key-proven', { key: typedCopy(shown.json.groups) })).json.ok, true);
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
 
     b.keystore.forget();
@@ -1093,8 +1086,8 @@ test('a proven backup belongs to its wallet: a different wallet in its place rea
   }
 });
 
-/* Prove it checks three groups of sixteen; Check my copy checks the rest. It must never be a
-   restore in disguise: no Touch ID, nothing written, and the answer is yes or no. */
+/* Check my copy is the proof's check again, for a key already proven: it must never be a restore in
+   disguise, and never a proof: no Touch ID, nothing written, and the answer is yes or no. */
 test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID and nothing written', async () => {
   const b = await boot({ mode: 'live' });
   try {
@@ -1141,6 +1134,9 @@ test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID
     const unopened = await c.post('/api/vault/key-check', { key });
     assert.equal(unopened.json.ok, false);
     assert.equal(unopened.json.code, 'unverified');
+    const unproven = await c.post('/api/vault/key-proven', { key });
+    assert.equal(unproven.json.code, 'unverified', 'a proof against a header nothing checked');
+    assert.equal((await c.get('/api/vault')).json.backedUp, false);
   } finally {
     await c.close();
   }

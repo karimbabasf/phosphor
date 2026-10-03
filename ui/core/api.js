@@ -187,16 +187,16 @@
     },
 
     /* The same pair for a wallet with no phrase: its private key, in
-       sixteen groups, and three of them typed back. */
+       sixteen groups, and the whole copy typed back, which is the proof. */
     vaultRevealKey: function () {
       return net.postJson('/api/vault/reveal-key', {}, { busy: 'reveal', label: 'Waiting for Touch ID', touch: true });
     },
 
-    vaultKeyProven: function (groups) {
-      return net.postJson('/api/vault/key-proven', { groups: groups }, { busy: 'reveal', label: 'Checking your key' });
+    vaultKeyProven: function (key) {
+      return net.postJson('/api/vault/key-proven', { key: key }, { busy: 'reveal', label: 'Checking your copy' });
     },
 
-    // A whole copy of the key against this wallet: no Touch ID, nothing written.
+    // The same check on a key already proven: no Touch ID, nothing written.
     vaultKeyCheck: function (key) {
       return net.postJson('/api/vault/key-check', { key: key }, { busy: 'reveal', label: 'Checking your copy' });
     },

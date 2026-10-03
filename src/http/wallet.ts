@@ -32,13 +32,13 @@ import { atomicWriteJson } from '../fsatomic.ts';
 import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
-import { keyGroups, keyProblem, mnemonicProblem } from '../keystore/derive.ts';
+import { keyGroups, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
-import { rememberKey, rememberPhrase } from '../vault/phrase-proof.ts';
+import { rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
@@ -469,7 +469,6 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   // re-armed.
   const read = await ctx.keystore.readWithPassword(password, (payload) => ({
     secret: (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null,
-    phrase: typeof payload.mnemonic === 'string' && payload.mnemonic !== '',
   }));
   if (!read.ok) {
     if (read.error === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
@@ -480,13 +479,11 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   if (what === 'mnemonic' && secret === null) {
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
-  // A wallet with no phrase backs up its key, so its key reveal leaves a proof the way a phrase does.
+  // The phrase is proven by three of its words, so its reveal leaves the proof behind; a key is
+  // proven by the whole copy typed back (POST /api/vault/key-proven), which needs nothing kept here.
   let prove: number[] = [];
   const wallet = ctx.keystore.addresses().evm;
-  if (wallet !== null && secret !== null) {
-    if (what === 'mnemonic') prove = rememberPhrase(secret.split(' '), wallet, ctx.keystore.kdfParams());
-    else if (!read.value.phrase && keyProblem(secret) === null) prove = rememberKey(keyGroups(secret), wallet, ctx.keystore.kdfParams());
-  }
+  if (wallet !== null && secret !== null && what === 'mnemonic') prove = rememberPhrase(secret.split(' '), wallet, ctx.keystore.kdfParams());
 
   // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
   // timer at its expiry as well: a window that never spends one leaves no key behind past it.
@@ -559,10 +556,8 @@ export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMe
     keys: {
       evm: secret,
     },
-    // The same key in the sixteen groups of four the Vault shows, and the three Prove it asks
-    // for when the wallet has no phrase (src/vault/phrase-proof.ts).
+    // The same key in the sixteen groups of four the Vault shows.
     groups: secret === null ? [] : keyGroups(secret),
-    prove: held.prove,
   });
 }
 

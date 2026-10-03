@@ -225,10 +225,10 @@ async function main(): Promise<void> {
       p = await page(b, size);
       await shoot(p, size, 'bind-first');
 
-      // The backup proven the way the Vault proves it: the key shown behind a touch, three groups back.
+      // The backup proven the way the Vault proves it: the key shown behind a touch, the whole copy back.
       const revealed = await post(b, '/api/vault/reveal-key');
       const groups = revealed?.groups as string[];
-      const proven = await post(b, '/api/vault/key-proven', { groups: (revealed.prove as number[]).map((index) => ({ index, group: groups[index] })) });
+      const proven = await post(b, '/api/vault/key-proven', { key: groups.join(' ') });
       if (proven?.ok !== true) throw new Error(`key proof refused: ${JSON.stringify(proven)}`);
       await p.waitForSelector(button('Bind with Touch ID'), { timeout: 10_000 });
       await sleep(400);

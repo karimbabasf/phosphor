@@ -24,7 +24,7 @@ import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { StagedFile } from '../keystore/store.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
-import { checkKey, checkPhrase, forgetPhrase, rememberKey, rememberPhrase } from '../vault/phrase-proof.ts';
+import { checkPhrase, forgetPhrase, rememberPhrase } from '../vault/phrase-proof.ts';
 import {
   ADDRESS_REASON,
   CREATE_REASON,
@@ -307,7 +307,8 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
 /* The private key of a wallet that has no recovery phrase, the phrase reveal's twin for a wallet
    brought in as a key: its own Touch ID every time, open wallet or not, read through
    readWithDataKey so a locked wallet stays locked, and returned once, in this response, in the
-   sixteen groups of four the window shows and Prove it asks three of. The EVM key alone: it is all
+   sixteen groups of four the window shows; the whole copy typed back proves it (key-proven, below).
+   The EVM key alone: it is all
    this app signs with and the one key behind every address the app shows (the account, and every
    deposit address the bridge gives that account). An older file can also seal a NEAR and a Solana
    key, which on a wallet with no phrase were drawn at random rather than from this key; they sign
@@ -339,7 +340,6 @@ export async function handleVaultRevealKey(ctx: Ctx, req: http.IncomingMessage, 
   if (read.value.key === null) return sendJson(res, 200, refusal('no_private_key'));
   const groups = keyGroups(read.value.key);
   const wallet = ctx.keystore.addresses().evm;
-  const prove = wallet === null ? [] : rememberKey(groups, wallet, ctx.keystore.kdfParams());
   ctx.audit.append('app_start', 'the private key was revealed in the window after a Touch ID; the wallet stays as it was', {});
   ctx.session.touch();
   sendJson(res, 200, {
@@ -347,7 +347,6 @@ export async function handleVaultRevealKey(ctx: Ctx, req: http.IncomingMessage, 
     groups,
     // The wallet this key opens, so a copy can be checked against it after a restore.
     address: wallet,
-    prove,
   });
 }
 
@@ -378,57 +377,56 @@ export async function handleVaultBackupProven(ctx: Ctx, req: http.IncomingMessag
   sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
 }
 
-/* The same proof for a wallet with no phrase: three groups of its private key, by position, typed
-   back and checked against what the last key reveal left behind, never echoed. A wrong answer
-   clears nothing and says nothing about which group was wrong. */
+/* A whole copy of the key, typed from the copy, against the wallet here: whether it opens this very
+   wallet, with no Touch ID and the key derived to an address and dropped. The answer is yes or no,
+   never which characters. It is checked against addresses this process derived from the keys, never
+   against a header nothing has checked: any process running as the owner can edit that one, so
+   "your copy is right" would be a fact about a file. The window cannot reach it while the wallet is
+   locked. It is not Restore: a restore puts the wallet a copy makes in the place of the one here,
+   so a copy with a slip in it must never be tried that way. */
+function copyAgainstWallet(ctx: Ctx, raw: unknown): { refused: JsonBody } | { matches: boolean; wallet: string } {
+  const key = typeof raw === 'string' ? raw : '';
+  const problem = keyProblem(key);
+  if (problem !== null) return { refused: { ok: false, error: problem, code: 'bad_key' } };
+  const report = ctx.keystore.addressReport();
+  const wallet = report.addresses.evm;
+  if (wallet === null) return { refused: refusal('no_wallet') };
+  if (!report.verified) {
+    return { refused: { ok: false, error: 'Open your wallet with Touch ID first, so the copy is checked against the wallet itself.', code: 'unverified' } };
+  }
+  const matches = (addressesFromKeys({ evm: keyFrom(key) }).evm ?? '').toLowerCase() === wallet.toLowerCase();
+  return { matches, wallet };
+}
+
+/* The proof for a wallet with no phrase is the whole copy. A phrase carries a checksum, so three of
+   its words typed back show a copy that reads; a raw key has none, so a slip anywhere in it is
+   simply another wallet, and three groups of sixteen pass a copy with one slipped group 13 times in
+   16. So the key's backup is proven only by the whole copy, typed back once from the paper and
+   opening this very wallet. A copy that opens another wallet clears nothing and says so. */
 export async function handleVaultKeyProven(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/key-proven', req, res);
   if (body === null) return;
-  const raw = Array.isArray(body.groups) ? (body.groups as unknown[]) : [];
-  const answers = raw.flatMap((a): Array<{ index: number; word: string }> => {
-    if (typeof a !== 'object' || a === null) return [];
-    const { index, group } = a as { index?: unknown; group?: unknown };
-    return typeof index === 'number' && typeof group === 'string' ? [{ index, word: group }] : [];
-  });
-  const checked = raw.length < 3 || answers.length !== raw.length ? 'mismatch' : await checkKey(answers, ctx.keystore.addresses().evm);
-  if (checked === 'none') {
-    return sendJson(res, 200, { ok: false, error: 'Show your key once more with Back it up, then type three groups of it back.', code: 'reveal_again' });
+  const checked = copyAgainstWallet(ctx, body.key);
+  if ('refused' in checked) return sendJson(res, 200, checked.refused);
+  if (!checked.matches) {
+    ctx.audit.append('app_start', 'a copy of the private key was typed back to prove the backup: it opens a different wallet, so nothing changed', {});
+    return sendJson(res, 200, { ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' });
   }
-  if (checked === 'mismatch') {
-    return sendJson(res, 200, { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' });
-  }
-  forgetPhrase();
-  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, ctx.keystore.addresses().evm);
-  ctx.audit.append('app_start', 'the private key was proven backed up: three groups typed back', {});
+  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, checked.wallet);
+  ctx.audit.append('app_start', 'the private key was proven backed up: the whole copy typed back opens this wallet', {});
   announce(ctx);
   sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
 }
 
-/* A whole copy of the key, checked against the wallet here, with no Touch ID and nothing written.
-   Prove it shows that a copy was made; three groups of sixteen cannot show that the other thirteen
-   are right, and a key has no checksum, so a slip in it is simply another wallet, found out the
-   day it is restored. This is the check to the last character. It is not Restore: a restore puts
-   the wallet a copy makes in the place of the one here, so a copy with a slip in it must never be
-   tried that way. The
-   answer is yes or no, never which characters, and the key is derived to an address and dropped. */
+/* The same check on a key that is already proven, for a copy made or kept later: nothing written,
+   never a proof. */
 export async function handleVaultKeyCheck(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/key-check', req, res);
   if (body === null) return;
-  const raw = typeof body.key === 'string' ? body.key : '';
-  const problem = keyProblem(raw);
-  if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_key' });
-  const report = ctx.keystore.addressReport();
-  const wallet = report.addresses.evm;
-  if (wallet === null) return sendJson(res, 200, refusal('no_wallet'));
-  /* "Your copy is right" is a fact about the wallet, so it is checked against addresses this
-     process derived from the keys, never against a header nothing has checked: any process running
-     as the owner can edit that one. The window cannot reach this while the wallet is locked. */
-  if (!report.verified) {
-    return sendJson(res, 200, { ok: false, error: 'Open your wallet with Touch ID first, so the copy is checked against the wallet itself.', code: 'unverified' });
-  }
-  const matches = (addressesFromKeys({ evm: keyFrom(raw) }).evm ?? '').toLowerCase() === wallet.toLowerCase();
-  ctx.audit.append('app_start', `a copy of the private key was checked in the window: it ${matches ? 'matches' : 'does not match'} this wallet`, {});
-  sendJson(res, 200, { ok: true, matches });
+  const checked = copyAgainstWallet(ctx, body.key);
+  if ('refused' in checked) return sendJson(res, 200, checked.refused);
+  ctx.audit.append('app_start', `a copy of the private key was checked in the window: it ${checked.matches ? 'matches' : 'does not match'} this wallet`, {});
+  sendJson(res, 200, { ok: true, matches: checked.matches });
 }
 
 /* Restore from a phrase, or from the private key a wallet with no phrase backs up (`key` in place

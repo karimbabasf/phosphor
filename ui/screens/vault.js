@@ -527,8 +527,10 @@
      goes into the conversation.
 
      A wallet brought in as a key has no phrase, so the same row backs up its
-     private key the same way: the key in sixteen groups of four, three of
-     them typed back by their number. */
+     private key: the key in sixteen groups of four, then the whole copy typed
+     back once. A phrase has a checksum and three words show a copy that
+     reads; a key has none, and one wrong character is simply another wallet,
+     so nothing short of the whole copy proves it. */
   function buildBackup(host) {
     var r = row('Recovery phrase', 'backup');
     refs.backupRow = r.node;
@@ -544,14 +546,12 @@
     refs.backupGo = button('Back it up', 'btn-sm', 'Waiting for Touch ID');
     r.act.appendChild(refs.backupGo);
     dom.on(refs.backupGo, 'click', startReveal);
-    /* A proven key's copy, checked whole: Prove it asks three groups of
-       sixteen, and a key has no checksum to catch a slip in the rest. */
+    /* A proven key's copy, checked whole again, for a copy kept or made
+       later: under Show my key, in the row's own action column. */
     refs.checkCopy = button('Check my copy', 'btn-quiet btn-sm');
     refs.checkCopy.hidden = true;
-    var checks = dom.el('div', 'vault-actions');
-    checks.appendChild(refs.checkCopy);
-    r.main.appendChild(checks);
-    dom.on(refs.checkCopy, 'click', startCheck);
+    r.act.appendChild(refs.checkCopy);
+    dom.on(refs.checkCopy, 'click', function () { startCheck(false); });
     refs.phraseFlow = dom.el('div', 'vault-flow');
     refs.phraseFlow.hidden = true;
     r.body.appendChild(refs.phraseFlow);
@@ -568,13 +568,19 @@
     var words = !has
       ? 'There is nothing to back up until a wallet exists.'
       : backed
-        ? 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.'
+        ? (noWords
+          ? 'Backed up' + (when ? ' on ' + when : '') + '. Your whole copy matched.'
+          : 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.')
         : noWords
           ? 'Not backed up yet. This wallet has no recovery phrase, so its key is the only way back if this Mac is lost.'
           : 'Not backed up yet. It is the only way back to this wallet if this Mac is lost.';
     dom.setText(refs.backupLine, words);
     dom.setAttr(refs.backupState, 'data-backed', has && backed ? 'true' : null);
     if (refs.backupMark) dom.setAttr(refs.backupMark, 'data-hidden', has && backed ? null : 'true');
+    if (has && backed && popMark) {
+      popMark = false;
+      pop(refs.backupState);
+    }
     var closed = !phrase && !shownKey && refs.phraseFlow.hidden;
     dom.setText(refs.backupGo.querySelector('.btn-label'), backed ? (noWords ? 'Show my key' : 'Show my words') : 'Back it up');
     dom.setAttr(refs.backupGo, 'data-pending-label', enclave ? 'Waiting for Touch ID' : 'Opening');
@@ -588,16 +594,39 @@
   function wipePhrase() {
     phrase = null;
     shownKey = null;
-    if (!refs.phraseFlow) return;
+    if (!refs.phraseFlow) return Promise.resolve();
+    var closing = Promise.resolve();
     if (!refs.phraseFlow.hidden || refs.phraseFlow.childNodes.length) {
-      shrink(refs.backupRow, refs.phraseFlow, function () {
+      closing = Promise.resolve(shrink(refs.backupRow, refs.phraseFlow, function () {
         dom.clear(refs.phraseFlow);
         refs.phraseFlow.hidden = true;
         delete refs.phraseFlow.dataset.step;
         render();
-      }, refs.backupGo);
+      }, refs.backupGo));
     }
     if (refs.backupGo) refs.backupGo.disabled = false;
+    return closing;
+  }
+
+  /* PROVEN. The flow closes, the row comes into view with its done line
+     whole, and the shield tick pops on the spring as the state says backed
+     up (DESIGN.md: "the done check pops"). No toast: the row says it, in
+     view. */
+  var popMark = false;
+
+  function proven() {
+    popMark = true;
+    wipePhrase().then(function () { bringIntoView(refs.backupRow); });
+    return window.PhosphorShell.refresh({});
+  }
+
+  /* The line's tick pops once on the spring (vault.css vault-pop), then the
+     attribute goes, so the next proof pops again. */
+  function pop(node) {
+    if (!node) return;
+    dom.setAttr(node, 'data-pop', null);
+    dom.setAttr(node, 'data-pop', 'true');
+    window.setTimeout(function () { dom.setAttr(node, 'data-pop', null); }, 1200);
   }
 
   /* The way in, from this row, the notice, the deposit card's reminder and
@@ -661,7 +690,7 @@
           flowProblem('No key came back.');
           return;
         }
-        shownKey = { groups: answer.groups.slice(), address: answer.address || null, prove: provable(answer.prove, KEY_GROUPS) };
+        shownKey = { groups: answer.groups.slice(), address: answer.address || null };
         showKey();
       })
       .catch(function (err) { flowProblem(net.readable(err)); })
@@ -738,7 +767,7 @@
             input.value = '';
             if (forKey) {
               if (!keyCameBack(material)) throw new Error('No key came back.');
-              shownKey = { groups: material.groups.slice(), address: null, prove: provable(material.prove, KEY_GROUPS) };
+              shownKey = { groups: material.groups.slice(), address: null };
               showKey();
               return;
             }
@@ -819,7 +848,7 @@
     var tools = dom.el('div', 'vault-actions');
     var wrote = button('I wrote them down', 'btn-sm');
     var print = button('Print', 'btn-ghost btn-sm');
-    var done = button('Done', 'btn-quiet btn-sm');
+    var done = button('Hide words', 'btn-quiet btn-sm');
     tools.appendChild(wrote);
     tools.appendChild(print);
     tools.appendChild(done);
@@ -950,9 +979,7 @@
             say(error, answer.error || 'That did not work.');
             return;
           }
-          wipePhrase();
-          window.PhosphorToast.show('Backed up. Your copy of the phrase is right.');
-          return window.PhosphorShell.refresh({});
+          return proven();
         })
         .catch(function (err) { say(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(prove, false); });
@@ -962,9 +989,10 @@
 
   /* ---------- safety: the private key, for a wallet with no phrase ----------
 
-     The phrase's flow, step for step: the key once, numbered in groups of
-     four so it can be copied by hand or printed, then three groups typed back
-     and checked by the app (src/vault/phrase-proof.ts). Print, never Copy. */
+     The phrase's flow, with the proof a key needs: the key once, numbered in
+     groups of four so it can be copied by hand or printed, then the whole
+     copy typed back once and checked against this wallet by the app
+     (POST /api/vault/key-proven). Print, never Copy. */
 
   function showKey(note) {
     if (!shownKey) return;
@@ -1012,14 +1040,14 @@
     var tools = dom.el('div', 'vault-actions');
     var wrote = button('I wrote it down', 'btn-sm');
     var print = button('Print', 'btn-ghost btn-sm');
-    var done = button('Done', 'btn-quiet btn-sm');
+    var done = button('Hide key', 'btn-quiet btn-sm');
     tools.appendChild(wrote);
     tools.appendChild(print);
     tools.appendChild(done);
     flow.appendChild(tools);
 
     dom.on(print, 'click', function () { printKey(shownKey ? shownKey.groups : [], keyWallet()); });
-    dom.on(wrote, 'click', showKeyProve);
+    dom.on(wrote, 'click', function () { startCheck(true); });
     dom.on(done, 'click', wipePhrase);
     if (wrote.focus) wrote.focus();
   }
@@ -1043,119 +1071,26 @@
     }
   }
 
-  function showKeyProve() {
-    if (!shownKey) return;
-    if (!shownKey.prove.length) {
-      wipePhrase();
-      window.PhosphorToast.show('Show your key once more with Back it up, then type three groups of it back.');
-      return;
-    }
-    grow(refs.backupRow, drawKeyProve, refs.phraseFlow);
-  }
-
-  function drawKeyProve() {
-    var flow = refs.phraseFlow;
-    dom.clear(flow);
-    flow.hidden = false;
-    flow.dataset.step = 'prove';
-
-    flow.appendChild(dom.el('p', 'vault-flow-title', 'Prove it'));
-    flow.appendChild(text('vault-sub', 'Type three groups back, by their number, from the copy you made.'));
-
-    var fields = dom.el('div', 'vault-fields');
-    var inputs = [];
-    shownKey.prove.forEach(function (at) {
-      var field = dom.el('div', 'field');
-      field.appendChild(dom.el('label', 'label', 'Group ' + (at + 1)));
-      var input = dom.el('input', 'input vault-key-input');
-      input.type = 'text';
-      input.name = 'group-' + (at + 1);
-      input.autocomplete = 'off';
-      input.spellcheck = false;
-      input.setAttribute('autocapitalize', 'off');
-      input.dataset.index = String(at);
-      field.appendChild(input);
-      fields.appendChild(field);
-      inputs.push(input);
-    });
-    flow.appendChild(fields);
-
-    var error = problem();
-    flow.appendChild(error);
-
-    var tools = dom.el('div', 'vault-actions');
-    var prove = button('Prove it', 'btn-sm', 'Checking');
-    var back = button('Show the key again', 'btn-quiet btn-sm');
-    tools.appendChild(prove);
-    tools.appendChild(back);
-    flow.appendChild(tools);
-
-    var misses = 0;
-    dom.on(back, 'click', function () { showKey(); });
-    dom.on(prove, 'click', function () {
-      var groups = [];
-      for (var i = 0; i < inputs.length; i += 1) {
-        var value = inputs[i].value.replace(/\s+/g, '').toLowerCase();
-        if (!value) {
-          say(error, 'Type all three groups.');
-          return;
-        }
-        /* Checked here so a slip of the keyboard does not spend one of the
-           app's five tries. */
-        if (!KEY_GROUP.test(value)) {
-          say(error, 'Each group is four characters, 0 to 9 and a to f.');
-          return;
-        }
-        groups.push({ index: Number(inputs[i].dataset.index), group: value });
-      }
-      say(error, '');
-      window.PhosphorShell.setPending(prove, true);
-      api.vaultKeyProven(groups)
-        .then(function (answer) {
-          if (answer && answer.ok === false) {
-            if (answer.code === 'reveal_again') {
-              wipePhrase();
-              window.PhosphorToast.show(answer.error || 'Show your key once more with Back it up, then type three groups of it back.');
-              return;
-            }
-            if (answer.code === 'wrong_groups') {
-              misses += 1;
-              if (misses >= 2) {
-                showKey('Two tries did not match. Check your copy, then try again.');
-                return;
-              }
-              say(error, 'Those groups do not match. Look at your copy again.');
-              return;
-            }
-            say(error, answer.error || 'That did not work.');
-            return;
-          }
-          wipePhrase();
-          window.PhosphorToast.show('Backed up. Your copy of the key is right.');
-          return window.PhosphorShell.refresh({});
-        })
-        .catch(function (err) { say(error, net.readable(err)); })
-        .finally(function () { window.PhosphorShell.setPending(prove, false); });
-    });
-    if (inputs[0] && inputs[0].focus) inputs[0].focus();
-  }
-
-  /* Check my copy: the whole key, typed from the copy, against this wallet.
-     No Touch ID and nothing written, and never through Restore, which would
+  /* Check your copy: the whole key, typed from the copy, against this wallet,
+     with no Touch ID. Straight after the key was shown (`proving`) a match is
+     the proof and marks the key backed up; on a key already proven it is
+     Check my copy, which writes nothing. Never through Restore, which would
      replace this wallet with whatever a slip makes. */
-  function startCheck() {
-    grow(refs.backupRow, drawCheck, refs.phraseFlow);
+  function startCheck(proving) {
+    grow(refs.backupRow, function () { drawCheck(proving === true && !!shownKey); }, refs.phraseFlow);
   }
 
-  function drawCheck() {
+  function drawCheck(proving) {
     var flow = refs.phraseFlow;
     dom.clear(flow);
     flow.hidden = false;
-    flow.dataset.step = 'check';
+    flow.dataset.step = proving ? 'prove' : 'check';
     render();
 
     flow.appendChild(dom.el('p', 'vault-flow-title', 'Check your copy'));
-    flow.appendChild(text('vault-sub', 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+    flow.appendChild(text('vault-sub', proving
+      ? 'Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'
+      : 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
 
     var field = dom.el('div', 'field');
     field.appendChild(dom.el('label', 'label', 'Private key'));
@@ -1181,12 +1116,16 @@
 
     var tools = dom.el('div', 'vault-actions');
     var check = button('Check', 'btn-sm', 'Checking');
-    var done = button('Done', 'btn-quiet btn-sm');
+    var other = proving ? button('Show the key again', 'btn-quiet btn-sm') : button('Done', 'btn-quiet btn-sm');
     tools.appendChild(check);
-    tools.appendChild(done);
+    tools.appendChild(other);
     flow.appendChild(tools);
 
-    dom.on(done, 'click', wipePhrase);
+    var misses = 0;
+    dom.on(other, 'click', function () {
+      if (proving) showKey();
+      else wipePhrase();
+    });
     dom.on(input, 'input', function () {
       say(error, '');
       right.hidden = true;
@@ -1194,6 +1133,8 @@
     dom.on(check, 'click', function () {
       var hex = keyOf(input.value);
       right.hidden = true;
+      /* Said here so a slip of the keyboard is caught before anything is
+         sent, and named by its group where the app can tell which. */
       if (!/^[0-9a-f]*$/.test(hex)) {
         say(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
         return;
@@ -1204,23 +1145,46 @@
       }
       say(error, '');
       window.PhosphorShell.setPending(check, true);
-      api.vaultKeyCheck('0x' + hex)
+      (proving ? api.vaultKeyProven('0x' + hex) : api.vaultKeyCheck('0x' + hex))
         .then(function (answer) {
-          if (answer && answer.ok === false) {
+          if (answer && answer.ok === false && answer.code !== 'wrong_copy') {
             say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : (answer.error || 'That did not work.'));
             return;
           }
-          if (answer && answer.matches === true) {
+          if (answer && (answer.ok === true && (proving || answer.matches === true))) {
             input.value = '';
+            if (proving) return proven();
             right.hidden = false;
             return;
           }
-          say(error, 'That copy opens a different wallet. Show your key and check it group by group.');
+          /* Another wallet. Straight after the key was shown, the app still
+             holds it here, so the line can name the group to look at; two
+             misses show the key again. */
+          misses += 1;
+          if (proving && misses >= 2) {
+            showKey('Two tries did not match. Check your copy group by group, then try again.');
+            return;
+          }
+          var off = proving ? firstSlip(hex) : -1;
+          say(error, off >= 0
+            ? 'Group ' + (off + 1) + ' does not match the key Phosphor showed you. Check it on your copy, then try again.'
+            : 'That copy opens a different wallet. Show your key and check it group by group.');
         })
         .catch(function (err) { say(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(check, false); });
     });
     if (input.focus) input.focus();
+  }
+
+  /* The first group of what was typed that differs from the key on screen a
+     moment ago, or -1. Compared here, in the window that already holds the
+     key; nothing about it is sent. */
+  function firstSlip(hex) {
+    if (!shownKey || !Array.isArray(shownKey.groups)) return -1;
+    for (var i = 0; i < shownKey.groups.length; i += 1) {
+      if (hex.slice(i * 4, i * 4 + 4) !== shownKey.groups[i]) return i;
+    }
+    return -1;
   }
 
   /* ---------- safety: your limits ---------- */
@@ -2526,11 +2490,13 @@
     offerMigration(state);
   }
 
+  /* "Oct 3, 2026", held together by non-breaking spaces so a line never ends
+     on "Oct". */
   function dateWords(iso) {
     if (!iso) return '';
     var when = new Date(iso);
     if (isNaN(when.getTime())) return '';
-    return when.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+    return when.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/ /g, '\u00a0');
   }
 
   /* ---------- migration ---------- */

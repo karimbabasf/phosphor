@@ -151,9 +151,8 @@ const WORDS = ('abandon ability able about above absent absorb abstract absurd a
 const PROVE = [2, 6, 11];
 const EVM = '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d';
 // A wallet with no phrase backs up its key in sixteen groups of four. Made up, and kept as groups
-// so no key-shaped string sits in the tree; KEY_PROVE are the three the app names.
+// so no key-shaped string sits in the tree.
 const GROUPS = ['3f9a', '07c2', 'b41e', '5d68', 'e2a0', '9b17', '4c3d', 'f805', '1a6e', 'c9b2', '7e41', '0d5f', 'a8c3', '62e9', 'd07b', '3b14'];
-const KEY_PROVE = [2, 6, 11];
 
 function vaultState(overrides: Any = {}): Any {
   return Object.assign({
@@ -195,8 +194,8 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   const answer: Any = {
     reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" }, prove: PROVE.slice() },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
-    revealKey: { ok: true, groups: GROUPS.slice(), address: EVM, prove: KEY_PROVE.slice() } as Any,
-    keyProven: (groups: Any[]) => (groups.every((g) => GROUPS[g.index] === g.group) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' }),
+    revealKey: { ok: true, groups: GROUPS.slice(), address: EVM } as Any,
+    keyProven: (key: string) => (key === '0x' + GROUPS.join('') ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' }),
     restoreKey: { ok: true, addresses: { evm: EVM } } as Any,
     keyCheck: { ok: true, matches: true } as Any,
     forget: { ok: true },
@@ -269,7 +268,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultReveal: () => { calls.push({ route: '/api/vault/reveal' }); return Promise.resolve(answer.reveal); },
     vaultBackupProven: (words: Any[]) => { calls.push({ route: '/api/vault/backup-proven', words }); return Promise.resolve(answer.proven(words)); },
     vaultRevealKey: () => { calls.push({ route: '/api/vault/reveal-key' }); return Promise.resolve(answer.revealKey); },
-    vaultKeyProven: (groups: Any[]) => { calls.push({ route: '/api/vault/key-proven', groups }); return Promise.resolve(answer.keyProven(groups)); },
+    vaultKeyProven: (key: string) => { calls.push({ route: '/api/vault/key-proven', key }); return Promise.resolve(answer.keyProven(key)); },
     vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restoreKey); },
     vaultKeyCheck: (key: string) => { calls.push({ route: '/api/vault/key-check', key }); return Promise.resolve(answer.keyCheck); },
     vaultForget: () => { calls.push({ route: '/api/vault/forget' }); return Promise.resolve(answer.forget); },
@@ -330,6 +329,8 @@ const recovery = (world: World): Any => row(world, 'recovery');
 const flow = (world: World): Any => find(row(world, 'backup'), '.vault-flow')[0];
 const restoreFlow = (world: World): Any => find(recovery(world), '.vault-flow')[0];
 const backup = (world: World): string => find(row(world, 'backup'), '.vault-text')[0].textContent;
+// A date as the Vault writes it: its spaces non-breaking, so "Oct" never ends a line alone.
+const day = (words: string): string => words.replace(/ /g, '\u00a0');
 const shown = (nodes: Any[]): Any[] => nodes.filter((n: Any) => {
   for (let at = n; at; at = at.parentNode) if (at.hidden) return false;
   return true;
@@ -525,8 +526,8 @@ test('the phrase row says the truth and leads to the reveal; proven, it says whe
   assert.equal(go.hidden, true, 'Back it up stayed beside the words');
 
   world.put({ vault: vaultState({ backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' }) });
-  buttonNamed(flow(world), 'Done').click();
-  assert.equal(backup(world), 'Backed up. You proved your copy on Sep 14, 2026.');
+  buttonNamed(flow(world), 'Hide words').click();
+  assert.equal(backup(world), `Backed up. You proved your copy on ${day('Sep 14, 2026')}.`);
   assert.equal(find(row(world, 'backup'), '.vault-text')[0].getAttribute('data-backed'), 'true');
   assert.equal(buttonNamed(row(world, 'backup'), 'Back it up'), undefined, 'Back it up on a proven phrase');
   assert.equal(buttonNamed(row(world, 'backup'), 'Show my words').hidden, false);
@@ -743,6 +744,8 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   panel = flow(world);
   inputs = find(panel, 'input');
   inputs.forEach((input: Any) => { input.value = WORDS[Number(input.dataset.index)]; });
+  let scrolled = 0;
+  row(world, 'backup').scrollIntoView = () => { scrolled += 1; };
   buttonNamed(panel, 'Prove it').click();
   await flush();
   const posts = world.calls.filter((c) => c.route === '/api/vault/backup-proven');
@@ -752,6 +755,10 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   assert.equal(find(flow(world), '.word').length, 0, 'the words survived the wipe');
   world.put({ vault: vaultState({ backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' }) });
   assert.ok(backup(world).startsWith('Backed up.'));
+  // The row says it, in view, with its tick popping: no toast laid over the rows below.
+  assert.equal(find(row(world, 'backup'), '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the tick did not pop');
+  assert.ok(scrolled > 0, 'the done line was left out of view');
+  assert.deepEqual(world.toasts, []);
 });
 
 test('Done, a lock, or leaving the tab wipes the words', async () => {
@@ -759,7 +766,7 @@ test('Done, a lock, or leaving the tab wipes the words', async () => {
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
   assert.equal(find(flow(world), '.word').length, 24);
-  buttonNamed(flow(world), 'Done').click();
+  buttonNamed(flow(world), 'Hide words').click();
   assert.equal(find(flow(world), '.word').length, 0);
   assert.equal(flow(world).hidden, true);
 
@@ -831,62 +838,72 @@ test('a wallet with no phrase backs up its key in the same row: one line says wh
   assert.ok(textOf(panel).includes('On this screen only. Anyone who reads this key can take your money.'));
   assert.ok(textOf(panel).includes('It opens the wallet 0x7d4e...0e1d.'), String(textOf(panel)));
   const labels = find(panel, 'button').map((b: Any) => b.textContent);
-  assert.deepEqual(labels, ['I wrote it down', 'Print', 'Done']);
+  // Hide key, not Done: a first-timer reads Done as "I am done backing up".
+  assert.deepEqual(labels, ['I wrote it down', 'Print', 'Hide key']);
   assert.equal(labels.some((l: string) => /copy/i.test(l)), false, 'a Copy button on the key');
   assert.equal(buttonNamed(row(world, 'backup'), 'Back it up').hidden, true, 'Back it up stayed beside the key');
   assert.equal(why.hidden, true, 'the Touch ID line stayed once the key was on screen');
   assert.equal(find(panel, '.banner').length, 0);
 });
 
-test('Prove it asks the three groups the app named, checks each is four characters before it spends a try, and only a right answer clears "not backed up"', async () => {
+/* A key has no checksum, and three groups of sixteen pass a copy with one slipped group 13 times
+   in 16, so the key is proven by the whole copy, typed once from the paper. */
+test('I wrote it down asks for the whole copy once; a slip is named by its group, and only a whole match marks it backed up', async () => {
   const world = build({ vault: { hasMnemonic: false } });
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
   buttonNamed(flow(world), 'I wrote it down').click();
   let panel = flow(world);
   assert.equal(panel.dataset.step, 'prove');
-  let inputs = find(panel, 'input');
-  assert.deepEqual(inputs.map((i: Any) => Number(i.dataset.index)), KEY_PROVE);
-  assert.deepEqual(find(panel, 'label').map((l: Any) => l.textContent), KEY_PROVE.map((i) => 'Group ' + (i + 1)));
-  assert.ok(textOf(panel).includes('Type three groups back, by their number, from the copy you made.'));
+  assert.equal(find(panel, 'input').length, 0, 'groups asked one by one');
+  assert.equal(find(panel, 'textarea').length, 1, 'one field takes the whole copy');
+  assert.ok(textOf(panel).includes('Check your copy'));
+  assert.ok(textOf(panel).includes('Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'));
+  assert.equal(keyText(world).length, 0, 'the key stayed on screen while its copy is typed');
 
-  buttonNamed(panel, 'Prove it').click();
-  assert.ok(textOf(panel).includes('Type all three groups.'));
-  inputs.forEach((input: Any) => { input.value = 'zz9'; });
-  buttonNamed(panel, 'Prove it').click();
-  assert.ok(textOf(panel).includes('Each group is four characters, 0 to 9 and a to f.'));
-  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-proven'), false, 'a group that cannot be right spent a try');
+  let input = find(panel, 'textarea')[0];
+  input.value = GROUPS.slice(0, 15).join(' ');
+  buttonNamed(panel, 'Check').click();
+  assert.ok(textOf(panel).includes('That is 60 characters. A private key is 64.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-proven'), false, 'a copy that cannot be right was sent');
 
-  // Two misses: the backend refuses each the same way, and the second shows the key again.
-  inputs.forEach((input: Any) => { input.value = 'ffff'; });
-  buttonNamed(panel, 'Prove it').click();
+  // One slipped group: the app answers another wallet, and the window, still holding the key it
+  // showed a moment ago, names the group to look at. Two misses show the key again.
+  world.answer.keyProven = () => ({ ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' });
+  input.value = GROUPS.map((g, i) => (i === 5 ? 'ffff' : g)).join(' ');
+  buttonNamed(panel, 'Check').click();
   await flush();
-  assert.ok(textOf(panel).includes('Those groups do not match. Look at your copy again.'));
-  buttonNamed(panel, 'Prove it').click();
+  assert.ok(textOf(panel).includes('Group 6 does not match the key Phosphor showed you. Check it on your copy, then try again.'), String(textOf(panel)));
+  buttonNamed(panel, 'Check').click();
   await flush();
   assert.equal(flow(world).dataset.step, 'key', 'two misses did not show the key again');
-  assert.ok(textOf(flow(world)).includes('Two tries did not match. Check your copy, then try again.'));
+  assert.ok(textOf(flow(world)).includes('Two tries did not match. Check your copy group by group, then try again.'));
 
-  // The right groups, copied the way a person copies them: upper case, a space inside.
+  // The whole copy, as a person copies it: upper case, a line break, 0x in front.
+  world.answer.keyProven = () => ({ ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' });
   buttonNamed(flow(world), 'I wrote it down').click();
   panel = flow(world);
-  inputs = find(panel, 'input');
-  inputs.forEach((input: Any) => { const g = GROUPS[Number(input.dataset.index)]; input.value = ` ${g.slice(0, 2).toUpperCase()} ${g.slice(2)} `; });
-  buttonNamed(panel, 'Prove it').click();
+  input = find(panel, 'textarea')[0];
+  input.value = '0X' + GROUPS.slice(0, 8).join(' ').toUpperCase() + '\n' + GROUPS.slice(8).join(' ');
+  buttonNamed(panel, 'Check').click();
   await flush();
   const posts = world.calls.filter((c) => c.route === '/api/vault/key-proven');
   assert.equal(posts.length, 3);
-  assert.deepEqual(Array.from(posts[2].groups, (g: Any) => [g.index, g.group]), KEY_PROVE.map((i) => [i, GROUPS[i]]));
-  assert.deepEqual(world.toasts, ['Backed up. Your copy of the key is right.']);
+  assert.equal(posts[2].key, '0x' + GROUPS.join(''), 'the copy is sent whole, as one key');
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-check'), false, 'the proof went through the check that writes nothing');
   assert.ok(world.calls.some((c) => c.route === 'refresh'));
   assert.equal(flow(world).hidden, true);
   assert.equal(find(flow(world), '.word').length, 0, 'the key survived the wipe');
+  world.put({ vault: vaultState({ hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' }) });
+  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. Your whole copy matched.`);
+  assert.equal(find(row(world, 'backup'), '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the tick did not pop');
+  assert.deepEqual(world.toasts, [], 'a toast said what the row says');
 });
 
 test('proven, the key row reads as done: the tick, the day, Show my key, and no Touch ID line', () => {
   const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   assert.equal(find(row(world, 'backup'), '.vault-row-title')[0].textContent, 'Private key');
-  assert.equal(backup(world), 'Backed up. You proved your copy on Sep 14, 2026.');
+  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. Your whole copy matched.`);
   assert.equal(find(row(world, 'backup'), '.vault-text')[0].getAttribute('data-backed'), 'true');
   assert.equal(buttonNamed(row(world, 'backup'), 'Show my key').hidden, false);
   assert.equal(buttonNamed(row(world, 'backup'), 'Back it up') === undefined, true, 'Back it up on a proven key');
@@ -912,7 +929,7 @@ test('Done, a lock, or leaving the tab wipes the key, and a cancelled touch show
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
   assert.equal(keyText(world).length, 16);
-  buttonNamed(flow(world), 'Done').click();
+  buttonNamed(flow(world), 'Hide key').click();
   assert.equal(keyText(world).length, 0);
 
   buttonNamed(row(world, 'backup'), 'Back it up').click();
@@ -928,15 +945,14 @@ test('Done, a lock, or leaving the tab wipes the key, and a cancelled touch show
   assert.equal(cancelled.toasts.length, 0);
 
   const short = build({ vault: { hasMnemonic: false } });
-  short.answer.revealKey = { ok: true, groups: GROUPS.slice(0, 15), prove: KEY_PROVE.slice() };
+  short.answer.revealKey = { ok: true, groups: GROUPS.slice(0, 15) };
   buttonNamed(row(short, 'backup'), 'Back it up').click();
   await flush();
   assert.ok(textOf(flow(short)).includes('No key came back.'), 'a key cut short was shown as a key');
 });
 
-/* Prove it checks three groups of sixteen. A key has no checksum, so the rest is checked whole,
-   here, with no Touch ID and nothing written: never by trying a restore, which would replace the
-   wallet with whatever a slip in the copy makes. */
+/* A proven key's copy, checked whole again later, with no Touch ID and nothing written: never by
+   trying a restore, which would replace the wallet with whatever a slip in the copy makes. */
 test('a proven key offers Check my copy: the whole key typed, checked with nothing written, and a slip named as another wallet', async () => {
   const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   assert.equal(buttonNamed(build({ vault: { hasMnemonic: false } }).view, 'Check my copy').hidden, true, 'a check offered before there is a proven copy');
@@ -981,7 +997,7 @@ test('a password wallet with no phrase shows its key behind the password typed i
   const world = build({ vault: { custody: 'software', hasMnemonic: false, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
   const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent.startsWith('Showing it takes Touch ID')) as Any;
   assert.equal(why.hidden, true, 'a password wallet was told about a Touch ID');
-  world.answer.revealFetch = { ok: true, what: 'keys', keys: { evm: '0x' + GROUPS.join('') }, groups: GROUPS.slice(), prove: KEY_PROVE.slice() };
+  world.answer.revealFetch = { ok: true, what: 'keys', keys: { evm: '0x' + GROUPS.join('') }, groups: GROUPS.slice() };
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   const panel = flow(world);
   assert.equal(panel.dataset.step, 'password');
@@ -1149,7 +1165,7 @@ test('the Keys row says which binding is live in plain words, and the software c
   const custody = row(enclave, 'custody');
   const text = textOf(custody);
   assert.ok(text.includes('Touch ID'), 'the row does not say what opens the keys');
-  assert.ok(text.includes('Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Made on Sep 14, 2026.'), JSON.stringify(text));
+  assert.ok(text.includes(`Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Made on ${day('Sep 14, 2026')}.`), JSON.stringify(text));
   assert.ok(text.includes('Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'), JSON.stringify(text));
   // Every release so far is signed and still binds the key to the Mac: the row follows the
   // binding, and a signature is never offered as the protection (the 0.10.13 audit).
