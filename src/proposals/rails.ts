@@ -222,7 +222,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
      price" because every error here was swallowed (R1, 2026-09-23). */
   if (params.minAmountOut === undefined && problems.length === 0) {
     let { priced, failure } = await floorlessPrice(rail, draft);
-    // Nobody on the relay: the same question on 1Click, and the floor comes off its answer.
+    // No price on the relay (nobody, an error, no answer): the same question on 1Click, and the floor comes off its answer.
     const other = failure === null && !(priced !== null && priced > 0) ? oneClickRoute(ctx, draft) : null;
     if (other !== null) {
       ({ draft, rail } = other);
@@ -238,7 +238,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
 
   if (problems.length > 0) return { params, draft, refusal: { problems, code }, simulation: null };
   let simulation = await presimulate(ctx, 'swap', draft);
-  // A floor the agent named asks for no price above, so a relay with nobody on the pair says so here.
+  // A floor the agent named asks for no price above, so a relay with no price for the pair says so here.
   const oneClick = params.minAmountOut !== undefined && simulation?.ok === false && simulation.reason === 'no_price' ? oneClickRoute(ctx, draft) : null;
   if (oneClick !== null) {
     draft = oneClick.draft;

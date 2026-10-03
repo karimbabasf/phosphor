@@ -23,6 +23,7 @@ import type { IntentsActivity } from '../../src/chainscan/index.ts';
 import type { RailRegistry } from '../../src/rails/index.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_NATIVE_VENUE, intentsNativeRail } from '../../src/rails/intents-native.ts';
 import { INTENTS_RELAY_COUNTERPARTY, INTENTS_RELAY_VENUE, intentsRelayRail } from '../../src/rails/intents-relay.ts';
+import { relayClient } from '../../src/relay/client.ts';
 import type { RelayClient, RelayQuote } from '../../src/relay/client.ts';
 import type { VerifierPort } from '../../src/relay/verifier.ts';
 import { floorUnderQuote } from '../../src/rails/slippage.ts';
@@ -64,19 +65,37 @@ function json(body: unknown, status = 200): Response {
 }
 
 /* What the two venues do, changeable mid-test: the pairs a relay solver serves with what each
-   answer gives up in basis points, the pairs 1Click has nobody for, and what 1Click's own answer
-   gives up beyond its 1 bp (its own dollar figures say so). */
+   answer gives up in basis points, how the relay fails when it fails (an HTTP status, a JSON-RPC
+   error, or no answer inside its bound, each through the real relay client), the pairs 1Click has
+   nobody for, and what 1Click's own answer gives up beyond its 1 bp (its own dollar figures say so). */
+type RelayFailure = 'http' | 'rpc' | 'timeout';
 type Tune = {
   relay: Map<string, bigint>;
+  relayFails: RelayFailure | null;
   oneClickNone: Set<string>;
   oneClickLoss: (assetOut: string) => bigint;
 };
+
+// The real relay client over a wire that fails the way a relay does.
+function failingRelay(how: RelayFailure): RelayClient {
+  const fetchImpl = (async () => {
+    if (how === 'timeout') {
+      const err = new Error('The operation was aborted due to timeout');
+      err.name = 'TimeoutError';
+      throw err;
+    }
+    if (how === 'http') return json({ error: 'upstream unavailable' }, 503);
+    return json({ jsonrpc: '2.0', id: 1, error: { code: -32000, message: 'solver bus down' } });
+  }) as typeof fetch;
+  return relayClient({ fetchImpl, apiKey: '' });
+}
 
 /* The two venues, the signers and the verifier, recorded. `credited` is what each swap left in the
    balance once its venue ran it, so the after-reads show the swap that was signed. */
 function world(start: Partial<{ relay: Record<string, bigint>; oneClickNone: string[]; oneClickLoss: (assetOut: string) => bigint }> = {}) {
   const tune: Tune = {
     relay: new Map(Object.entries(start.relay ?? {})),
+    relayFails: null,
     oneClickNone: new Set(start.oneClickNone ?? []),
     oneClickLoss: start.oneClickLoss ?? (() => 0n),
   };
@@ -147,6 +166,7 @@ function world(start: Partial<{ relay: Record<string, bigint>; oneClickNone: str
   const relay: RelayClient = {
     async quote(req) {
       asked.relay.push({ assetIn: req.assetIn, assetOut: req.assetOut });
+      if (tune.relayFails !== null) return failingRelay(tune.relayFails).quote(req);
       const loss = tune.relay.get(pair(req.assetIn, req.assetOut));
       if (loss === undefined) return [];
       const quote: RelayQuote = {
@@ -322,6 +342,36 @@ test('a floor the agent names asks for no price first: the relay simulation find
   assert.deepEqual(w.signatures.map((s) => s.rail), ['native']);
 });
 
+test('a relay that answers with an HTTP error, a JSON-RPC error or not at all moves the swap to 1Click at propose, priced, pinned and signed once there', async () => {
+  for (const how of ['http', 'rpc', 'timeout'] as const) {
+    const w = world(RELAY_SERVES_USDT);
+    w.tune.relayFails = how;
+    const p = await landed(w.h, w.h.svc.proposeSwap(USDC_TO_USDT));
+    assert.equal(p.status, 'executed', `${how}: ${String(p.result?.detail ?? p.verdict.reasons.at(-1))}`);
+    const draft = swapOf(p);
+    assert.equal(draft.venue, INTENTS_NATIVE_VENUE, `${how}: a pair the relay serves, moved because it failed`);
+    assert.equal(draft.minAmountOut, floorUnderQuote(Number(formatUnits(fairOut(USDC, USDT, 10_000_000n, 1n), 6))), `${how}: the floor is 1Click's`);
+    assert.deepEqual(draft.assets, { origin: { assetId: USDC, decimals: 6 }, destination: { assetId: USDT, decimals: 6 } });
+    assert.equal(live(w).length, 1, `${how}: one live quote at the click`);
+    assert.equal(w.asked.published, 0);
+    assert.deepEqual(w.signatures.map((s) => s.rail), ['native'], `${how}: one signature, by the 1Click rail`);
+
+    // A floor the agent names: the relay's simulation fails the same way, and the move is the same.
+    const named = world(RELAY_SERVES_USDT);
+    named.tune.relayFails = how;
+    const q = await landed(named.h, named.h.svc.proposeSwap({ ...USDC_TO_USDT, minAmountOut: 9.9 }));
+    assert.equal(q.status, 'executed', `${how}, named floor: ${String(q.result?.detail ?? q.verdict.reasons.at(-1))}`);
+    assert.equal(swapOf(q).venue, INTENTS_NATIVE_VENUE);
+    assert.equal(swapOf(q).minAmountOut, 9.9);
+    assert.deepEqual(named.signatures.map((s) => s.rail), ['native']);
+
+    // And swap_quote prices the route the swap would take.
+    const read = await w.h.svc.swapQuote!(USDC_TO_USDT);
+    assert.equal(read.ok, true, `${how}: ${String(read.sentence)}`);
+    assert.equal(read.etaSeconds, 10, "1Click's time");
+  }
+});
+
 test('one rail for both venues (demo mode, a hand-built registry) has no other route: nobody is nobody, asked once', async () => {
   let asked = 0;
   const only = { ...railThat('swap', async () => ({ ok: true, detail: 'swapped' })), quote: async () => ((asked += 1), null) };
@@ -383,6 +433,26 @@ test('a row on the relay stays on the relay: with nobody there at the click it h
   assert.equal(held.status, 'approved', 'held, to be asked again in a while');
   assert.ok(held.heldSince !== undefined);
   assert.equal(w.asked.relay.length, relayAsks + 1, 'the relay was asked again at the click');
+  assert.deepEqual(live(w), [], '1Click was never asked to run it');
+  assert.equal(w.asked.generated, 0);
+  assert.deepEqual(w.signatures, []);
+});
+
+test('a relay error at the click stays on the relay: the row it landed on fails there, 1Click is never asked, and nothing is signed', async () => {
+  const w = world(RELAY_SERVES_USDT);
+  const p = await landed(w.h, w.h.svc.proposeSwap({ ...USDC_TO_USDT, amountIn: '150' }));
+  assert.equal(p.status, 'pending');
+  assert.equal(swapOf(p).venue, INTENTS_RELAY_VENUE);
+
+  // The quote the card showed runs out, and the relay answers the click with an error.
+  w.tune.relayFails = 'http';
+  w.clock.now += 61_000;
+  const relayAsks = w.asked.relay.length;
+  const clicked = await landed(w.h, w.h.svc.approve(p.id));
+  assert.equal(clicked.status, 'failed');
+  assert.match(String(clicked.result?.detail), /relay quote failed/);
+  assert.equal(swapOf(clicked).venue, INTENTS_RELAY_VENUE, 'the route the card showed');
+  assert.equal(w.asked.relay.length, relayAsks + 1);
   assert.deepEqual(live(w), [], '1Click was never asked to run it');
   assert.equal(w.asked.generated, 0);
   assert.deepEqual(w.signatures, []);

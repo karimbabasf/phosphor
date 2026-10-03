@@ -121,11 +121,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   percent of its value by that quote's prices is refused, even after your click, and one with no
   signed price to check it by waits for your click. Proof: `intents-relay.test.ts`,
   `swap-price-ask.test.ts`.
-- **The solver relay offers no price for a pair.** The same swap is drafted on the 1Click route
-  before its card is priced, and held to that route's own checks: a signed quote, the echo of the
-  request it sent, one fee account, the 3 percent cap and the pinned coins. A relay price past the
-  cap is still refused, never routed around, and a swap never changes route once its card is drawn.
-  Proof: `swap-route.test.ts`.
+- **The solver relay offers no price for a pair, or answers with an error or not at all.** The
+  same swap is drafted on the 1Click route before its card is priced, and held to that route's own
+  checks: a signed quote, the echo of the request it sent, one fee account, the 3 percent cap and
+  the pinned coins. A relay price past the cap is still refused, never routed around, and a swap
+  never changes route once its card is drawn: a relay error at the click stays on the relay's route.
+  Proof: `swap-route.test.ts`, `intents-relay.test.ts`.
 - **The coin list changes under a card before you click.** A card's coins are pinned when it
   lands. A list that names another coin at the click refuses the move, and nothing is signed.
   Proof: `asset-pins.test.ts`.
@@ -217,10 +218,11 @@ your money.
   could not check the price. Once you click, it runs at the relay's price, held only to what its
   card says you get at least, so the card is the only check. What closes it: the relay signing
   what it quotes.
-- **A relay that answers nothing moves a swap to 1Click.** Whoever runs the relay can send a swap
-  to 1Click by answering nothing. There 1Click holds the coins for the seconds until it delivers,
-  where the relay moves both sides at once. Both venues have one operator, already trusted for the
-  price on both routes. What closes it: a click on every swap that leaves the relay.
+- **A relay that answers nothing or an error moves a swap to 1Click.** Whoever runs the relay can
+  send a swap to 1Click by answering nothing, or an error. There 1Click holds the coins for the
+  seconds until it delivers, where the relay moves both sides at once. Both venues have one
+  operator, already trusted for the price on both routes. What closes it: a click on every swap
+  that leaves the relay.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
