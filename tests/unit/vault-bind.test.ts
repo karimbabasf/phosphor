@@ -31,6 +31,8 @@ import { createVaultRelay } from '../../src/vault/relay.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
 import { BIND_REASON, CREATE_REASON, MIGRATE_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
 import { refusal } from '../../src/http/wallet.ts';
+import { base58Encode } from '../../src/chain/near.ts';
+import { privateKeyToAccount } from 'viem/accounts';
 import { identityProof } from '../../src/http/respond.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
@@ -253,6 +255,41 @@ test('a device-bound wallet binds with one Touch ID: staged, proven, committed, 
     assert.deepEqual(again.json, { ok: true, binding: 'app' });
     assert.equal(b.double.state().keys.length, keys);
     assert.equal(b.double.touches().length, t0 + 1);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a bind keeps every key the file sealed: the legacy NEAR and Solana keys and a trading key, not only the one the backup holds', { skip }, async () => {
+  const b = await boot();
+  try {
+    // A file as old ones are: keygen's three rails and a Hyperliquid trading key, moved from the
+    // plaintext keys.json to a password file, then behind a key bound to this Mac.
+    const evmKey = `0x${'2a'.repeat(32)}` as const;
+    const agentKey = `0x${'3b'.repeat(32)}`;
+    const legacy = {
+      evm: { address: privateKeyToAccount(evmKey).address, privateKey: evmKey },
+      solana: { secretKey: base58Encode(crypto.randomBytes(64)) },
+      near: { secretKey: `ed25519:${base58Encode(crypto.randomBytes(64))}` },
+      hyperliquidAgents: { mainnet: { privateKey: agentKey, address: privateKeyToAccount(agentKey as `0x${string}`).address, name: 'phosphor' } },
+    };
+    fs.mkdirSync(path.dirname(b.keysPath), { recursive: true });
+    fs.writeFileSync(b.keysPath, JSON.stringify(legacy), { mode: 0o600 });
+    const password = 'a long enough password';
+    assert.equal((await b.post('/api/wallet/migrate', { password })).json.ok, true);
+    b.double.team = '';
+    await b.probe();
+    assert.equal((await b.post('/api/vault/migrate', { password })).json.ok, true);
+    b.double.team = TEAM;
+    await b.probe();
+    const before = b.keystore.keys();
+    assert.ok(before.solana && before.near && before.hyperliquidAgents?.mainnet, 'the legacy keys came through the moves');
+    b.prefs.markBackedUp(Date.now, legacy.evm.address);
+    assert.deepEqual((await b.post('/api/vault/bind')).json, { ok: true, binding: 'app' });
+    b.keystore.lock();
+    assert.equal((await b.post('/api/vault/unlock')).json.ok, true);
+    assert.deepEqual(b.keystore.keys(), before, 'the bound file seals the same payload, key for key');
+    assert.equal(b.keystore.apiWallet()?.address, legacy.hyperliquidAgents.mainnet.address, 'the trading key still signs');
   } finally {
     await b.close();
   }
