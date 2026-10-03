@@ -355,6 +355,8 @@ for (const code of ['pin_mismatch', 'not_committed', 'blob_refused', 'damaged'])
     const line = textOf(find(screen, '.lock-error')[0]).join(' ');
     assert.ok(line.endsWith('Restore your wallet from your private key to open it here.'), line);
     assert.ok(/nothing moved/.test(line), line);
+    // Another wallet made Phosphor-only refuses this one too (audit1b AU1B-02), so the line says why without calling it a copy.
+    if (code === 'blob_refused') assert.ok(line.startsWith('A wallet on this Mac is Phosphor-only, so Phosphor no longer opens this older wallet file here'), line);
     const way = shown(find(screen, 'button.lock-forgot'));
     assert.equal(way.length, 1, 'no way to use the backup the line names');
     assert.equal(way[0].textContent, 'Restore from your private key');

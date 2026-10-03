@@ -1704,6 +1704,8 @@
     if (enclave.attached === false) return 'Touch ID protection needs the Phosphor app.';
     if (cap && cap.secureEnclave === false) return 'This Mac has no Secure Enclave.';
     if (cap && cap.canAuthenticate === false) return 'This Mac cannot check who you are. Set up Touch ID or a login password, then come back.';
+    // An enclave that answers and is not ready is a demo, which makes no Touch ID wallet (src/vault/relay.ts).
+    if (cap && cap.secureEnclave === true && cap.canAuthenticate === true) return 'A demo keeps its wallet behind a password, so the wallets on this Mac stay as they are.';
     return 'Touch ID is not available on this Mac right now.';
   }
 

@@ -164,6 +164,12 @@ test('commit, sweep and status come back typed, read strictly, and probe carries
 test('a relay that makes no keys answers create, commit and sweep itself, and the shell never sees one', async () => {
   for (const keychainHome of [true, false]) {
     const relay = createVaultRelay({ transportKey: transport, makesKeys: false });
+    // Before the service has said what it is, too.
+    for (const op of ['create', 'sweep'] as const) {
+      const early = await relay.ask({ op });
+      assert.equal(!early.ok && early.error, 'no_keychain_home', `${op} before the probe`);
+    }
+    assert.equal(relay.queued(), 0, 'a write reached the queue before the probe');
     const probe = relay.ask({ op: 'probe' });
     const asked = await relay.next(1000);
     relay.answer({ id: asked!.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome });

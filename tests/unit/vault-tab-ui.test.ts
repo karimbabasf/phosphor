@@ -1269,6 +1269,13 @@ test('the Keys row says which binding is live in plain words, and the software c
   const none = row(noEnclave, 'custody');
   assert.ok(textOf(none).includes('This Mac has no Secure Enclave.'));
   assert.equal(buttonNamed(none, 'Protect with Touch ID').hidden, true);
+  // A demo makes no Touch ID wallet, on any build (audit1b AU1B-02), and says why in plain words.
+  for (const keychainHome of [true, false]) {
+    const demo = build({ vault: { custody: 'software', enclave: { attached: true, ready: false, capability: { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome }, keyMadeAt: null, binding: null } } });
+    const demoRow = row(demo, 'custody');
+    assert.ok(textOf(demoRow).includes('A demo keeps its wallet behind a password, so the wallets on this Mac stay as they are.'), JSON.stringify(textOf(demoRow)));
+    assert.equal(buttonNamed(demoRow, 'Protect with Touch ID').hidden, true);
+  }
   // No shell words on the page.
   assert.doesNotMatch(textOf(enclave.view).join(' ') + textOf(software.view).join(' '), /desktop shell|Developer ID|round trip/);
 });

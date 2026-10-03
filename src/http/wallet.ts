@@ -167,7 +167,8 @@ const REFUSALS: Record<string, string> = {
   foreign_key: OTHER_MAC,
   bad_input: NOTHING_CHANGED,
   keychain_unavailable: 'Phosphor could not reach its saved keys on this Mac just now, so nothing changed. Try again in a moment.',
-  blob_refused: 'This wallet file is an older copy, so Phosphor did not open it and nothing moved. Your backup brings your wallet back.',
+  // Any Phosphor-only wallet on the Mac refuses every older wallet file, another wallet's too (audit1b AU1B-02).
+  blob_refused: 'A wallet on this Mac is Phosphor-only, so Phosphor no longer opens this older wallet file here, and nothing moved. Your backup brings your wallet back.',
   pin_mismatch: NOT_SAVED_HERE,
   not_committed: NOT_SAVED_HERE,
   no_key: NOTHING_CHANGED,

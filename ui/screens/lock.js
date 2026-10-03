@@ -694,7 +694,8 @@
 
   /* The four answers that mean this Mac will not open the wallet file in
      place, however often Touch ID is asked: not the file Phosphor saved, an
-     older copy, or a file that cannot be read. The backup is the way back,
+     older wallet file on a Mac where any wallet is Phosphor-only (another
+     wallet's counts too), or a file that cannot be read. The backup is the way back,
      and the backend lets a restore replace such a file without asking for
      one first (src/http/custody.ts openableHere, src/http/vault.ts damaged). */
   function refusedHere(code) {
@@ -722,7 +723,7 @@
     }
     if (code === 'no_wallet') return 'There is no wallet on this Mac yet.';
     if (code === 'damaged') return 'The wallet file on this Mac cannot be read, and nothing moved.' + restore;
-    if (code === 'blob_refused') return 'This wallet file is an older copy, so Phosphor did not open it and nothing moved.' + restore;
+    if (code === 'blob_refused') return 'A wallet on this Mac is Phosphor-only, so Phosphor no longer opens this older wallet file here, and nothing moved.' + restore;
     if (code === 'pin_mismatch' || code === 'not_committed') {
       return 'This wallet file is not the one Phosphor saved on this Mac, so it stayed closed and nothing moved.' + restore;
     }

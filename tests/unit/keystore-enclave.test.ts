@@ -247,14 +247,21 @@ test('forget shreds the file and leaves no wallet', () => {
 test('a link swapped in for the staged file after its check is not followed', (t) => {
   const keysPath = tmpKeys();
   const store = createKeystore({ keysPath, mode: 'live', kdf: FAST_KDF });
-  const elsewhere = tmpKeys();
-  createKeystore({ keysPath: elsewhere, mode: 'live', kdf: FAST_KDF }).stageNew(fakeEnclave().ref);
-  const target = stagedPathFor(elsewhere);
-  const link = stagedPathFor(keysPath);
-  fs.symlinkSync(target, link);
+  store.createWithEnclave(fakeEnclave().ref);
+  store.stageRewrap(fakeEnclave().ref);
+  const staged = stagedPathFor(keysPath);
+  const read = store.stagedOnDisk();
+  assert.ok(read !== null && read !== 'unreadable', 'the staged file this app wrote did not read back');
+
+  // The same bytes, elsewhere, behind a link at the staged path.
+  const elsewhere = path.join(path.dirname(keysPath), 'elsewhere.json');
+  fs.renameSync(staged, elsewhere);
+  fs.symlinkSync(elsewhere, staged);
   assert.equal(store.stagedOnDisk(), 'unreadable', 'a link seen by the check');
+
   const lstat = fs.lstatSync.bind(fs);
-  const regular = lstat(target);
-  t.mock.method(fs, 'lstatSync', ((p: fs.PathLike) => (String(p) === link ? regular : lstat(p))) as typeof fs.lstatSync);
+  const regular = lstat(elsewhere);
+  const swapped = t.mock.method(fs, 'lstatSync', ((p: fs.PathLike) => (String(p) === staged ? regular : lstat(p))) as typeof fs.lstatSync);
   assert.equal(store.stagedOnDisk(), 'unreadable', 'the read followed a link put there after the check');
+  assert.ok(swapped.mock.calls.some((call) => String(call.arguments[0]) === staged), 'the check no longer runs through lstat, so this test proves nothing');
 });
