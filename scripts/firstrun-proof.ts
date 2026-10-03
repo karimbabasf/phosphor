@@ -3,7 +3,7 @@
 // Boots the app in demo mode on a free port with an EMPTY data directory, so the window opens
 // on the first-run card by itself, then drives headless Chromium through playwright-core: the
 // welcome and the create-wallet step at 1280 x 800 (two device pixels per CSS pixel, a laptop)
-// and at 2560 x 1440 (one, a large external display), into docs/screenshots/firstrun/. The
+// and at 2560 x 1440 (one, a large external display), into scripts/scratch/firstrun-proof/. The
 // create step is also shot with the developer switch on, at the small size, because that is
 // the tallest the card gets and the one that must not scroll. Alongside the pictures it prints
 // what a picture cannot show: the card's box at each size, how far the screen would scroll,
@@ -22,8 +22,8 @@
 //
 // Fixture data only: a temp directory and a throwaway home, never the live wallet. Run:
 //   node scripts/firstrun-proof.ts
-// PROOF_OUT names another directory for the pictures. playwright-core is not a dependency of
-// this repo; point PLAYWRIGHT_CORE at a copy. Without playwright's own Chromium installed, point
+// --docs writes the pictures into docs/screenshots/firstrun/ instead, PROOF_OUT into any other
+// directory. playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without playwright's own Chromium installed, point
 // PROOF_BROWSER at a Chromium binary (Brave's, say).
 
 import { spawn, type ChildProcess } from 'node:child_process';
@@ -33,12 +33,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'firstrun');
+const SHOTS = proofOut('firstrun-proof', 'firstrun');
 
 type Json = any;
 

@@ -24,6 +24,7 @@ import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
@@ -73,7 +74,7 @@ type Booted = {
 // that needs the wait to be real.
 async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: number } = {}): Promise<Booted> {
   let releases = 0;
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-wallet-'));
+  const dataDir = tempDir('phosphor-wallet-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -676,7 +677,7 @@ test('a backup checks the password without unlocking the wallet as a side effect
     await b.post('/api/lock', { token: b.token });
     assert.equal(b.keystore.state(), 'locked');
 
-    const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-backup-')), 'backup.json');
+    const target = path.join(tempDir('phosphor-backup-'), 'backup.json');
     const out = await b.post('/api/wallet/export', { token: b.token, password: PASSWORD, path: target });
 
     assert.equal(out.json.ok, true, 'the backup is written from behind the lock');
@@ -694,7 +695,7 @@ test('a wrong password on a backup still refuses, and still counts toward the ba
     await b.post('/api/wallet/create', { token: b.token, password: PASSWORD });
     await b.post('/api/lock', { token: b.token });
 
-    const target = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-backup-')), 'backup.json');
+    const target = path.join(tempDir('phosphor-backup-'), 'backup.json');
     const out = await b.post('/api/wallet/export', { token: b.token, password: 'not the password', path: target });
 
     assert.equal(out.json.ok, false);

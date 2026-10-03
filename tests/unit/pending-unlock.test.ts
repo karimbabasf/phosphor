@@ -10,8 +10,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { Policy } from '../../src/types.ts';
@@ -20,6 +18,7 @@ import { renderSentences } from '../../src/policy/render.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { makeCtx, railThat, seededPolicy } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const PASSWORD = 'a long enough password';
 
@@ -34,7 +33,7 @@ function fast(): ReturnType<typeof defaultParams> {
 /* The service over a scripted Hyperliquid deposit rail and a verifier read big enough for the
    large move: the lock is global (useKeystore), so the rail sees it the way the app's would. */
 function setup(policy: Policy = happyPolicy()) {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-queued-')), 'keys', 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-queued-'), 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: fast });
   useKeystore(keystore);
   const rail = railThat('hl_deposit', async () => ({ ok: true, detail: 'credited', txids: ['h1'] }));

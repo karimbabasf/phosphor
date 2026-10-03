@@ -4,11 +4,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 import { FAKE_PEM_FIXTURE, KNOWN_PUBLIC_CONSTANTS, historyCheck, historyScope, isMnemonicRun, publicFormat, scanContent, type Finding } from '../../scripts/sweep.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // Made from characters, never written out: a 64 hex value that is on no allowlist and is not
 // regular enough to be excused as a ruler.
@@ -107,7 +107,7 @@ const GIT_ENV = {
 const planted = (k: number) => Array.from({ length: 64 }, (_, i) => '0123456789abcdef'[(i * 7 + k) % 16]).join('');
 
 function plantedRepo(): { dir: string; done: () => void } {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sweep-history-'));
+  const root = tempDir('sweep-history-');
   const dir = path.join(root, 'work');
   fs.mkdirSync(dir);
   const run = (...args: string[]) => execFileSync('git', args, { cwd: dir, env: GIT_ENV, stdio: 'pipe' });

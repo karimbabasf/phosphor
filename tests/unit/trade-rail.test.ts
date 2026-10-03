@@ -8,7 +8,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +25,7 @@ import type { TradeDeps } from '../../src/trade/rail.ts';
 import { planHash, validatePlanInput } from '../../src/trade/plan.ts';
 import type { PlanInput } from '../../src/trade/plan.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -92,7 +92,7 @@ async function landed(h: { svc: ProposalService }, reply: Promise<Proposal>): Pr
 }
 
 function setup(over: { clickUsd?: number; kill?: boolean } = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-trade-rail-'));
+  const dataDir = tempDir('phosphor-trade-rail-');
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,
@@ -272,7 +272,7 @@ test('the kill switch refuses even a change that takes risk off', async () => {
 
 test('without a trading surface every trade proposal refuses by name', async () => {
   const h = setup();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-trade-rail-none-'));
+  const dataDir = tempDir('phosphor-trade-rail-none-');
   savePolicy(dataDir, seededPolicy());
   const svc = createProposalService({
     cfg: { mode: 'demo', port: 4177, addresses: {}, candleProducts: [], dataDir, keysPath: '/tmp/none' },

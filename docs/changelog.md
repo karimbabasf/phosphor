@@ -5,6 +5,32 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.14
+
+Built 2026-10-02. Tagged v0.10.14 on 2026-10-02.
+
+- A move card names its coins from the moment it appears. A swap your assistant asked for by a
+  coin's id used to show that id for a split second ("Swap 1.7147 nep141:17208628...a1 to SOL",
+  over two gray letters) before it read "Swap 1.7147 USDC to SOL". Now it says USDC and shows the
+  USDC logo from the start. The id still decides which coin is signed for.
+- A payment to another chain says where it lands ("on Base") from the start, and a coin your
+  assistant typed in lower case reads the same as it will once the move is filed.
+- Activity and receipts name every coin by its ticker, and a payment's Details name the coin it
+  swaps on the way by where it came from ("the USDC from Ethereum"), never by an id.
+- A move the app turned away before filing it, such as an amount below zero or a repeat of a swap
+  that is still running, now says it did not go through and that nothing moved. Its card used to
+  say Swapping for good. A check on a move the app does not hold draws no card and says so in one
+  line.
+- A swap the solver relay has no price for, such as USDC to ETH, wNEAR or ETH on Base, used to
+  be turned away. It now goes through 1Click with the same checks: the price is held to 1Click's
+  signed figures and the coins are pinned when the card appears. A relay that answers with an
+  error or not at all moves the swap to 1Click the same way, before anything is signed.
+- Tauri is 2.12.0 and its updater plugin 2.13.1, which still checks every update against the same
+  key: the 0.10.12 and 0.10.13 downloads both pass it. The MCP SDK is 1.31.0 and viem 2.57.1.
+- For people who build Phosphor: `npm test` fails when a run leaves a temp folder behind, and proof
+  scripts write their pictures into scripts/scratch/ unless you pass `--docs`.
+- Your wallet, your keys and your settings stay as they were.
+
 ## 0.10.13
 
 Built 2026-10-01 and 2026-10-02, the invite codes and safety pass. Tagged v0.10.13 on

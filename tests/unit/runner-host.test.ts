@@ -8,8 +8,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { createRunnerHost } from '../../src/runner/host.ts';
@@ -23,6 +21,7 @@ import type { PlanInput } from '../../src/trade/plan.ts';
 import type { Bar } from '../../src/trade/watch.ts';
 import type { InfoClient } from '../../src/hl/info.ts';
 import { clearWebRead, markWebRead } from '../../src/web-read.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const META = { assetId: 3, szDecimals: 4, maxLeverage: 25 };
 
@@ -166,7 +165,7 @@ type HarnessOptions = {
 };
 
 function harness(over: HarnessOptions = {}): Harness {
-  const dir = over.dir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = over.dir ?? tempDir('phosphor-runner-host-');
   const forked: FakeChild[] = [];
   const events: RunnerEvent[] = [];
   const clock = { now: Date.now() };
@@ -361,7 +360,7 @@ test('a plan that ends names its entry and its exits to the runner, so the rest 
 });
 
 test('after a restart with no runner running, an ended plan whose entry still rests starts one to take it off the book, then lets it go', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const openRow = row({ status: 'open', entry: { type: 'limit', px: 95 }, cloids: { entry: '0xentry', stop: '0xstop', target: '0xtarget' }, gen: 2, exitSz: 5, fillPx: 95 });
   createPlanStore(dir).put(openRow);
   const h = harness({ dir });
@@ -378,7 +377,7 @@ test('after a restart with no runner running, an ended plan whose entry still re
 });
 
 test('a plan that ended with nothing of its own resting starts no runner', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   createPlanStore(dir).put(row({ status: 'open', cloids: { entry: '0xentry', stop: '0xstop' }, gen: 1, exitSz: 5, fillPx: 100 }));
   const h = harness({ dir });
   h.runner.onAccount(account({ positions: [], orders: [{ coin: 'ETH', cloid: '0xsomeone-else' }] }));
@@ -465,7 +464,7 @@ function openOn(id: string, symbol: string): PlanRow {
 }
 
 function withRows(...rows: PlanRow[]): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const store = createPlanStore(dir);
   for (const r of rows) store.put(r);
   return dir;
@@ -713,7 +712,7 @@ test('the kill switch refuses an arm before a child exists', async () => {
 });
 
 test('no venue metadata for the coin refuses the arm rather than arming a plan that cannot size', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const runner = createRunnerHost({
     apiWalletKey: async () => '0x'.padEnd(66, '1') as `0x${string}`,
     baseUrl: 'http://127.0.0.1:1',
@@ -735,7 +734,7 @@ test('no venue metadata for the coin refuses the arm rather than arming a plan t
 // ---------- boot ----------
 
 test('reconcile re-arms a waiting plan whose proposal executed with the same hash, and fails one that does not match', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const store = createPlanStore(dir);
   const good = row({ id: 'pl_good', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
   const bad = row({ id: 'pl_bad', proposalId: 'p2', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
@@ -756,7 +755,7 @@ test('reconcile re-arms a waiting plan whose proposal executed with the same has
 });
 
 test('reconcile reads placed and open rows against the venue by cloid', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const store = createPlanStore(dir);
   store.put(row({ id: 'pl_resting', status: 'placed', cloids: { entry: '0xrest' }, gen: 1 }));
   store.put(row({ id: 'pl_gone', status: 'placed', cloids: { entry: '0xgone' }, gen: 1 }));
@@ -937,7 +936,7 @@ test('Freeze stops a change before the child signs new exits', async () => {
 // ---------- a shut wallet arms nothing on a reconcile (re-audit R-L2) ----------
 
 test('a reconcile that lands while the wallet is shut (a touch lease, a shut when idle) locks the waiting plan and reads no trading key', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const store = createPlanStore(dir);
   const waiting = row({ id: 'pl_wait', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
   store.put(waiting);
@@ -963,7 +962,7 @@ test('a reconcile that lands while the wallet is shut (a touch lease, a shut whe
 });
 
 test('a host built without walletOpen reads the wallet as shut: a reconcile locks the waiting plan and reads no trading key', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-host-'));
+  const dir = tempDir('phosphor-runner-host-');
   const waiting = row({ id: 'pl_wait', proposalId: 'p1', when: [{ type: 'time', after: new Date(Date.now() + 86_400_000).toISOString() }] });
   createPlanStore(dir).put(waiting);
   const keyReads = { n: 0 };

@@ -6,7 +6,6 @@
 // test hands it. Nothing here touches a key or a network.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -23,6 +22,7 @@ import { renderSentences } from '../../../src/policy/render.ts';
 import { createProposalService } from '../../../src/proposals.ts';
 import type { ProposalDeps } from '../../../src/proposals.ts';
 import { isRailKind, venueAllowlist } from '../../../src/rails/index.ts';
+import { tempDir } from './tmp.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -102,7 +102,7 @@ export type HarnessOptions = {
 };
 
 export function makeCtx(over: HarnessOptions = {}): Harness {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-proposals-'));
+  const dataDir = tempDir('phosphor-proposals-');
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,

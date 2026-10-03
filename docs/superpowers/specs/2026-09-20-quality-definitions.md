@@ -100,7 +100,7 @@ How to read each term: (a) meaning, (b) criteria with a threshold, (c) verificat
 
 ## 6. The user-anxiety (overwhelm) score
 
-Lead's amendment (2026-09-20): Jev (typesafe/jev-1.13) is a browser-decisions model reached through `jev-browse` on OpenRouter, not a chat model that can score a screenshot against a rubric (it is absent from OpenRouter's chat model list). The score therefore has two legs: (a) the rubric below, judged by a vision model probed in the order given in the builder prompt (NEAR AI Cloud first, then Claude Sonnet 5 via OpenRouter, then `claude -p`); (b) Jev as the naive user on the flow rows through `jev-browse`, scored on reaching the end state, steps over the minimum, wrong clicks, and blocked or timeout. Where this file says "Judge: Jev via OpenRouter", read leg (a).
+Lead's amendment (2026-09-20): Jev (typesafe/jev-1.13) is a browser-decisions model reached through `jev-browse` on OpenRouter, not a chat model that can score a screenshot against a rubric (it is absent from OpenRouter's chat model list). The score therefore has two legs: (a) the rubric below, judged by a vision model probed in order (NEAR AI Cloud first, then `claude -p`; the OpenRouter leg was dropped on 2026-09-23 because Karim's OpenRouter account runs Jev and nothing else); (b) Jev as the naive user on the flow rows through `jev-browse`, scored on reaching the end state, steps over the minimum, wrong clicks, and blocked or timeout. Where this file says "Judge: Jev via OpenRouter", read leg (a).
 
 (a) A judge model looks at one screenshot plus the agent's reply for one situation, as a person who does not understand crypto, and scores how overwhelmed that person would be.
 

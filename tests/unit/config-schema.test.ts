@@ -19,6 +19,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../src/config.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const EVM = '0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045';
 const SOL = 'So11111111111111111111111111111111111111112';
@@ -29,7 +30,7 @@ const NEAR_IMPLICIT = 'aec6b4afd08c0ace0f392c4d1b8aa9c44ce9bbd558903c4b702ce1cb1
 // Keys are pinned inside the scratch directory so the default resolver never probes the real
 // home directory, and dataDir sits beside them so loadConfig's mkdir lands in the temp tree.
 function root(local: Record<string, unknown> | null, base?: Record<string, unknown>): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-schema-'));
+  const dir = tempDir('phosphor-schema-');
   fs.writeFileSync(
     path.join(dir, 'config.json'),
     JSON.stringify(base ?? { mode: 'live', port: 4177, addresses: {}, dataDir: 'state' }),

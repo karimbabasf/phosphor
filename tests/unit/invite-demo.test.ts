@@ -6,12 +6,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createInviteService } from '../../src/invite/claim.ts';
 import { codeAddress, formatCode } from '../../src/invite/code.ts';
 import { DEMO_INVITE_ENV, demoInviteNet } from '../../src/invite/demo.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const WALLET = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
 const secret = (byte: number): Uint8Array => new Uint8Array(16).fill(byte);
@@ -20,7 +20,7 @@ const code = (name: keyof typeof CODES): string => formatCode(secret(CODES[name]
 const account = (name: keyof typeof CODES): string => codeAddress(secret(CODES[name]))!;
 
 function fixture(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-demo-'));
+  const dir = tempDir('phosphor-invite-demo-');
   const file = path.join(dir, 'invite.json');
   fs.writeFileSync(file, JSON.stringify({
     accounts: {
@@ -49,7 +49,7 @@ test('every check answer and both claim ends come out of the demo world, and not
   globalThis.fetch = (() => Promise.reject(new Error('the demo world reached the network'))) as typeof fetch;
   try {
     const service = createInviteService({
-      dataDir: fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-demo-')),
+      dataDir: tempDir('phosphor-invite-demo-'),
       movesMoney: true,
       audit: { append: (type, msg, data) => ({ ts: '', type, msg, data }) },
       keystore: {

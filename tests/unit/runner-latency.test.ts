@@ -14,9 +14,6 @@
 
 import { test, after } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 import { createRunnerHost } from '../../src/runner/host.ts';
 import type { AccountView, RunnerEvent } from '../../src/runner/host.ts';
@@ -24,6 +21,7 @@ import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 import { planHash } from '../../src/trade/plan.ts';
 import { venue } from '../fixtures/hl-venue.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const FIRES = 20;
 const BUDGET_MS = 50;
@@ -80,7 +78,7 @@ after(async () => {
 // so there the test is skipped by name rather than failing on somebody else's scheduler.
 test('twenty fires: frame to venue post and fire command to venue post, p95 under 50 ms', { skip: process.env.CI ? 'a shared runner cannot promise a p95' : false }, async () => {
   const url = await v.listen();
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-runner-latency-'));
+  const dir = tempDir('phosphor-runner-latency-');
   const clock = { now: Date.now() };
   const base = clock.now;
   // The instant each fire command left the host, and the placed event that answers it.

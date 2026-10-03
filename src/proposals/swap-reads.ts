@@ -22,6 +22,7 @@ import { ourIntentsAddress, usdOf } from './draft.ts';
 import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 import { reasonSentence, shortIds, watchWords } from './view.ts';
+import { oneClickRoute, routedFacts } from './swap-route.ts';
 
 // ---------- shapes ----------
 
@@ -200,7 +201,8 @@ function nearVersion(candidates: SwapSide[], list: OneClickToken[]): SwapSide | 
 }
 
 /* THE COIN BOUGHT, BY WHAT IT WOULD GET. Up to BUY_PROBE_MAX of the candidates are asked for a
-   floorless price at once, BUY_PROBE_TIMEOUT_MS for all of them, and the most arriving IN DOLLARS
+   floorless price at once, BUY_PROBE_TIMEOUT_MS for all of them (and once more on 1Click when the
+   relay prices none of them, the route such a swap would take), and the most arriving IN DOLLARS
    wins: what arrives times the coin's listed price, so ETH from Ethereum beats the bridged ETH on
    near when it pays more. ONE TICKER CAN BE TWO COINS: two NEARKATs are listed 30 times apart, and
    the most units went to the cheaper one whatever the person meant (audit, finding 8). So listed
@@ -238,7 +240,10 @@ export async function pickBoughtByQuote(
   const ordered = pool.map((s, i) => ({ s, i })).sort((a, b) => rank(a.s) - rank(b.s) || a.i - b.i).map((x) => x.s);
   const near = ordered.find((s) => s.network === 'near');
   const asked = amount === null ? [] : ordered.slice(0, BUY_PROBE_MAX);
-  const outs = await Promise.all(asked.map((s) => boughtOut(ctx, sold, s, amount ?? '0', account)));
+  const askAll = (oneClick: boolean) => Promise.all(asked.map((s) => boughtOut(ctx, sold, s, amount ?? '0', account, oneClick)));
+  let outs = await askAll(false);
+  // The relay priced none of them: 1Click is asked the same, the route such a swap would take (./swap-route.ts).
+  if (outs.every((out) => out === null)) outs = await askAll(true);
   let won: { side: SwapSide; value: number } | null = null;
   for (const [i, out] of outs.entries()) {
     if (out === null) continue;
@@ -251,11 +256,14 @@ export async function pickBoughtByQuote(
 }
 
 // What one candidate would get for the amount sold, in its own units, or null: no price, a refusal,
-// or no answer inside BUY_PROBE_TIMEOUT_MS.
-async function boughtOut(ctx: PCtx, sold: SwapSide, target: SwapSide, amount: string, account: string): Promise<number | null> {
-  const draft = { ...draftFor(ctx, sold, target, account), amountIn: Number(amount), amountInExact: amount };
-  const rail = ctx.rails.for(draft);
-  if (rail === null) return null;
+// or no answer inside BUY_PROBE_TIMEOUT_MS. `oneClick` asks the 1Click route of a relay draft, and
+// is null where there is no such route.
+async function boughtOut(ctx: PCtx, sold: SwapSide, target: SwapSide, amount: string, account: string, oneClick = false): Promise<number | null> {
+  const asked = { ...draftFor(ctx, sold, target, account), amountIn: Number(amount), amountInExact: amount };
+  const route = oneClick ? oneClickRoute(ctx, asked) : { draft: asked, rail: ctx.rails.for(asked) };
+  const rail = route?.rail ?? null;
+  if (route === null || rail === null) return null;
+  const draft = route.draft;
   const ask = async (): Promise<number | null> => {
     if (typeof rail.quote === 'function') return rail.quote(draft);
     if (typeof rail.facts === 'function') return Number((await rail.facts(draft)).expectedOut);
@@ -418,7 +426,8 @@ function recalled(ctx: PCtx, assetId: string): 'yes' | 'no' | 'unknown' {
 }
 
 /* Whether a few dollars of USDC buys this coin inside NEAR Intents right now: one dry quote on
-   the configured rail, bounded. Nobody selling is 'no'; a minimum is still somebody selling. */
+   the route a swap would take (./swap-route.ts), bounded. Nobody selling is 'no'; a minimum is
+   still somebody selling. */
 async function probe(ctx: PCtx, usdc: SwapSide, target: SwapSide, account: string): Promise<'yes' | 'no' | 'unknown'> {
   if (target.assetId === usdc.assetId) return 'yes';
   const draft = { ...draftFor(ctx, usdc, target, account), amountIn: Number(PROBE_USDC), amountInExact: PROBE_USDC, amountUsd: Number(PROBE_USDC) };
@@ -430,7 +439,7 @@ async function probe(ctx: PCtx, usdc: SwapSide, target: SwapSide, account: strin
       timer = setTimeout(() => resolve('unknown'), PROBE_TIMEOUT_MS);
       timer.unref?.();
     });
-    const asked = rail.facts(draft).then(
+    const asked = routedFacts(ctx, draft, rail).then(
       () => 'yes' as const,
       (err: unknown) => {
         const code = reasonOf(err);
@@ -638,7 +647,7 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   if (rail === null || typeof rail.facts !== 'function') return { ...none, from, to, amountIn: exact, reason: 'not_available', sentence: NO_VENUE };
 
   try {
-    const facts = await rail.facts(priced);
+    const facts = await routedFacts(ctx, priced, rail);
     remember(ctx, to.assetId, 'yes');
     // A quote for more than is held is still a price, and the reason says the swap could not run.
     const short = heldBase !== null && base > heldBase;

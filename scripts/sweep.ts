@@ -236,10 +236,10 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['0eca63d4e42e247ca9d7b3e4ffd8b72e73237a74cec0c0d9a490bd05dc3a7153', 'expected signature half for a user-signed fixture, tests/unit/hl-user-signed.test.ts'],
   // The sendAsset vectors the SDK produces for its own fixture key on mainnet and testnet,
   // reproduced in the Hyperliquid exit research of 2026-09-20 and asserted by the same test.
-  ['fe1a043dc1f5b7e5bd361b397a615f8f791a317cf2d7c28e483746020cf2dd04', 'sendAsset mainnet signature r for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md'],
-  ['3dbf449f1d7dc7c819e04c8f88e30edc762abbc69351d278e851c2b7c1fd9d39', 'sendAsset mainnet signature s for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md'],
-  ['99a9ac7337378f56543cb5a762b710d4afd8925abf644bb6ec03ed9669c8f60e', 'sendAsset testnet signature r for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md'],
-  ['5d2db4547b8b54c9c54ce80a4948031566e5e78267eb3d9fe811960f59a7dcc0', 'sendAsset testnet signature s for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md'],
+  ['fe1a043dc1f5b7e5bd361b397a615f8f791a317cf2d7c28e483746020cf2dd04', 'sendAsset mainnet signature r for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md in history'],
+  ['3dbf449f1d7dc7c819e04c8f88e30edc762abbc69351d278e851c2b7c1fd9d39', 'sendAsset mainnet signature s for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md in history'],
+  ['99a9ac7337378f56543cb5a762b710d4afd8925abf644bb6ec03ed9669c8f60e', 'sendAsset testnet signature r for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md in history'],
+  ['5d2db4547b8b54c9c54ce80a4948031566e5e78267eb3d9fe811960f59a7dcc0', 'sendAsset testnet signature s for the SDK fixture, docs/superpowers/prompts/ready-for-people/evidence-b/sendasset-research.md in history'],
   // Public transaction hashes used to prove the chain readers validate and lowercase them.
   ['5c504ed432cb51138bcf09aa5e8a410dd4a1e204ef84bfed1be16dfba1b22060', 'the first Ethereum transaction ever mined (block 46147), tests/unit/chainscan-*.test.ts'],
   ['a6494142e2e565b5e672d41a37a3eafec2fe5594f22efbb07f421a6cedf473c5', 'a public Bitcoin transaction id, tests/unit/chainscan-networks.test.ts'],
@@ -253,7 +253,7 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['c7e1d3a95b40f826d1c9e4a7b3086f52dc1a9e4b7350f28cd6a1b93e5074cf81', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['41ba7cd9e2f80516a3c7d84be91f0c25d7a6b3e8420fc19d5e7a80b3c6f19d42', 'a made-up transaction hash in the window fixtures, ui/core/fixtures.js in history'],
   ['9f8e7d6c5b4a39281706f5e4d3c2b1a09f8e7d6c5b4a39281706f5e4d3c2b1a0', 'a made-up intent hash inside a rail sentence, tests/unit/agent-cards-ui.test.ts (the one card pass, 2026-09-20)'],
-  // Demo rail hashes from node B's evidence (docs/superpowers/prompts/ready-for-people/evidence-b, the kill -9 and withdraw walks on a demo backend): minted by the demo rail, real nowhere.
+  // Demo rail hashes from node B's evidence (docs/superpowers/prompts/ready-for-people/evidence-b in history, the kill -9 and withdraw walks on a demo backend): minted by the demo rail, real nowhere.
   ['9c250bdf641fe43ea36928778a6d31ccd649ed8da6b9e6bbd4a4c6f2d72b72cf', 'demo rail hash, evidence-b/demo-kill9-4202.txt'],
   ['e35b1abf83cf884f9b1b6250a86726f0993982479bb3a17971a6ad9bf3ff6d18', 'demo rail hash, evidence-b/demo-withdraw-walk-4202.txt'],
   ['6da6ffb54f84da34ec3b078ceb6c2ce840d57ce1e5b38ca7f69152b252b56b94', 'demo rail hash, evidence-b/demo-withdraw-walk-4202.txt'],
@@ -274,7 +274,7 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // now assembles it at runtime). Excused as the exact block; the header alone still trips.
   [FAKE_PEM_FIXTURE, 'a fake PEM block, tests/unit/log-tail.test.ts in history'],
   // sha256 of the published release files, as SHA256SUMS on the release page lists them and as
-  // the launch evidence under docs/superpowers/prompts/ready-for-people/evidence-g records them.
+  // the launch evidence under docs/superpowers/prompts/ready-for-people/evidence-g (in history) records them.
   ['211b95fc39d380218e835b12a4d6a6feb516353a0103b9acd70a5aa4db79f48c', 'sha256 of Phosphor-macOS-arm64.dmg, release v0.7.0'],
   ['65b5564e47d96ec4b20640b74e1386112854e47d017b7551c315ef9516931506', 'sha256 of Phosphor_0.7.0_aarch64.app.tar.gz, release v0.7.0'],
   ['7350f574186227f6a1e3b084e6cec3eb8beb198a6735186bf1d74095c089d52f', 'sha256 of Phosphor-macOS-arm64.dmg, release v0.6.0'],

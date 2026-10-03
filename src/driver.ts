@@ -75,7 +75,9 @@ export type DriverEvent =
   /* A piece of a block as the model writes it, for the window to print before the block is done.
      Never kept in the transcript: the `text` event with the same block number is the record. */
   | { kind: 'delta'; block: number; text: string }
-  | { kind: 'tool'; name: string; input: unknown }
+  /* `words` is added by the window's chats (src/http/chats.ts), never by a driver: what a person
+     calls each coin a propose names, which its card draws before the row exists. */
+  | { kind: 'tool'; name: string; input: unknown; words?: Record<string, string> }
   | { kind: 'tool_result'; name: string; ok: boolean }
   /* The structured answer of one read, for the window to draw as a card rather than for the
      model to read back out in prose. Only the tools in TOOL_DATA_TOOLS below produce one, and

@@ -9,7 +9,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -25,9 +24,10 @@ import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmp(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-terms-'));
+  return tempDir('phosphor-terms-');
 }
 
 test('nothing is accepted on a fresh data directory, and the payload names the version and the pages', () => {

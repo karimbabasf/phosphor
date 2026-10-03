@@ -1586,6 +1586,27 @@ fn main() {
         });
 }
 
+/// A test's own folder in the temp directory, emptied when it is made and removed when the test
+/// ends, passed or failed, so no run leaves one behind.
+#[cfg(test)]
+pub(crate) struct TestDir(pub(crate) std::path::PathBuf);
+
+#[cfg(test)]
+impl TestDir {
+    pub(crate) fn new(name: &str) -> TestDir {
+        let path = std::env::temp_dir().join(format!("{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&path);
+        TestDir(path)
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{connection_line_from, probe_interval, FAST_PROBE_INTERVAL, FAST_PROBE_WINDOW, SLOW_PROBE_INTERVAL, log_from_response, log_lines, query_value, report_url, HELP_LINKS, HELP_REPORT_ID};
@@ -1811,12 +1832,12 @@ mod tests {
 
     #[test]
     fn the_altered_details_show_short_digests_and_the_app_name() {
-        let root = std::env::temp_dir().join(format!("phosphor-shown-{}", std::process::id())).join("Phosphor.app/Contents/Resources/phosphor");
+        let scratch = crate::TestDir::new("phosphor-shown");
+        let root = scratch.0.join("Phosphor.app/Contents/Resources/phosphor");
         std::fs::create_dir_all(&root).unwrap();
         std::fs::write(root.join("main.ts"), "x").unwrap();
         let built_for = "0123456789abcdef".repeat(4);
         let why = payload::check(&root, &built_for).err().expect("a different payload is refused");
-        let _ = std::fs::remove_dir_all(root.ancestors().nth(3).unwrap());
         let found = why.split("found ").nth(1).unwrap()[..64].to_string();
 
         let failure = Failure::altered(why.clone());

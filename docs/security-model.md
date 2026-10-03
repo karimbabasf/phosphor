@@ -7,7 +7,7 @@ What this app defends against, how, and where the v1 boundary honestly sits.
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
 defends against and the test that proves each defence, what stays open, what the invite tools
-guard, and how to check a release yourself. It describes version 0.10.13. The rest of the
+guard, and how to check a release yourself. It describes version 0.10.14. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -121,6 +121,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   percent of its value by that quote's prices is refused, even after your click, and one with no
   signed price to check it by waits for your click. Proof: `intents-relay.test.ts`,
   `swap-price-ask.test.ts`.
+- **The solver relay offers no price for a pair, or answers with an error or not at all.** The
+  same swap is drafted on the 1Click route before its card is priced, and held to that route's own
+  checks: a signed quote, the echo of the request it sent, one fee account, the 3 percent cap and
+  the pinned coins. A relay price past the cap is still refused, never routed around, and a swap
+  never changes route once its card is drawn: a relay error at the click stays on the relay's route.
+  Proof: `swap-route.test.ts`, `intents-relay.test.ts`.
 - **The coin list changes under a card before you click.** A card's coins are pinned when it
   lands. A list that names another coin at the click refuses the move, and nothing is signed.
   Proof: `asset-pins.test.ts`.
@@ -165,7 +171,7 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 
 ### What stays open
 
-These are true of 0.10.13. [Known limits](known-limits.md) gives each one with what it means for
+These are true of 0.10.14. [Known limits](known-limits.md) gives each one with what it means for
 your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
@@ -212,6 +218,11 @@ your money.
   could not check the price. Once you click, it runs at the relay's price, held only to what its
   card says you get at least, so the card is the only check. What closes it: the relay signing
   what it quotes.
+- **A relay that answers nothing or an error moves a swap to 1Click.** Whoever runs the relay can
+  send a swap to 1Click by answering nothing, or an error. There 1Click holds the coins for the
+  seconds until it delivers, where the relay moves both sides at once. Both venues have one
+  operator, already trusted for the price on both routes. What closes it: a click on every swap
+  that leaves the relay.
 - **The quote check fails closed.** If 1Click starts sending back a field this app does not know,
   every quote is refused until Phosphor is updated. Nothing is signed, and your money stays where
   it is.
@@ -308,7 +319,7 @@ It should be built by this repository's release workflow, from the tag of its ve
 ```
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.13
+  --source-ref refs/tags/v0.10.14
 ```
 
 With `--repo` alone, the check also passes for a file any other workflow in this repository
@@ -324,7 +335,7 @@ the tag builds:
 cd /Applications/Phosphor.app/Contents/Resources/phosphor
 find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
 
-git clone --depth 1 --branch v0.10.13 https://github.com/karimbabasf/phosphor.git
+git clone --depth 1 --branch v0.10.14 https://github.com/karimbabasf/phosphor.git
 cd phosphor && npm run bundle
 ```
 
@@ -993,7 +1004,10 @@ SOL (`NATIVE_ASSET` in `src/intents.ts`); a list that files one of them under an
 refused before the card is priced. The six registry coins 1Click did not list when they were
 pinned carry `null` and are never quoted (`tests/unit/asset-pins.test.ts`). A coin outside the
 registry takes the id the list gives when its card is priced, and the card's pin holds it from
-then on.
+then on. The card names each coin by the ticker this app's own tables give for its id
+(`src/proposals/coin-words.ts`), from the propose call's first frame on, and never prints the id:
+an id no table knows names no coin on the card. The id stays on the draft and in its pins, and
+only the id decides what is signed.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside

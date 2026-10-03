@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit, TAIL_BYTES } from '../../src/audit.ts';
@@ -17,9 +16,10 @@ import { readToolNames } from '../../src/http/mcp.ts';
 import { viewToolNames } from '../../src/http/view.ts';
 import { READ_TOOLS, VIEW_TOOLS, PROPOSE_KINDS } from '../../src/http/context.ts';
 import type { LogEvent } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-observe-'));
+  return tempDir('phosphor-observe-');
 }
 
 // ---------- the audit log ----------

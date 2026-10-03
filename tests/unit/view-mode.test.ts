@@ -13,9 +13,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { readScreen, readViewMode, writeScreen, writeViewMode } from '../../src/view/mode.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-view-'));
+  return tempDir('phosphor-view-');
 }
 
 test('a fresh data dir with no view file opens on basic', () => {

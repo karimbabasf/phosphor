@@ -5,7 +5,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -13,13 +12,14 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { EXPECTED_CHAT_TOOLS_SORTED, EXPECTED_TOOLS_SORTED } from '../tool-surface.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 type Listed = { name: string; description?: string; inputSchema: Record<string, unknown> };
 
 async function listed(surface: 'chat' | 'terminal'): Promise<{ tools: Listed[]; instructions: string }> {
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-mcp-surface-'));
+  const data = tempDir('phosphor-mcp-surface-');
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, 'src', 'mcp.ts')],

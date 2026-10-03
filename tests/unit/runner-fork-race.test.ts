@@ -13,15 +13,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { createRunnerHost, type RunnerEvent } from '../../src/runner/host.ts';
 import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 class FakeChild extends EventEmitter {
   connected = true;
@@ -92,7 +90,7 @@ function host(keyDelayMs = 20) {
     killSwitch: () => false,
     walletOpen: () => true,
     onEvent: (e) => events.push(e),
-    store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-fork-race-'))),
+    store: createPlanStore(tempDir('phosphor-fork-race-')),
     meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),
     mark: () => 100,
     free: () => 1000,

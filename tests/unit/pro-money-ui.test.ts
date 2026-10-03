@@ -702,6 +702,21 @@ test('a move under way says what it is doing, and a late one stays in the list a
   assert.equal(one(moves[0], 'move-meta').textContent, 'Started 1 minute ago');
 });
 
+/* A draft can name its coin by 1Click's id, where one ticker is two coins on one network. Activity
+   never prints the id (2026-10-02): a move whose coin the app cannot name reads by its sentence, and
+   an ended one by its headline, both in words. */
+test('a move whose coin is named only by an id reads by its sentence, never the id', async () => {
+  const twin = '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054';
+  const done = { id: 'p_twin_done', kind: 'swap', at: '2026-09-23T19:58:00Z', status: 'executed', headline: 'Changed $5.00 of your that coin into Solana (SOL).', summary: '', amount: 5, symbol: twin, received: { symbol: 'SOL', amount: 0.03 } };
+  const rig = boot({ receipts: [done] });
+  const live = { ...waiting(), id: 'p_twin', draft: { kind: 'swap', fromSymbol: twin, toSymbol: 'SOL', amountIn: 5 }, view: { ...waiting().view, sentence: '5 that coin to SOL on Solana, inside NEAR Intents', money: { symbol: twin, toSymbol: 'SOL', amountIn: '5', amountOut: null } } };
+  rig.put(state({ proposals: [live] }));
+  rig.view('pro');
+  await tick();
+  const titles = withClass(one(rig.host, 'moves'), 'move').map((m) => one(m, 'move-title').textContent);
+  assert.deepEqual(titles, ['5 that coin to SOL on Solana, inside NEAR Intents', 'Changed $5.00 of your that coin into Solana (SOL).']);
+});
+
 /* The activity server, paged the way /api/receipts pages: newest first, `before` the cursor. */
 function history(n: number): Any[] {
   return Array.from({ length: n }, (_, i) => ({

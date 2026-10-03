@@ -23,6 +23,7 @@ import type { ReasonCode } from '../rails/reasons.ts';
 import type { PolicyAxisChange, Proposal, SwapDraft, WriteDraft } from '../types.ts';
 import { baseUnitsToDecimal } from '../intents.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
+import { COIN_KINDS } from './coin-words.ts';
 
 // The app's own phases are lowercase. The provider's phases are the vendor's words, byte for
 // byte: 1Click's seven off GetExecutionStatusResponse, the solver relay's four off get_status,
@@ -494,9 +495,9 @@ function oneLine(raw: string): string {
 // The amount and the token as the draft holds them, never rounded: "7.54" under a draft that
 // says 7.5425 is a figure nobody agreed to. Null amount (a retired kind, a row written without
 // one) says the token alone rather than the word undefined.
-function moved(draft: WriteDraft): string {
+function moved(draft: WriteDraft, word: (symbol: string) => string): string {
   const amount = amountInOf(draft);
-  const symbol = symbolOf(draft);
+  const symbol = word(symbolOf(draft));
   return amount === null ? symbol : `${amount} ${symbol}`;
 }
 
@@ -508,25 +509,25 @@ function moved(draft: WriteDraft): string {
    has read one has read them all. A send names its receiver in full: the whole address and
    whether it lands on a chain or inside NEAR Intents are the two facts a wrong send turns on,
    and a shortened address is exactly what a substituted one hides behind. */
-export function sentenceOf(draft: WriteDraft): string {
+export function sentenceOf(draft: WriteDraft, word: (symbol: string) => string = (symbol) => symbol): string {
   switch (draft.kind) {
     case 'policy_change':
       return oneLine(draft.sentence);
     case 'hl_deposit':
-      return `${moved(draft)} from NEAR Intents to Hyperliquid`;
+      return `${moved(draft, word)} from NEAR Intents to Hyperliquid`;
     case 'hl_withdraw':
-      return `${moved(draft)} from Hyperliquid to NEAR Intents`;
+      return `${moved(draft, word)} from Hyperliquid to NEAR Intents`;
     // Both legs sit inside the verifier, so the sentence names the two assets rather than two
     // pockets: a swap changes what the balance holds and moves nothing anywhere.
     // The bought coin's network is named: one ticker is several coins, one per network.
     case 'swap': {
       const network = spendNetworkOf(draft.toChain)?.name;
-      return `${moved(draft)} to ${draft.toSymbol}${network === undefined ? '' : ` on ${network}`}, inside NEAR Intents`;
+      return `${moved(draft, word)} to ${word(draft.toSymbol)}${network === undefined ? '' : ` on ${network}`}, inside NEAR Intents`;
     }
     case 'intents_send':
-      return `${moved(draft)} from NEAR Intents to ${draft.to}, inside NEAR Intents`;
+      return `${moved(draft, word)} from NEAR Intents to ${draft.to}, inside NEAR Intents`;
     case 'intents_pay':
-      return `${moved(draft)} from NEAR Intents to ${draft.to}, on ${spendNetworkOf(draft.network)?.name ?? draft.network}`;
+      return `${moved(draft, word)} from NEAR Intents to ${draft.to}, on ${spendNetworkOf(draft.network)?.name ?? draft.network}`;
     case 'trade': {
       if (draft.op === 'open') {
         const plan = draft.plan;
@@ -541,7 +542,7 @@ export function sentenceOf(draft: WriteDraft): string {
     }
     // A rail this app no longer has still has to read; see pocketsOf.
     default:
-      return moved(draft);
+      return moved(draft, word);
   }
 }
 
@@ -899,7 +900,24 @@ export type ViewCtx = {
   // A trade proposal's fate is its plan's, and the plan lives in the runner. Absent where no
   // runner is wired, which is demo mode and most tests.
   plan?: (p: Proposal) => PlanFate | null;
+  // What a person calls a coin the draft names, by ticker or by id (src/proposals/coin-words.ts).
+  // Absent in most tests, where the draft's own symbol is the word.
+  coin?: (ref: string) => string | null;
 };
+
+/* The word the card and Activity draw for a coin the draft names: the draft keeps an id where one
+   ticker is two coins, and a ticker as the agent typed it, and neither is what a person reads. An id
+   no table knows stays as it is, and the window names no coin for it. */
+function coinWordFor(ctx: ViewCtx, draft: WriteDraft): (symbol: string) => string {
+  const coin = ctx.coin;
+  if (coin === undefined || !COIN_KINDS.has(draft.kind)) return (symbol) => symbol;
+  return (symbol) => (symbol === '' ? symbol : (coin(symbol) ?? symbol));
+}
+
+// In the move's own sentence an id no table names is "that coin", as in every reason sentence.
+function sentenceWord(symbol: string): string {
+  return symbol.includes(':') ? 'that coin' : symbol;
+}
 
 /* THE ONE OBJECT. proposal_status returns it, /api/state carries it, the card draws it, the
    agent narrates it. Everything on it is read off the row or off the tables above; nothing here
@@ -913,6 +931,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   const typical = TYPICAL_SEC[p.kind] ?? null;
   const reason = reasonOfRow(p, stage, now);
   const state = plainStateOf(stage, reason);
+  const word = coinWordFor(ctx, p.draft);
   // Where the cause chose the state, the cause's sentence is the copy, so the two cannot disagree.
   const byCause = reason !== null && (state === 'didnt_go_through' || STATE_OF_REASON[reason.code] !== undefined);
   /* AND WHEN IT ENDED, which a move still being checked or on its way back has not, whatever the
@@ -922,7 +941,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   return {
     id: p.id,
     kind: p.kind,
-    sentence: sentenceOf(p.draft),
+    sentence: sentenceOf(p.draft, (symbol) => sentenceWord(word(symbol))),
     changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
     stageLabel: stageLabelOf(p, stage),
@@ -952,8 +971,8 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
     typicalSec: typical === 0 ? null : typical,
     deadlineAt: deadlineAtOf(p),
     money: {
-      symbol: symbolOf(p.draft),
-      toSymbol: toSymbolOf(p.draft),
+      symbol: word(symbolOf(p.draft)),
+      toSymbol: word(toSymbolOf(p.draft)),
       amountIn: amountInOf(p.draft),
       feeUsd: feeUsdOf(p),
       amountOut: amountOutOf(p),

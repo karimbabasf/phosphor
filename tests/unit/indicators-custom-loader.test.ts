@@ -5,15 +5,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createCustomIndicators, FILE_CAP_BYTES, SLUG_RE } from '../../src/indicators-custom/loader.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const FIXTURES = path.join(import.meta.dirname, '..', 'fixtures', 'indicators');
 
 function scratch(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-indicators-'));
+  return tempDir('phosphor-indicators-');
 }
 
 function copy(dir: string, ...names: string[]): void {

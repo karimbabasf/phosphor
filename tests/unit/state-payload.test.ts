@@ -12,7 +12,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -32,6 +31,7 @@ import {
 } from '../../src/http/state.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
 // The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
@@ -89,7 +89,7 @@ function row(id: string, status: ProposalStatus, ageMin: number): Proposal {
 let builds = 0;
 
 async function boot(proposals: Proposal[]): Promise<{ url: string; store: ReturnType<typeof createStore>; close: () => Promise<void> }> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-state-payload-'));
+  const dataDir = tempDir('phosphor-state-payload-');
   // Seeded as a file rather than through a thousand put() calls: the store rewrites the whole
   // array on every put, so seeding through it is quadratic and measures the wrong thing.
   fs.writeFileSync(path.join(dataDir, 'proposals.json'), JSON.stringify(proposals, null, 2));

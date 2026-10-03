@@ -12,9 +12,6 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { createTradeFeed } from '../../src/trade/feed-ws.ts';
@@ -24,6 +21,7 @@ import { createRunnerHost } from '../../src/runner/host.ts';
 import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const WS = 'wss://test.invalid/ws';
 const USER = '0x1111111111111111111111111111111111111111';
@@ -224,7 +222,7 @@ test('the runner child is forked with the wallet as it is at arm time, not at bo
     killSwitch: () => false,
     walletOpen: () => true,
     onEvent: () => {},
-    store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-feed-identity-'))),
+    store: createPlanStore(tempDir('phosphor-feed-identity-')),
     meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),
     mark: () => 100,
     free: () => 1000,

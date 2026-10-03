@@ -7,7 +7,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -33,6 +32,7 @@ import { stubView } from '../fixtures/view.ts';
 import { CODE, CODE_ADDRESS, SECRET, freshWorld, oneclickOf, relayOf, verifierOf } from './helpers/invite-world.ts';
 import type { World } from './helpers/invite-world.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const PASSWORD = 'a long enough password';
@@ -57,7 +57,7 @@ type Booted = {
 };
 
 async function boot(): Promise<Booted> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-routes-'));
+  const dataDir = tempDir('phosphor-invite-routes-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -318,7 +318,7 @@ test('the tool surface is unchanged: no agent tool, read or op reaches an invite
 });
 
 test("intents_activity labels a counterparty this app claimed an invite from, and nothing else", async () => {
-  const audit = createAudit(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-label-')));
+  const audit = createAudit(tempDir('phosphor-invite-label-'));
   audit.append('invite_claimed', 'An invite code paid 5.00 USDC into this wallet.', { claim: 'c1', codeAddress: CODE_ADDRESS, receiver: '0x9858effd232b4033e47d90003d41ec34ecaeda94', asset: 'USDC', amount: '5.00', intentHash: 'h', route: 'relay' });
   const row = (counterparty: string) => ({
     transaction_hash: '9fRHzGWLtKvuGEtGAxkUgFAqZeVmbrPDPSvQETDjZhyZ',

@@ -11,7 +11,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +31,7 @@ import { HYPERCORE_COUNTERPARTY, HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMAL
 import { HL_WITHDRAW_COUNTERPARTY, INTENTS_USDC_ASSET_ID, INTENTS_USDC_DECIMALS, SETTLING_WITHDRAW, minReceivedForHlWithdraw } from '../../src/rails/hypercore-withdraw.ts';
 import { STAGE_LABEL } from '../../src/proposals/view.ts';
 import { makeCtx, slowRail } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -149,7 +149,7 @@ type Boot = {
    because a boot must never reach them for a row it found on disk. `demo` boots the way
    main.ts does in demo mode: no 1Click client, so no venue lookup for the sweep. */
 function boot(seed: Proposal, over: { demo?: boolean } = {}): Boot {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hl-crash-'));
+  const dataDir = tempDir('phosphor-hl-crash-');
   const cfg: AppConfig = { mode: over.demo ? 'demo' : 'live', port: 4177, addresses: { evm: SELF_EVM }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json') };
   savePolicy(dataDir, seededPolicy());
   const store = createStore(dataDir);

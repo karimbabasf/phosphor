@@ -5,11 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { isCardRow, markUnreachable, parseRows, UNREACHABLE_MARK } from '../../scripts/anxiety/rows.ts';
-import { median, parseVote, PASS_MAX_VOTE, RUBRIC, rowVerdict } from '../../scripts/anxiety/judge.ts';
+import { median, parseVote, PASS_MAX_VOTE, probeJudge, RUBRIC, rowVerdict } from '../../scripts/anxiety/judge.ts';
 import { counts, markdownTable, worstThree, type RowResult } from '../../scripts/anxiety/table.ts';
 import { scoreFlow } from '../../scripts/anxiety/flows.ts';
 import { endingReply, fill } from '../../scripts/anxiety/agent.ts';
 import { claimedRows } from '../../scripts/anxiety/scenes.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -31,6 +32,57 @@ test('the rubric in judge.ts is the definitions file term 6(b) verbatim', () => 
   const end = defs.indexOf('\n', levelsAt + 1);
   const fromFile = defs.slice(start, end === -1 ? undefined : end).trim();
   assert.equal(RUBRIC.trim(), fromFile, 'the rubric copy has drifted from the definitions file');
+});
+
+// ---------- the judge never reaches OpenRouter ----------
+
+/* Karim's OpenRouter account runs Jev and nothing else. The probe is handed an OpenRouter key on
+   purpose, NEAR AI Cloud offers no vision model, and a fake `claude` answers: the judge must fall
+   to claude -p without one request to openrouter.ai. A leg that comes back fails here. */
+test('the judge probe skips OpenRouter even with a key in the env file', async (t) => {
+  const dir = tempDir('phosphor-judge-');
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const shot = path.join(dir, 'probe.png');
+  fs.writeFileSync(shot, Buffer.from('89504e470d0a1a0a', 'hex'));
+  const part = { score: 0, why: 'plain' };
+  const answer = JSON.stringify({ jargon: part, density: part, next_step: part, money_certainty: part, alarm: part });
+  fs.writeFileSync(path.join(dir, 'claude'), `#!/bin/sh\ncat > /dev/null\nprintf '%s' '${answer}'\n`, { mode: 0o755 });
+
+  const urls: string[] = [];
+  const realFetch = globalThis.fetch;
+  const realPath = process.env.PATH;
+  globalThis.fetch = async (input: string | URL | Request) => {
+    const url = input instanceof Request ? input.url : String(input);
+    urls.push(url);
+    if (url.endsWith('/models')) return new Response(JSON.stringify({ data: [{ id: 'text-only', input_modalities: ['text'] }] }), { status: 200 });
+    return new Response('{"error":"refused"}', { status: 402 });
+  };
+  process.env.PATH = `${dir}${path.delimiter}${realPath ?? ''}`;
+  t.after(() => {
+    globalThis.fetch = realFetch;
+    process.env.PATH = realPath;
+  });
+
+  const probe = await probeJudge(shot, { TEXT_MODEL_API_KEY: 'k', TEXT_MODEL_BASE_URL: 'http://127.0.0.1:9/v1', OPENROUTER_API_KEY: 'sk-or-test' });
+  assert.deepEqual(urls.filter((u) => /openrouter/i.test(u)), [], 'no request went to OpenRouter');
+  assert.deepEqual(probe.tried.map((p) => p.name), ['nearai', 'claude-p'], 'the probe tried NEAR AI Cloud, then claude -p, nothing else');
+  assert.equal(probe.judge?.name, 'claude-p');
+});
+
+test('no script or app file calls OpenRouter or reads an OpenRouter key', () => {
+  const offenders: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const file = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name !== 'node_modules' && entry.name !== 'scratch') walk(file);
+      } else if (/\.(ts|js|mjs|sh)$/.test(entry.name) && /openrouter\.ai|OPENROUTER_API_KEY/.test(fs.readFileSync(file, 'utf8'))) {
+        offenders.push(path.relative(ROOT, file));
+      }
+    }
+  };
+  for (const top of ['src', 'scripts', 'ui']) walk(path.join(ROOT, top));
+  assert.deepEqual(offenders, [], 'OpenRouter runs Jev only, through jev-browse');
 });
 
 // ---------- row parsing ----------

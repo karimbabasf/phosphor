@@ -15,11 +15,11 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { writePick } from '../../src/agents-catalog.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -65,8 +65,8 @@ function digests(home: string): Record<string, string> {
 }
 
 test('a boot on a throwaway folder, and a pick of every vendor in it, leaves a fake HOME\'s vendor configs byte-identical', async () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-fake-home-'));
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-throwaway-boot-'));
+  const home = tempDir('phosphor-fake-home-');
+  const dataDir = tempDir('phosphor-throwaway-boot-');
   const bin = path.join(home, 'bin');
   const calls = path.join(home, 'vendor-calls.txt');
   fs.mkdirSync(bin);

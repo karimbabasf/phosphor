@@ -10,9 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { classifyVenueStatus, confirmOrder } from '../../src/hl/confirm.ts';
@@ -23,6 +20,7 @@ import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 import { planHash } from '../../src/trade/plan.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const USER = '0x0000000000000000000000000000000000000001';
 const FAST = { firstMs: 1, maxMs: 1, timeoutMs: 3 };
@@ -175,7 +173,7 @@ function host(script: string[], replyMs = 500) {
     killSwitch: () => false,
     walletOpen: () => true,
     onEvent: (e) => events.push(e),
-    store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hl-confirm-'))),
+    store: createPlanStore(tempDir('phosphor-hl-confirm-')),
     meta: () => ({ assetId: 3, szDecimals: 4, maxLeverage: 25 }),
     mark: () => 100,
     free: () => 1000,

@@ -8,13 +8,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit, hashLine, verifyChain } from '../../src/audit.ts';
+import * as tmp from './helpers/tmp.ts';
 
 function tempDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-audit-'));
+  return tmp.tempDir('phosphor-audit-');
 }
 
 function lines(dir: string): string[] {

@@ -11,16 +11,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { readApiWallet, readApiWalletKey } from '../../src/runner/keys.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const MAINNET_KEY = ('0x' + 'a'.repeat(64)) as `0x${string}`;
 const OTHER_KEY = ('0x' + 'b'.repeat(64)) as `0x${string}`;
 const LEGACY_KEY = ('0x' + 'c'.repeat(64)) as `0x${string}`;
 
 function keysFile(body: unknown): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-keys-'));
+  const dir = tempDir('phosphor-keys-');
   const p = path.join(dir, 'keys.json');
   fs.writeFileSync(p, JSON.stringify(body, null, 2), { mode: 0o600 });
   return p;
@@ -73,7 +73,7 @@ test('the keyed entry wins over a stale flat one', () => {
 test('a missing file, a malformed file and a malformed key all read as no key', async () => {
   assert.equal(await readApiWalletKey('/nowhere/keys.json'), null);
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-keys-'));
+  const dir = tempDir('phosphor-keys-');
   const bad = path.join(dir, 'keys.json');
   fs.writeFileSync(bad, '{ not json');
   assert.equal(await readApiWalletKey(bad), null);

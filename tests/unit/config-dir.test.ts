@@ -9,9 +9,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../src/config.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function scratch(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-config-'));
+  return tempDir('phosphor-config-');
 }
 
 // loadConfig reads process.env directly, so every case runs with a known environment and

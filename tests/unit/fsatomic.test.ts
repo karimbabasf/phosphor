@@ -8,7 +8,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -18,11 +17,12 @@ import { writeViewMode, readViewMode } from '../../src/view/mode.ts';
 import { writeTheme, readTheme, DEFAULT_THEME } from '../../src/view/theme.ts';
 import { savePolicy, loadPolicy, defaultPolicy } from '../../src/policy/file.ts';
 import type { Proposal } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-atomic-'));
+  return tempDir('phosphor-atomic-');
 }
 
 function leftovers(dir: string): string[] {

@@ -12,7 +12,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { base58Decode, base58Encode } from '../../src/chain/near.ts';
@@ -20,6 +19,7 @@ import { canonical, seal, open as openSealed } from '../../src/keystore/envelope
 import { checkParams, defaultParams } from '../../src/keystore/kdf.ts';
 import { addressesFromKeys, mnemonicProblem, newWallet, walletFromMnemonic } from '../../src/keystore/derive.ts';
 import { backupCopies, createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // The BIP39 test vector every wallet agrees on, and the EVM address it produces.
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
@@ -53,7 +53,7 @@ function keystore(keysPath: string, now?: () => number) {
 }
 
 function tempKeys(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-keystore-')), 'keys.json');
+  return path.join(tempDir('phosphor-keystore-'), 'keys.json');
 }
 
 // ---------- derivation ----------
@@ -364,7 +364,7 @@ test('an exported backup opens under the same password and carries a different s
   assert.notEqual(copy.header.kdf.salt, live.header.kdf.salt, 'one cracked password must not open both files');
 
   // And it really is a keystore: opening it as one recovers the same wallet.
-  const restoredPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-restore-')), 'keys.json');
+  const restoredPath = path.join(tempDir('phosphor-restore-'), 'keys.json');
   fs.copyFileSync(backup, keystorePathFor(restoredPath));
   const restored = keystore(restoredPath);
   assert.equal((await restored.unlock('a long enough password')).ok, true);

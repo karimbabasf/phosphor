@@ -14,6 +14,10 @@
 //                 1.5 s when the row waits for a click). The TOOL ANSWER is what is timed, never
 //                 the row: an answer that arrived after the row settled fails on its own line,
 //                 because that is the 20 s hold the vault Gotchas record coming back.
+//                 This agent is one a person started outside Phosphor (src/agents.ts), so its
+//                 small swaps wait for a click until the person allows it in the window: 5 more
+//                 under the threshold prove that, then the run answers Allow the way the
+//                 window's card does (POST /api/agents/answer) and the 5 that run are timed.
 //   STAGE CHANGE  from the row's lastChangeAt to the /api/events frame that carries its id, for
 //                 every stage every row of this run entered (2.3: under 500 ms).
 //   RESOURCES     `ps -o rss=,%cpu=` on the backend pid after the run, and the audit lines one
@@ -35,6 +39,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
+import { OUTSIDE_REASON } from '../src/web-read.ts';
+
 type Json = any;
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
@@ -51,8 +57,10 @@ const READS = 20;
 const READ_TOOLS = ['wallet', 'proposals', 'policy_show', 'show'] as const;
 // Distinct amounts, because the duplicate guard (src/http/propose.ts) refuses a repeat of a
 // swap still in flight from the same session, and every one of these is in flight at once.
-// Under the 100 USD default threshold: ten to fourteen dollars. Over it: 150 to 190.
+// Under the 100 USD default threshold: ten to fourteen dollars, and twenty to twenty four before
+// the agent is allowed. Over it: 150 to 190.
 const UNDER_USD = [10, 11, 12, 13, 14];
+const NOT_ALLOWED_USD = [20, 21, 22, 23, 24];
 const OVER_USD = [150, 160, 170, 180, 190];
 // The floor asked for, as a share of what the wallet read prices the swap at. Frozen rule 2:
 // the floor comes off a read, never off a guess, and is truncated toward zero, never rounded.
@@ -248,6 +256,24 @@ async function proposalRows(base: string, token: string): Promise<Row[]> {
   return body.proposals ?? [];
 }
 
+/* The person's Allow for this run's agent, sent the way the window's card sends it: the seat as
+   the roster lists it, the window token in the body, from the window's origin. Null when the app
+   took it; otherwise the problem, in the app's words. */
+async function allowSeat(base: string, token: string): Promise<string | null> {
+  const state = (await (await fetch(`${base}/api/state`, { headers: { 'x-phosphor-token': token } })).json()) as {
+    agents?: { members?: Array<{ session: string; origin: string; askable: boolean }> };
+  };
+  const seat = (state.agents?.members ?? []).find((m) => m.origin === 'outside');
+  if (seat === undefined) return 'no agent started outside Phosphor is on the roster to allow';
+  if (!seat.askable) return `${seat.session} sent no key of its own, so it cannot be allowed`;
+  const res = await fetch(`${base}/api/agents/answer`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', origin: base },
+    body: JSON.stringify({ token, session: seat.session, allow: true }),
+  });
+  return res.ok ? null : `the Allow answered ${res.status}: ${(await res.text()).slice(0, 160)}`;
+}
+
 // The endings a walk can reach. needs_reconciliation is not one: a demo row wears it while it
 // is settling (the credit read that closes it comes a beat later), so a wait that stopped on it
 // would read every row as stuck one second before it confirmed.
@@ -396,8 +422,30 @@ async function main(): Promise<number> {
       reads.push(row);
     }
 
-    // ---- proposes under the threshold: the policy decides, the rail walks, the answer is timed ----
+    // ---- proposes under the threshold before the person allows this agent: each waits, and says why ----
+    const notAllowed: ProofRow = { route: 'propose_swap under, not allowed (click)', samples: [], budgetMs: PROPOSE_CLICK_BUDGET_MS, problems: [] };
+    const notAllowedIds: string[] = [];
+    for (const usd of NOT_ALLOWED_USD) {
+      try {
+        const { ms: took, value } = await timed(() =>
+          callTool(client as Client, 'propose_swap', { chain: 'eth', toChain: 'eth', fromSymbol: 'USDC', toSymbol: 'ETH', amountIn: usd, minAmountOut: floorFor(usd) }),
+        );
+        notAllowed.samples.push(took);
+        if (typeof value?.id !== 'string') notAllowed.problems.push(`${usd} USDC: no proposal id in the answer: ${JSON.stringify(value).slice(0, 160)}`);
+        else {
+          notAllowedIds.push(value.id);
+          if (value.status !== 'pending') notAllowed.problems.push(`${usd} USDC: answered ${value.status}, expected pending (a click)`);
+          else if (value.verdict?.reasons?.at(-1) !== OUTSIDE_REASON) notAllowed.problems.push(`${usd} USDC: waits for another reason: ${String(value.verdict?.reasons?.at(-1))}`);
+        }
+      } catch (err) {
+        notAllowed.problems.push(`${usd} USDC: ${errText(err)}`);
+      }
+    }
+
+    // ---- the person allows the agent, then proposes under the threshold: the policy decides, the rail walks, the answer is timed ----
     const under: ProofRow = { route: 'propose_swap under threshold', samples: [], budgetMs: PROPOSE_BUDGET_MS, problems: [] };
+    const refused = await allowSeat(base, token);
+    if (refused !== null) under.problems.push(`Allow: ${refused}`);
     const underIds: string[] = [];
     const answeredAt = new Map<string, number>();
     for (const usd of UNDER_USD) {
@@ -428,7 +476,7 @@ async function main(): Promise<number> {
       await sleep(250);
     }
     const all = await proposalRows(base, token);
-    const mine = all.filter((r) => underIds.includes(r.id) || overIds.includes(r.id));
+    const mine = all.filter((r) => underIds.includes(r.id) || overIds.includes(r.id) || notAllowedIds.includes(r.id));
     for (const id of underIds) {
       const row = mine.find((r) => r.id === id);
       if (row === undefined) under.problems.push(`${id}: not in /api/proposals after the walk`);
@@ -469,7 +517,7 @@ async function main(): Promise<number> {
         else stage.samples.push(frame.at - at);
       }
     }
-    const rows: ProofRow[] = [...reads, over, under, stage];
+    const rows: ProofRow[] = [...reads, over, notAllowed, under, stage];
 
     // ---- resources: the backend a few seconds after the last write, and one lifecycle's log ----
     await sleep(3000);

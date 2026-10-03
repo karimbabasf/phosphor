@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -29,6 +28,7 @@ import { EXPECTED_TOOLS, WORKER_WITHHELD } from '../tool-surface.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
 const SEAT = 's'.repeat(64);
@@ -51,7 +51,7 @@ type Harness = {
 };
 
 async function boot(): Promise<Harness> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-learned-'));
+  const dataDir = tempDir('phosphor-learned-');
   const audit = createAudit(dataDir);
   const cfg: AppConfig = {
     mode: 'demo',

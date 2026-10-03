@@ -6,7 +6,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { SIGNED_DEADLINE_MS } from '../../src/rails/intents-native.ts';
@@ -36,6 +35,7 @@ import {
   verifierOf,
 } from './helpers/invite-world.ts';
 import type { World } from './helpers/invite-world.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Harness = {
   world: World;
@@ -50,7 +50,7 @@ type Harness = {
 
 function harness(over: Partial<InviteDeps> & { world?: World; dataDir?: string } = {}): Harness {
   const world = over.world ?? freshWorld();
-  const dataDir = over.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-'));
+  const dataDir = over.dataDir ?? tempDir('phosphor-invite-');
   const h: Harness = { world, service: null as never, audit: [], frames: [], holds: [], refreshes: 0, dataDir, lock: { state: 'unlocked', verified: true, tampered: false } };
   h.service = createInviteService({
     dataDir,
@@ -580,7 +580,7 @@ test('Plan B stopping before its signature watches the refused relay claim to it
 
 test('the RPC never holds claim bytes that can still run: only a rehearsal, on disk first, dying a millisecond past its block', async () => {
   const world = freshWorld();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-'));
+  const dataDir = tempDir('phosphor-invite-');
   const v = verifierOf(world);
   const seen: Array<{ payload: string; at: string | undefined; onDisk: boolean }> = [];
   const verifier = {

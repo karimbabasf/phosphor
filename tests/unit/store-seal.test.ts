@@ -10,7 +10,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -27,6 +26,7 @@ import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import type { EnclaveRef } from '../../src/keystore/store.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import { makeCtx, railThat } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -120,7 +120,7 @@ test('a row this process wrote still approves, and a file that predates the proc
 });
 
 test('the seal survives the round trip through disk: a row read back after a write is intact', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-seal-'));
+  const dir = tempDir('phosphor-seal-');
   const store = createStore(dir);
   const row = {
     id: 'p1',
@@ -189,7 +189,7 @@ test.afterEach(() => {
 });
 
 test('a finger on a row that was rewritten on disk while the dialog was up signs nothing and opens nothing', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-seal-touch-'));
+  const dataDir = tempDir('phosphor-seal-touch-');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const cfg: AppConfig = { mode: 'demo', keysPath, port: 4177, addresses: {}, candleProducts: [], dataDir };
   const audit = createAudit(dataDir);

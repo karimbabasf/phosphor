@@ -10,7 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -32,6 +31,7 @@ import type { PlanRow } from '../../src/trade/plans.ts';
 import { createEndedNotices } from '../../src/http/ended.ts';
 import type { Chat } from '../../src/http/context.ts';
 import type { DriverState } from '../../src/driver.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -194,7 +194,7 @@ async function landed(h: { svc: ProposalService }, reply: Promise<Proposal>): Pr
 }
 
 function setup(clickUsd: number) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-trade-door-'));
+  const dataDir = tempDir('phosphor-trade-door-');
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,

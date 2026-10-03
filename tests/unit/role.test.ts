@@ -13,7 +13,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -21,6 +20,7 @@ import { buildRole, chatToolNames, customPersona } from '../../src/role.ts';
 import { CAPABILITIES } from '../../src/greeting.ts';
 import { CHAT_WITHHELD, OPERATING_RULES } from '../../src/persona.ts';
 import { loadProfile, parseProfile, profilePath, recordLearned } from '../../src/profile/index.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const EM_DASH = String.fromCharCode(0x2014);
@@ -266,7 +266,7 @@ test('every hostile sentence fed through the profile is refused or absent from t
     sentences: string[];
     tokenNames: string[];
   };
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-role-'));
+  const dir = tempDir('phosphor-role-');
   for (const sentence of [...hostile.sentences, ...hostile.tokenNames]) {
     assert.equal(recordLearned(dir, sentence, '2026-09-11').ok, false, `profile_learned accepted: ${sentence}`);
     fs.writeFileSync(

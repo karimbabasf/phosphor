@@ -11,7 +11,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +25,7 @@ import { ReasonError } from '../../src/rails/reasons.ts';
 import { NEAR_VERSION_PINNED } from '../../src/proposals/swap-reads.ts';
 import { MONEY } from '../../src/persona.ts';
 import { SELF_EVM, makeCtx, railThat } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const VVV = 'nep141:base-0xacfe6019ed1a7dc6f7b508c02d1b04ec88cc21bf.omft.near';
@@ -216,7 +216,7 @@ test('a coin not held with no NEAR version is no preview until it is named by th
 });
 
 test('swap_quote says a coin not held yet is a preview and every step is quoted first; propose_swap files a plan a step at a time', async () => {
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-leg-quotes-'));
+  const data = tempDir('phosphor-leg-quotes-');
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, 'src', 'mcp.ts')],

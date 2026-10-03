@@ -21,6 +21,7 @@ import type { Ctx } from './context.ts';
 import { amountUsdOf, didHeadline, triedHeadline } from '../view/basic.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { explorerName } from '../explorers.ts';
+import { COIN_KINDS } from '../proposals/coin-words.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
@@ -162,12 +163,14 @@ function feesOf(entry: TxEntry): number | null {
    proposal has been pruned from the store still has the rail's own line to show, and
    inventing a headline for a draft we cannot read would be the one thing worse than
    showing the raw one. */
-function headlineFor(proposal: Proposal | undefined, status: Receipt['status'], entry: TxEntry): string {
+function headlineFor(proposal: Proposal | undefined, status: Receipt['status'], entry: TxEntry, word: (symbol: string) => string): string {
   // An invite claim has no proposal: the code's key signed it, and it only ever lands.
   if (entry.kind === 'invite') return entry.received === null ? 'Invite' : `Invite: +${entry.received.amount} ${entry.received.symbol}`;
   if (proposal === undefined) return '';
   const amount = amountUsdOf(proposal.draft);
-  return status === 'executed' ? didHeadline(proposal.draft, amount) : triedHeadline(proposal.draft, amount);
+  // The coins in their words: a swap's draft can name one by its id.
+  const draft = proposal.draft.kind === 'swap' ? { ...proposal.draft, fromSymbol: word(proposal.draft.fromSymbol), toSymbol: word(proposal.draft.toSymbol) } : proposal.draft;
+  return status === 'executed' ? didHeadline(draft, amount) : triedHeadline(draft, amount);
 }
 
 function handleOf(proposal: Proposal | undefined, detail: string): string | null {
@@ -188,6 +191,8 @@ function refundedOf(proposal: Proposal | undefined): string | null {
 function buildReceipts(ctx: Ctx): Receipt[] {
   const proposals = new Map<string, Proposal>();
   for (const p of ctx.proposals.list()) proposals.set(p.id, p);
+  // What a person calls each coin, never the id a draft may name it by (src/proposals/coin-words.ts).
+  const wordOf = (entry: TxEntry, symbol: string): string => (COIN_KINDS.has(entry.kind) ? (ctx.proposals.coinWord?.(symbol) ?? symbol) : symbol);
 
   const out: Receipt[] = [];
   for (const entry of transactionsPayload(ctx).entries) {
@@ -210,16 +215,16 @@ function buildReceipts(ctx: Ctx): Receipt[] {
          written by the thing that actually did the work. It belongs on the opened receipt,
          not as the title of a row: basic.ts:570 already says why, that text is written for
          whoever is debugging this app and reads as noise to the person who owns the money. */
-      headline: headlineFor(proposal, status, entry),
+      headline: headlineFor(proposal, status, entry, (symbol) => wordOf(entry, symbol)),
       summary: entry.detail,
       fromChain: entry.place,
       toChain: entry.toPlace,
       amount: entry.sent?.amount ?? null,
-      symbol: entry.sent?.symbol ?? null,
+      symbol: entry.sent === null || entry.sent === undefined ? null : wordOf(entry, entry.sent.symbol),
       // An arrival is a fact only on a row that went through. A row the app cannot confirm
       // may carry the venue's settled figure, and printing it in green would be asserting
       // exactly what the row says the app cannot see.
-      received: status === 'executed' ? entry.received : null,
+      received: status === 'executed' && entry.received !== null ? { ...entry.received, symbol: wordOf(entry, entry.received.symbol) } : null,
       feesUsd: feesOf(entry),
       txids: entry.hashes.map((h) => ({ chain: h.place, hash: h.hash, url: h.url, explorer: explorerName(h.url) })),
       handle: handleOf(proposal, entry.detail),

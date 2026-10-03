@@ -11,14 +11,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 import { depositAddressProblem, depositPinsPath, intentsReceiveReport } from '../../src/http/wallet.ts';
 import { RECEIVE_NETWORKS, receiveNetworkByBridge, receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Any = Record<string, any>;
 
@@ -70,7 +69,7 @@ function row(report: Any, id: string): Any {
 }
 
 test('an answer that is not an address on the network is not shown, and the row says why', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const dir = tempDir('phosphor-pin-');
   const b = bridge((chain) => (chain === 'eth:1' ? '0x1234' : chain === 'sol:mainnet' ? 'not base58 at all!' : chain === 'btc:mainnet' ? 'send here: bc1q...' : shaped(chain)));
   try {
     const report = await intentsReceiveReport(ctxFor(dir).ctx);
@@ -91,7 +90,7 @@ test('an answer that is not an address on the network is not shown, and the row 
 });
 
 test('every network is asked twice, and two answers that differ draw nothing', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const dir = tempDir('phosphor-pin-');
   const b = bridge((chain, nth) => (chain === 'eth:1' && nth === 2 ? OTHER_EVM : shaped(chain)));
   try {
     const report = await intentsReceiveReport(ctxFor(dir).ctx);
@@ -107,7 +106,7 @@ test('every network is asked twice, and two answers that differ draw nothing', a
 });
 
 test('the address shown is pinned on disk per account and network, and a later answer that differs is drawn as no address with a sentence', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const dir = tempDir('phosphor-pin-');
   let swap = false;
   const b = bridge((chain) => (swap && chain === 'eth:1' ? OTHER_EVM : shaped(chain)));
   const { ctx, account } = ctxFor(dir);
@@ -149,7 +148,7 @@ test('the address shown is pinned on disk per account and network, and a later a
 });
 
 test('the pin survives a restart and never crosses accounts, and an unreadable pin file pins afresh', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const dir = tempDir('phosphor-pin-');
   const b = bridge((chain) => shaped(chain));
   try {
     const one = ctxFor(dir);
@@ -192,7 +191,7 @@ test('depositAddressProblem rules by the chain where it knows one and by plainne
 });
 
 test('a pin file rewritten by another process cannot put its address on the card: the mismatch draws no address', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pin-'));
+  const dir = tempDir('phosphor-pin-');
   const b = bridge((chain) => shaped(chain));
   const { ctx, account } = ctxFor(dir);
   try {

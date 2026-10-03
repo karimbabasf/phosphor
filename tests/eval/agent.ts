@@ -169,6 +169,7 @@ for (const [index, step] of scenario.script.entries()) {
     results.push(null);
     continue;
   }
+  if (step.holdMs !== undefined && step.holdMs > 0) await sleep(step.holdMs);
   calls += 1;
   const result = await callTool(client, step, args);
   try {

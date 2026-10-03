@@ -6,14 +6,15 @@
 // through playwright-core: Basic's Money in fold at each of its three steps (the network tiles
 // with one under the pointer, the token list with the acknowledgement ticked, the address),
 // the Vault tab, the Vault tab with the developer switch on, and the deposit card the Vault
-// tab opens, at 1280 x 800 and 2560 x 1440, into docs/screenshots/deposit/.
+// tab opens, at 1280 x 800 and 2560 x 1440, into scripts/scratch/deposit-proof/ (git ignores it).
 //
 // The address step is also shot with the watcher line in the seen and credited phases, frames put
 // on the window's store for the watch the backend started when the address was drawn.
 //
 // Fixture data only: the demo wallet on a temp directory, never the live one. Run:
 //   node scripts/deposit-proof.ts
-// PROOF_OUT names another directory for the pictures.
+// --docs writes the pictures into docs/screenshots/deposit/ instead, PROOF_OUT into any other
+// directory.
 // PROOF_LIVE_BRIDGE=1 skips the fixture and lets the demo backend ask the real bridge for the
 // demo wallet's addresses on every network it credits (read-only calls, thirty-odd of them),
 // which is the one way to see the whole network list drawn from real rows.
@@ -27,12 +28,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'deposit');
+const SHOTS = proofOut('deposit-proof', 'deposit');
 
 type Json = any;
 

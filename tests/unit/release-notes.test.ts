@@ -7,10 +7,10 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { checksumLines } from '../../scripts/release-manifest.ts';
 import { parseWorkflow } from './helpers/workflow-yaml.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const root = new URL('../../', import.meta.url);
 const workflow = parseWorkflow(fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8'));
@@ -19,7 +19,7 @@ const sign = (workflow.jobs as unknown as Record<string, { steps: { name?: strin
 test('every command in the release notes prints exactly the line the notes promise under it', () => {
   const run = sign.steps.find((step) => step.name === 'Write the release notes')?.run;
   assert.ok(run, 'the sign job writes the release notes');
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-notes-'));
+  const home = tempDir('phosphor-notes-');
   try {
     const version = '9.9.9';
     const downloads = path.join(home, 'Downloads');

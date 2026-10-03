@@ -8,14 +8,14 @@
 // under a path no sweep of this checkout matches.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tempDir } from '../unit/helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 export function lockdownCopy(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lockdown-'));
+  const dir = tempDir('phosphor-lockdown-');
   const copy = path.join(dir, 'driver.settings.json');
   fs.copyFileSync(path.join(ROOT, 'operator', 'driver.settings.json'), copy);
   return copy;

@@ -8,6 +8,7 @@
 // state.
 //
 // Run: node scripts/card-proof.ts [--scenario S29] [--port 4204] [--out <dir>]
+// --out defaults to scripts/scratch/card-proof-<width>/, which git ignores.
 // It stages the repo the way scripts/eval.ts does, boots a demo app on the port with a
 // throwaway data dir, and quits everything it started. playwright-core is not a dependency of
 // this repo: point PLAYWRIGHT_CORE at a copy (the npx cache has one) and it uses the headless
@@ -21,6 +22,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 import { defaultPolicy } from '../src/policy/file.ts';
 import { renderSentences } from '../src/policy/render.ts';
 import { venueAllowlist } from '../src/rails/index.ts';
@@ -39,7 +41,7 @@ const SCENARIO = flag('--scenario', 'S29');
 // at about 400, the narrow one (vault State 2026-09-18).
 const WIDTH = Number(flag('--width', '1280'));
 const PORT = Number(flag('--port', process.env.PHOSPHOR_PORT ?? '4204'));
-const OUT = path.resolve(flag('--out', path.join(ROOT, 'docs', 'superpowers', 'prompts', 'ready-for-people', 'evidence-d', `card-proof-${WIDTH}`)));
+const OUT = path.resolve(flag('--out', proofOut(`card-proof-${WIDTH}`)));
 const PLAYWRIGHT_CORE = process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/705bc6b22212b352/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
 const POLL_MS = 50;

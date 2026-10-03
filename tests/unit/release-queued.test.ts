@@ -13,8 +13,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { LedgerSnapshot, Proposal, RiskRow } from '../../src/types.ts';
@@ -24,6 +22,7 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { NO_RAILS, releaseQueued } from '../../src/proposals/lifecycle.ts';
 import type { PCtx } from '../../src/proposals/lifecycle.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -56,7 +55,7 @@ function queued(usd: number, createdAt: string): Proposal {
    ends in a chain send, and the window in which a second release can start is exactly that
    wait. It records every id it was handed, so a row landed twice is visible as a duplicate. */
 function setup() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-release-'));
+  const dataDir = tempDir('phosphor-release-');
   const policy = defaultPolicy();
   policy.sentences = renderSentences(policy);
   savePolicy(dataDir, policy);

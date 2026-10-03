@@ -3,12 +3,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { enabledSkills, listSkills, readSkill, skillsInstruction } from '../../src/skills.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function fixture(config: unknown, files: Record<string, string>): string {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-skills-'));
+  const root = tempDir('phosphor-skills-');
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify(config));
   fs.mkdirSync(path.join(root, 'skills'), { recursive: true });
   for (const [name, body] of Object.entries(files)) {
@@ -71,7 +71,7 @@ test('a non-array skills value is no skills, not a crash', () => {
 });
 
 test('an unparseable config leaves the other file deciding', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-skills-'));
+  const root = tempDir('phosphor-skills-');
   fs.writeFileSync(path.join(root, 'config.json'), '{ not json');
   fs.writeFileSync(path.join(root, 'config.local.json'), JSON.stringify({ skills: ['ok'] }));
   fs.mkdirSync(path.join(root, 'skills'));
@@ -80,7 +80,7 @@ test('an unparseable config leaves the other file deciding', () => {
 });
 
 test('no skills directory at all is an empty list, not a throw', () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-skills-'));
+  const root = tempDir('phosphor-skills-');
   fs.writeFileSync(path.join(root, 'config.json'), JSON.stringify({ skills: ['ghost'] }));
   assert.deepEqual(listSkills(root), []);
   assert.equal(readSkill(root, 'ghost'), null);

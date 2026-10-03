@@ -1400,8 +1400,8 @@ mod tests {
             eprintln!("no node on PATH, so the launch probe cannot run here");
             return;
         };
-        let root = std::env::temp_dir().join(format!("phosphor-launch-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-launch");
+        let root = scratch.0.clone();
         let payload = root.join("payload");
         std::fs::create_dir_all(payload.join("src")).unwrap();
         std::fs::write(payload.join("package.json"), "{\"type\":\"module\"}\n").unwrap();
@@ -1452,7 +1452,6 @@ mod tests {
             .output()
             .expect("start the probe through backend_command");
         let canary_ran = mark.exists();
-        let _ = std::fs::remove_dir_all(&root);
         let stderr = String::from_utf8_lossy(&out.stderr);
         assert!(out.status.success(), "the probe exited badly: {stderr}");
         assert!(!stderr.contains("Debugger listening"), "SIGUSR1 opened an inspector: {stderr}");
@@ -1533,8 +1532,8 @@ mod tests {
             node.is_file() && payload.join("src").join("main.ts").is_file(),
             "npm run bundle stages the runtime and the payload this test boots"
         );
-        let root = std::env::temp_dir().join(format!("phosphor-canary-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-canary");
+        let root = scratch.0.clone();
         std::fs::create_dir_all(root.join("home")).unwrap();
         let mark = root.join("node-options-ran");
         let canary = root.join("canary.cjs");
@@ -1567,7 +1566,6 @@ mod tests {
             .output()
             .expect("start this test binary as the shell");
         let canary_ran = mark.exists();
-        let _ = std::fs::remove_dir_all(&root);
         // The backend's own output came through the shell's, as it does in the app.
         let said = format!("{}{}", String::from_utf8_lossy(&shell.stdout), String::from_utf8_lossy(&shell.stderr));
         assert!(shell.status.success(), "the shell's half failed:\n{said}");
@@ -1599,8 +1597,8 @@ mod tests {
     #[test]
     fn a_changed_an_added_a_removed_or_a_linked_payload_file_is_never_started() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("phosphor-altered-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-altered");
+        let root = scratch.0.clone();
         std::fs::create_dir_all(&root).unwrap();
         let copy = payload_copy(&root);
         let mark = root.join("started");
@@ -1667,7 +1665,6 @@ mod tests {
         }
         std::thread::sleep(Duration::from_millis(200));
         assert!(!mark.exists(), "the runtime was given the handshake and ran on");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Audit 2026-10-01, L16: the launch hand-over trusted any app declaring the bundle identifier.
@@ -1705,8 +1702,8 @@ mod tests {
     #[test]
     fn the_runtime_is_held_to_the_shells_team_as_the_kernel_runs_it() {
         let staged = Path::new(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("node-{}", env!("TARGET_TRIPLE")));
-        let root = std::env::temp_dir().join(format!("phosphor-runtime-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-runtime");
+        let root = scratch.0.clone();
         std::fs::create_dir_all(&root).unwrap();
         let adhoc = root.join("node");
         std::fs::copy(&staged, &adhoc).unwrap();
@@ -1749,7 +1746,6 @@ mod tests {
             }
             None => eprintln!("the staged runtime has no Team ID (not an official Node build): only the refusals were checked"),
         }
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// Audit 2026-10-01, HIGH: the respawn handed the new backend the boot's own handshake, so a
@@ -1759,8 +1755,8 @@ mod tests {
     #[test]
     fn no_two_spawns_ever_hand_a_backend_the_same_secrets() {
         use std::os::unix::fs::PermissionsExt;
-        let root = std::env::temp_dir().join(format!("phosphor-fresh-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-fresh");
+        let root = scratch.0.clone();
         std::fs::create_dir_all(root.join("data")).unwrap();
         let copy = payload_copy(&root);
         // A runtime that keeps what it was handed, where the cleared environment still points.
@@ -1783,7 +1779,6 @@ mod tests {
         for (line, name) in ["token", "nonce", "seat", "transport", "relay"].iter().enumerate() {
             assert_ne!(first[line], second[line], "the {name} was handed to two backends");
         }
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -1817,8 +1812,8 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn two_spellings_of_one_bundle_are_one_bundle_and_two_bundles_are_not() {
-        let root = std::env::temp_dir().join(format!("phosphor-bundles-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-bundles");
+        let root = scratch.0.clone();
         let (a, b, plain) = (root.join("A.app"), root.join("B.app"), root.join("NotABundle"));
         for dir in [&a, &b, &plain] {
             std::fs::create_dir_all(dir).unwrap();
@@ -1832,7 +1827,6 @@ mod tests {
         assert_eq!(one_bundle(&a, &b), None, "one copy's runtime running another copy's payload is not spawn_backend's");
         assert_eq!(one_bundle(&plain, &plain), None, "not an app bundle");
         assert_eq!(one_bundle(&root.join("Gone.app"), &root.join("Gone.app")), None);
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// A stand-in for an installed copy of the app, in a temp directory of its own: a bundle that

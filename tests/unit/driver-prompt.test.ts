@@ -10,13 +10,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { buildArgv, createDriver } from '../../src/driver.ts';
 import type { DriverEvent } from '../../src/driver.ts';
 import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // A copy outside this checkout: see tests/fixtures/lockdown-copy.ts.
 const SETTINGS = lockdownCopy();
@@ -39,7 +39,7 @@ type Run = { events: DriverEvent[]; turns: string[]; argv: string; home: string;
 
 // The real spawn, the real stdin write and the real parser, over a stand-in binary.
 async function drive(opts: { systemPrompt?: string; sends: string[]; notes?: string[] }): Promise<Run> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
+  const dir = tempDir('phosphor-driver-prompt-');
   const home = path.join(dir, 'agents', 'claude');
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = dir;
@@ -148,7 +148,7 @@ test('a tool the API ran inside Claude\'s reply ends the session', async () => {
 });
 
 test('a message sent right after a stop is its own turn: the stopped answer\'s late result never ends it', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
+  const dir = tempDir('phosphor-driver-prompt-');
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   const events: DriverEvent[] = [];
@@ -215,7 +215,7 @@ test('Bash, Write and another server\'s tool still end the session', async () =>
 });
 
 test('a persona file is gone when the agent cannot even start', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-prompt-'));
+  const dir = tempDir('phosphor-driver-prompt-');
   const home = path.join(dir, 'agents', 'claude');
   // A file that exists and cannot be run: the spawn fails with EACCES and never exits.
   const bin = path.join(dir, 'claude');

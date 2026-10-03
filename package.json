@@ -1,6 +1,6 @@
 {
   "name": "phosphor",
-  "version": "0.10.13",
+  "version": "0.10.14",
   "private": true,
   "type": "module",
   "description": "Phosphor: local stablecoin control app driven by any MCP agent. The app is the car, the agent is the person with the key.",
@@ -26,7 +26,7 @@
     "usage": "node scripts/usage.ts",
     "invite": "node scripts/invite.ts",
     "latency-proof": "node scripts/latency-proof.ts",
-    "test": "node --test tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts",
+    "test": "node scripts/run-tests.ts tests/unit/*.test.ts tests/injection.test.ts tests/lockdown.test.ts",
     "e2e": "node scripts/e2e.ts",
     "attack": "node scripts/attack.ts",
     "eval": "node scripts/eval.ts",
@@ -44,13 +44,13 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.17.0",
-    "viem": "^2.56.8",
+    "@modelcontextprotocol/sdk": "^1.31.0",
+    "viem": "^2.57.1",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.11.4",
-    "@types/node": "^26.6.2",
+    "@tauri-apps/cli": "^2.12.0",
+    "@types/node": "^26.6.3",
     "typescript": "^7.0.2"
   }
 }

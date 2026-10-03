@@ -13,8 +13,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -28,6 +26,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import type { IntentsRead } from '../../src/ledger/intents.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // Fixed, unlike the fixture in security-hardening.test.ts, which stamps a fresh timestamp on
 // every call. A moving timestamp would change the bytes on every request and make an ETag
@@ -44,7 +43,7 @@ function snapshot(): LedgerSnapshot {
 }
 
 async function boot(): Promise<{ url: string; close: () => Promise<void> }> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-etag-'));
+  const dataDir = tempDir('phosphor-etag-');
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,

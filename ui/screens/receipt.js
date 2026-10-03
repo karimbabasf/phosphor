@@ -134,7 +134,7 @@
   }
 
   function refundedLine(receipt) {
-    var symbol = receipt.symbol ? ' ' + String(receipt.symbol) : '';
+    var symbol = nameOf(receipt.symbol) ? ' ' + nameOf(receipt.symbol) : '';
     return 'Refunded ' + String(receipt.refunded) + symbol;
   }
 
@@ -186,10 +186,18 @@
     }).catch(function () { /* the hash is on screen to read */ });
   }
 
+  /* A coin's name, or nothing for an asset id (the rule is ui/screens/cards.js nameOf): a
+     receipt for a draft that named its coin by 1Click's id says the amount and draws no mark. */
+  function nameOf(symbol) {
+    var s = String(symbol === null || symbol === undefined ? '' : symbol).trim();
+    if (!s || s.indexOf(':') !== -1 || /^[0-9a-f]{64}$/i.test(s) || /^unlisted-[0-9a-f]{8}$/i.test(s)) return '';
+    return s;
+  }
+
   function leg(dir, amount, symbol, muted) {
     var node = dom.el('span', 'receipt-leg');
     node.dataset.dir = dir;
-    node.appendChild(logo(symbol, 32));
+    if (symbol) node.appendChild(logo(symbol, 32));
     node.appendChild(dom.el('span', 'receipt-amount num' + (muted ? ' dim' : ''), amount));
     return node;
   }
@@ -204,16 +212,17 @@
     var wrap = dom.el('div', 'receipt-legs');
     var done = receipt.status === 'executed';
     var nothing = nothingLeft(receipt);
-    var symbol = receipt.symbol ? String(receipt.symbol) : '';
+    var symbol = nameOf(receipt.symbol);
     var left = typeof receipt.amount === 'number';
     if (left) {
       wrap.appendChild(leg('out', (done ? '-' : '') + dom.qty(receipt.amount) + (symbol ? ' ' + symbol : ''), symbol, nothing));
     }
     var got = receipt.received;
-    var arrived = done && got && typeof got.amount === 'number' && got.symbol;
+    var gotSymbol = got ? nameOf(got.symbol) : '';
+    var arrived = done && got && typeof got.amount === 'number' && gotSymbol;
     if (arrived) {
       wrap.appendChild(icon('swap', 'receipt-arrow'));
-      wrap.appendChild(leg('in', '+' + dom.qty(got.amount) + ' ' + String(got.symbol), String(got.symbol), false));
+      wrap.appendChild(leg('in', '+' + dom.qty(got.amount) + ' ' + gotSymbol, gotSymbol, false));
     } else if (done && left && receipt.toChain && receipt.toChain !== receipt.fromChain) {
       wrap.appendChild(icon('swap', 'receipt-arrow'));
       wrap.appendChild(dom.el('span', 'receipt-leg receipt-leg-place', 'to ' + chainName(receipt.toChain)));

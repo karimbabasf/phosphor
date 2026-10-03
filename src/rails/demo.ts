@@ -205,6 +205,7 @@ export function demoRails(deps: DemoRailDeps): RailRegistry {
 export function demoSwapLookup(): SwapLookup {
   return {
     tokens: async () => demoTokenList(),
+    listed: () => demoTokenList(),
     balance: async (_account, assetId) => heldBaseOf(assetId),
     activity: async (account, limit) => demoActivity(account, limit),
   };

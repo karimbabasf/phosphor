@@ -7,14 +7,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit, hashLine, verifyChain, readTip, TIP_FILENAME } from '../../src/audit.ts';
 import { atomicWriteJson } from '../../src/fsatomic.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function seeded(count = 6): { dir: string; file: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chain-hard-'));
+  const dir = tempDir('phosphor-chain-hard-');
   const audit = createAudit(dir);
   for (let i = 0; i < count; i += 1) audit.append('tool_call', `line ${i}`, { i });
   audit.flushTip();
@@ -180,7 +180,7 @@ test('a boot on a truncated log with its anchor deleted stays unanchored after t
 });
 
 test('a fresh install has nothing to launder and reports anchored once it has written', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chain-fresh-'));
+  const dir = tempDir('phosphor-chain-fresh-');
   const audit = createAudit(dir);
   audit.append('app_start', 'first ever line');
   audit.flushTip();

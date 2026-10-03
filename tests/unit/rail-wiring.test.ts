@@ -53,6 +53,7 @@ import { DEFAULT_SWAP_RAIL, loadConfig, swapRailOf } from '../../src/config.ts';
 import { ONECLICK_COUNTERPARTY } from '../../src/intents.ts';
 import { evaluate } from '../../src/policy/engine.ts';
 import { classify } from '../../src/composition.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -132,7 +133,7 @@ async function landed(h: Harness, reply: Promise<Proposal>): Promise<Proposal> {
 
 // intents: null means the ledger has no read at all; omitted means the default holdings.
 function setup(over: { policy?: Policy; rails?: Spy; intents?: IntentsRead | null; cfg?: Partial<AppConfig> } = {}): Harness {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-wiring-'));
+  const dataDir = tempDir('phosphor-rail-wiring-');
   const cfg: AppConfig = {
     mode: 'live', // demo mode owns no rails at all; that is its own test below
     port: 4177,
@@ -645,7 +646,7 @@ test('proposeSwap stamps the venue the switch names, and the verifier as the cou
 });
 
 test('the config file accepts swap.rail as relay or oneclick and refuses anything else', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-swap-rail-'));
+  const dir = tempDir('phosphor-swap-rail-');
   const load = (swap: unknown): AppConfig => {
     fs.writeFileSync(path.join(dir, 'config.json'), JSON.stringify({ mode: 'live', port: 4177, addresses: {}, dataDir: 'state', ...(swap === undefined ? {} : { swap }) }));
     const saved = process.env.PHOSPHOR_KEYS;
@@ -677,7 +678,7 @@ test('demo mode owns the demo rails and no live one, and a service with no regis
   }
 
   // The proposal service default is the other shape: no registry means no rail can execute.
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-rail-norails-'));
+  const dataDir = tempDir('phosphor-rail-norails-');
   savePolicy(dataDir, seededPolicy());
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const svc = createProposalService({

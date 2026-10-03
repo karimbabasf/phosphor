@@ -10,8 +10,6 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { AppConfig } from '../../src/types.ts';
@@ -19,6 +17,7 @@ import { createLedger } from '../../src/ledger/index.ts';
 import { createDepositWatch } from '../../src/vault/watch.ts';
 import { createKeystore, useKeystore, walletAddresses } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const VECTOR_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
@@ -102,7 +101,7 @@ test.afterEach(() => {
 });
 
 test('a wallet created after the ledger was built is read on the next refresh, not the next restart', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-ledger-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-ledger-'), 'keys.json');
   // Boot order as in src/main.ts: the empty keystore is registered, then the ledger is built.
   const store = createKeystore({ keysPath, kdf: fast });
   useKeystore(store);
@@ -127,7 +126,7 @@ test('a wallet created after the ledger was built is read on the next refresh, n
 });
 
 test('the deposit watch credits a deposit for a wallet created after the ledger was built', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-ledger-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-ledger-'), 'keys.json');
   const store = createKeystore({ keysPath, kdf: fast });
   useKeystore(store);
   const world = fakeWorld();

@@ -12,16 +12,16 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_IDLE_MINUTES, createVaultPrefs } from '../../src/vault/prefs.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-vault-prefs-'));
+  return tempDir('phosphor-vault-prefs-');
 }
 
 function onDisk(dir: string): Record<string, unknown> {
