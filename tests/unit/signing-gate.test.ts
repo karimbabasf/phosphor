@@ -115,7 +115,10 @@ test('the team guard names the one that moved: certificate, codesign\'s team, or
   assert.match(teamProblems(p, { ...signer, leaf: null, team: null }).join('\n'), /signed the vault service is no team's/);
 });
 
-// A real process for each answer the smoke exec can get.
+/* A real process for each answer the smoke exec can get, except the abort itself: a process that
+   aborts leaves a crash report in ~/Library/Logs/DiagnosticReports on every run, and xpc_main's
+   abort, the one the gate wants, writes none. A signal death is read the same way for every signal,
+   so SIGKILL holds the arithmetic, and the 134 answer is held as a value. */
 function binary(dir: string, name: string, body: string): string {
   const source = path.join(dir, `${name}.c`);
   fs.writeFileSync(source, `#include <signal.h>\n#include <stdlib.h>\n#include <unistd.h>\nint main(void) { ${body} }\n`);
@@ -126,7 +129,6 @@ function binary(dir: string, name: string, body: string): string {
 
 test('the smoke exec reads 134 as started, 137 as refused, anything else as not an XPC service', { skip: !tooling && 'needs macOS and cc' }, () => {
   const dir = tempDir('signing-gate-smoke-');
-  assert.deepEqual(smokeExec(binary(dir, 'aborts', 'abort();')).code, 134);
   assert.equal(smokeProblem({ code: 134, stderr: 'An XPC Service cannot be run directly.' }), null);
   assert.equal(smokeExec(binary(dir, 'killed', 'kill(getpid(), SIGKILL); return 0;')).code, 137);
   assert.match(String(smokeProblem({ code: 137, stderr: '' })), /AMFI refused the vault service: run by hand it was killed before main, 137/);
