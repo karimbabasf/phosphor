@@ -157,6 +157,9 @@ const REFUSALS: Record<string, string> = {
   bind_busy: 'Phosphor is already binding this wallet.',
   touch_waiting: 'A move is waiting for your Touch ID. Finish it, then try again.',
   install_pending: 'Phosphor saved your wallet but could not put the file in place yet. It finishes the next time your wallet opens, and nothing moved.',
+  // Every new key file (src/http/custody.ts): the enclave opened nothing it just made, or the disk refused it.
+  proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
+  write_failed: 'Phosphor could not write the wallet file on this Mac, so nothing changed.',
 };
 
 export function refusal(code: string, retryInSec?: number): JsonBody {

@@ -749,8 +749,77 @@ test('after the first open of the bound file, the copies this app left are shred
   }
 });
 
+test('a new file the disk will not take is finished later when committed, and is gone when it was not', { skip }, async () => {
+  let gate: Promise<void> | null = null;
+  let release: () => void = () => {};
+  const b = await boot({
+    hook: async (r) => {
+      if (r.op === 'unwrap' && r.reason === CREATE_REASON && gate !== null) await gate;
+      return { kind: 'run' };
+    },
+  });
+  try {
+    const hold = (): void => {
+      gate = new Promise<void>((r) => {
+        release = r;
+      });
+    };
+    // A build with no keychain home: nothing is committed, so a file that cannot be put in place is nothing.
+    b.double.team = '';
+    await b.probe();
+    hold();
+    let making = b.post('/api/vault/create');
+    while (!fs.existsSync(b.staged)) await new Promise((r) => setTimeout(r, 10));
+    fs.mkdirSync(b.live);
+    release();
+    let made = await making;
+    assert.equal(made.json.code, 'write_failed', JSON.stringify(made.json));
+    assert.equal(made.json.error, refusal('write_failed').error);
+    assert.equal(fs.existsSync(b.staged), false);
+    fs.rmdirSync(b.live);
+
+    // A Developer ID build: the commit landed, so the staged file is the wallet, and the next step puts it in place.
+    b.double.team = TEAM;
+    await b.probe();
+    hold();
+    making = b.post('/api/vault/create');
+    while (!fs.existsSync(b.staged)) await new Promise((r) => setTimeout(r, 10));
+    fs.mkdirSync(b.live);
+    release();
+    made = await making;
+    assert.equal(made.json.code, 'install_pending', JSON.stringify(made.json));
+    assert.equal(fs.existsSync(b.staged), true);
+    assert.equal(b.double.state().markers.length, 1);
+    fs.rmdirSync(b.live);
+    gate = null;
+    assert.equal((await b.post('/api/vault/create')).status, 409, 'the committed wallet was put in place first, so there is one');
+    assert.equal(fs.existsSync(b.staged), false);
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true);
+  } finally {
+    release();
+    await b.close();
+  }
+});
+
+test('a staged file the enclave will not open is refused as such, and nothing changes', { skip }, async () => {
+  const b = await boot({ hook: (r) => (r.op === 'unwrap' && r.reason === BIND_REASON ? { kind: 'answer', answer: { ok: false, error: 'crypto_failed', message: 'x' } } : { kind: 'run' }) });
+  try {
+    await blobWallet(b);
+    b.prefs.markBackedUp();
+    const before = fs.readFileSync(b.live, 'utf8');
+    const got = await b.post('/api/vault/bind');
+    assert.equal(got.json.code, 'proof_failed');
+    assert.equal(got.json.error, refusal('proof_failed').error);
+    assert.equal(fs.readFileSync(b.live, 'utf8'), before);
+    assert.equal(fs.existsSync(b.staged), false);
+    assert.equal(b.double.state().markers.length, 0);
+  } finally {
+    await b.close();
+  }
+});
+
 test('every refusal the bind can give is said in plain words', () => {
-  for (const code of ['wallet_locked', 'not_enclave', 'no_keychain_home', 'bind_busy', 'touch_waiting', 'install_pending', 'not_backed_up', 'keychain_unavailable', 'user_cancel']) {
+  for (const code of ['wallet_locked', 'not_enclave', 'no_keychain_home', 'bind_busy', 'touch_waiting', 'install_pending', 'proof_failed', 'write_failed', 'no_wallet', 'not_backed_up', 'keychain_unavailable', 'user_cancel']) {
     const said = String(refusal(code).error);
     assert.notEqual(said, 'That did not work.', code);
     assert.ok(!/marker|\bpin\b|\btag\b|group|commit|sweep|entitlement|stag(ed|ing)|blob|-\d{4,5}/i.test(said), `${code}: ${said}`);

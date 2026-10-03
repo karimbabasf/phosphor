@@ -63,7 +63,8 @@ type SettleDeps = { keystore: Keystore; vault: VaultRelay; audit: Audit; announc
 export async function settleStaged(deps: SettleDeps): Promise<Settled> {
   const found = deps.keystore.stagedOnDisk();
   if (found === null) return 'none';
-  // Never delete what cannot be read. It cannot be a committed file this app could put in place.
+  // Never deleted here: it cannot be a committed file this app could put in place, and the next
+  // staged file the person starts writes over it.
   if (found === 'unreadable') return 'unreadable';
   if (found.installed) {
     deps.keystore.dropStaged();
@@ -121,15 +122,16 @@ export async function proveAndInstall(ctx: Ctx, staged: StagedFile, reason: stri
   if (!answer.ok || answer.op !== 'unwrap') {
     ctx.keystore.dropStaged();
     if (answer.ok) return { refused: refusal('garbled') };
-    return { refused: answer.error === 'crypto_failed' ? refusal('damaged') : enclaveRefusal(answer) };
+    return { refused: answer.error === 'crypto_failed' ? refusal('proof_failed') : enclaveRefusal(answer) };
   }
   const dek = answer.dek;
   if (!ctx.keystore.proveStaged(staged, dek)) {
     dek.fill(0);
     ctx.keystore.dropStaged();
-    return { refused: refusal('damaged') };
+    return { refused: refusal('proof_failed') };
   }
-  if (staged.request.keyBlob.startsWith('keychain:') && keychainHome(ctx.vault)) {
+  const commits = staged.request.keyBlob.startsWith('keychain:') && keychainHome(ctx.vault);
+  if (commits) {
     const committed = await commitStaged(ctx, staged);
     if (committed.landed !== 'yes') {
       dek.fill(0);
@@ -138,8 +140,13 @@ export async function proveAndInstall(ctx: Ctx, staged: StagedFile, reason: stri
     }
   }
   const put = ctx.keystore.installStaged(staged, dek, after);
-  // The marker is written and the staged file is the committed one: the next start puts it in place.
-  if (!put.ok) return { refused: refusal('install_pending') };
+  if (!put.ok) {
+    // Committed, the staged file is the one that opens, and the next start puts it in place. Not
+    // committed (a build with no keychain home), it is nothing yet, and goes.
+    if (commits) return { refused: refusal('install_pending') };
+    ctx.keystore.dropStaged();
+    return { refused: refusal('write_failed') };
+  }
   return { ok: true };
 }
 
@@ -233,6 +240,7 @@ export async function bindWallet(ctx: Ctx, backedUp: () => boolean): Promise<Jso
 
 async function bindNow(ctx: Ctx, backedUp: () => boolean): Promise<JsonBody> {
   if ((await settleFor(ctx)) === 'undecided') return refusal('keychain_unavailable');
+  if (ctx.keystore.custody() === null) return refusal('no_wallet');
   if (ctx.keystore.custody() !== 'secure-enclave') return refusal('not_enclave');
   if (!ctx.vault.enclaveReady()) return refusal('enclave_unavailable');
   if (!keychainHome(ctx.vault)) return refusal('no_keychain_home');
