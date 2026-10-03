@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const PLIST = path.join(ROOT, 'src-tauri/entitlements.plist');
+const NODE_PLIST = path.join(ROOT, 'src-tauri/entitlements-node.plist');
 const CONFIG = path.join(ROOT, 'src-tauri/tauri.conf.json');
 
 type MacConfig = {
@@ -32,34 +33,44 @@ function macConfig(): MacConfig {
   return raw.bundle?.macOS ?? {};
 }
 
-function plist(): string {
-  return fs.readFileSync(PLIST, 'utf8');
+function plist(file = PLIST): string {
+  return fs.readFileSync(file, 'utf8');
 }
 
 // The plist is XML with a long comment in it. Reading a key's value means reading the <dict>,
 // not the prose above it, or the note explaining why a key might not be needed would be parsed
 // as the key itself.
-function entitlement(key: string): boolean | null {
-  const body = plist().slice(plist().indexOf('<dict>'));
+function entitlement(key: string, file = PLIST): boolean | null {
+  const body = plist(file).slice(plist(file).indexOf('<dict>'));
   const match = new RegExp(`<key>${key}</key>\\s*<(true|false)/>`).exec(body);
   return match === null ? null : match[1] === 'true';
 }
 
-test('the bundle points at the entitlements file and asks for the hardened runtime', () => {
+function keys(file: string): string[] {
+  const body = plist(file).slice(plist(file).indexOf('<dict>'));
+  return [...body.matchAll(/<key>([^<]+)<\/key>/g)].map((m) => m[1]);
+}
+
+/* Tauri's ad-hoc pass signs the shell and every sidecar with the one file the config names, so
+   the config names node's: an ad-hoc build's backend has to start too. The signed build gives each
+   binary its own file (scripts/notarize-mac.sh), and nothing ad hoc ships. */
+test('the bundle points the ad-hoc pass at node\'s file and asks for the hardened runtime', () => {
   const mac = macConfig();
-  assert.equal(mac.entitlements, 'entitlements.plist');
+  assert.equal(mac.entitlements, 'entitlements-node.plist');
   assert.equal(mac.hardenedRuntime, true);
-  assert.ok(fs.existsSync(PLIST), 'and the file it points at exists');
+  assert.ok(fs.existsSync(NODE_PLIST) && fs.existsSync(PLIST), 'and both files exist');
 });
 
-test('the entitlements file is valid plist and parses as one dict', () => {
-  const raw = plist();
-  assert.match(raw, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
-  assert.match(raw, /<!DOCTYPE plist PUBLIC "-\/\/Apple\/\/DTD PLIST 1\.0\/\/EN"/);
-  assert.match(raw, /<plist version="1\.0">/);
-  const body = raw.slice(raw.indexOf('<dict>'));
-  assert.equal((body.match(/<dict>/g) ?? []).length, 1);
-  assert.equal((body.match(/<key>/g) ?? []).length, (body.match(/<(true|false)\/>/g) ?? []).length);
+test('the entitlements files are valid plists and parse as one dict each', () => {
+  for (const file of [PLIST, NODE_PLIST]) {
+    const raw = plist(file);
+    assert.match(raw, /^<\?xml version="1\.0" encoding="UTF-8"\?>/);
+    assert.match(raw, /<!DOCTYPE plist PUBLIC "-\/\/Apple\/\/DTD PLIST 1\.0\/\/EN"/);
+    assert.match(raw, /<plist version="1\.0">/);
+    const body = raw.slice(raw.indexOf('<dict>'));
+    assert.equal((body.match(/<dict>/g) ?? []).length, 1);
+    assert.equal((body.match(/<key>/g) ?? []).length, (body.match(/<(true|false)\/>/g) ?? []).length);
+  }
 });
 
 /* THE assertion in this file. get-task-allow is what lets a debugger attach to the process and
@@ -70,28 +81,42 @@ test('the entitlements file is valid plist and parses as one dict', () => {
    name. Naming it in prose is how the file tells a reader what never to add, so the name has to
    be allowed; what must not appear is the thing somebody could uncomment, and a pasted
    entitlement is always a key element. */
-test('nothing in this file lets a debugger attach', () => {
-  assert.doesNotMatch(
-    plist(),
-    /<key>[^<]*get-task-allow[^<]*<\/key>/,
-    'a get-task-allow key must not appear, not even inside a comment: it is one uncomment from live',
-  );
+test('nothing in either file lets a debugger attach', () => {
+  for (const file of [PLIST, NODE_PLIST]) {
+    assert.doesNotMatch(
+      plist(file),
+      /<key>[^<]*get-task-allow[^<]*<\/key>/,
+      'a get-task-allow key must not appear, not even inside a comment: it is one uncomment from live',
+    );
+  }
   assert.equal(entitlement('com.apple.security.cs.debugger'), false);
 });
 
-/* allow-jit was <false/> here and this test asserted it, and between them they meant every signed
-   build shipped a working window over a dead backend. V8 cannot start without it: the node child
-   died instantly with "Failed to reserve virtual memory for CodeRange", and because the shell's
-   window opens either way, the app looked installed. Settled by building it, 2026-09-09.
+/* allow-jit was <false/> here once and this test asserted it, and between them they meant every
+   signed build shipped a working window over a dead backend. V8 cannot start without it: the node
+   child died instantly with "Failed to reserve virtual memory for CodeRange", and because the
+   shell's window opens either way, the app looked installed. Settled by building it, 2026-09-09.
 
-   It is not a hole in what this file protects. allow-jit lets THIS process map its OWN memory
-   executable through MAP_JIT and grants nothing to any other process; the control that stops
-   another process reading an unlocked key out of this heap is the absence of get-task-allow,
-   asserted above and untouched. The blanket version stays denied, because V8 uses MAP_JIT
-   properly and does not need it. */
-test('the runtime allows this process to jit, and nothing broader', () => {
-  assert.equal(entitlement('com.apple.security.cs.allow-jit'), true, 'node cannot start without it');
+   Then it was <true/> here, on the shell and node alike, because one file signed both. Only node
+   runs V8, so allow-jit is node's file alone now, and the shell's has none. allow-jit lets node map
+   its OWN memory executable through MAP_JIT and grants nothing to any other process; the control
+   that stops another process reading an unlocked key out of that heap is the absence of
+   get-task-allow, asserted above. The blanket version stays denied everywhere, because V8 uses
+   MAP_JIT properly and does not need it. */
+test('only node may jit, and nothing broader anywhere', () => {
+  assert.equal(entitlement('com.apple.security.cs.allow-jit'), null, 'the shell runs no V8: its web view runs in WebKit\'s own process');
   assert.equal(entitlement('com.apple.security.cs.allow-unsigned-executable-memory'), false);
+  assert.deepEqual(keys(NODE_PLIST), ['com.apple.security.cs.allow-jit'], 'node gets allow-jit and nothing else');
+  assert.equal(entitlement('com.apple.security.cs.allow-jit', NODE_PLIST), true, 'node cannot start without it');
+});
+
+/* Restricted entitlements are the ones only a provisioning profile can grant; the shell and node
+   ship without a profile, so AMFI would kill either one at launch for claiming one. The vault
+   service's three are made from its profile at signing time (scripts/signing-gate.ts). */
+test('neither file claims an entitlement only a provisioning profile can grant', () => {
+  for (const file of [PLIST, NODE_PLIST]) {
+    for (const key of keys(file)) assert.ok(key.startsWith('com.apple.security.'), `${path.basename(file)} claims ${key}`);
+  }
 });
 
 /* This was the one entitlement here that weakened the runtime, and it was carried as an open
@@ -118,10 +143,12 @@ test('the library-validation opt-out is retired and stays retired', () => {
    "Failed to parse entitlements: AMFIUnserializeXML: syntax error near line 31". A command-line
    flag written out longhand in the comment cost exactly that, and `plutil -lint` called the file
    OK the whole time, so the local check disagreed with the build. */
-test('the comment carries no double hyphen, which codesign refuses to parse', () => {
-  const raw = plist();
-  const comment = raw.slice(raw.indexOf('<!--') + 4, raw.indexOf('-->'));
-  assert.doesNotMatch(comment, /--/, 'a double hyphen inside the comment fails codesign, not plutil');
+test('the comments carry no double hyphen, which codesign refuses to parse', () => {
+  for (const file of [PLIST, NODE_PLIST]) {
+    const raw = plist(file);
+    const comment = raw.slice(raw.indexOf('<!--') + 4, raw.indexOf('-->'));
+    assert.doesNotMatch(comment, /--/, `${path.basename(file)}: a double hyphen inside the comment fails codesign, not plutil`);
+  }
 });
 
 /* Ad-hoc, so a local build still produces something that runs, and Tauri builds ad-hoc on a

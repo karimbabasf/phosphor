@@ -15,12 +15,13 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
-import { checkApp, entitlementProblem, expectedEntitlements, payloadProblems, shellCarries } from '../../scripts/release-check.ts';
+import { checkApp, entitlementProblem, expectedEntitlements, payloadProblems, shellCarries, tauriEntitlements } from '../../scripts/release-check.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
-const COMMITTED = path.join(ROOT, 'src-tauri', 'entitlements.plist');
-const APP_ENTITLEMENTS = { 'com.apple.security.cs.allow-jit': true, 'com.apple.security.cs.allow-unsigned-executable-memory': false, 'com.apple.security.cs.debugger': false };
+// What Tauri's ad-hoc pass signs the shell and node with: the file tauri.conf.json names.
+const COMMITTED = path.join(ROOT, 'src-tauri', 'entitlements-node.plist');
+const APP_ENTITLEMENTS = { 'com.apple.security.cs.allow-jit': true };
 
 // A checkout holding every payload entry, small.
 function fakeCheckout(): string {
@@ -36,8 +37,10 @@ function fakeCheckout(): string {
       fs.writeFileSync(full, entry.endsWith('.json') ? '{}\n' : `# ${entry}\n`);
     }
   }
-  fs.mkdirSync(path.join(dir, 'src-tauri'));
-  fs.copyFileSync(COMMITTED, path.join(dir, 'src-tauri', 'entitlements.plist'));
+  fs.mkdirSync(path.join(dir, 'src-tauri', 'signing'), { recursive: true });
+  for (const rel of ['entitlements.plist', 'entitlements-node.plist', 'tauri.conf.json', path.join('signing', 'vault.provisionprofile')]) {
+    fs.copyFileSync(path.join(ROOT, 'src-tauri', rel), path.join(dir, 'src-tauri', rel));
+  }
   return dir;
 }
 
@@ -104,7 +107,13 @@ test('a folder named .DS_Store is read like any other, so a file planted in one 
   }
 });
 
-test('the app executables carry the committed entitlements, and everything else carries none', () => {
+test('built, the app executables carry the file Tauri was given, and everything else carries none', () => {
+  const checkout = fakeCheckout();
+  try {
+    assert.deepEqual(tauriEntitlements(checkout), APP_ENTITLEMENTS, 'tauri.conf.json names node\'s file for the ad-hoc pass');
+  } finally {
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
   assert.deepEqual(expectedEntitlements('Contents/MacOS/phosphor-desktop', APP_ENTITLEMENTS), APP_ENTITLEMENTS);
   assert.deepEqual(expectedEntitlements('Contents/MacOS/node', APP_ENTITLEMENTS), APP_ENTITLEMENTS);
   assert.deepEqual(expectedEntitlements('Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc/Contents/MacOS/se-helper', APP_ENTITLEMENTS), {});
@@ -116,6 +125,7 @@ test('the app executables carry the committed entitlements, and everything else 
   assert.match(String(planted), /se-helper carries entitlements other than the ones it should \(com\.apple\.security\.get-task-allow\)/);
   assert.match(String(entitlementProblem('Contents/MacOS/node', { ...APP_ENTITLEMENTS, 'com.apple.security.cs.disable-library-validation': true }, APP_ENTITLEMENTS)), /disable-library-validation/);
   assert.match(String(entitlementProblem('Contents/MacOS/node', { ...APP_ENTITLEMENTS, 'com.apple.security.cs.debugger': true }, APP_ENTITLEMENTS)), /cs\.debugger/);
+  assert.match(String(entitlementProblem('Contents/MacOS/node', { ...APP_ENTITLEMENTS, 'keychain-access-groups': ['35Z6P26CBD.com.karimbabasf.phosphor.vault'] }, APP_ENTITLEMENTS)), /keychain-access-groups/);
   assert.match(String(entitlementProblem('Contents/MacOS/node', {}, APP_ENTITLEMENTS)), /allow-jit/);
 });
 
@@ -156,6 +166,10 @@ function fakeApp(checkout: string, opts: { digest?: string } = {}): string {
   sign(path.join(macos, 'node'), COMMITTED);
   const service = path.join(app, 'Contents', 'XPCServices', 'com.karimbabasf.phosphor.vault.xpc', 'Contents', 'MacOS');
   fs.mkdirSync(service, { recursive: true });
+  fs.writeFileSync(
+    path.join(path.dirname(service), 'Info.plist'),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>se-helper</string></dict></plist>\n',
+  );
   fs.copyFileSync(path.join(macos, 'phosphor-desktop'), path.join(service, 'se-helper'));
   sign(path.join(service, 'se-helper'));
   return app;
@@ -207,14 +221,19 @@ test('a build that planted an entitlement, changed a first-party file or ships a
   }
 });
 
-test('after signing, an ad-hoc signature is not a release: every binary needs the hardened runtime and the team', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {
+test('after signing, an ad-hoc signature is not a release: every binary needs the hardened runtime, the team and the signing gate', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {
   const checkout = fakeCheckout();
   const app = fakeApp(checkout);
   try {
     const problems = checkApp(app, checkout, 'signed').join('\n');
     assert.match(problems, /the shell is not signed by a team/);
-    // The runtime flag is on (sign() asks for it), so the only refusal is the missing team.
+    // The runtime flag is on (sign() asks for it), so no binary is refused for that.
     assert.doesNotMatch(problems, /hardened runtime/);
+    // The signing gate runs from here: no profile in the service, no per-path entitlements, no team.
+    assert.match(problems, /the vault service carries no Contents\/embedded\.provisionprofile/);
+    assert.match(problems, /Contents\/MacOS\/phosphor-desktop carries entitlements other than the ones it should \(com\.apple\.security\.cs\.allow-jit/);
+    assert.match(problems, /se-helper carries entitlements other than the ones it should \(com\.apple\.application-identifier, com\.apple\.developer\.team-identifier, keychain-access-groups\)/);
+    assert.match(problems, /the certificate that signed the vault service is not in the profile/);
   } finally {
     fs.rmSync(path.dirname(app), { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });

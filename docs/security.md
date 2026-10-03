@@ -115,13 +115,14 @@ wallet is open, never on a touch for one move.
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows.
 The lock overwrites those bytes, but copies of the key that a signature or an unlock left as text
-stay in the app's memory until it is reused. And every build so far, the signed releases
-included, binds the enclave key to this Mac rather than to Phosphor. On a signed release the vault
-service answers only the signed Phosphor app; on a copy you build yourself, which is signed ad
-hoc, it checks the app's identifier alone, which another app can claim. Either way another app
-running as you could ask to use the key with a Touch ID prompt of its own, and the Keys row in the
-Vault tab says so. Binding the key to Phosphor itself takes a keychain entitlement that no build
-carries yet.
+stay in the app's memory until it is reused. And a wallet made before the vault service carried
+its provisioning profile, or by a copy you build yourself, has its enclave key bound to this Mac
+rather than to Phosphor. On a signed release the vault service answers only the signed Phosphor
+app; on a copy you build yourself, which is signed ad hoc, it checks the app's identifier alone,
+which another app can claim. Either way another app running as you could ask to use such a key
+with a Touch ID prompt of its own, and the Keys row in the Vault tab says so. A signed release
+with the profile keeps the key of a wallet it makes in a keychain group only its vault service can
+reach; moving an older wallet's key there is not built yet.
 
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
@@ -210,9 +211,11 @@ into the digest, never dates or owners, so the same tag gives the same digest on
 `.DS_Store` files are left out because Finder writes one into any folder it shows.
 
 In that clone, the check the release itself passed before and after signing compares the
-payload's own files in your copy with the tag, one by one, and reads the entitlements of every
-binary in it. It does not compare the compiled programs (the shell, the bundled Node, the Secure
-Enclave service) or the installed packages:
+payload's own files in your copy with the tag, one by one, reads the entitlements of every binary
+in it, and checks the vault service: the provisioning profile inside it is the tag's, and run by
+hand it starts (it stops at once, because only the app may start it). It does not compare the
+compiled programs (the shell, the bundled Node, the Secure Enclave service) or the installed
+packages:
 
 ```
 node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed

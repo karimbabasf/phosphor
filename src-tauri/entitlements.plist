@@ -15,21 +15,22 @@
   shipped. `com.apple.security.cs.debugger` is denied explicitly for the same reason, written
   out rather than omitted so that granting it is a visible edit.
 
-  ALLOW-JIT IS REQUIRED AND IS NOT A WEAKENING OF THE ABOVE. Settled at the first signed build,
-  2026-09-09. It was `<false/>`, and with it false the bundle could not run at all: the shell
-  window opened, the node child was spawned, and it died immediately with
+  ALLOW-JIT IS NODE'S, AND IT IS NOT IN THIS FILE. V8 cannot start without it: at the first
+  signed build, 2026-09-09, the node child died at once with
 
       Fatal process out of memory: Failed to reserve virtual memory for CodeRange
 
-  which is V8 being refused the executable memory it needs to exist. Every signed build before
-  this one had a working window and a dead backend. It is a different capability from debugger
-  attach: allow-jit permits this process to map its OWN memory executable through MAP_JIT, and
-  grants nothing to any other process. The control that stops another process reading these
-  keys is the absence of get-task-allow, and that is untouched.
+  so allow-jit was granted here, and this one file was signed onto the shell and node alike. Only
+  node runs V8. The shell is Rust and a web view, and the web view's JavaScript runs in WebKit's
+  own WebContent process, under WebKit's entitlements rather than this file's. So each binary now
+  gets its own set: scripts/notarize-mac.sh signs node with src-tauri/entitlements-node.plist
+  (allow-jit and nothing else), the shell with this file, and the Secure Enclave service with
+  entitlements made from its provisioning profile. scripts/signing-gate.ts holds every signed
+  build to that map, and refuses this file if it grants allow-jit or anything only a
+  provisioning profile can grant.
 
-  `com.apple.security.cs.allow-unsigned-executable-memory` stays denied. V8 uses MAP_JIT
-  properly, so it does not need the blanket version, and the health check below passes without
-  it.
+  `com.apple.security.cs.allow-unsigned-executable-memory` stays denied, here and on node: V8
+  uses MAP_JIT properly, so it does not need the blanket version.
 
   LIBRARY VALIDATION: SETTLED, 2026-09-09, and the answer was that the app does not need it
   disabled. `com.apple.security.cs.disable-library-validation` used to be `<true/>` here, on the
@@ -63,8 +64,6 @@
 -->
 <plist version="1.0">
 <dict>
-  <key>com.apple.security.cs.allow-jit</key>
-  <true/>
   <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
   <false/>
   <key>com.apple.security.cs.debugger</key>

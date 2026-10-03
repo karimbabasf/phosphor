@@ -90,9 +90,9 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       ready: ctx.vault.enclaveReady(),
       capability: ctx.vault.capability(),
       keyMadeAt: enclave?.createdAt ?? null,
-      // A device-bound blob on every build so far, Developer ID included: the keychain home needs
-      // the keychain-access-groups entitlement, which no build carries yet. A key made by a build
-      // that has it lives in the keychain, bound to Phosphor's signature. The window says which.
+      // A key made by a Developer ID build that carries the vault profile lives in the keychain,
+      // bound to Phosphor's signature; one made before the profile shipped, or by an ad hoc build,
+      // is a device-bound blob. The window says which.
       binding: enclave === null ? null : enclave.keyBlob.startsWith('keychain:') ? 'app' : 'device',
     },
     foreign,

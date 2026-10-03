@@ -182,10 +182,13 @@ your money.
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
   closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
   never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
-- **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
-  to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
-  started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
-  keychain entitlement no build carries yet.
+- **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
+  the vault service carried its provisioning profile, or by a copy you build yourself, has a key
+  another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
+  dialog only for something you started in Phosphor, and read its sentence. A signed release with
+  the profile keeps the key of a wallet it makes in a keychain group only its vault service can
+  reach. What closes it for older wallets: moving their key into that group, which is not built
+  yet.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed
