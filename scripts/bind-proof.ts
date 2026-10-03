@@ -12,15 +12,15 @@
 //
 //   keys-dev        a build with no keychain home: the Keys row as it was, no card
 //   bind-first      a device-bound key whose backup is not proven: the card asks for it first
-//   bind-offer      proven: what binding gives, why the one touch, what it does not reach
+//   bind-offer      proven: what Phosphor-only gives, why the one touch, what it does not reach
 //   bind-waiting    the Touch ID is up
 //   bind-cancelled  the person cancelled it: said in the card, nothing changed
-//   bind-done       bound: the tick, and the old copies binding cannot reach
+//   bind-done       Phosphor-only: the tick, and the old copies the step cannot reach
 //   keys-bound      the Keys row after the window opens again
 //   firstrun-create   a new Mac with no wallet: Create, and I already have a wallet beside it
 //   firstrun-restore  that second path: the phrase or the key, behind one Touch ID
 //   firstrun-short    a key typed one character short, said before anything is sent
-//   firstrun-restored the wallet brought back, the first run going on to the addresses
+//   firstrun-restored the wallet brought back, named before any address
 //
 // The app is dark only (src/view/theme.ts has one colourway), so there is no light picture.
 // Run: node scripts/bind-proof.ts. playwright-core is not a dependency of this repo; point
@@ -230,13 +230,13 @@ async function main(): Promise<void> {
       const groups = revealed?.groups as string[];
       const proven = await post(b, '/api/vault/key-proven', { key: groups.join(' ') });
       if (proven?.ok !== true) throw new Error(`key proof refused: ${JSON.stringify(proven)}`);
-      await p.waitForSelector(button('Bind with Touch ID'), { timeout: 10_000 });
+      await p.waitForSelector(button('Make it Phosphor-only'), { timeout: 10_000 });
       await sleep(400);
       await shoot(p, size, 'bind-offer');
 
       hold = true;
       cancel = true;
-      await p.click(button('Bind with Touch ID'));
+      await p.click(button('Make it Phosphor-only'));
       await p.waitForSelector(`${KEYS} button[aria-busy="true"]`, { timeout: 10_000 });
       await shoot(p, size, 'bind-waiting');
       while (release === null) await sleep(20);
@@ -247,7 +247,7 @@ async function main(): Promise<void> {
       hold = false;
       cancel = false;
       release = null;
-      await p.click(button('Bind with Touch ID'));
+      await p.click(button('Make it Phosphor-only'));
       await p.waitForSelector(`${KEYS} .vault-bind[data-step="done"]`, { timeout: 10_000 });
       await shoot(p, size, 'bind-done');
       await p.close();
@@ -287,9 +287,9 @@ async function main(): Promise<void> {
       await p.fill('#screen-firstrun textarea', (key.match(/.{4}/g) as string[]).join(' '));
       await p.click('#screen-firstrun button:has(.btn-label:text-is("Restore"))');
       // A selector, not a predicate: the window's CSP refuses the eval a polled predicate needs.
-      await p.waitForSelector('#screen-firstrun h1:text-is("Your addresses")', { timeout: 15_000 }).catch(async (err: unknown) => {
+      await p.waitForSelector('#screen-firstrun h1:text-is("Your wallet is back")', { timeout: 15_000 }).catch(async (err: unknown) => {
         const said = await p.evaluate(`(document.querySelector('#screen-firstrun') || { innerText: '' }).innerText`);
-        throw new Error(`the restore did not reach the addresses: ${String(err)}\nthe screen says: ${said}\nbackend: ${b.log.join('').slice(-1500)}`);
+        throw new Error(`the restore did not name the wallet: ${String(err)}\nthe screen says: ${said}\nbackend: ${b.log.join('').slice(-1500)}`);
       });
       await first('firstrun-restored');
       await p.close();
