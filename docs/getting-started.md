@@ -157,6 +157,15 @@ A password wallet says Password in the Keys row: "Locked with your password on t
 Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
 behind the enclave. Nothing moves and the addresses stay the same.
 
+A wallet made before the signed app kept keys in its own keychain says "Bound to this Mac rather
+than to Phosphor" in the Keys row. On a signed release the row then shows Bind to Phosphor: once
+your backup is proven (Back it up first takes you there), Bind with Touch ID moves the key into
+Phosphor's own keychain, where no other app on this Mac can ask to use it. One Touch ID checks that
+Phosphor opens the wallet from there before anything changes; a cancel changes nothing. The same
+wallet, the same addresses. Copies of the old wallet file made before (a Time Machine backup, a
+sync folder) still hold the key for other apps until your keys change, so delete the ones you know
+of. [Known limits](known-limits.md) says more.
+
 ## The five minute lock
 
 The wallet locks after five minutes with nobody at the window, when the Mac wakes from a sleep of

@@ -213,6 +213,11 @@
       return net.postJson('/api/vault/migrate', { password: password }, { busy: 'wallet', label: 'Moving your keys', touch: true });
     },
 
+    // An older wallet's key moves into Phosphor's keychain: one Touch ID.
+    vaultBind: function () {
+      return net.postJson('/api/vault/bind', {}, { busy: 'wallet', label: 'Binding your wallet', touch: true });
+    },
+
     vaultForget: function () {
       return net.postJson('/api/vault/forget', { confirm: 'FORGET' }, { busy: 'wallet', label: 'Forgetting this wallet', touch: true });
     },

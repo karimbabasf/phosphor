@@ -1519,7 +1519,115 @@
     tools.appendChild(refs.migrate);
     r.main.appendChild(tools);
     dom.on(refs.migrate, 'click', function () { openMigrate(false); });
+    refs.custodyRow = r.node;
+    buildBind(r.body);
     host.appendChild(r.node);
+  }
+
+  /* ---------- your wallet: binding an older key to Phosphor ----------
+
+     A wallet made before the vault profile shipped keeps a key bound to this
+     Mac. On a build with a keychain home, Bind moves it into Phosphor's own
+     keychain with one Touch ID (src/http/custody.ts). The card asks for the
+     backup first, because from then on the key lives in one keychain item on
+     this Mac, and it says what binding does not reach: older copies of the
+     wallet file, which still hold the key for other apps until the keys change. */
+  var bound = false;
+  var bindDrawn = false;
+
+  function buildBind(host) {
+    var flow = dom.el('div', 'vault-flow vault-bind');
+    flow.hidden = true;
+    refs.bindFlow = flow;
+    refs.bindTitle = dom.el('p', 'vault-flow-title', 'Bind to Phosphor');
+    flow.appendChild(refs.bindTitle);
+    refs.bindDone = dom.el('p', 'vault-text vault-backup-line');
+    refs.bindDone.setAttribute('data-backed', 'true');
+    append(refs.bindDone, icon('check', 'vault-backup-mark'));
+    refs.bindDone.appendChild(dom.el('span', 'vault-backup-words', 'Bound to Phosphor. Only Phosphor can ask to use this key on this Mac.'));
+    flow.appendChild(refs.bindDone);
+    refs.bindGives = text('vault-text');
+    flow.appendChild(refs.bindGives);
+    refs.bindWhy = text('vault-sub', 'One Touch ID checks that Phosphor opens your wallet from there before anything changes.');
+    flow.appendChild(refs.bindWhy);
+    refs.bindCopies = text('vault-sub');
+    flow.appendChild(refs.bindCopies);
+    refs.bindError = problem();
+    flow.appendChild(refs.bindError);
+    var actions = dom.el('div', 'vault-actions');
+    refs.bindGo = button('Bind with Touch ID', 'btn-sm', 'Waiting for Touch ID');
+    refs.bindFirst = button('Back it up first', 'btn-ghost btn-sm');
+    actions.appendChild(refs.bindGo);
+    actions.appendChild(refs.bindFirst);
+    flow.appendChild(actions);
+    dom.on(refs.bindGo, 'click', bindWithTouch);
+    dom.on(refs.bindFirst, 'click', focusRecovery);
+    host.appendChild(flow);
+  }
+
+  /* 'first' while the backup is not proven, 'offer' once it is, 'done' after
+     a bind in this window; null when there is nothing to bind here: a key
+     already bound, a password wallet, or a build with no keychain home. */
+  function bindStep(vault) {
+    var enclave = vault.enclave || {};
+    var cap = enclave.capability || {};
+    if (bound && enclave.binding === 'app') return 'done';
+    if (vault.custody !== 'secure-enclave' || enclave.binding !== 'device') return null;
+    if (cap.keychainHome !== true || vault.state !== 'unlocked') return null;
+    return vault.backedUp === true ? 'offer' : 'first';
+  }
+
+  function renderBind(vault) {
+    var step = bindStep(vault);
+    var was = refs.bindFlow.hidden ? null : refs.bindFlow.getAttribute('data-step');
+    var apply = function () {
+      dom.setHidden(refs.bindFlow, step === null);
+      dom.setAttr(refs.bindFlow, 'data-step', step);
+      if (step === null) return;
+      var backup = vault.hasMnemonic === false ? 'private key' : 'recovery phrase';
+      dom.setHidden(refs.bindTitle, step === 'done');
+      dom.setHidden(refs.bindDone, step !== 'done');
+      dom.setText(refs.bindGives, step === 'first'
+        ? 'Back up your ' + backup + ' first. Once bound, your key lives only in Phosphor\'s keychain on this Mac, so your copy is the way back if anything happens to it.'
+        : 'Binding moves this key into Phosphor\'s own keychain, where no other app on this Mac can ask to use it.');
+      dom.setHidden(refs.bindGives, step === 'done');
+      dom.setHidden(refs.bindWhy, step !== 'offer');
+      dom.setText(refs.bindCopies, step === 'done'
+        ? 'Older copies of your wallet file, such as one in a Time Machine backup, still hold this key for other apps until your keys change. Delete the copies you know of.'
+        : 'Phosphor stops opening older copies of your wallet file, but another app could still use one, with a Touch ID prompt of its own, until your keys change.');
+      dom.setHidden(refs.bindCopies, step === 'first');
+      dom.setHidden(refs.bindGo, step !== 'offer');
+      dom.setHidden(refs.bindFirst, step !== 'first');
+    };
+    // Drawn as it is on the first render; a change after that slides, as the row's other steps do.
+    if (was === step || !bindDrawn) {
+      bindDrawn = true;
+      return apply();
+    }
+    say(refs.bindError, '');
+    if (step === null) shrink(refs.custodyRow, refs.bindFlow, apply);
+    else grow(refs.custodyRow, apply, refs.bindFlow);
+  }
+
+  function bindWithTouch() {
+    say(refs.bindError, '');
+    refs.bindGo.disabled = true;
+    window.PhosphorShell.setPending(refs.bindGo, true);
+    api.vaultBind()
+      .then(function (answer) {
+        if (!answer || answer.ok !== true) {
+          say(refs.bindError, answer && answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing changed.' : (answer && answer.error) || 'That did not work.');
+          return null;
+        }
+        bound = true;
+        return window.PhosphorShell.refresh({});
+      })
+      .catch(function (err) { say(refs.bindError, net.readable(err)); })
+      .finally(function () {
+        window.PhosphorShell.setPending(refs.bindGo, false);
+        refs.bindGo.disabled = false;
+        render();
+      });
   }
 
   function renderCustody(vault) {
@@ -1535,8 +1643,12 @@
          hoc build, is bound to this Mac, where any process running as you can
          present it. */
       var device = enclave.binding === 'device';
-      dom.setText(refs.custodyMore, device ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.' : '');
-      dom.setHidden(refs.custodyMore, !device);
+      var app = enclave.binding === 'app';
+      dom.setText(refs.custodyMore, device
+        ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'
+        : app ? 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.' : '');
+      // Right after a bind the card below says it, with what binding does not reach.
+      dom.setHidden(refs.custodyMore, !(device || (app && !bound)));
       var reach = enclave.attached === false
         ? 'Touch ID only works inside the Phosphor app. Open the app to use this wallet.'
         : (enclave.ready === false ? 'This Mac cannot check your Touch ID right now, so the wallet cannot be opened here.' : '');
@@ -2405,6 +2517,7 @@
     renderBackup(vault);
     renderLimits(state);
     renderCustody(vault);
+    renderBind(vault);
     renderRecovery(vault);
     renderForget(vault);
     var verifiedKey = (vault.state || '') + ':' + (vault.custody || '');

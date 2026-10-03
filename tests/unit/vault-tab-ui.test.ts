@@ -202,6 +202,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
     migrate: { ok: true },
+    bind: { ok: true, binding: 'app' } as Any,
     prefs: { ok: true },
     confirm: true,
     revealStart: { ok: true, nonce: 'n1' },
@@ -274,6 +275,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultForget: () => { calls.push({ route: '/api/vault/forget' }); return Promise.resolve(answer.forget); },
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
     vaultMigrate: (password: string) => { calls.push({ route: '/api/vault/migrate', password }); return Promise.resolve(answer.migrate); },
+    vaultBind: () => { calls.push({ route: '/api/vault/bind' }); return Promise.resolve(answer.bind); },
     vaultPrefs: (prefs: Any) => { calls.push(Object.assign({ route: '/api/vault/prefs' }, prefs)); return Promise.resolve(answer.prefs); },
     kill: (on: boolean) => { calls.push({ route: '/api/kill', on }); return answer.kill ? Promise.reject(new Error(answer.kill)) : Promise.resolve(answer.killAnswer || { ok: true }); },
     lock: () => { calls.push({ route: '/api/lock' }); return Promise.resolve({ ok: true }); },
@@ -377,7 +379,7 @@ test('the lock row says the screen lock locks the window too, so a long timer is
     ["The window locks after this long without you, and whenever your Mac's screen locks. It hides everything until you open it."]);
 });
 
-test('no red but the freeze, and no green anywhere on the Vault but the tick on a proven phrase', () => {
+test('no red but the freeze, and no green anywhere on the Vault but the tick on a proven backup or a bound key', () => {
   // btn-danger is set in the freeze's own code and nowhere else; btn-primary is Approve's.
   const danger = SOURCE.split('btn-danger').length - 1;
   assert.equal(danger, 2, 'btn-danger outside the freeze confirm');
@@ -1154,8 +1156,10 @@ test('the Keys row says which binding is live in plain words, and the software c
   assert.doesNotMatch(JSON.stringify(text), /signed/i, 'the row ties the binding to a signature');
   assert.equal(buttonNamed(custody, 'Protect with Touch ID').hidden, true);
 
+  // A key in Phosphor's keychain says that instead, in the same line.
   enclave.put({ vault: vaultState({ enclave: { attached: true, ready: true, capability: null, keyMadeAt: null, binding: 'app' } }) });
-  assert.equal(find(custody, '.vault-sub')[0].hidden, true, 'the device line is shown for an app-bound key');
+  assert.equal(find(custody, '.vault-sub')[0].hidden, false);
+  assert.equal(find(custody, '.vault-sub')[0].textContent, 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.');
 
   const software = build({ vault: { custody: 'software' } });
   const soft = row(software, 'custody');
@@ -1386,3 +1390,95 @@ test('no migration card for an enclave wallet, a locked window, or a Mac with no
   assert.equal(build({ vault: { custody: 'software' }, lock: { state: 'locked' } }).migrate.hidden, true);
   assert.equal(build({ vault: { custody: 'software', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } }).migrate.hidden, true);
 });
+
+/* ---------- your wallet: binding an older key ---------- */
+
+// A build whose vault service has its keychain home: the one place Bind is offered.
+const HOME = { attached: true, ready: true, capability: { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true }, keyMadeAt: '2026-09-14T09:00:00.000Z' };
+const keysRow = (world: World): Any => row(world, 'custody');
+const bindCard = (world: World): Any => find(keysRow(world), '.vault-bind')[0];
+const bindWords = (world: World): string[] => shown(find(bindCard(world), '.vault-text, .vault-sub, .vault-flow-title')).map((n: Any) => n.textContent);
+
+test('Bind asks for the backup first: one sentence on why, and the way to it', () => {
+  const world = build({ vault: { hasMnemonic: false, enclave: { ...HOME, binding: 'device' } } });
+  const card = bindCard(world);
+  assert.equal(card.hidden, false);
+  assert.equal(card.getAttribute('data-step'), 'first');
+  assert.deepEqual(bindWords(world), [
+    'Bind to Phosphor',
+    "Back up your private key first. Once bound, your key lives only in Phosphor's keychain on this Mac, so your copy is the way back if anything happens to it.",
+  ]);
+  assert.equal(buttonNamed(card, 'Bind with Touch ID').hidden, true, 'no bind before the backup is proven');
+  const first = buttonNamed(card, 'Back it up first');
+  assert.equal(first.hidden, false);
+  const backupRow = row(world, 'backup');
+  const backItUp = buttonNamed(backupRow, 'Back it up');
+  const went: string[] = [];
+  backupRow.scrollIntoView = () => went.push('scrolled');
+  backItUp.focus = () => went.push('focused');
+  first.click();
+  assert.deepEqual(went, ['scrolled', 'focused'], 'the backup row is brought into view with its button under the cursor');
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/bind'), false);
+});
+
+test('backed up, Bind says what binding gives, why the one touch, and what it does not reach', async () => {
+  const world = build({ vault: { hasMnemonic: true, backedUp: true, backedUpAt: '2026-10-02T10:00:00.000Z', enclave: { ...HOME, binding: 'device' } } });
+  const card = bindCard(world);
+  assert.equal(card.getAttribute('data-step'), 'offer');
+  assert.deepEqual(bindWords(world), [
+    'Bind to Phosphor',
+    "Binding moves this key into Phosphor's own keychain, where no other app on this Mac can ask to use it.",
+    'One Touch ID checks that Phosphor opens your wallet from there before anything changes.',
+    'Phosphor stops opening older copies of your wallet file, but another app could still use one, with a Touch ID prompt of its own, until your keys change.',
+  ]);
+  const go = buttonNamed(card, 'Bind with Touch ID');
+  assert.equal(go.hidden, false);
+  assert.equal(go.getAttribute('data-pending-label'), 'Waiting for Touch ID');
+  assert.doesNotMatch(go.className, /btn-primary/, 'the one green button belongs to Approve');
+  go.click();
+  await flush();
+  assert.deepEqual(world.calls.filter((c) => c.route === '/api/vault/bind' || c.route === 'refresh').map((c) => c.route), ['/api/vault/bind', 'refresh']);
+  world.put({ vault: vaultState({ hasMnemonic: true, backedUp: true, enclave: { ...HOME, binding: 'app' } }) });
+  await flush();
+  assert.equal(bindCard(world).getAttribute('data-step'), 'done');
+  assert.deepEqual(bindWords(world), [
+    'Bound to Phosphor. Only Phosphor can ask to use this key on this Mac.',
+    'Older copies of your wallet file, such as one in a Time Machine backup, still hold this key for other apps until your keys change. Delete the copies you know of.',
+  ]);
+  const done = find(bindCard(world), '.vault-backup-line')[0];
+  assert.equal(done.getAttribute('data-backed'), 'true', 'the done line wears the tick');
+  assert.equal((find(keysRow(world), '.vault-sub').find((p: Any) => p.textContent.startsWith('Bound to Phosphor, so')) as Any).hidden, true, 'said once, in the card');
+});
+
+test('a cancelled or refused bind says so in the card, and Bind stays', async () => {
+  const world = build({ vault: { backedUp: true, enclave: { ...HOME, binding: 'device' } } });
+  world.answer.bind = { ok: false, code: 'user_cancel', error: 'You cancelled the Touch ID prompt.' };
+  buttonNamed(bindCard(world), 'Bind with Touch ID').click();
+  await flush();
+  const error = find(bindCard(world), '.vault-error')[0];
+  assert.equal(error.hidden, false);
+  assert.equal(textOf(error).join(''), 'Touch ID was cancelled. Nothing changed.');
+  assert.equal(buttonNamed(bindCard(world), 'Bind with Touch ID').hidden, false);
+  world.answer.bind = { ok: false, code: 'touch_waiting', error: 'A move is waiting for your Touch ID. Finish it, then try again.' };
+  buttonNamed(bindCard(world), 'Bind with Touch ID').click();
+  await flush();
+  assert.equal(textOf(find(bindCard(world), '.vault-error')[0]).join(''), 'A move is waiting for your Touch ID. Finish it, then try again.');
+  assert.equal(world.calls.filter((c) => c.route === 'refresh').length, 0, 'nothing to refresh after a refusal');
+});
+
+test('Bind is not offered where there is nothing to bind, and a bound key says so in its row', () => {
+  for (const vault of [
+    { enclave: { ...HOME, capability: { ...HOME.capability, keychainHome: false }, binding: 'device' }, backedUp: true },
+    { custody: 'software', enclave: { ...HOME, binding: null }, backedUp: true },
+    { state: 'locked', enclave: { ...HOME, binding: 'device' }, backedUp: true },
+    { enclave: { ...HOME, binding: 'app' }, backedUp: true },
+  ]) {
+    const world = build({ vault });
+    assert.equal(bindCard(world).hidden, true, JSON.stringify(vault));
+  }
+  const bound = build({ vault: { enclave: { ...HOME, binding: 'app' } } });
+  const sub = find(keysRow(bound), '.vault-sub').find((p: Any) => p.textContent.startsWith('Bound to Phosphor, so')) as Any;
+  assert.equal(sub.textContent, 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.');
+  assert.equal(sub.hidden, false);
+});
+

@@ -1473,6 +1473,10 @@
     if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
     if (code === 'keychain_unavailable') return 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.';
+    // A new wallet file is written beside nothing and put in place last (src/http/custody.ts).
+    if (code === 'proof_failed') return 'Phosphor could not open the file it just made, so nothing changed. Try again.';
+    if (code === 'write_failed') return 'Phosphor could not write the wallet file on this Mac, so nothing changed.';
+    if (code === 'install_pending') return 'Phosphor saved your wallet but could not put the file in place yet. It finishes the next time your wallet opens, and nothing moved.';
     return walletProblem(code);
   }
 
