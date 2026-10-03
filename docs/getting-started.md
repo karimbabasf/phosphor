@@ -77,14 +77,21 @@ There is nothing to write down yet. The app then shows your addresses and asks w
 use, see [Connect an agent](connect-an-agent.md).
 
 If you already have a wallet (a Mac lost or replaced, the case the backup is for), press I already
-have a wallet beside Create wallet. Type your recovery phrase, or your private key if your wallet
-has no phrase, and one Touch ID brings it here. With no wallet on this Mac yet, nothing is
-replaced, so no backup is asked for; a cancelled Touch ID leaves the Mac as it was.
+have a wallet beside Create a new wallet. Type your recovery phrase, or your private key if your
+wallet has no phrase, and one Touch ID restores it here. The key can be typed the way the backup
+shows it: with or without 0x, the spaces or line breaks between the groups, even the numbers in
+front of each group. A character a key never uses (an o for a 0) is named by its group before
+anything is sent. With no wallet on this Mac yet, nothing is replaced, so no backup is asked for; a
+cancelled Touch ID leaves the Mac as it was.
+
+Before any address, the next screen, Your wallet is back, names the wallet that came back with its
+full address. Check it against the address on your copy: a key with one slipped character restores
+a wallet too, an empty one. If it is not yours, press That is not my wallet and type the copy again.
 
 ### With a password
 
-Without an enclave, the app asks you to make a new wallet or bring one in with its recovery
-words, or with its private key if it has no phrase. Set a password of at least eight characters. Nobody can reset it, not the app and not your
+Without an enclave, the app asks you to create a new wallet or restore one from its recovery
+phrase, or from its private key if it has no phrase. Set a password of at least eight characters. Nobody can reset it, not the app and not your
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on. Take as long as writing them down takes. If Phosphor locks
 meanwhile, after five quiet minutes or when your screen locks, the lock card covers the words;
@@ -99,9 +106,12 @@ Vault tab, see [Policy](policy.md#changing-a-rule).
 ### A wallet from another Mac
 
 A wallet file made on a different Mac cannot be opened here, because its key lives in that Mac's
-enclave. The window says Made on another Mac and asks for your recovery phrase, twelve or
-twenty-four words, to bring the wallet here. A wallet that has no phrase asks for its private key
-instead (see [A wallet with no phrase](#a-wallet-with-no-phrase)).
+enclave. This is what moving to a new Mac with Migration Assistant looks like, so the window skips
+the welcome and says Made on another Mac: your wallet file came with you and your money has not
+moved. Type your recovery phrase, twelve or twenty-four words, or the private key of a wallet that
+has no phrase (see [A wallet with no phrase](#a-wallet-with-no-phrase)), to open it here. The next
+screen sets the wallet that came back beside the one the old file names. With no copy at hand,
+open Phosphor on the Mac that made the wallet, then Vault, Back it up, and come back with the copy.
 
 ## The backup words
 

@@ -17,6 +17,7 @@ type Any = Record<string, any>;
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const LOCK = read('../../ui/screens/lock.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
 const SHELL = read('../../ui/screens/shell.js');
@@ -245,6 +246,7 @@ function build(state: Any, sources: string[]): World {
   createContext(sandbox);
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   for (const source of sources) {
     const file = source === LOCK ? 'ui/screens/lock.js' : source === FIRSTRUN ? 'ui/screens/firstrun.js' : 'ui/screens/shell.js';
     runInContext(source, sandbox, { filename: file });
@@ -547,6 +549,8 @@ test('a forgotten password has a way back where this Mac has Touch ID: the phras
 
 // Sixteen made-up groups of four, a private key as the Vault's backup shows one.
 const GROUPS = ['3f9a', '07c2', 'b41e', '5d68', 'e2a0', '9b17', '4c3d', 'f805', '1a6e', 'c9b2', '7e41', '0d5f', 'a8c3', '62e9', 'd07b', '3b14'];
+// The wallet a file names in its header, made up.
+const WALLET = '0x8902231e893D97D9834081469D87D79C8fA8Aede';
 
 test('a password wallet with no phrase comes back from its private key, in the same card', async () => {
   const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', hasMnemonic: false }) }, [LOCK]);
@@ -579,7 +583,7 @@ test('a password wallet with no phrase comes back from its private key, in the s
 
 /* ---------- the first run ---------- */
 
-test('with the enclave ready, the first run is the welcome, Create wallet, the addresses, the assistant, then Home', async () => {
+test('with the enclave ready, the first run is the welcome, Create a new wallet, the addresses, the assistant, then Home', async () => {
   const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet' }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
@@ -601,7 +605,7 @@ test('with the enclave ready, the first run is the welcome, Create wallet, the a
   // back for a wallet that exists quiet beside it.
   assert.equal(find(screen, 'input.input, textarea').length, 0, 'the enclave first run asks for something typed');
   const buttons = find(screen, 'button');
-  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['I already have a wallet', 'Create wallet']);
+  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['I already have a wallet', 'Create a new wallet']);
   assert.match(buttons[0].className, /btn-quiet/);
   assert.match(buttons[1].className, /btn-primary/);
   assert.ok(textOf(screen).includes('Step 1 of 3'));
@@ -634,20 +638,27 @@ test('a cancelled Touch ID on Create says so and stays on the screen', async () 
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  buttonNamed(screen, 'Create wallet').click();
+  buttonNamed(screen, 'Create a new wallet').click();
   await flush();
-  assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing was changed.'));
-  assert.ok(buttonNamed(screen, 'Create wallet'), 'still on Create');
+  assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing changed.'));
+  // A cancel is the person's own choice: the quiet line, no warning glyph.
+  const line = find(screen, '.firstrun-error').find((n: Any) => !n.hidden) as Any;
+  assert.equal(line.getAttribute('data-tone'), 'quiet');
+  assert.equal(find(line, '.firstrun-error-icon').length, 0);
+  assert.ok(buttonNamed(screen, 'Create a new wallet'), 'still on Create');
 });
 
-test('a file made on another Mac opens, after the welcome, on Restore: one field, one button, 12 or 24 words', async () => {
+/* A person who moved Macs with Migration Assistant already owns the wallet: no welcome, no invite
+   for "your new wallet", straight to what happened and the way in. */
+test('a file made on another Mac opens straight on Made on another Mac: no welcome, no invite, one field, 12 or 24 words', async () => {
   const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
-  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
-  buttonNamed(screen, 'Get started').click();
+  assert.ok(!textOf(screen).includes('Welcome to Phosphor'), 'an owner who moved Macs was welcomed as new');
   assert.ok(textOf(screen).includes('Made on another Mac'));
+  assert.ok(textOf(screen).includes('Your wallet file came with you, and your money has not moved. This Mac cannot open a file another Mac made, so type your recovery phrase to open the wallet here.'));
+  assert.ok(textOf(screen).includes('No copy of your recovery phrase? On the Mac that made this wallet, open Phosphor, then Vault, Recovery phrase, Back it up. Come back here with the copy.'));
   const fields = find(screen, 'textarea');
   assert.equal(fields.length, 1, 'the restore screen does not have exactly one field');
   assert.equal(find(screen, 'input').length, 0);
@@ -662,39 +673,86 @@ test('a file made on another Mac opens, after the welcome, on Restore: one field
   assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
 
   const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
+  world.answer.restore = { ok: true, addresses: { evm: WALLET } };
   fields[0].value = '  ' + words.join('   ').toUpperCase() + '\n';
   buttons[0].click();
   await flush();
   const post = world.calls.find((c) => c.route === '/api/vault/restore');
   assert.ok(post, 'nothing was posted');
   assert.equal(post.mnemonic, words.join(' '));
-  assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
+  assert.ok(textOf(screen).includes('Your wallet is back'), 'the wallet that came back was not named');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Your addresses'));
+  // The invite step is missing from this window, and the flow keeps its last step all the same.
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Your assistant'), 'the step after the addresses was dropped');
 });
 
 /* A file with no phrase, carried to a new Mac (Migration Assistant does this), comes back from the
-   key its owner backed up. The header says which backup it is, and it reads without the enclave. */
-test('a file with no phrase made on another Mac asks for its private key, and takes it as the backup shows it', async () => {
-  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
+   key its owner backed up. The header says which backup it is, and it reads without the enclave;
+   it also names the wallet, so the one that comes back is set beside it. */
+test('a file with no phrase made on another Mac asks for its private key, and sets the wallet that came back beside the one the file names', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null, addresses: { evm: WALLET } }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
-  buttonNamed(screen, 'Get started').click();
   assert.ok(textOf(screen).includes('Made on another Mac'));
-  assert.ok(textOf(screen).includes('The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your private key to bring the wallet here.'));
+  assert.ok(textOf(screen).includes('Your wallet file came with you, and your money has not moved. This Mac cannot open a file another Mac made, so type your private key to open the wallet here.'));
+  assert.ok(textOf(screen).includes('No copy of your key? On the Mac that made this wallet, open Phosphor, then Vault, Private key, Back it up. Come back here with the copy.'));
   assert.ok(textOf(screen).includes('Private key, 64 characters'));
   const field = find(screen, 'textarea')[0];
   const restore = buttonNamed(screen, 'Restore');
   field.value = 'not a key';
   restore.click();
   await flush();
-  assert.ok(textOf(screen).includes('A private key has only the digits 0 to 9 and the letters a to f.'));
+  assert.ok(textOf(screen).includes('That has a character a private key never uses. A key has only 0 to 9 and a to f.'));
+  world.answer.restore = { ok: true, addresses: { evm: WALLET } };
   field.value = `0x ${GROUPS.join(' ').toUpperCase()}`;
   restore.click();
   await flush();
   const post = world.calls.find((c) => c.route === '/api/vault/restore');
   assert.ok(post, 'nothing was posted');
   assert.equal(post.key, '0x' + GROUPS.join(''));
-  assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
+  assert.ok(textOf(screen).includes('Your wallet is back'));
+  assert.ok(textOf(screen).includes(`This is the wallet ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}. Check it matches the address on your copy.`));
+  assert.ok(textOf(screen).includes('The same wallet your file from the other Mac names.'));
+});
+
+test('a key that brings back another wallet than the file names says so, and leads with Try again', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null, addresses: { evm: WALLET } }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  const other = '0x1111111111111111111111111111111111112222';
+  world.answer.restore = { ok: true, addresses: { evm: other } };
+  find(screen, 'textarea')[0].value = GROUPS.join(' ');
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.ok(textOf(screen).includes('This is a different wallet'));
+  assert.ok(textOf(screen).includes(`The wallet file from your other Mac is ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}. If that one is yours, a character is off in what you typed.`));
+  const buttons = find(find(screen, '.screen-actions')[0], 'button');
+  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['Keep this wallet', 'Try again']);
+  assert.match(buttons[1].className, /btn-primary/);
+  // The file here is no longer the other Mac's: a second try is a plain restore, with the line.
+  world.put({ vault: vaultState({ foreign: false, hasMnemonic: false, state: 'unlocked' }) });
+  buttons[1].click();
+  assert.ok(textOf(screen).includes('Restore your wallet'));
+  assert.ok(textOf(screen).includes('Then a character is off. Check your copy group by group and try again.'));
+});
+
+test('the terms come first on a flow with no welcome', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorTerms = {
+    required: () => true,
+    firstRunOwns: () => true,
+    content: (host: Any) => { const p = world.sandbox.document.createElement('p'); p.textContent = 'The terms.'; host.appendChild(p); return p; },
+    accept: () => Promise.resolve({ ok: true }),
+  };
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Before you start'), textOf(screen).join(' | '));
+  assert.ok(!textOf(screen).includes('Made on another Mac'), 'the wallet step came before the terms');
 });
 
 test('without an enclave the software first run keeps its screens after the welcome: nine steps from Get started', () => {
@@ -706,7 +764,7 @@ test('without an enclave the software first run keeps its screens after the welc
   assert.equal(find(screen, 'button')[0].textContent, 'Get started');
   find(screen, 'button')[0].click();
   assert.ok(textOf(screen).includes('Step 1 of 9'));
-  assert.ok(textOf(screen).includes('Create or bring a wallet'));
+  assert.ok(textOf(screen).includes('Create or restore a wallet'));
   buttonNamed(screen, 'Continue').click();
   assert.ok(textOf(screen).includes('Step 2 of 9'));
   assert.ok(textOf(screen).includes('Set a password'));

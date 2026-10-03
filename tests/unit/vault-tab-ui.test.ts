@@ -22,6 +22,7 @@ type Any = Record<string, any>;
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const SOURCE = read('../../ui/screens/vault.js');
 
 /* ---------- a DOM small enough to read ---------- */
@@ -289,6 +290,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   createContext(sandbox);
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   runInContext(SOURCE, sandbox, { filename: 'ui/screens/vault.js' });
 
   const store = sandbox.PhosphorState;

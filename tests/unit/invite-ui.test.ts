@@ -22,6 +22,7 @@ const read = (path: string): string => readFileSync(new URL(path, import.meta.ur
 const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const ADAPTER = read('../../ui/core/invite.js');
 const INVITE = read('../../ui/screens/invite.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
@@ -325,6 +326,7 @@ function build(options: { terms?: boolean; vault?: Any; money?: boolean; deposit
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   runInContext(ADAPTER, sandbox, { filename: 'ui/core/invite.js' });
   runInContext(INVITE, sandbox, { filename: 'ui/screens/invite.js' });
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
@@ -372,19 +374,22 @@ async function paste(world: World, code = CODE): Promise<void> {
 
 /* ---------- the step, in every flow ---------- */
 
-test('the invite step sits after the welcome in all four flows and is not counted by the progress', async () => {
-  // The source says it: every flow has it second, and UNCOUNTED names it beside the welcome and the terms.
+test('the invite step sits after the welcome in every flow for a new wallet and is not counted by the progress', async () => {
+  // The source says it: every flow for a new wallet has it second, and UNCOUNTED names it beside
+  // the welcome and the terms. A file another Mac made belongs to someone who already has the
+  // wallet: no welcome, and no invite for "your new wallet".
   const flows = /var FLOWS = \{([\s\S]*?)\};/.exec(FIRSTRUN)?.[1] ?? '';
-  for (const name of ['create', 'import', 'enclave', 'foreign']) {
+  for (const name of ['create', 'import', 'enclave', 'recover']) {
     assert.match(flows, new RegExp(`${name}: \\['welcome', 'invite', `), `${name} does not open welcome, invite`);
   }
+  assert.match(flows, /foreign: \['foreign', /, 'the foreign flow greets an owner as new');
+  assert.doesNotMatch(/foreign: \[[^\]]*\]/.exec(flows)?.[0] ?? '', /invite/);
   assert.match(FIRSTRUN, /var UNCOUNTED = \['welcome', 'terms', 'invite'\];/);
 
   const cases: Array<[string, Any, string, string | null, string]> = [
     ['enclave', ENCLAVE, 'Create your wallet', null, 'Step 1 of 3'],
-    ['create', SOFTWARE, 'Create or bring a wallet', null, 'Step 1 of 9'],
-    ['import', SOFTWARE, 'Create or bring a wallet', 'I already have one', 'Step 1 of 8'],
-    ['foreign', FOREIGN, 'Made on another Mac', null, 'Step 1 of 3'],
+    ['create', SOFTWARE, 'Create or restore a wallet', null, 'Step 1 of 9'],
+    ['import', SOFTWARE, 'Create or restore a wallet', 'I already have a wallet', 'Step 1 of 9'],
   ];
   for (const [name, vault, first, pick, count] of cases) {
     const world = build({ vault });
@@ -399,6 +404,13 @@ test('the invite step sits after the welcome in all four flows and is not counte
     assert.ok(visibleText(screen).includes(count), `${name}: the first wallet step is not ${count}: ${visibleText(screen).filter((t) => t.startsWith('Step')).join()}`);
     assert.equal(checks(world).length, 0, `${name}: Skip checked a code`);
   }
+
+  // Another Mac's file opens on what happened, with its own wallet steps counted from one.
+  const world = build({ vault: FOREIGN });
+  world.sandbox.PhosphorFirstRun.open();
+  assert.equal(title(world.screen), 'Made on another Mac');
+  assert.ok(visibleText(world.screen).includes('Step 1 of 4'));
+  assert.equal(checks(world).length, 0);
 });
 
 test('the terms come first, then the invite, and Back from the invite goes to the welcome once they are accepted', async () => {
@@ -446,7 +458,7 @@ test('a pasted code is checked at once, a good one says what is waiting, and Con
   assert.equal(primary(screen).textContent, 'Continue');
   assert.equal(buttonNamed(screen, 'Skip'), undefined, 'Skip is still offered over a good code');
   primary(screen).click();
-  assert.equal(title(screen), 'Create or bring a wallet');
+  assert.equal(title(screen), 'Create or restore a wallet');
   assert.equal(claims(world).length, 0, 'the check claimed the money before there was a wallet');
   // Back finds the code still good, and an edit takes that back.
   buttonNamed(screen, 'Back').click();
@@ -545,7 +557,7 @@ test('an answer for a code that was edited, skipped or left behind is dropped', 
   buttonNamed(screen, 'Skip').click();
   release(GOOD);
   await flush();
-  assert.equal(title(screen), 'Create or bring a wallet');
+  assert.equal(title(screen), 'Create or restore a wallet');
   buttonNamed(screen, 'Back').click();
   assert.equal(field(screen).value, '', 'Skip left the code in the field');
   assert.equal(said(screen), '', 'a late answer for a skipped code was shown');
@@ -558,7 +570,7 @@ async function toAddresses(world: World): Promise<Any> {
   const screen = toInvite(world);
   await paste(world);
   primary(screen).click(); // Continue
-  buttonNamed(screen, 'Create wallet').click();
+  buttonNamed(screen, 'Create a new wallet').click();
   await flush();
   await flush();
   assert.equal(title(screen), 'Your addresses');
