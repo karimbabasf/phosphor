@@ -1,4 +1,4 @@
-// The anxiety score, criterion 6 of docs/superpowers/prompts/2026-09-20-ready-for-people.md:
+// The anxiety score, term 6 of docs/superpowers/specs/2026-09-20-quality-definitions.md:
 // every situation in docs/superpowers/prompts/2026-09-20-ready-for-people.situations.md, as
 // a person who has never bought crypto would see it.
 //
