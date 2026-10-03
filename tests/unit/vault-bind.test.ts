@@ -29,7 +29,7 @@ import type { EnclaveUnwrapRequest, Keystore } from '../../src/keystore/store.ts
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
-import { BIND_REASON, CREATE_REASON, MIGRATE_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
+import { BIND_REASON, CREATE_REASON, MIGRATE_REASON, RESTORE_KEY_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
 import { refusal } from '../../src/http/wallet.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -648,6 +648,38 @@ test('a restore replaces the wallet only after its Touch ID and its commit: a ca
     assert.equal(statusOf(b, liveRequest(b)).pinMatches, true, 'a restored wallet is committed at creation');
   } finally {
     await b.close();
+  }
+});
+
+test('with no wallet on this Mac, a restore from a phrase or a key asks for no backup and is committed at creation', { skip }, async () => {
+  const phrase = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+  const key = `0x${'4c'.repeat(32)}`;
+  for (const body of [{ mnemonic: phrase }, { key }]) {
+    const b = await boot();
+    try {
+      assert.equal(b.keystore.state(), 'no_wallet');
+      const from = b.shell.seen.length;
+      const restored = await b.post('/api/vault/restore', body);
+      assert.equal(restored.json.ok, true, JSON.stringify(restored.json));
+      const reason = 'key' in body ? RESTORE_KEY_REASON : RESTORE_REASON;
+      assert.deepEqual(ops(seenSince(b, from)).filter((o) => o !== 'sweep'), ['create', `unwrap:${reason}`, 'commit'], 'no backup asked, no status read: there is nothing to replace');
+      assert.equal(statusOf(b, liveRequest(b)).pinMatches, true);
+      assert.equal(b.keystore.state(), 'unlocked');
+      assert.equal((await b.get('/api/vault')).json.backedUp, true, 'what was typed from a copy is a proven backup');
+    } finally {
+      await b.close();
+    }
+  }
+  // A cancelled touch leaves no wallet and nothing staged.
+  const c = await boot();
+  try {
+    c.double.touch = 'cancel';
+    assert.equal((await c.post('/api/vault/restore', { key })).json.code, 'user_cancel');
+    assert.equal(fs.existsSync(c.live), false);
+    assert.equal(fs.existsSync(c.staged), false);
+    assert.equal(c.keystore.state(), 'no_wallet');
+  } finally {
+    await c.close();
   }
 });
 

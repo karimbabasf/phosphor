@@ -76,10 +76,15 @@ a Mac that has one, the first run is short: Create your wallet is one click and 
 There is nothing to write down yet. The app then shows your addresses and asks which agent you
 use, see [Connect an agent](connect-an-agent.md).
 
+If you already have a wallet (a Mac lost or replaced, the case the backup is for), press I already
+have a wallet beside Create wallet. Type your recovery phrase, or your private key if your wallet
+has no phrase, and one Touch ID brings it here. With no wallet on this Mac yet, nothing is
+replaced, so no backup is asked for; a cancelled Touch ID leaves the Mac as it was.
+
 ### With a password
 
 Without an enclave, the app asks you to make a new wallet or bring one in with its recovery
-words. Set a password of at least eight characters. Nobody can reset it, not the app and not your
+words, or with its private key if it has no phrase. Set a password of at least eight characters. Nobody can reset it, not the app and not your
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on. Take as long as writing them down takes. If Phosphor locks
 meanwhile, after five quiet minutes or when your screen locks, the lock card covers the words;

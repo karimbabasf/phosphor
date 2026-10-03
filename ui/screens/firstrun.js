@@ -35,13 +35,14 @@
     create: ['welcome', 'invite', 'choose', 'password', 'words', 'prove', 'addresses', 'money', 'connect', 'threshold', 'done'],
     import: ['welcome', 'invite', 'choose', 'password', 'import', 'addresses', 'money', 'connect', 'threshold', 'done'],
     enclave: ['welcome', 'invite', 'create', 'addresses', 'connect'],
+    recover: ['welcome', 'invite', 'restore', 'addresses', 'connect'],
     foreign: ['welcome', 'invite', 'foreign', 'addresses', 'connect']
   };
 
   /* What the progress names. The welcome, the terms and the invite come
      before any of it and are not counted. */
   var PHASES = [
-    { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'foreign'] },
+    { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'restore', 'foreign'] },
     { name: 'Backup', steps: ['words', 'prove'] },
     { name: 'Money', steps: ['addresses', 'money'] },
     { name: 'Assistant', steps: ['connect', 'threshold', 'done'] }
@@ -90,7 +91,7 @@
     var vault = state.vault || {};
     var base = vault.foreign === true
       ? FLOWS.foreign
-      : (vault.enclave && vault.enclave.ready === true ? FLOWS.enclave : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
+      : (vault.enclave && vault.enclave.ready === true ? (draft.path === 'restore' ? FLOWS.recover : FLOWS.enclave) : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
     var steps = base.slice();
     /* The invite step needs its screen (ui/screens/invite.js). A window without it goes
        straight from the welcome to the wallet, as the terms step leaves when it has nothing
@@ -384,6 +385,7 @@
     else if (name === 'invite') screenInvite();
     else if (name === 'create') screenCreate();
     else if (name === 'foreign') screenForeign();
+    else if (name === 'restore') screenRestore();
     else if (name === 'choose') screenChoose();
     else if (name === 'password') screenPassword();
     else if (name === 'words') screenWords();
@@ -466,6 +468,18 @@
       back.appendChild(dom.el('span', 'btn-label', 'Back'));
       row.appendChild(back);
       dom.on(back, 'click', function () { go(step - 1); });
+    }
+    /* `aside` is the step's other way forward, quiet beside the primary: it
+       changes the path, and the flow redraws on the step that takes its place. */
+    if (opts.aside) {
+      var aside = dom.el('button', 'btn btn-quiet');
+      aside.appendChild(dom.el('span', 'btn-label', opts.aside.label));
+      row.appendChild(aside);
+      dom.on(aside, 'click', function () {
+        draft.path = opts.aside.path;
+        reflow();
+        draw();
+      });
     }
     if (opts.skip) {
       var skip = dom.el('button', 'btn btn-quiet');
@@ -636,8 +650,58 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false, pending: 'Waiting for Touch ID' });
+    }, { back: false, pending: 'Waiting for Touch ID', aside: { label: 'I already have a wallet', path: 'restore' } });
     card.appendChild(dom.el('p', 'meta', 'One Touch ID confirms it. Nothing to write down yet.'));
+  }
+
+  /* The same first run for a wallet that exists already: a Mac lost or
+     replaced, the case the backup is for. Its recovery phrase or, for a wallet
+     with none, its private key brings it here, and one Touch ID proves this Mac
+     opens it before the screen says so, as Create does. With no wallet on this
+     Mac there is nothing a restore could replace, so it asks for no backup. */
+  function screenRestore() {
+    card.appendChild(dom.el('h1', 'title', 'Restore your wallet'));
+    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, or your private key if your wallet has no phrase. One Touch ID keeps it on this Mac.'));
+    var f = phraseField('Recovery phrase or private key');
+    card.appendChild(f.node);
+    var error = dom.el('p', 'body firstrun-error');
+    error.hidden = true;
+    card.appendChild(error);
+
+    actions('Restore', function (button) {
+      var sent = restoreFrom(f.input.value, error);
+      if (sent === null) return;
+      error.hidden = true;
+      window.PhosphorShell.setPending(button, true);
+      sent
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            fail(error, vaultProblem(answer.code || answer.error));
+            return;
+          }
+          f.input.value = '';
+          draft.addresses = answer.addresses || null;
+          next();
+        })
+        .catch(function (err) { fail(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(button, false); });
+    }, { back: false, pending: 'Waiting for Touch ID', aside: { label: 'Make a new wallet', path: 'create' } });
+  }
+
+  /* A phrase or a key, told apart by what was typed: a private key is hex with
+     digits in it, and a recovery phrase is words of letters. The route for it,
+     or null once the problem is said. */
+  function restoreFrom(value, error) {
+    var hex = keyOf(value);
+    if (/^[0-9a-f]+$/.test(hex) && /[0-9]/.test(hex)) {
+      if (hex.length === 64) return api.vaultRestoreKey('0x' + hex);
+      fail(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+      return null;
+    }
+    var words = wordsOf(value);
+    if (words.length === 12 || words.length === 24) return api.vaultRestore(words.join(' '));
+    fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. A recovery phrase is 12 or 24, and a private key is 64 characters.');
+    return null;
   }
 
   /* A version 2 file another Mac made. Its key lives in that Mac's Secure
@@ -842,7 +906,7 @@
     options.setAttribute('role', 'radiogroup');
     options.setAttribute('aria-label', 'Which wallet');
     options.appendChild(choice('Make a new wallet', 'A new wallet starts empty. You add money in a minute.', 'create'));
-    options.appendChild(choice('I already have one', 'Bring it in with its recovery phrase, 12 or 24 words.', 'import'));
+    options.appendChild(choice('I already have one', 'Bring it in with its recovery phrase, or its private key if it has no phrase.', 'import'));
     card.appendChild(options);
     actions('Continue', function () { go('password'); });
   }
@@ -1129,25 +1193,29 @@
     });
   }
 
-  /* The import path's own step: the phrase, 12 or 24 words, in a box that
-     wraps, with every helper that would remember or correct it off. */
+  /* The import path's own step: the phrase, 12 or 24 words, or the private key
+     of a wallet that has no phrase, in a box that wraps, with every helper that
+     would remember or correct it off. */
   function screenImport() {
     card.appendChild(dom.el('h1', 'title', 'Bring your wallet in'));
-    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, 12 or 24 words, with a space between each.'));
-    var f = phraseField('Recovery phrase');
+    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, 12 or 24 words, or your private key if your wallet has no phrase.'));
+    var f = phraseField('Recovery phrase or private key');
     card.appendChild(f.node);
     var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
     actions('Continue', function (button) {
+      var hex = keyOf(f.input.value);
+      var asKey = /^[0-9a-f]+$/.test(hex) && /[0-9]/.test(hex);
       var words = wordsOf(f.input.value);
-      if (words.length !== 12 && words.length !== 24) {
-        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      if (asKey && hex.length !== 64) return fail(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+      if (!asKey && words.length !== 12 && words.length !== 24) {
+        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. A recovery phrase is 12 or 24, and a private key is 64 characters.');
       }
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
-      api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
+      api.walletImport(asKey ? { password: draft.password, keys: { evm: '0x' + hex } } : { password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
           if (answer && answer.ok === false) {
             fail(error, walletProblem(answer.code || answer.error));
@@ -1469,6 +1537,7 @@
     if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing was changed.';
     if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
+    if (code === 'bad_key') return 'That key is not right. Check every character against your copy.';
     if (code === 'bad_key') return 'That key is not right. Check every character against your copy.';
     if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';

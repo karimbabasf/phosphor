@@ -597,16 +597,18 @@ test('with the enclave ready, the first run is the welcome, Create wallet, the a
   assert.equal(find(screen, '.screen-progress').length, 0, 'a step count on the welcome');
   welcome[0].click();
 
-  // Create wallet: one button, nothing typed, the first of three steps.
+  // Create wallet: nothing typed, the first of three steps, Create the main action and the way
+  // back for a wallet that exists quiet beside it.
   assert.equal(find(screen, 'input.input, textarea').length, 0, 'the enclave first run asks for something typed');
   const buttons = find(screen, 'button');
-  assert.equal(buttons.length, 1, 'more than one button on the create screen');
-  assert.equal(buttons[0].textContent, 'Create wallet');
+  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['I already have a wallet', 'Create wallet']);
+  assert.match(buttons[0].className, /btn-quiet/);
+  assert.match(buttons[1].className, /btn-primary/);
   assert.ok(textOf(screen).includes('Step 1 of 3'));
   assert.ok(textOf(screen).some((t) => t.startsWith('Locked by this Mac')), 'the enclave create screen does not say where the key is held');
 
-  buttons[0].click();
-  assert.equal(buttons[0].getAttribute('data-pending-label'), 'Waiting for Touch ID');
+  buttons[1].click();
+  assert.equal(buttons[1].getAttribute('data-pending-label'), 'Waiting for Touch ID');
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/vault/create'));
   assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'the password route was posted');
@@ -632,10 +634,10 @@ test('a cancelled Touch ID on Create says so and stays on the screen', async () 
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  find(screen, 'button')[0].click();
+  buttonNamed(screen, 'Create wallet').click();
   await flush();
   assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing was changed.'));
-  assert.equal(find(screen, 'button')[0].textContent, 'Create wallet');
+  assert.ok(buttonNamed(screen, 'Create wallet'), 'still on Create');
 });
 
 test('a file made on another Mac opens, after the welcome, on Restore: one field, one button, 12 or 24 words', async () => {

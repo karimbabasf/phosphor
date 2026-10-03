@@ -174,7 +174,7 @@ test('no Secure Enclave: create and unwrap refuse before any keychain call, and 
   assert.equal(mac.ask({ op: 'probe' }, { se: false }).secureEnclave, false, 'what makes enclave.ready false, so first run offers the password wallet');
   assert.deepEqual(mac.calls().filter((c) => !c.startsWith('markers')), []);
   const firstrun = fs.readFileSync(path.join(ROOT, 'ui/screens/firstrun.js'), 'utf8');
-  assert.ok(firstrun.includes('vault.enclave && vault.enclave.ready === true ? FLOWS.enclave'), 'first run takes the enclave flow only when it is ready');
+  assert.ok(firstrun.includes("vault.enclave && vault.enclave.ready === true ? (draft.path === 'restore' ? FLOWS.recover : FLOWS.enclave)"), 'first run takes the enclave flows only when it is ready');
 });
 
 test('a device-bound key opens while nothing is bound, and once a marker exists it is refused before the enclave is asked', { skip }, () => {

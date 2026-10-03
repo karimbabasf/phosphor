@@ -796,7 +796,7 @@ test('the import path asks for the phrase it imports, 12 or 24 words, never stra
   assert.ok(box, 'the phrase is not typed into a box that wraps');
   box.value = 'one two three';
   buttonNamed(screen, 'Continue').click();
-  assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
+  assert.ok(textOf(screen).includes('That is 3 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
   const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
   box.value = words.join('  ').toUpperCase();
   buttonNamed(screen, 'Continue').click();

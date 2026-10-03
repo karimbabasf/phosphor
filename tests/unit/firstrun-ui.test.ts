@@ -230,7 +230,8 @@ function build(): World {
   sandbox.PhosphorMoneyIn = { render: (host: Any) => { host.appendChild(makeNode('div')); } };
   sandbox.PhosphorApi = {
     vaultCreate: () => Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }),
-    vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
+    vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return answerFor('/api/vault/restore').then((a) => (a && Object.keys(a as Any).length ? (a as Any) : { ok: true, addresses: { evm: '0xabc' } })); },
+    vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return answerFor('/api/vault/restore').then((a) => (a && Object.keys(a as Any).length ? (a as Any) : { ok: true, addresses: { evm: '0xabc' } })); },
     walletCreate: () => Promise.resolve({ ok: true, mnemonic: [], addresses: {} }),
     walletImport: (payload: Any) => { calls.push({ route: '/api/wallet/import', ...payload }); return Promise.resolve({ ok: true, addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
@@ -623,3 +624,80 @@ test('a refusal from the policy route is shown as its one sentence over the same
   assert.equal(world.calls.filter((c) => c.route === '/api/policy/threshold').length, 2);
   assert.ok(visibleText(screen).includes('Type a number of dollars above 0.'));
 });
+
+/* ---------- a wallet that exists already ---------- */
+
+const KEY_GROUPS = '3f9a 07c2 b41e 5d68 e2a0 9b17 4c3d f805 1a6e c9b2 7e41 0d5f a8c3 62e9 d07b 3b14';
+
+test('with Touch ID, the first run offers a calm second path beside Create: Restore takes the phrase or the key behind one Touch ID', async () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  assert.ok(visibleText(screen).includes('Create your wallet'));
+  const other = buttonNamed(screen, 'I already have a wallet');
+  assert.ok(other, 'a second way in beside Create');
+  assert.match(other.className, /btn-quiet/, 'it is the quiet one: Create stays the main action');
+  other.click();
+  assert.ok(visibleText(screen).includes('Restore your wallet'), visibleText(screen).join(' | '));
+  assert.ok(visibleText(screen).includes('Type your recovery phrase, or your private key if your wallet has no phrase. One Touch ID keeps it on this Mac.'));
+  const restore = buttonNamed(screen, 'Restore');
+  assert.equal(restore.getAttribute('data-pending-label'), 'Waiting for Touch ID');
+
+  const box = (): Any => find(screen, 'textarea')[0];
+  box().value = PHRASE.split(' ').slice(0, 11).join(' ');
+  restore.click();
+  assert.ok(visibleText(screen).includes('That is 11 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
+  box().value = KEY_GROUPS.slice(0, -1);
+  buttonNamed(screen, 'Restore').click();
+  assert.ok(visibleText(screen).includes('That is 63 characters. A private key is 64.'));
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, 0, 'nothing is sent before it reads right');
+
+  world.answers['/api/vault/restore'] = { ok: false, code: 'bad_key', error: 'That is not a private key.' };
+  box().value = KEY_GROUPS;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.ok(visibleText(screen).includes('That key is not right. Check every character against your copy.'));
+  assert.equal((world.calls.filter((c) => c.route === '/api/vault/restore').at(-1) as Any).key, '0x' + KEY_GROUPS.replace(/ /g, ''));
+
+  delete world.answers['/api/vault/restore'];
+  box().value = ` ${PHRASE.toUpperCase()} `;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.equal((world.calls.filter((c) => c.route === '/api/vault/restore').at(-1) as Any).mnemonic, PHRASE);
+  assert.ok(visibleText(screen).includes('Your addresses'), 'restored, the flow goes on as after Create');
+});
+
+test('Make a new wallet takes the first run back to Create, and the restore path counts as the wallet step', () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'I already have a wallet').click();
+  const phase = find(screen, '.screen-phase').find((p: Any) => p.dataset.phase === 'Wallet') as Any;
+  assert.equal(phase.getAttribute('data-current'), 'true');
+  buttonNamed(screen, 'Make a new wallet').click();
+  assert.ok(visibleText(screen).includes('Create your wallet'));
+  assert.ok(buttonNamed(screen, 'Create wallet'));
+});
+
+test('without Touch ID, I already have one takes a private key as well as a phrase', async () => {
+  const world = build();
+  world.store.put({ ...world.store.get(), vault: { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  const tile = find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any;
+  assert.ok(tile.textContent.includes('Bring it in with its recovery phrase, or its private key if it has no phrase.'));
+  tile.click();
+  buttonNamed(screen, 'Continue').click();
+  find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+  buttonNamed(screen, 'Continue').click();
+  find(screen, 'textarea')[0].value = `0x${KEY_GROUPS}`;
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const sent = world.calls.find((c) => c.route === '/api/wallet/import') as Any;
+  assert.equal(sent.keys.evm, '0x' + KEY_GROUPS.replace(/ /g, ''));
+  assert.equal(sent.mnemonic, undefined);
+});
+
