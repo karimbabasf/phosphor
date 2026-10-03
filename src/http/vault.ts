@@ -91,9 +91,10 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       ready: ctx.vault.enclaveReady(),
       capability: ctx.vault.capability(),
       keyMadeAt: enclave?.createdAt ?? null,
-      // 'device': a blob any process on this Mac can load behind its own dialog, which every
-      // wallet made before the keychain home is. 'app': a key in Phosphor's keychain home, which
-      // only Phosphor's signed vault service can reach, made by create or by POST /api/vault/bind.
+      // 'device': a blob any process on this Mac can load behind its own dialog: every wallet made
+      // before the vault profile shipped, and any an ad hoc build makes. 'app': a key in Phosphor's
+      // keychain home, which only Phosphor's signed vault service can reach, made by a Developer ID
+      // build's create or by POST /api/vault/bind. The window says which.
       binding: enclave === null ? null : enclave.keyBlob.startsWith('keychain:') ? 'app' : 'device',
     },
     foreign,

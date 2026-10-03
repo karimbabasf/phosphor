@@ -1191,8 +1191,9 @@
       dom.setText(refs.custodyValue, 'Touch ID');
       dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? ' Made on ' + made + '.' : ''));
       /* Which of the two bindings is live, in words, off the binding and never
-         the signature: every build so far, signed or not, keeps the key bound to
-         this Mac, where any process running as you can present it. */
+         the signature: a key made before the vault profile shipped, or by an ad
+         hoc build, is bound to this Mac, where any process running as you can
+         present it. */
       var device = enclave.binding === 'device';
       dom.setText(refs.custodyMore, device ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.' : '');
       dom.setHidden(refs.custodyMore, !device);

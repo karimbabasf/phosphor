@@ -118,8 +118,8 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   key: its public half is in the file. On a Developer ID build that carries the keychain
   entitlement, a bound wallet's file is checked against a pin only the vault service can write,
   before any Touch ID, so a substitute or an edited file is refused, and once a wallet on this Mac
-  is bound, no device-bound key file opens on it. Such a build never falls back to a device key.
-  No released build carries the entitlement yet, so this waits on that release. Proof:
+  is bound, no device-bound key file opens on it. Such a build never falls back to a device key,
+  and a signed release is such a build: its service carries the vault profile. Proof:
   `vault-service.test.ts` (the service's own rules against a stand-in keychain).
 - **A wallet file swapped while it is being made or bound.** Create, restore, the move from a
   password and the bind write the new file beside the live one, prove it with one Touch ID and
@@ -196,13 +196,13 @@ your money.
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
   closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
   never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
-- **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
-  to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
-  started in Phosphor, and read its sentence. What closes it: custody binding. The vault service
-  is built for it (keys in Phosphor's own keychain group, a pin per bound wallet file, no device key
-  on a Developer ID build), and so is the step that moves an existing wallet over: Bind in the
-  Vault tab, one Touch ID, once the backup is proven. The signed build that carries the keychain
-  entitlement is not shipped yet.
+- **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
+  the vault service carried its provisioning profile, or by a copy you build yourself, has a key
+  another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
+  dialog only for something you started in Phosphor, and read its sentence. A signed release with
+  the profile keeps the key of a wallet it makes in a keychain group only its vault service can
+  reach, with a pin per bound wallet file and never a device key. What closes it for older
+  wallets: Bind in the Vault tab, one Touch ID, once the backup is proven.
 - **Old copies of a wallet file still open on this Mac until the keys change.** A bind moves the
   key into Phosphor's keychain, and Phosphor stops opening any device-bound file on this Mac, but
   it cannot reach a copy of the old file made before: a Time Machine backup, a sync folder, a copy

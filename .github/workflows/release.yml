@@ -235,9 +235,9 @@ jobs:
       # Before any key is in this job: the build job's app against this checkout. The build job
       # holds no secret, and this is what keeps it from choosing what gets signed: its first-party
       # payload files must be this checkout's byte for byte, its shell must carry the digest of
-      # the payload beside it, and no binary may carry an entitlement the committed plist does not
-      # grant, because notarize-mac.sh keeps a nested binary's entitlements as it found them.
-      # Node's own modules and codesign, nothing installed (scripts/release-check.ts).
+      # the payload beside it, and no binary may carry an entitlement Tauri's ad-hoc pass did not
+      # give it. notarize-mac.sh then signs every binary with the set its path is given and none it
+      # arrived with. Node's own modules and codesign, nothing installed (scripts/release-check.ts).
       - name: The unsigned build is this checkout, with the committed entitlements
         run: node scripts/release-check.ts --app "src-tauri/target/$TARGET/release/bundle/macos/Phosphor.app" --checkout . --stage built
 
@@ -290,12 +290,16 @@ jobs:
           echo "signing with $APPLE_SIGNING_IDENTITY"
           echo "SIGN_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
 
-      # Developer ID over everything inside out, the app notarized and stapled, the updater
-      # bundle rebuilt from the stapled app, the stapled app put into the DMG, the DMG signed,
-      # notarized and stapled. Before the checksums, because it changes all three.
+      # Developer ID over everything inside out, each binary with its own entitlements and the
+      # vault service with its profile, then the signing gate (scripts/signing-gate.ts: the
+      # profile, every path's entitlements, the service run by hand, and the team, held to
+      # APPLE_TEAM_ID here), the app notarized and stapled, the updater bundle rebuilt from the
+      # stapled app, the stapled app put into the DMG, the DMG signed, notarized and stapled.
+      # Before the checksums, because it changes all three.
       - name: Sign, notarize and staple the app and the DMG
         env:
           SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           NOTARY_APPLE_ID: ${{ secrets.APPLE_ID }}
           NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           NOTARY_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
@@ -338,7 +342,9 @@ jobs:
       # it holds, then the code signature against the requirement in src-tauri/src/update.rs
       # (`requirement`, held equal to the line below by a test there). Both apps that ship, the one
       # in the DMG and the one in the update, are held to the checkout again once signed: the
-      # payload, the entitlements, the hardened runtime and one team on every binary.
+      # payload, the hardened runtime and one team on every binary, and the signing gate
+      # (scripts/signing-gate.ts, run by release-check.ts): the vault profile, each path's own
+      # entitlements, the vault service run by hand giving 134, and one team.
       - name: The app and the DMG pass Gatekeeper, and the update passes the installed app's check
         run: |
           hdiutil attach "$RELEASE_DIR/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"

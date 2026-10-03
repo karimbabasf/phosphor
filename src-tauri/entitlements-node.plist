@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Hardened runtime entitlements for Contents/MacOS/node, the runtime that runs the backend.
+
+  ALLOW-JIT, AND NOTHING ELSE. V8 cannot exist without executable memory: with the hardened
+  runtime and no allow-jit, node dies before its first line with
+
+      Fatal process out of memory: Failed to reserve virtual memory for CodeRange
+
+  allow-jit lets this one process map its OWN memory executable through MAP_JIT, and grants
+  nothing to any other process. The control that stops another process reading a key out of this
+  heap is the absence of get-task-allow, which this file does not grant either.
+  allow-unsigned-executable-memory stays denied by absence: V8 uses MAP_JIT properly.
+
+  The signed build gives each binary its own set (scripts/notarize-mac.sh): this file on node, the
+  shell's src-tauri/entitlements.plist on the shell, and the Secure Enclave service's set made from
+  its provisioning profile. scripts/signing-gate.ts refuses a build where any of them differs, and
+  refuses this file if it ever holds more than allow-jit.
+
+  A plain `tauri build` signs ad hoc, and Tauri signs every sidecar with the app's one file, so
+  tauri.conf.json names this file: the ad hoc build's backend has to start too. Nothing ad hoc
+  ships; notarize-mac.sh replaces every signature in it.
+
+  codesign parses this comment with AMFI's XML reader, which refuses a double hyphen inside an
+  XML comment. Do not write one here.
+-->
+<plist version="1.0">
+<dict>
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>

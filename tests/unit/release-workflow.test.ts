@@ -86,6 +86,7 @@ test('no job that holds a signing secret installs, builds or runs code it did no
     };
     for (const script of scripts) walk(script);
     assert.ok(read.has('scripts/payload-digest.ts'), 'the release check reads the digest rule the bundler wrote');
+    assert.ok(read.has('scripts/signing-gate.ts'), 'and runs the signing gate notarize-mac.sh runs, held to the same imports');
     assert.match(all(job), /bash scripts\/notarize-mac\.sh/);
     assert.doesNotMatch(fs.readFileSync(new URL('scripts/notarize-mac.sh', root), 'utf8'), /\bnpx\b|\bnpm\b|tauri signer|TAURI_SIGNING/);
   }

@@ -561,21 +561,31 @@ Encryption at rest with no hardened runtime moves a key from a file anyone can r
 anyone can read: any process running as you can attach to the backend with `task_for_pid` and take
 the unlocked key out of memory. `fill(0)` on lock is best effort and says so in the source.
 
-So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block asking for the
-hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
-attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
-V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so `tauri build` on its own makes
-an ad hoc bundle, locally and on the release runner alike. The release workflow's sign job then
-runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service
-inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
-notarize the app and the disk image, and staples both. A release without those secrets fails
-before it signs anything. That job installs and builds nothing (the build job, which holds no
-secret, does). Before it signs, it holds the unsigned app to its own checkout with
-`scripts/release-check.ts` (first-party payload files byte for byte, the digest the shell
-carries, the committed entitlements on the app's executables and none on any other binary), and
-it runs the same check
-on the signed app in the DMG and in the update; the rest of the DMG is the build job's and goes
-unchecked. It deletes the signing keychain right
+So the bundle asks for the hardened runtime, and no binary in it carries `get-task-allow`, which
+is the entitlement that would let a debugger attach. Each binary carries its own set: the shell
+`src-tauri/entitlements.plist`, with no JIT and nothing only a provisioning profile can grant;
+node `src-tauri/entitlements-node.plist`, the one entitlement V8 needs, `allow-jit`, and nothing
+else; the Secure Enclave service the three its Developer ID provisioning profile allows
+(`com.apple.application-identifier`, `com.apple.developer.team-identifier`, and
+`keychain-access-groups` set to the one group `35Z6P26CBD.com.karimbabasf.phosphor.vault`, never
+the profile's `35Z6P26CBD.*`). `tests/unit/code-signing.test.ts` holds the two files to that.
+`signingIdentity` is `-` in the config, so `tauri build` on its own makes an ad hoc bundle,
+locally and on the release runner alike; Tauri signs the shell and node with the one file the
+config names, node's, so an ad hoc build's backend starts too. The release workflow's sign job
+then runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC
+service inside out with the Developer ID from its secrets (hardened runtime, secure timestamp),
+each with the set its path is given, the service once, with `src-tauri/signing/vault.provisionprofile`
+embedded in it first; has Apple notarize the app and the disk image, and staples both. A release
+without those secrets fails before it signs anything. That job installs and builds nothing (the
+build job, which holds no secret, does). Before it signs, it holds the unsigned app to its own
+checkout with `scripts/release-check.ts` (first-party payload files byte for byte, the digest the
+shell carries, the ad hoc pass's entitlements on the app's executables and none on any other
+binary). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
+(this service's team and app id, Developer ID, more than a year left, listing the certificate
+that signed), each path's entitlements, that the service run by hand gets past AMFI (it aborts in
+`xpc_main` with 134; a refused one is killed with 137), and that the profile, the certificate and
+`APPLE_TEAM_ID` name one team. The job runs the same checks on the signed app in the DMG and in
+the update; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
 Node's own crypto. The same chain runs on
 a Mac, checks included, with nothing published:
@@ -597,12 +607,13 @@ with a data key wrapped to a key the enclave made and cannot export, and every c
 Touch ID dialog the app composes. The service answers only a peer whose code signature passes its
 requirement: under Developer ID, Apple's anchor, the app's Team ID and `com.karimbabasf.phosphor`;
 under ad hoc, that identifier alone (`sh scripts/xpc-attack.sh` plays a foreign process against a
-built bundle). Every build so far, ad hoc or Developer ID, keeps the enclave key bound to this Mac
-rather than to Phosphor's signature: the keychain home needs the keychain-access-groups
-entitlement, which no build carries yet, so the key is a CryptoKit device key. The Vault tab's Keys
-row says so in one line ("Bound to this Mac rather than to Phosphor"). A build whose profile grants
-that entitlement keeps the key in the keychain, binds it to the app, and the service is then the
-only process that can reach it.
+built bundle). Where the enclave key lives depends on the build that made it. A Developer ID
+build carries the vault profile, so the service holds `keychain-access-groups`, and a key it makes
+lives in the keychain under that group, bound to the app: the service is the only process that can
+reach it. A key made before the profile shipped, or by an ad hoc build (which can carry no profile:
+AMFI kills an ad hoc binary that claims a keychain group), is a CryptoKit device key, bound to this
+Mac rather than to Phosphor's signature, and the Vault tab's Keys row says so in one line ("Bound
+to this Mac rather than to Phosphor").
 
 The service is ready for that build. It reads its own Team ID from its code signature: with one,
 every keychain call names the group `<team>.com.karimbabasf.phosphor.vault`, `create` makes the key

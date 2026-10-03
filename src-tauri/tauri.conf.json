@@ -34,7 +34,7 @@
     ],
     "macOS": {
       "minimumSystemVersion": "13.5",
-      "entitlements": "entitlements.plist",
+      "entitlements": "entitlements-node.plist",
       "hardenedRuntime": true,
       "signingIdentity": "-",
       "files": {

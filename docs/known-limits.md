@@ -71,29 +71,30 @@ serves and no program can fetch.
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.
 
-## The Secure Enclave key is bound to this Mac, not to Phosphor
+## An older wallet's Secure Enclave key is bound to this Mac, not to Phosphor
 
-Every build so far, the signed releases included, keeps the Secure Enclave key bound to this Mac
-rather than to Phosphor. The keychain home that would tie it to the app needs the
-keychain-access-groups entitlement, and no build carries it yet, so the key is a CryptoKit key any
-program running as you can load. On a signed release the vault service answers only the signed
-Phosphor app, and on a copy you build yourself it checks the app's identifier alone; the key
-itself does not care who asks.
+A wallet made before the vault service carried its provisioning profile, and any wallet a copy
+you build yourself makes, keeps its Secure Enclave key bound to this Mac rather than to Phosphor:
+a CryptoKit key any program running as you can load. A signed release embeds a Developer ID
+provisioning profile in the vault service (`src-tauri/signing/vault.provisionprofile`), which
+grants it one keychain group, `35Z6P26CBD.com.karimbabasf.phosphor.vault`, and the key of a wallet
+it makes lives there, where only that service can ask for it. A copy you build yourself is signed
+ad hoc and can carry no profile: macOS kills an ad hoc program that claims a keychain group. On a
+signed release the vault service answers only the signed Phosphor app, and on a copy you build
+yourself it checks the app's identifier alone; a key bound to this Mac does not care who asks.
 
 What it means: another app running as you could ask to use the key, and macOS would show that
 app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for something you started
 in Phosphor, and read the sentence in it. The Keys row in the Vault tab says the same in one line.
 
-What closes it: a Developer ID provisioning profile that grants the keychain entitlement, so the
-key lives in the keychain where only Phosphor can ask for it. The vault service is built for that
-build: it makes new keys only in Phosphor's own keychain group, never a device key, and a wallet
-bound there carries a pin only the service can write, so a wallet file someone else wrapped to the
-same key, or an edited one, is refused before any Touch ID. Once a wallet on the Mac is bound,
-device-bound key files stop opening there, copies included. The step that moves an existing wallet
-over is Bind in the Vault tab: one Touch ID, once the backup is proven. Until a release carries the
-entitlement, this limit stands. A signed
-update still verifies either way: the updater checks the bundle's own update signature, and then
-its Developer ID code signature against Phosphor's Team ID, before it replaces anything.
+What closes it: Bind, in the Vault tab of a signed release, moves an older wallet's key into the
+vault's keychain group with one Touch ID, once its backup is proven. The service of such a release
+makes new keys only in that group, never a device key, and a wallet bound there carries a pin only
+the service can write, so a wallet file someone else wrapped to the same key, or an edited one, is
+refused before any Touch ID. Once a wallet on the Mac is bound, device-bound key files stop opening
+in Phosphor there, copies included. A signed update still verifies either way: the updater checks
+the bundle's own update signature, and then its Developer ID code signature against Phosphor's Team
+ID, before it replaces anything.
 
 ## Old copies of a wallet file still open on this Mac until the keys change
 

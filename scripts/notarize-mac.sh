@@ -19,6 +19,8 @@
 #                     submissions can sit In Progress for hours.
 #   NOTARIZE=0        sign and rebuild everything but skip Apple's service. Only for proving the
 #                     chain with a throwaway identity; nothing made this way can ship.
+#   APPLE_TEAM_ID     the team the release secrets name (optional). The signing gate holds the
+#                     vault profile and the signing certificate to it when it is set.
 #
 # Why this and not Tauri's own signing. Tauri signs the app, its sidecars and the DMG, and
 # notarizes the app, but it signs nothing nested in a bundle (an XPC service in
@@ -28,7 +30,8 @@
 # type makes and drops its own. So Tauri builds ad-hoc, exactly as on an unsigned release, and
 # everything Apple checks is done here, in one place, in the order Apple needs:
 #
-#   1. sign inside out: every Mach-O, then every nested bundle deepest first, then the app
+#   1. sign inside out: every Mach-O, then every nested bundle deepest first, then the app, each
+#      with the entitlements its path is given; then the signing gate (scripts/signing-gate.ts)
 #   2. notarize the app and staple its ticket
 #   3. rebuild the updater bundle from the stapled app
 #   4. put the stapled app into the DMG in place of the ad-hoc one (Finder layout kept)
@@ -59,11 +62,14 @@ if [ "$notarize" = 1 ]; then
 fi
 
 root="$(cd "$(dirname "$0")/.." && pwd)"
-entitlements="$root/src-tauri/entitlements.plist"
+shell_entitlements="$root/src-tauri/entitlements.plist"
+node_entitlements="$root/src-tauri/entitlements-node.plist"
+profile="$root/src-tauri/signing/vault.provisionprofile"
 app="$bundle/macos/Phosphor.app"
+service="$app/Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc"
 tarball="$bundle/macos/Phosphor.app.tar.gz"
 dmg="$bundle/dmg/Phosphor_${version}_aarch64.dmg"
-for path in "$app" "$dmg" "$entitlements"; do
+for path in "$app" "$service" "$dmg" "$shell_entitlements" "$node_entitlements" "$profile"; do
   test -e "$path" || { echo "notarize: $path is missing" >&2; exit 1; }
 done
 
@@ -128,34 +134,64 @@ notarize_file() {
   fi
 }
 
-# 1. Inside out. Extended attributes first: a resource fork or Finder info on any file inside
-# the bundle makes codesign refuse it (Apple QA1940).
+# The Secure Enclave service's entitlements, made from the committed profile: its app id, its
+# team, and the one keychain group its vault lives in. The script refuses a profile that is not
+# this service's or has less than a year left, before anything is signed.
+node "$root/scripts/signing-gate.ts" --entitlements "$profile" > "$work/vault.entitlements"
+
+# 1. Inside out, every piece of code with the entitlements its path is given and none it arrived
+# with, so nothing the build job put on a binary survives signing:
+#
+#   Contents/MacOS/<main>   the shell: src-tauri/entitlements.plist, no JIT and nothing a
+#                           provisioning profile grants
+#   Contents/MacOS/node     src-tauri/entitlements-node.plist: allow-jit alone, which V8 needs
+#   the vault service       the set made above, with the profile embedded in it
+#   any other Mach-O        none
+#
+# scripts/signing-gate.ts holds the signed app to the same map.
+#
+# The profile goes into the service first: it is one of the service's sealed resources, so it has
+# to be in place before the service is signed. Then extended attributes: a resource fork or Finder
+# info on any file inside the bundle makes codesign refuse it (Apple QA1940).
+cp "$profile" "$service/Contents/embedded.provisionprofile"
 xattr -cr "$app"
 main="$(plutil -extract CFBundleExecutable raw -o - "$app/Contents/Info.plist")"
+service_main="$(plutil -extract CFBundleExecutable raw -o - "$service/Contents/Info.plist")"
 
-# Every Mach-O that is not the app's own executable, wherever it sits: the sidecars in
-# Contents/MacOS today, anything an XPC service or a framework carries tomorrow. A file inside a
-# nested bundle keeps whatever entitlements its own build gave it; a sidecar of the app itself
-# gets the app's entitlements, which is what Tauri's ad-hoc pass gave it too.
+# Every Mach-O but the shell and the service's own executable, wherever it sits; those two are
+# signed with their bundles below.
 find "$app/Contents" -type f | by_depth | while IFS= read -r file; do
   [ "$file" = "$app/Contents/MacOS/$main" ] && continue
+  [ "$file" = "$service/Contents/MacOS/$service_main" ] && continue
   is_macho "$file" || continue
-  if [ "$(dirname "$file")" = "$app/Contents/MacOS" ]; then
-    sign --entitlements "$entitlements" "$file"
+  if [ "$file" = "$app/Contents/MacOS/node" ]; then
+    sign --entitlements "$node_entitlements" "$file"
   else
-    sign --preserve-metadata=entitlements "$file"
+    sign "$file"
   fi
 done
 
-# Nested bundles, deepest first, each keeping its own entitlements. Contents/XPCServices is
-# where the Secure Enclave helper moves to; the loop is empty while it does not exist.
+# Nested bundles, deepest first. The vault service is signed here, once, and nothing signs it
+# again: the app's own signature below seals it without re-signing it. The old loop re-signed
+# every nested bundle keeping the entitlements it found, and the service is built with none, so
+# that loop would have shipped it unentitled.
 find "$app/Contents" -type d \( -name '*.xpc' -o -name '*.framework' -o -name '*.app' -o -name '*.appex' -o -name '*.bundle' \) \
   | by_depth | while IFS= read -r nested; do
-  sign --preserve-metadata=entitlements "$nested"
+  if [ "$nested" = "$service" ]; then
+    sign --entitlements "$work/vault.entitlements" "$service"
+  else
+    sign "$nested"
+  fi
 done
 
-sign --entitlements "$entitlements" "$app"
+sign --entitlements "$shell_entitlements" "$app"
 codesign --verify --deep --strict --verbose=2 "$app"
+
+# The signing gate, before Apple sees anything: the profile, every path's entitlements, the vault
+# service run by hand (134 means AMFI let it start, 137 means AMFI killed it), and one team,
+# APPLE_TEAM_ID's when it is set. A service AMFI refuses would ship an app that cannot reach its
+# vault service at all.
+node "$root/scripts/signing-gate.ts" --app "$app" --checkout "$root"
 
 # 2. Apple takes an app as a zip; ditto makes the one Finder would.
 if [ "$notarize" = 1 ]; then

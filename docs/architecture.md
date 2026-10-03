@@ -267,13 +267,20 @@ which lets only `v*` tags in and waits for the maintainer's approval (see
 [Known limits](known-limits.md#a-release-rests-on-one-github-account)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
 first-party payload file byte for byte, the payload digest the
-shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
-on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
-entitlements as it found them. Then it runs
-`notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
+shell carries, and the entitlements of every binary: the file Tauri's ad hoc pass was given on the
+app's executables, and none anywhere else. Then it runs `notarize-mac.sh`, which signs every
+binary with the entitlements its path is given and none it arrived with: the shell
+`src-tauri/entitlements.plist` (no JIT), node `src-tauri/entitlements-node.plist` (`allow-jit`
+alone, which V8 needs), and the Secure Enclave service three made from its Developer ID
+provisioning profile (`src-tauri/signing/vault.provisionprofile`, embedded in it), which give it
+the one keychain group `35Z6P26CBD.com.karimbabasf.phosphor.vault`. Before Apple sees the app, the
+signing gate (`scripts/signing-gate.ts`) checks the profile, each path's entitlements, that the
+service run by hand gets past AMFI (it aborts in `xpc_main` with 134; 137 is AMFI killing it), and
+that the profile, the signing certificate and the release's team are one team. Then the job
+deletes the signing keychain, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
+one team on every binary and the signing gate once more. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
 app inside it, and nothing checks what else sits beside the app before the DMG is signed and
 notarized. The split keeps the secrets from the build. This check stops the build
 from changing a first-party file in the payload or adding an entitlement before signing. It
