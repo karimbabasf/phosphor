@@ -55,6 +55,7 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
+import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
 import { refreshRegistration } from './http/mutation.ts';
@@ -227,6 +228,8 @@ if (transportKey !== null) {
   void vault.ask({ op: 'probe' }).then((probe) => {
     if (probe.ok && probe.op === 'probe') {
       audit.append('app_start', probe.capability.secureEnclave ? 'the Secure Enclave is reachable through the shell' : 'this Mac has no Secure Enclave the shell can reach', { ...probe.capability });
+      // A wallet file a crash left half put in place is finished or removed before anyone asks.
+      settleAtStart({ keystore, vault, audit, announce: () => announceLock?.() });
     } else if (!probe.ok) {
       audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
     }

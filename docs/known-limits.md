@@ -89,10 +89,31 @@ key lives in the keychain where only Phosphor can ask for it. The vault service 
 build: it makes new keys only in Phosphor's own keychain group, never a device key, and a wallet
 bound there carries a pin only the service can write, so a wallet file someone else wrapped to the
 same key, or an edited one, is refused before any Touch ID. Once a wallet on the Mac is bound,
-device-bound key files stop opening there, copies included. Until a release carries the
-entitlement, and the step that moves an existing wallet over ships, this limit stands. A signed
+device-bound key files stop opening there, copies included. The step that moves an existing wallet
+over is Bind in the Vault tab: one Touch ID, once the backup is proven. Until a release carries the
+entitlement, this limit stands. A signed
 update still verifies either way: the updater checks the bundle's own update signature, and then
 its Developer ID code signature against Phosphor's Team ID, before it replaces anything.
+
+## Old copies of a wallet file still open on this Mac until the keys change
+
+Binding moves the wallet's key into Phosphor's own keychain and writes a new wallet file for it.
+From then on Phosphor on this Mac refuses every device-bound wallet file, old copies included, before
+any Touch ID. What binding cannot do is reach those copies. A copy of the old `keys.enc.json` made
+before the bind (a Time Machine backup or local snapshot, a sync folder, a copy you made, the file on
+another disk) still holds the old key, wrapped to a key this Mac's Secure Enclave keeps. Any program
+running as you can load that key from the copy and ask for your Touch ID with its own dialog, and a
+Phosphor build from before binding existed opens it too. The keys inside are the same keys, so such
+a copy can spend the same money.
+
+What Phosphor deletes: only the copies it wrote itself, the temp file a write cut short leaves
+beside the key file, and only after the bound file has opened once. It never touches a Time Machine
+snapshot, a sync folder or a file you made. A backup you exported with a password is a password
+file: binding does not change it, and anyone with the file and the password opens it anywhere.
+
+What it means: after a bind, delete the old copies you know of, and approve a Touch ID dialog only
+for something you started in Phosphor. What closes it: moving to new keys that never existed outside
+the keychain, so the old key holds nothing. The chip vault plans that; it is not built.
 
 ## The venues are not ours
 

@@ -42,6 +42,9 @@ import type { SeWrapped } from './sewrap.ts';
 import { atomicWrite } from '../fsatomic.ts';
 
 export const KEYSTORE_FILENAME = 'keys.enc.json';
+/* Where a new version 2 file waits until the enclave has opened it and, on a build with a keychain
+   home, it is committed: only then does it replace the live file (src/http/custody.ts). */
+export const STAGED_FILENAME = 'keys.enc.json.bind';
 
 // Five failures, then thirty seconds. Not a lockout an attacker can trigger against the owner
 // (it is a local file behind a window token) and not a defence against an offline attack
@@ -177,6 +180,12 @@ export type UnlockResult =
    before it asks for a touch (src-tauri/se-helper/main.swift, THE PIN). */
 export type EnclaveUnwrapRequest = { keyBlob: string; ephemeralPublicKey: string; ciphertext: string; aad: string; addresses: string };
 
+/* A version 2 file this process wrote to the staged path and has not put in place: its bytes as
+   written, what the enclave is asked to open, and the addresses its header claims. Ciphertext
+   only. The proving touch and the commit are built from this, never from a read of the disk, so a
+   file swapped in between is not the one that gets proven or pinned. */
+export type StagedFile = { bytes: string; request: EnclaveUnwrapRequest; addresses: StoredAddresses };
+
 /* The addresses plus how much they can be believed, which is a different fact and used to be
    silently missing.
 
@@ -255,6 +264,27 @@ export type Keystore = {
   updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses;
   // Shreds the file. The caller has already made the person prove they mean it.
   forget(): { destroyed: string };
+
+  // ---- staging: a new version 2 file is written beside the live one and put in place last ----
+  // A new wallet, an imported one, the open wallet under a fresh data key, and a password wallet
+  // opened once. Each writes the staged path only, and wipes the data key it made: the proof gets
+  // it back from the enclave.
+  stageNew(enclave: EnclaveRef): StagedFile;
+  stageImport(enclave: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): StagedFile;
+  stageRewrap(enclave: EnclaveRef): StagedFile;
+  stageFromPassword(password: string, enclave: EnclaveRef): Promise<{ ok: true; staged: StagedFile } | Extract<UnlockResult, { ok: false }>>;
+  /* The staged file a crash left, as it is on disk: `installed` when it is already the live file
+     byte for byte. Null when there is none; 'unreadable' when it is not a file this app wrote. */
+  stagedOnDisk(): { staged: StagedFile; installed: boolean } | 'unreadable' | null;
+  // Whether this data key opens exactly these bytes, to the wallet their header names. Wipes nothing.
+  proveStaged(staged: StagedFile, dek: Buffer): boolean;
+  /* The staged bytes become the live file in one rename, and the staged path is cleared. 'open'
+     holds the wallet open on `dek` (a new or moved wallet); 'keep' leaves the lock as it is and,
+     when the wallet is open, makes `dek` its data key (a bind). `dek` null is a crash being
+     finished: no wallet is opened, and an open one keeps no data key that no longer fits the file. */
+  installStaged(staged: StagedFile, dek: Buffer | null, after: 'open' | 'keep'): UnlockResult;
+  // Shreds the staged file, if there is one.
+  dropStaged(): boolean;
   // The scrypt parameters a new file is written with, a fresh salt each call. The words Prove it
   // checks are slowed with the same (src/vault/phrase-proof.ts).
   kdfParams(): KdfParams;
@@ -264,6 +294,62 @@ export type Keystore = {
 
 export function keystorePathFor(keysPath: string): string {
   return path.join(path.dirname(keysPath), KEYSTORE_FILENAME);
+}
+
+export function stagedPathFor(keysPath: string): string {
+  return path.join(path.dirname(keysPath), STAGED_FILENAME);
+}
+
+/* Overwrite with random bytes, force to disk, truncate, force again: destroyPlaintext's steps, on a
+   descriptor already open. */
+function overwrite(fd: number): void {
+  const size = fs.fstatSync(fd).size;
+  if (size > 0) {
+    fs.writeSync(fd, crypto.randomBytes(size), 0, size, 0);
+    fs.fsyncSync(fd);
+  }
+  fs.ftruncateSync(fd, 0);
+  fs.fsyncSync(fd);
+}
+
+/* A regular file at `target` with no other name, opened for writing without following a link, or
+   null. A symbolic link planted where a key file was expected, or a hard link to a file somewhere
+   else, must not turn a shred into an overwrite of a file this app did not write. */
+function openOwnFile(target: string): number | null {
+  let fd: number;
+  try {
+    fd = fs.openSync(target, fs.constants.O_RDWR | fs.constants.O_NOFOLLOW);
+  } catch {
+    return null;
+  }
+  const stat = fs.fstatSync(fd);
+  if (!stat.isFile() || stat.nlink !== 1) {
+    fs.closeSync(fd);
+    return null;
+  }
+  return fd;
+}
+
+/* Overwritten, then unlinked: a copy of key material leaves the block as well as the directory. A
+   name that is a link loses only the name. */
+export function shredFile(target: string): boolean {
+  let stat: fs.Stats;
+  try {
+    stat = fs.lstatSync(target);
+  } catch {
+    return false;
+  }
+  if (!stat.isFile() && !stat.isSymbolicLink()) return false;
+  const fd = openOwnFile(target);
+  if (fd !== null) {
+    try {
+      overwrite(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+  }
+  fs.unlinkSync(target);
+  return true;
 }
 
 /* tmp-then-rename with the tmp file's contents forced to disk first, so a crash leaves either
@@ -357,6 +443,7 @@ function payloadFrom(mnemonic: string | null, keys: Wallet['keys'], addresses: W
 export function createKeystore(opts: { keysPath: string; mode?: string; now?: () => number; kdf?: () => KdfParams }): Keystore {
   const keysPath = opts.keysPath;
   const file = keystorePathFor(keysPath);
+  const stagedPath = stagedPathFor(keysPath);
   const now = opts.now ?? Date.now;
   const demo = opts.mode === 'demo' || envIsDemo();
   /* The parameters a NEW file is written with. Injected only so the test suite can run the
@@ -741,9 +828,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     return stored !== null && isEnclaveFile(stored) ? (stored.header.enclave ?? null) : null;
   }
 
-  function enclaveRequest(): EnclaveUnwrapRequest | null {
-    const stored = storedFile();
-    if (stored === null || !isEnclaveFile(stored)) return null;
+  function requestOf(stored: KeystoreFile): EnclaveUnwrapRequest {
     const wrap = stored.wrap as SeWrapped;
     return {
       keyBlob: stored.header.enclave!.keyBlob,
@@ -754,10 +839,16 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     };
   }
 
+  function enclaveRequest(): EnclaveUnwrapRequest | null {
+    const stored = storedFile();
+    if (stored === null || !isEnclaveFile(stored)) return null;
+    return requestOf(stored);
+  }
+
   /* The version 2 write. One header, one data key, one wrap to the enclave, one payload under
-     the data key, both envelopes under the header-minus-addresses AAD. The data key is handed
-     back to the caller, which is about to hold the wallet open with it. */
-  function writeEnclave(payload: KeysPayload, ref: EnclaveRef, dek: Buffer): KeystoreHeader {
+     the data key, both envelopes under the header-minus-addresses AAD. The data key stays the
+     caller's; the bytes written come back, for a caller that must prove and commit exactly them. */
+  function writeEnclave(payload: KeysPayload, ref: EnclaveRef, dek: Buffer, target = file): { header: KeystoreHeader; bytes: string } {
     const header: KeystoreHeader = {
       version: 2,
       createdAt: new Date(now()).toISOString(),
@@ -768,17 +859,19 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     };
     const aad = proofAad(header);
     const body = Buffer.from(JSON.stringify(payload), 'utf8');
+    let bytes: string;
     try {
       const out: KeystoreFile = {
         header,
         wrap: seWrap(dek, ref.publicKey, aad),
         payload: seal(body, dek, aad),
       };
-      writeSecret(file, JSON.stringify(out, null, 2) + '\n');
+      bytes = JSON.stringify(out, null, 2) + '\n';
+      writeSecret(target, bytes);
     } finally {
       wipe(body);
     }
-    return header;
+    return { header, bytes };
   }
 
   function holdOpen(payload: KeysPayload, dek: Buffer, addrs: StoredAddresses): void {
@@ -896,7 +989,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const made = newWallet();
     const payload = payloadFrom(made.mnemonic, made.wallet.keys, made.wallet.addresses);
     const dek = newDataKey();
-    const header = writeEnclave(payload, ref, dek);
+    const { header } = writeEnclave(payload, ref, dek);
     tampered = false;
     holdOpen(payload, dek, header.addresses);
     return { addresses: header.addresses };
@@ -906,7 +999,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (hasKeystore()) throw new Error('this app already holds a wallet. Move keys.enc.json aside first, or import into a fresh data directory.');
     const payload = payloadFromImport(from);
     const dek = newDataKey();
-    const header = writeEnclave(payload, ref, dek);
+    const { header } = writeEnclave(payload, ref, dek);
     tampered = false;
     holdOpen(payload, dek, header.addresses);
     return { addresses: header.addresses };
@@ -922,10 +1015,181 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       wipe(opened.body);
     }
     const dek = newDataKey();
-    const header = writeEnclave(payload, ref, dek);
+    const { header } = writeEnclave(payload, ref, dek);
     tampered = false;
     holdOpen(payload, dek, header.addresses);
     return { ok: true };
+  }
+
+  // ---------- staging ----------
+
+  function stagedFrom(bytes: string): StagedFile {
+    const stored = JSON.parse(bytes) as KeystoreFile;
+    if (stored?.header === undefined || !isEnclaveFile(stored)) throw new Error('not an enclave key file');
+    return { bytes, request: requestOf(stored), addresses: stored.header.addresses };
+  }
+
+  /* The data key made here is wiped as soon as the file is written. The only copy left is the wrap,
+     which the enclave opens after the owner's touch: that answer is the proof the staged file opens. */
+  function stage(payload: KeysPayload, ref: EnclaveRef): StagedFile {
+    const dek = newDataKey();
+    try {
+      return stagedFrom(writeEnclave(payload, ref, dek, stagedPath).bytes);
+    } finally {
+      wipe(dek);
+    }
+  }
+
+  function stageNew(ref: EnclaveRef): StagedFile {
+    const made = newWallet();
+    return stage(payloadFrom(made.mnemonic, made.wallet.keys, made.wallet.addresses), ref);
+  }
+
+  /* Demo mode never stages one wallet to take the place of another: putting it in place would be
+     the shred forget() refuses there. The same wallet (the file from another Mac) may come back. */
+  function stageImport(ref: EnclaveRef, from: { mnemonic?: string; keys?: Partial<RailKeys> }): StagedFile {
+    const payload = payloadFromImport(from);
+    if (demo && hasKeystore() && (readHeader(keysPath)?.addresses.evm ?? '').toLowerCase() !== (addressesOf(payload).evm ?? '').toLowerCase()) {
+      throw new Error(DEMO_REFUSAL);
+    }
+    return stage(payload, ref);
+  }
+
+  // The open wallet's own payload, as this process decrypted it: a bind changes the wrap and nothing in it.
+  function stageRewrap(ref: EnclaveRef): StagedFile {
+    if (plain === null || closers.size > 0) throw new Error('the wallet is locked');
+    return stage(keys(), ref);
+  }
+
+  async function stageFromPassword(password: string, ref: EnclaveRef): Promise<{ ok: true; staged: StagedFile } | Extract<UnlockResult, { ok: false }>> {
+    const opened = await openWith(password);
+    if (!opened.ok) return opened;
+    let payload: KeysPayload;
+    try {
+      payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
+    } finally {
+      wipe(opened.body);
+    }
+    return { ok: true, staged: stage(payload, ref) };
+  }
+
+  function stagedOnDisk(): { staged: StagedFile; installed: boolean } | 'unreadable' | null {
+    let bytes: string;
+    try {
+      // A key file this app wrote is a regular file of a couple of kilobytes.
+      const stat = fs.lstatSync(stagedPath);
+      if (!stat.isFile() || stat.size > 256 * 1024) return 'unreadable';
+      bytes = fs.readFileSync(stagedPath, 'utf8');
+    } catch (err) {
+      return (err as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable';
+    }
+    let found: StagedFile;
+    try {
+      found = stagedFrom(bytes);
+    } catch {
+      return 'unreadable';
+    }
+    let live: string | null = null;
+    try {
+      live = fs.readFileSync(file, 'utf8');
+    } catch {
+      live = null;
+    }
+    return { staged: found, installed: live === bytes };
+  }
+
+  /* The staged payload opened with `dek`, from the bytes in hand, and checked against the addresses
+     its header names. The data key is the caller's either way. */
+  function openStaged(s: StagedFile, dek: Buffer): { ok: true; body: Buffer; payload: KeysPayload } | { ok: false } {
+    let body: Buffer | null = null;
+    try {
+      const stored = JSON.parse(s.bytes) as KeystoreFile;
+      body = open(stored.payload, dek, proofAad(stored.header));
+      const payload = JSON.parse(body.toString('utf8')) as KeysPayload;
+      if (!sameAddresses(addressesOf(payload), stored.header.addresses)) {
+        wipe(body);
+        return { ok: false };
+      }
+      return { ok: true, body, payload };
+    } catch {
+      wipe(body);
+      return { ok: false };
+    }
+  }
+
+  function proveStaged(s: StagedFile, dek: Buffer): boolean {
+    const opened = openStaged(s, dek);
+    if (opened.ok) wipe(opened.body);
+    return opened.ok;
+  }
+
+  /* The live file becomes `bytes` in one rename, and the file it replaces is overwritten through a
+     descriptor taken before the rename: its bytes leave the block as well as the directory, with no
+     moment where the live file is anything but whole. Not in demo mode, which never destroys a key
+     file; the rename alone is what an in-place rewrite always did. */
+  function replaceLive(bytes: string): void {
+    const old = demo ? null : openOwnFile(file);
+    try {
+      writeSecret(file, bytes);
+      if (old !== null) overwrite(old);
+    } finally {
+      if (old !== null) fs.closeSync(old);
+    }
+  }
+
+  function installStaged(s: StagedFile, dek: Buffer | null, after: 'open' | 'keep'): UnlockResult {
+    const opened = dek === null ? null : openStaged(s, dek);
+    if (opened !== null && !opened.ok) {
+      wipe(dek);
+      return { ok: false, error: 'damaged', detail: 'that data key does not open the staged wallet file' };
+    }
+    try {
+      replaceLive(s.bytes);
+    } catch (err) {
+      if (opened?.ok === true) wipe(opened.body);
+      wipe(dek);
+      return { ok: false, error: 'damaged', detail: `the wallet file could not be written: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    try {
+      fs.unlinkSync(stagedPath);
+    } catch {
+      // Already gone, or left for the next start, which finds it equal to the live file and removes it.
+    }
+    if (opened === null || !opened.ok) {
+      // A crash finished: nothing is opened, and an open wallet's data key fits the old file only.
+      if (dataKey !== null) wipe(dataKey);
+      dataKey = null;
+      announce();
+      return { ok: true };
+    }
+    if (after === 'open') {
+      hold(opened.body, opened.payload);
+      if (dataKey !== null && dataKey !== dek) wipe(dataKey);
+      dataKey = dek;
+    } else {
+      wipe(opened.body);
+      // The wallet may have locked while the touch was open; a bind opens nothing it found shut.
+      if (plain !== null && closers.size === 0) {
+        if (dataKey !== null) wipe(dataKey);
+        dataKey = dek;
+      } else {
+        wipe(dek);
+      }
+    }
+    openAddresses = addressesOf(opened.payload);
+    tampered = false;
+    failures = 0;
+    backoffUntil = 0;
+    announce();
+    return { ok: true };
+  }
+
+  function dropStaged(): boolean {
+    try {
+      return shredFile(stagedPath);
+    } catch {
+      return false;
+    }
   }
 
   function updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses {
@@ -1092,6 +1356,14 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     rewrapToEnclave,
     updatePayload,
     forget,
+    stageNew,
+    stageImport,
+    stageRewrap,
+    stageFromPassword,
+    stagedOnDisk,
+    proveStaged,
+    installStaged,
+    dropStaged,
     kdfParams: params,
     onChange(fn) {
       listeners.add(fn);

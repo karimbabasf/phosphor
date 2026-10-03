@@ -44,6 +44,7 @@ import {
   handleDepositStop,
   handleVaultAnswer,
   handleVaultBackupProven,
+  handleVaultBind,
   handleVaultCreate,
   handleVaultForget,
   handleVaultMigrate,
@@ -178,6 +179,8 @@ const POST: Record<string, Route> = {
   '/api/vault/backup-proven': (ctx, req, res) => handleVaultBackupProven(ctx, req, res),
   '/api/vault/restore': (ctx, req, res) => handleVaultRestore(ctx, req, res),
   '/api/vault/migrate': (ctx, req, res) => handleVaultMigrate(ctx, req, res),
+  // A device-bound wallet moves into Phosphor's keychain home: one Touch ID, window only.
+  '/api/vault/bind': (ctx, req, res) => handleVaultBind(ctx, req, res),
   '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.

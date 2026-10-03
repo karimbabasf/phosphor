@@ -121,6 +121,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   is bound, no device-bound key file opens on it. Such a build never falls back to a device key.
   No released build carries the entitlement yet, so this waits on that release. Proof:
   `vault-service.test.ts` (the service's own rules against a stand-in keychain).
+- **A wallet file swapped while it is being made or bound.** Create, restore, the move from a
+  password and the bind write the new file beside the live one, prove it with one Touch ID and
+  commit it from the bytes held in memory, and only then put those bytes in place; the staged file
+  is never read back. A crash leaves the old file whole or the new one committed, and the next
+  start finishes or removes the staged file by the service's answer about it. Proof:
+  `vault-bind.test.ts` (a staged file swapped during the touch is never pinned; the crash matrix).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -194,8 +200,17 @@ your money.
   to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
   started in Phosphor, and read its sentence. What closes it: custody binding. The vault service
   is built for it (keys in Phosphor's own keychain group, a pin per bound wallet file, no device key
-  on a Developer ID build); the signed build that carries the keychain entitlement, and the step
-  that moves an existing wallet over, are not shipped yet.
+  on a Developer ID build), and so is the step that moves an existing wallet over: Bind in the
+  Vault tab, one Touch ID, once the backup is proven. The signed build that carries the keychain
+  entitlement is not shipped yet.
+- **Old copies of a wallet file still open on this Mac until the keys change.** A bind moves the
+  key into Phosphor's keychain, and Phosphor stops opening any device-bound file on this Mac, but
+  it cannot reach a copy of the old file made before: a Time Machine backup, a sync folder, a copy
+  you made. Any program running as you can load the old key from such a copy and ask for your
+  Touch ID with its own dialog, and an older Phosphor build opens it too. Phosphor shreds only the
+  copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
+  yourself. What closes it: moving to new keys that never existed outside the keychain, so the
+  old key holds nothing. The chip vault plans that; it is not built.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed

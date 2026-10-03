@@ -19,10 +19,11 @@ import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
 import { announce, depositRoute, guarded, refusal } from './wallet.ts';
 import type { IntentsReceiveToken } from './wallet.ts';
+import { afterBoundOpen, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
-import type { EnclaveRef } from '../keystore/store.ts';
-import type { VaultResult } from '../vault/relay.ts';
+import type { StagedFile } from '../keystore/store.ts';
+import { custodyLock } from '../vault/custody-lock.ts';
 import { checkPhrase, forgetPhrase, rememberPhrase } from '../vault/phrase-proof.ts';
 import {
   ADDRESS_REASON,
@@ -90,9 +91,9 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       ready: ctx.vault.enclaveReady(),
       capability: ctx.vault.capability(),
       keyMadeAt: enclave?.createdAt ?? null,
-      // A device-bound blob on every build so far, Developer ID included: the keychain home needs
-      // the keychain-access-groups entitlement, which no build carries yet. A key made by a build
-      // that has it lives in the keychain, bound to Phosphor's signature. The window says which.
+      // 'device': a blob any process on this Mac can load behind its own dialog, which every
+      // wallet made before the keychain home is. 'app': a key in Phosphor's keychain home, which
+      // only Phosphor's signed vault service can reach, made by create or by POST /api/vault/bind.
       binding: enclave === null ? null : enclave.keyBlob.startsWith('keychain:') ? 'app' : 'device',
     },
     foreign,
@@ -110,85 +111,97 @@ export function handleVaultStatus(ctx: Ctx, res: http.ServerResponse): void {
 
 // ---------- the enclave verbs ----------
 
-function enclaveRefusal(result: Extract<VaultResult, { ok: false }>): JsonBody {
-  const code = result.error === 'user_cancel' ? 'user_cancel' : result.error === 'no_relay' || result.error === 'helper_missing' ? 'enclave_unavailable' : result.error;
-  const known = refusal(code);
-  return known.code === code && known.error !== 'That did not work.' ? known : { ok: false, error: result.message, code };
+/* What a custody step answers: a body for the window, or an HTTP refusal. Built inside the custody
+   lock, sent after it. */
+type Reply = { json: JsonBody } | { fail: number; error: string };
+
+function reply(res: http.ServerResponse, r: Reply): void {
+  if ('fail' in r) fail(res, r.fail, r.error);
+  else sendJson(res, 200, r.json);
 }
 
-/* A fresh enclave key. No dialog: making a key needs no presence. */
-async function newEnclaveKey(ctx: Ctx): Promise<{ key: EnclaveRef } | { refused: JsonBody }> {
-  if (!ctx.vault.enclaveReady()) return { refused: refusal('enclave_unavailable') };
-  const made = await ctx.vault.ask({ op: 'create' });
-  if (!made.ok) return { refused: enclaveRefusal(made) };
-  if (made.op !== 'create') return { refused: { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' } };
-  return { key: made.enclave };
-}
-
-/* One Touch ID with the given reason, and the data key it releases. What the key is then used
-   for is the caller's: an unlock opens the wallet with it, and every other verb reads with it
+/* One Touch ID with the given reason, and what `use` makes of the data key it releases, all under
+   the custody lock (src/vault/custody-lock.ts): the file the enclave was asked about is the file
+   `use` opens, and no bind replaces it in between. A staged file a crash left is settled first
+   (src/http/custody.ts), so the touch is asked about the file really in place. What the key is
+   used for is the caller's: an unlock opens the wallet with it, and every other verb reads with it
    and leaves the lock where it was (Keystore.readWithDataKey). */
-async function unwrapThroughEnclave(ctx: Ctx, reason: string): Promise<{ dek: Buffer } | { refused: JsonBody }> {
-  const request = ctx.keystore.enclaveRequest();
-  if (request === null) return { refused: refusal('no_wallet') };
-  const answer = await ctx.vault.ask({ op: 'unwrap', reason, ...request });
-  if (!answer.ok) {
-    if (answer.error === 'foreign_key') {
-      foreign = true;
-      return { refused: refusal('foreign') };
+async function unwrapThroughEnclave<T extends { ok: boolean }>(ctx: Ctx, reason: string, use: (dek: Buffer) => T): Promise<{ value: T } | { refused: JsonBody }> {
+  return custodyLock(ctx.keystore).run(async () => {
+    await settleFor(ctx);
+    const request = ctx.keystore.enclaveRequest();
+    if (request === null) return { refused: refusal('no_wallet') };
+    const answer = await ctx.vault.ask({ op: 'unwrap', reason, ...request });
+    if (!answer.ok) {
+      if (answer.error === 'foreign_key') {
+        foreign = true;
+        return { refused: refusal('foreign') };
+      }
+      // The enclave loaded its key and the wrap still did not open: the file's header or wrap was
+      // edited or damaged on this Mac. Restore from the phrase is the way back, and the sentence
+      // says so; it is a different sentence from the other Mac's file.
+      if (answer.error === 'crypto_failed') return { refused: refusal('damaged') };
+      return { refused: enclaveRefusal(answer) };
     }
-    // The enclave loaded its key and the wrap still did not open: the file's header or wrap was
-    // edited or damaged on this Mac. Restore from the phrase is the way back, and the sentence
-    // says so; it is a different sentence from the other Mac's file.
-    if (answer.error === 'crypto_failed') return { refused: refusal('damaged') };
-    return { refused: enclaveRefusal(answer) };
-  }
-  if (answer.op !== 'unwrap') return { refused: { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' } };
-  foreign = false;
-  return { dek: answer.dek };
+    if (answer.op !== 'unwrap') return { refused: { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' } };
+    foreign = false;
+    const value = use(answer.dek);
+    if (value.ok) afterBoundOpen(ctx, request.keyBlob);
+    return { value };
+  });
 }
 
-/* Lock, then open through the enclave with the given reason. The one way a version 2 wallet
-   opens, and the way every verb below proves the file it just wrote can be opened again. */
+/* Open through the enclave with the given reason: the one way a version 2 wallet opens. */
 async function openThroughEnclave(ctx: Ctx, reason: string): Promise<JsonBody> {
-  const got = await unwrapThroughEnclave(ctx, reason);
+  const got = await unwrapThroughEnclave(ctx, reason, (dek) => ctx.keystore.unlockWithDataKey(dek));
   if ('refused' in got) return got.refused;
-  const opened = ctx.keystore.unlockWithDataKey(got.dek);
-  if (!opened.ok) return refusal(opened.error, opened.retryInSec);
+  if (!got.value.ok) return refusal(got.value.error, got.value.retryInSec);
   return { ok: true };
 }
 
-/* Create, enclave style: one click brought the person here, one Touch ID proves the wallet the
-   enclave just wrapped can be opened by it, and only then is it reported as made. The phrase
-   is not returned: it is revealed later, behind its own Touch ID, and proven by typing three
-   words back. */
+/* Create, enclave style: one click brought the person here, one Touch ID proves the enclave opens
+   the wallet it just wrapped, the wallet is committed to its key on a build with a keychain home,
+   and only then is it written in place and reported as made (src/http/custody.ts). The phrase is
+   not returned: it is revealed later, behind its own Touch ID, and proven by typing three words
+   back. */
 export async function handleVaultCreate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/create', req, res);
   if (body === null) return;
-  if (ctx.keystore.state() !== 'no_wallet') return fail(res, 409, 'this app already holds a wallet');
-  const fresh = await newEnclaveKey(ctx);
-  if ('refused' in fresh) return sendJson(res, 200, fresh.refused);
-  let made: { addresses: unknown };
-  try {
-    made = ctx.keystore.createWithEnclave(fresh.key);
-  } catch (err) {
-    return fail(res, 409, errText(err));
-  }
-  ctx.keystore.lock();
-  const proven = await openThroughEnclave(ctx, CREATE_REASON);
-  if (proven.ok !== true) {
-    /* The enclave would not open what it just wrapped, or the person cancelled. Either way a
-       wallet nobody can open must not exist: it is shredded, and the person starts again. */
-    ctx.keystore.forget();
-    ctx.audit.append('app_start', 'a new enclave wallet was discarded: the first Touch ID did not open it', { code: proven.code });
-    announce(ctx);
-    return sendJson(res, 200, proven);
-  }
-  ctx.vaultPrefs.clearBackedUp();
-  ctx.audit.append('app_start', 'a new wallet was created behind the Secure Enclave', { evm: (made.addresses as { evm?: string }).evm });
-  ctx.session.touch();
-  announce(ctx);
-  sendJson(res, 200, { ok: true, addresses: made.addresses, custody: 'secure-enclave' });
+  reply(
+    res,
+    await custodyLock(ctx.keystore).run(async (): Promise<Reply> => {
+      if ((await settleFor(ctx)) === 'undecided') return { json: refusal('keychain_unavailable') };
+      if (ctx.keystore.state() !== 'no_wallet') return { fail: 409, error: 'this app already holds a wallet' };
+      const fresh = await newEnclaveKey(ctx);
+      if ('refused' in fresh) return { json: fresh.refused };
+      let staged: StagedFile;
+      try {
+        staged = ctx.keystore.stageNew(fresh.key);
+      } catch (err) {
+        return { fail: 409, error: errText(err) };
+      }
+      const made = await proveAndInstall(ctx, staged, CREATE_REASON, 'open');
+      if ('refused' in made) {
+        /* The enclave would not open what it just wrapped, the person cancelled, or the commit did
+           not land. A wallet nobody can open must not exist, and none does: the staged file is
+           shredded, no live file was written, and the person starts again. */
+        const pending = made.refused.code === 'install_pending';
+        ctx.audit.append(
+          'app_start',
+          pending ? 'a new enclave wallet was made and committed; its file is put in place at the next start' : 'a new enclave wallet was discarded: the first Touch ID did not open it',
+          { code: made.refused.code },
+        );
+        announce(ctx);
+        return { json: made.refused };
+      }
+      ctx.vaultPrefs.clearBackedUp();
+      ctx.audit.append('app_start', 'a new wallet was created behind the Secure Enclave', { evm: staged.addresses.evm });
+      ctx.session.touch();
+      announce(ctx);
+      sweepSoon(ctx);
+      return { json: { ok: true, addresses: staged.addresses, custody: 'secure-enclave' } };
+    }),
+  );
 }
 
 /* The enclave unlock. `reason` picks between the two sentences the app owns for it; nothing
@@ -206,9 +219,9 @@ export async function handleVaultUnlock(ctx: Ctx, req: http.IncomingMessage, res
      took the trading key for a fresh session before the lock. A dialog that named less than the
      touch did would be the one dishonest sentence in the product. */
   if (body.purpose === 'address') {
-    const got = await unwrapThroughEnclave(ctx, ADDRESS_REASON);
+    const got = await unwrapThroughEnclave(ctx, ADDRESS_REASON, (dek) => ctx.keystore.readWithDataKey(dek, () => true));
     if ('refused' in got) return sendJson(res, 200, got.refused);
-    const read = ctx.keystore.readWithDataKey(got.dek, () => true);
+    const read = got.value;
     if (!read.ok) return sendJson(res, 200, refusal(read.error, read.retryInSec));
     ctx.audit.append('app_start', 'the addresses were verified with Touch ID; the wallet stays as it was', { purpose: 'address' });
     announce(ctx);
@@ -232,9 +245,9 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
   const body = await guarded(ctx, '/api/vault/reveal', req, res);
   if (body === null) return;
   if (ctx.keystore.custody() !== 'secure-enclave') return sendJson(res, 200, refusal('wrong_password'));
-  const got = await unwrapThroughEnclave(ctx, REVEAL_REASON);
+  const got = await unwrapThroughEnclave(ctx, REVEAL_REASON, (dek) => ctx.keystore.readWithDataKey(dek, (payload) => (typeof payload.mnemonic === 'string' ? payload.mnemonic : null)));
   if ('refused' in got) return sendJson(res, 200, got.refused);
-  const read = ctx.keystore.readWithDataKey(got.dek, (payload) => (typeof payload.mnemonic === 'string' ? payload.mnemonic : null));
+  const read = got.value;
   if (!read.ok) return sendJson(res, 200, refusal(read.error, read.retryInSec));
   if (read.value === null) return sendJson(res, 200, refusal('no_mnemonic'));
   const words = read.value.split(' ');
@@ -281,7 +294,11 @@ export async function handleVaultBackupProven(ctx: Ctx, req: http.IncomingMessag
 
 /* Restore from a phrase, behind the enclave. Refused only when all three are true: the wallet
    here is not proven backed up, the phrase derives different addresses, and this Mac can still
-   open the file. Any one of them false means nothing is lost by replacing the file. */
+   open the file. Any one of them false means nothing is lost by replacing the file. "Can still
+   open" asks the service: a file it refuses before any Touch ID (an older device-bound copy on a
+   Mac that has bound a wallet, a file that is not the committed one) opens nothing here.
+   The restored wallet is staged, proven and committed before it replaces the file in place, so a
+   cancelled touch leaves the wallet that was here exactly as it was. */
 export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/restore', req, res);
   if (body === null) return;
@@ -290,92 +307,119 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
   if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_phrase' });
   const phrase = normaliseMnemonic(raw);
 
-  if (ctx.keystore.state() !== 'no_wallet') {
-    const incoming = walletFromMnemonic(phrase).addresses;
-    const current = ctx.keystore.addressReport().addresses;
-    const same = current.evm !== null && current.evm.toLowerCase() === incoming.evm.toLowerCase();
-    const openable = ctx.keystore.custody() === 'secure-enclave' && !foreign;
-    if (!ctx.vaultPrefs.get().backedUp && !same && openable) return sendJson(res, 200, refusal('not_backed_up'));
-  }
+  reply(
+    res,
+    await custodyLock(ctx.keystore).run(async (): Promise<Reply> => {
+      if ((await settleFor(ctx)) === 'undecided') return { json: refusal('keychain_unavailable') };
+      if (ctx.keystore.state() !== 'no_wallet') {
+        const incoming = walletFromMnemonic(phrase).addresses;
+        const current = ctx.keystore.addressReport().addresses;
+        const same = current.evm !== null && current.evm.toLowerCase() === incoming.evm.toLowerCase();
+        const openable = ctx.keystore.custody() === 'secure-enclave' && !foreign && (await openableHere(ctx));
+        if (!ctx.vaultPrefs.get().backedUp && !same && openable) return { json: refusal('not_backed_up') };
+      }
 
-  const fresh = await newEnclaveKey(ctx);
-  if ('refused' in fresh) return sendJson(res, 200, fresh.refused);
-  if (ctx.keystore.state() !== 'no_wallet') ctx.keystore.forget();
-  let restored: { addresses: unknown };
-  try {
-    restored = ctx.keystore.importWithEnclave(fresh.key, { mnemonic: phrase });
-  } catch (err) {
-    return fail(res, 409, errText(err));
-  }
-  ctx.keystore.lock();
-  const proven = await openThroughEnclave(ctx, RESTORE_REASON);
-  if (proven.ok !== true) {
-    ctx.keystore.forget();
-    announce(ctx);
-    return sendJson(res, 200, proven);
-  }
-  foreign = false;
-  // A phrase the person just typed from their own record is, by that act, backed up.
-  ctx.vaultPrefs.markBackedUp();
-  ctx.audit.append('app_start', 'a wallet was restored from its recovery phrase behind the Secure Enclave', { evm: (restored.addresses as { evm?: string }).evm });
-  ctx.session.touch();
-  announce(ctx);
-  sendJson(res, 200, { ok: true, addresses: restored.addresses, custody: 'secure-enclave' });
+      const fresh = await newEnclaveKey(ctx);
+      if ('refused' in fresh) return { json: fresh.refused };
+      let staged: StagedFile;
+      try {
+        staged = ctx.keystore.stageImport(fresh.key, { mnemonic: phrase });
+      } catch (err) {
+        return { fail: 409, error: errText(err) };
+      }
+      const restored = await proveAndInstall(ctx, staged, RESTORE_REASON, 'open');
+      if ('refused' in restored) {
+        announce(ctx);
+        return { json: restored.refused };
+      }
+      foreign = false;
+      // A phrase the person just typed from their own record is, by that act, backed up.
+      ctx.vaultPrefs.markBackedUp();
+      ctx.audit.append('app_start', 'a wallet was restored from its recovery phrase behind the Secure Enclave', { evm: staged.addresses.evm });
+      ctx.session.touch();
+      announce(ctx);
+      sweepSoon(ctx);
+      return { json: { ok: true, addresses: staged.addresses, custody: 'secure-enclave' } };
+    }),
+  );
 }
 
 /* A password wallet moves behind the enclave. The password opens it once; a fresh enclave key
-   wraps a fresh data key; the file is rewritten; a Touch ID proves the rewrite opens. If that
-   last step fails the old file is already gone, so the rewrite is verified BEFORE the password
-   wrap is dropped: rewrapToEnclave writes atomically, and a failed proof here puts nothing at
-   risk that a restore from the phrase would not recover. The audit line says which happened. */
+   wraps a fresh data key into the staged file; a Touch ID proves the enclave opens it; on a build
+   with a keychain home it is committed; and only then does it replace the password file. Every
+   failure before that leaves the password file exactly as it was, and says so. Rewriting in place
+   first would leave, on a failed commit, a file that stops opening ten minutes later on any Mac
+   that holds a marker, with the password wrap already gone. */
 export async function handleVaultMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/migrate', req, res);
   if (body === null) return;
-  if (ctx.keystore.custody() !== 'software' || ctx.keystore.state() === 'needs_migration') {
-    return sendJson(res, 200, { ok: false, error: 'Only an encrypted password wallet can move behind the enclave.', code: 'not_password' });
-  }
   const password = typeof body.password === 'string' ? body.password : '';
-  const verified = await ctx.keystore.verify(password);
-  if (!verified.ok) return sendJson(res, 200, refusal(verified.error, verified.retryInSec));
-  const fresh = await newEnclaveKey(ctx);
-  if ('refused' in fresh) return sendJson(res, 200, fresh.refused);
-  const moved = await ctx.keystore.rewrapToEnclave(password, fresh.key);
-  if (!moved.ok) return sendJson(res, 200, refusal(moved.error, moved.retryInSec));
-  ctx.keystore.lock();
-  const proven = await openThroughEnclave(ctx, MIGRATE_REASON);
-  if (proven.ok !== true) {
-    ctx.audit.append('app_start', 'the wallet moved behind the enclave but the proving Touch ID did not complete; the file is enclave-wrapped and will open on the next Touch ID', { code: proven.code });
-    announce(ctx);
-    return sendJson(res, 200, { ...proven, moved: true });
-  }
-  ctx.audit.append('app_start', 'the wallet moved behind the Secure Enclave; the password wrap is gone', {});
-  ctx.session.touch();
-  announce(ctx);
-  sendJson(res, 200, { ok: true, custody: 'secure-enclave' });
+  reply(
+    res,
+    await custodyLock(ctx.keystore).run(async (): Promise<Reply> => {
+      if ((await settleFor(ctx)) === 'undecided') return { json: refusal('keychain_unavailable') };
+      if (ctx.keystore.custody() !== 'software' || ctx.keystore.state() === 'needs_migration') {
+        return { json: { ok: false, error: 'Only an encrypted password wallet can move behind the enclave.', code: 'not_password' } };
+      }
+      const verified = await ctx.keystore.verify(password);
+      if (!verified.ok) return { json: refusal(verified.error, verified.retryInSec) };
+      const fresh = await newEnclaveKey(ctx);
+      if ('refused' in fresh) return { json: fresh.refused };
+      const staged = await ctx.keystore.stageFromPassword(password, fresh.key);
+      if (!staged.ok) return { json: refusal(staged.error, staged.retryInSec) };
+      const moved = await proveAndInstall(ctx, staged.staged, MIGRATE_REASON, 'open');
+      if ('refused' in moved) {
+        ctx.audit.append('app_start', 'the wallet did not move behind the enclave: the proving Touch ID did not complete, and the password file is unchanged', { code: moved.refused.code });
+        announce(ctx);
+        return { json: moved.refused };
+      }
+      ctx.audit.append('app_start', 'the wallet moved behind the Secure Enclave; the password wrap is gone', {});
+      ctx.session.touch();
+      announce(ctx);
+      sweepSoon(ctx);
+      return { json: { ok: true, custody: 'secure-enclave' } };
+    }),
+  );
 }
 
-/* Forget: typed confirmation, proven backup, a Touch ID, then the file is shredded. */
+/* Bind: a wallet whose key is a device-bound blob moves into Phosphor's keychain home, with one
+   Touch ID (src/http/custody.ts, bindWallet). Window only, never an MCP op. */
+export async function handleVaultBind(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/vault/bind', req, res);
+  if (body === null) return;
+  sendJson(res, 200, await bindWallet(ctx, () => ctx.vaultPrefs.get().backedUp));
+}
+
+/* Forget: typed confirmation, proven backup, a Touch ID, then the file is shredded, and a staged
+   file beside it with it. */
 export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/forget', req, res);
   if (body === null) return;
   if (body.confirm !== 'FORGET') return fail(res, 400, 'type FORGET to confirm');
-  if (ctx.keystore.state() === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
-  if (!ctx.vaultPrefs.get().backedUp && !foreign) return sendJson(res, 200, refusal('not_backed_up'));
-  if (ctx.vault.enclaveReady()) {
-    const present = await ctx.vault.ask({ op: 'presence', reason: FORGET_REASON });
-    if (!present.ok) return sendJson(res, 200, enclaveRefusal(present));
-  }
-  let gone: { destroyed: string };
-  try {
-    gone = ctx.keystore.forget();
-  } catch (err) {
-    return fail(res, 409, errText(err));
-  }
-  foreign = false;
-  ctx.vaultPrefs.clearBackedUp();
-  ctx.audit.append('app_start', 'the wallet on this Mac was forgotten: the key file was shredded', { file: gone.destroyed });
-  announce(ctx);
-  sendJson(res, 200, { ok: true });
+  reply(
+    res,
+    await custodyLock(ctx.keystore).run(async (): Promise<Reply> => {
+      await settleFor(ctx);
+      if (ctx.keystore.state() === 'no_wallet') return { json: refusal('no_wallet') };
+      if (!ctx.vaultPrefs.get().backedUp && !foreign) return { json: refusal('not_backed_up') };
+      if (ctx.vault.enclaveReady()) {
+        const present = await ctx.vault.ask({ op: 'presence', reason: FORGET_REASON });
+        if (!present.ok) return { json: enclaveRefusal(present) };
+      }
+      let gone: { destroyed: string };
+      try {
+        gone = ctx.keystore.forget();
+      } catch (err) {
+        return { fail: 409, error: errText(err) };
+      }
+      ctx.keystore.dropStaged();
+      foreign = false;
+      ctx.vaultPrefs.clearBackedUp();
+      ctx.audit.append('app_start', 'the wallet on this Mac was forgotten: the key file was shredded', { file: gone.destroyed });
+      announce(ctx);
+      return { json: { ok: true } };
+    }),
+  );
 }
 
 export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {

@@ -150,6 +150,13 @@ const REFUSALS: Record<string, string> = {
   stale_key: 'That did not finish, so nothing changed. Try again.',
   marker_exists: 'That did not finish, so nothing changed. Try again.',
   nothing_bound: 'That did not finish, so nothing changed. Try again.',
+  // The bind (src/http/custody.ts).
+  wallet_locked: 'Open your wallet first.',
+  not_enclave: 'Only a wallet that opens with Touch ID can be bound to this Mac.',
+  no_keychain_home: 'This copy of Phosphor cannot keep keys in its own keychain, so your wallet stays as it is.',
+  bind_busy: 'Phosphor is already binding this wallet.',
+  touch_waiting: 'A move is waiting for your Touch ID. Finish it, then try again.',
+  install_pending: 'Phosphor saved your wallet but could not put the file in place yet. It finishes the next time your wallet opens, and nothing moved.',
 };
 
 export function refusal(code: string, retryInSec?: number): JsonBody {

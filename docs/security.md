@@ -124,6 +124,12 @@ Vault tab says so. Binding the key to Phosphor itself takes a keychain entitleme
 carries yet. The vault service is ready for it: such a build keeps new keys only in Phosphor's own
 keychain, and refuses a wallet file it did not bind before asking for your finger.
 
+On such a build, Bind in the Vault tab moves a wallet made earlier into that keychain with one
+Touch ID, once its backup is proven. It cannot reach copies of the old wallet file made before
+(a Time Machine backup, a sync folder, a copy you made): Phosphor refuses them, but another program
+running as you can still load the old key from one and ask for your Touch ID, until the wallet
+moves to new keys. Delete the copies you know of.
+
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
 click alone, with no biometric: Approve runs the move with no Touch ID after it. That is the

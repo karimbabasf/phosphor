@@ -32,6 +32,7 @@ import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { reasonFor } from '../vault/reason.ts';
+import { custodyLock } from '../vault/custody-lock.ts';
 import { recordRecipient } from '../recipients.ts';
 import type { AddressActivity, ChainNetwork } from '../chainscan/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
@@ -490,14 +491,21 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
      awaiting_touch and the enclave is asked to unwrap the data key with a dialog that names this
      move; finishTouch (below) takes it from there when the shell answers. Not awaited: approve
      runs inside the service's serialiser, and a person can take a minute to reach for the
-     sensor. What the dialog says is composed from the draft's fields, never from the agent. */
+     sensor. What the dialog says is composed from the draft's fields, never from the agent.
+     The file is read and asked about under the custody lock (src/vault/custody-lock.ts), so a
+     bind in progress finishes first and the touch is asked about the file in place. */
   if (enclaveGated(ctx)) {
     const waiting = persist(ctx, { ...p, verdict, status: 'awaiting_touch' });
     ctx.audit.append('proposal_created', `${id} was approved by click and is waiting for Touch ID`, { id });
-    void ctx.vault!.ask({ op: 'unwrap', id: `approve:${id}`, reason: reasonFor(p), ...ctx.keystore!.enclaveRequest() }).then(
-      (result) => ctx.afterTouch(id, result),
-      () => ctx.afterTouch(id, { ok: false, error: 'relay', message: 'the relay failed' }),
-    );
+    const keystore = ctx.keystore!;
+    void custodyLock(keystore).run(() => {
+      const asked = ctx.vault!.ask({ op: 'unwrap', id: `approve:${id}`, reason: reasonFor(p), ...keystore.enclaveRequest() });
+      void asked.then(
+        (result) => ctx.afterTouch(id, result),
+        () => ctx.afterTouch(id, { ok: false, error: 'relay', message: 'the relay failed' }),
+      );
+      return asked;
+    });
     return waiting;
   }
 

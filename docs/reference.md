@@ -618,6 +618,40 @@ development helper whoever signs it) the service keeps the device key path. The 
 carries these seven ops and no other (`src-tauri/src/enclave.rs`). `vault-service.test.ts` runs the
 rules against a stand-in keychain compiled into the test alone.
 
+**Every new key file, and the bind** (`src/http/custody.ts`). Create, restore, the move from a
+password and `POST /api/vault/bind` all write the new file to `keys.enc.json.bind` beside the live
+one and leave the live file alone. One Touch ID unwraps exactly the bytes this process wrote, held
+in memory; on a build with a keychain home `commit` pins those same bytes; only then do they
+replace `keys.enc.json` in one rename, and the file they replace is overwritten through a
+descriptor taken before it. Nothing in that sequence reads the staged file back from disk, so a
+file swapped in while the dialog is up is never what gets proven, pinned or put in place. A new
+wallet therefore never exists unbound on such a build, and a failed step changes nothing: a
+cancelled touch or a refused commit shreds the staged file and leaves the wallet that was there.
+A commit whose answer was lost is settled by `status` before anything is dropped.
+
+The bind takes a wallet whose key is a device-bound blob into the keychain home: the wallet must
+be open (its payload is resealed from memory under a fresh data key, so nothing in it changes),
+its backup proven (`backedUp` in the vault slice), no move waiting on a Touch ID, and the build
+must have a keychain home. It is window only, behind the token, and never an MCP op. Refusals each
+have a sentence (`wallet_locked`, `not_backed_up`, `touch_waiting`, `bind_busy`, `not_enclave`,
+`no_keychain_home`, `keychain_unavailable`); a bound wallet answers `{ ok: true, binding: 'app' }`
+again with no dialog.
+
+A crash leaves at most a staged file, and the next start (once the shell's probe answers) and every
+custody step after it settle it by the service's answer about it, with no dialog: staged and not
+committed, it is shredded and the live file opens as before; committed and not renamed, it is put
+in place and the open goes on with it; renamed, there is nothing staged, or a staged file equal to
+the live one, which is removed. With no answer (no shell, a keychain the service cannot read)
+nothing is touched, and nothing that would write the staged path again runs until there is one.
+Every step that reads the live file for the enclave and every step that replaces it runs under one
+lock, in the order asked (`src/vault/custody-lock.ts`): an unlock during a bind waits for it and
+opens the bound file, and a second bind while one runs is refused. After the first open of a bound
+file, the copies of the key file this app itself can leave beside it (a write cut short between
+its temp file and the rename) are shredded and unused keys are swept; nothing the app did not
+write is touched. `vault-bind.test.ts` runs all of it against the service's own rules with the
+stand-in keychain, including a crash matrix that kills real backends before the commit, between
+the commit and the rename, and after the rename.
+
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
 here. Treat the balance behind these keys as the amount you are willing to lose to something that
