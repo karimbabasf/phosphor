@@ -79,7 +79,8 @@ export type VaultRelay = {
   fromShell(): boolean;
   capability(): Capability | null;
   /** Whether this Mac keeps a Phosphor-only wallet, any data folder's, as the service has said: true from
-   *  the first status or commit that shows a marker (no op deletes one), null before any answer. */
+   *  the first status or commit that shows a marker (no op deletes one), null until a status read the
+   *  markers, which a service with no keychain home never does. */
   bound(): boolean | null;
   /** attached, and the shell reported an enclave the person can authenticate to, on a relay that makes keys. */
   enclaveReady(): boolean;
@@ -295,7 +296,10 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
       }
       case 'status': {
         const status = statusOf(body);
-        bound = bound === true || status.bound;
+        /* Only an answer that read the markers can say there are none. A service with no keychain
+           home (the development shell's, a copy built without the Developer ID) answers bound: false
+           whatever this Mac holds, so it leaves the question open (verify-ra1b VRA1B-01). */
+        if (status.keychainHome) bound = bound === true || status.bound;
         /* The probe's one read of the markers can fail while the build has a keychain home (reaudit1b
            RA1B-02); a later answer that read them says what the build is. */
         if (status.keychainHome && capability !== null && !capability.keychainHome) capability = { ...capability, keychainHome: true };

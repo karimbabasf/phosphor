@@ -545,7 +545,11 @@ wallet is Phosphor-only (`vault.enclave.phosphorOnlyHere`), nothing pins such a 
 served with `verified: false`, the lock card says it stayed closed and offers the restore, and the
 migration route asks the service at the click and refuses with `plaintext_refused` before it reads
 the file. A backend the shell started serves the file unverified until the service has answered;
-one it did not start has no service to ask and vouches for it as before.
+one it did not start has no service to ask and vouches for it as before. A service with no keychain
+home (`npm run tauri dev`, a copy built without the Developer ID) cannot read the markers, so its
+answer settles nothing: there a developer's readable `keys.json` stays unverified,
+`phosphorOnlyHere` stays null, and Encrypt now is refused with `plaintext_unchecked`, which turns
+the lock card into the closed card with that sentence and Restore from your backup.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and
@@ -687,8 +691,12 @@ create or a restore, by Touch ID or by password, could not write it, `forget_fai
 could not finish removing it, `migrate_failed` when encrypting a readable key file could not finish,
 and `export_failed` when an encrypted copy could not be saved where the person asked. The system's
 own text names the file's path, so it never reaches a window; the audit line keeps only the
-system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`). A sentence the app
-writes on purpose may still name what a person needs, such as the file a step left alone.
+system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`), and an audit file
+the disk refuses as well loses that line, never the sentence. A sentence the app writes on purpose
+may still name what a person needs, such as the file a step left alone. Once the password create,
+import, migration or encrypted copy has written its file, the step has happened and the route gives
+its usual answer (a create shows the new wallet's words): its audit line and the broadcast after the
+write are bookkeeping, and one the disk refuses is lost to stderr, never put in the answer's place.
 
 A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
 it said) and every custody step after it settle it by the service's answer about it, never by the

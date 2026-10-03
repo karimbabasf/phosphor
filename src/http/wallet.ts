@@ -199,6 +199,8 @@ const REFUSALS: Record<string, string> = {
   install_pending: 'Your wallet is saved, and nothing moved. Phosphor finishes setting it up the next time you open it.',
   // A readable key file on a Mac that keeps a Phosphor-only wallet (reaudit1b RA1B-01).
   plaintext_refused: 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file, and nothing changed. If the file is your wallet, restore it from your backup.',
+  // The same file, in a copy whose vault service cannot read the keychain home (verify-ra1b VRA1B-01).
+  plaintext_unchecked: 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.',
   // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
   proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
   write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',
@@ -228,8 +230,35 @@ export function refusalCodes(): string[] {
 export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed' | 'migrate_failed' | 'export_failed'): JsonBody | null {
   const os = osError(err);
   if (os === null) return null;
-  ctx.audit.append('app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
+  auditSafely(ctx, 'app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
   return refusal(code);
+}
+
+/* An audit line on a path that answers all the same. The audit file sits on the disk that may just
+   have refused the key file, and then the line is what is lost, never the sentence; the system's
+   text goes to stderr only, as in the router's catch (verify-ra1b VRA1B-02). */
+function auditSafely(ctx: Pick<Ctx, 'audit'>, type: 'app_start' | 'error', msg: string, data?: Record<string, unknown>): void {
+  try {
+    ctx.audit.append(type, msg, data);
+  } catch (logErr) {
+    process.stderr.write(`phosphor: could not log that ${msg}: ${errText(logErr)}\n`);
+  }
+}
+
+/* AFTER THE KEY FILE IS WRITTEN the step has happened, and the route gives its usual answer: the
+   wallet is made (its words are shown on that answer alone), imported or encrypted. What follows the
+   write is bookkeeping, its audit line (on the disk that may be full) and the broadcast, and a
+   failure there is logged where it can be and never takes the answer's place: a create never leaves
+   a wallet whose words nobody has seen, and nothing says "nothing changed" (verify-ra1b VRA1B-02). */
+function afterSave(ctx: Ctx, line: string, data: Record<string, unknown>): void {
+  auditSafely(ctx, 'app_start', line, data);
+  try {
+    ctx.session.touch();
+    announce(ctx);
+  } catch (err) {
+    const os = osError(err);
+    auditSafely(ctx, 'error', `${line}, but the window was not told (${os === null ? errText(err) : `${os.code} on ${os.syscall}`})`, os ?? undefined);
+  }
 }
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -359,23 +388,22 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
   if (body === null) return;
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let made: Awaited<ReturnType<Ctx['keystore']['create']>>;
   try {
-    const made = await ctx.keystore.create(password);
-    // The words are audited by their absence: the line says a wallet exists and names the
-    // address, which is the fact a log is for. The phrase is returned once, here, and never
-    // written anywhere this process controls.
-    // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
-    // run's next step.
-    const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
-    ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
+    made = await ctx.keystore.create(password);
   } catch (err) {
     const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
     if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
+    return fail(res, 400, errText(err));
   }
+  // The words are audited by their absence: the line says a wallet exists and names the
+  // address, which is the fact a log is for. The phrase is returned once, here, and never
+  // written anywhere this process controls.
+  // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
+  // run's next step.
+  const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
+  afterSave(ctx, 'a new wallet was created in the window', { evm: made.addresses.evm });
+  sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
 }
 
 export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -392,29 +420,31 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
   const raw = body.keys !== null && typeof body.keys === 'object' ? (body.keys as Partial<RailKeys>) : undefined;
   if (mnemonic === undefined && raw === undefined) return fail(res, 400, 'bring twelve words or an EVM private key');
 
+  let out: Awaited<ReturnType<Ctx['keystore']['importWallet']>>;
   try {
-    const out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
-    ctx.audit.append('app_start', `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, addresses: out.addresses });
+    out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
   } catch (err) {
     const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
     if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
+    return fail(res, 400, errText(err));
   }
+  afterSave(ctx, `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
+    evm: out.addresses.evm,
+  });
+  sendJson(res, 200, { ok: true, addresses: out.addresses });
 }
 
 /* Whether this Mac keeps a Phosphor-only wallet, any data folder's, asked of the vault service now
    when it has not said so already. A backend the shell did not start has no service to ask and no
-   such wallet it could open, so false, as before. Null when the service did not answer. */
-async function phosphorOnlyHere(ctx: Ctx): Promise<boolean | null> {
+   such wallet it could open, so false, as before. 'unchecked' from a service with no keychain home:
+   it cannot read the markers, so its bound: false says nothing (verify-ra1b VRA1B-01). Null when the
+   service did not answer. */
+async function phosphorOnlyHere(ctx: Ctx): Promise<boolean | 'unchecked' | null> {
   if (!ctx.vault.fromShell()) return false;
   if (ctx.vault.bound() === true) return true;
   const asked = await ctx.vault.ask({ op: 'status' });
-  return asked.ok && asked.op === 'status' ? asked.status.bound : null;
+  if (!asked.ok || asked.op !== 'status') return null;
+  return asked.status.keychainHome ? asked.status.bound : 'unchecked';
 }
 
 export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -431,35 +461,36 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
   /* NOT ON A MAC THAT KEEPS A PHOSPHOR-ONLY WALLET (reaudit1b RA1B-01). No pin covers a readable
      key file, so a program running as the owner can move the bound file aside and put its own
      wallet here; encrypting it, then moving it behind Touch ID, would make that wallet the app's.
-     Asked of the service at this click, not read off the window's card. */
+     Asked of the service at this click, not read off the window's card. A copy whose service cannot
+     tell refuses too: it cannot know the Mac keeps none. */
   const here = await phosphorOnlyHere(ctx);
   if (here !== false) {
-    ctx.audit.append('approve_attempt_rejected', 'a readable key file was not opened: this Mac keeps a Phosphor-only wallet, or the vault service did not say', { known: here === true });
-    return sendJson(res, 200, refusal(here === true ? 'plaintext_refused' : 'keychain_unavailable'));
+    const why = here === true ? 'this Mac keeps a Phosphor-only wallet' : here === 'unchecked' ? 'this build cannot read the keychain home, so it cannot tell whether this Mac keeps a Phosphor-only wallet' : 'the vault service did not say whether this Mac keeps a Phosphor-only wallet';
+    ctx.audit.append('approve_attempt_rejected', `a readable key file was not opened: ${why}`, { known: here === true });
+    return sendJson(res, 200, refusal(here === true ? 'plaintext_refused' : here === 'unchecked' ? 'plaintext_unchecked' : 'keychain_unavailable'));
   }
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let out: Awaited<ReturnType<Ctx['keystore']['migrate']>>;
   try {
-    const out = await ctx.keystore.migrate(password);
-    ctx.audit.append('app_start', `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
-      destroyed: out.destroyed.map((p) => path.basename(p)),
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, {
-      ok: true,
-      destroyed: out.destroyed,
-      addresses: out.addresses,
-      // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
-      // system that keeps snapshots, and the only complete answer is a fresh wallet.
-      note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
-    });
+    out = await ctx.keystore.migrate(password);
   } catch (err) {
     const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
     if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
+    return fail(res, 400, errText(err));
   }
+  afterSave(ctx, `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
+    destroyed: out.destroyed.map((p) => path.basename(p)),
+    evm: out.addresses.evm,
+  });
+  sendJson(res, 200, {
+    ok: true,
+    destroyed: out.destroyed,
+    addresses: out.addresses,
+    // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
+    // system that keeps snapshots, and the only complete answer is a fresh wallet.
+    note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
+  });
 }
 
 export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -485,13 +516,14 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
   }
   try {
     await ctx.keystore.exportTo(target, password);
-    ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
-    sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
     const disk = diskRefusal(ctx, 'the encrypted copy was not saved', err, 'export_failed');
     if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
+    return fail(res, 400, errText(err));
   }
+  // The copy is saved: its audit line is bookkeeping, as in afterSave.
+  auditSafely(ctx, 'app_start', 'an encrypted backup of the wallet was written', { to: target });
+  sendJson(res, 200, { ok: true, path: target });
 }
 
 // ---------- reveal ----------
