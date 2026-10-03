@@ -2527,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "phosphor-desktop"
-version = "0.10.13"
+version = "0.10.14"
 dependencies = [
  "cc",
  "core-foundation 0.10.1",
