@@ -205,6 +205,10 @@ const REFUSALS: Record<string, string> = {
   // Forget overwrites the file before it removes it, so a disk that stops it part way may leave
   // the file unreadable: never "nothing changed" here.
   forget_failed: 'Phosphor could not finish removing the wallet file on this Mac. Your backup still brings the wallet back. Check that the Mac has free space, then try again.',
+  // The move from a readable key file writes the encrypted one before it destroys the readable
+  // copies, so a disk that stops it may have done the first half: not "nothing changed" either.
+  migrate_failed: 'Phosphor could not finish encrypting your keys on this Mac. Check that the Mac has free space, then try again.',
+  export_failed: 'Phosphor could not save the encrypted copy there, and your wallet is unchanged. Check that you can save to that folder and that the disk has free space, then try again.',
 };
 
 /* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
@@ -216,11 +220,12 @@ export function refusalCodes(): string[] {
   return Object.keys(REFUSALS);
 }
 
-/* A disk that refused the wallet file (full, a permission, a directory where the file goes), said
-   in the words of this table and nothing of the system's: its text names the key file's path
-   (reaudit1b RA1B-03). The audit line keeps the system's code and the call that failed. Null for a
-   failure the system did not raise, which is the app's own sentence. */
-export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed'): JsonBody | null {
+/* A disk that refused a key file (full, a permission, a directory where the file goes), said in
+   the words of this table and nothing of the system's: its text names the file's path (reaudit1b
+   RA1B-03). The audit line keeps the system's code and the call that failed. Null for a failure
+   the system did not raise: that is the app's own sentence, written on purpose, which may name
+   what a person needs, such as the file it left alone. */
+export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed' | 'migrate_failed' | 'export_failed'): JsonBody | null {
   const os = osError(err);
   if (os === null) return null;
   ctx.audit.append('app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
@@ -451,6 +456,8 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
       note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
     });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }
@@ -481,6 +488,8 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
     ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
     sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'the encrypted copy was not saved', err, 'export_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }

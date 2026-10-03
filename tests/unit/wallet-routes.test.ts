@@ -449,6 +449,57 @@ test('a disk that refuses the wallet file is said in calm words in the password 
   }
 });
 
+/* The same for encrypting a readable key file and for saving an encrypted copy. The disk errors are
+   real: a key file nobody may read (EACCES on open), and a folder nobody may write to. */
+test('a disk that refuses a key file is said in calm words in the migration and the encrypted copy, never the system\'s text or the path', async () => {
+  const entries = async (b: Booted): Promise<string[]> => ((await b.get('/api/log?limit=50')).json as unknown[]).map((e) => JSON.stringify(e)).filter((l) => l.includes('the disk refused the wallet file'));
+  const clean = (json: Record<string, unknown>, dir: string): void => {
+    assert.ok(!RAW.test(String(json.error)), String(json.error));
+    assert.ok(!JSON.stringify(json).includes(dir), JSON.stringify(json));
+  };
+
+  const m = await boot('live');
+  try {
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    const wallet = walletFromMnemonic(VECTOR);
+    fs.mkdirSync(path.dirname(m.keysPath), { recursive: true });
+    fs.writeFileSync(m.keysPath, JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }), { mode: 0o600 });
+    fs.chmodSync(m.keysPath, 0o000);
+    try {
+      const out = await m.post('/api/wallet/migrate', { token: m.token, password: PASSWORD });
+      assert.equal(out.status, 200);
+      assert.deepEqual(out.json, refusal('migrate_failed'), JSON.stringify(out.json));
+      clean(out.json, path.dirname(m.keysPath));
+    } finally {
+      fs.chmodSync(m.keysPath, 0o600);
+    }
+    assert.ok(fs.existsSync(m.keysPath), 'the readable file is where it was');
+    const lines = await entries(m);
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    assert.ok(lines[0]!.includes('(EACCES on open)') && !lines[0]!.includes(path.dirname(m.keysPath)), lines[0]);
+  } finally {
+    await m.close();
+  }
+
+  const e = await boot('live');
+  const folder = tempDir('phosphor-export-ro-');
+  try {
+    assert.equal((await e.post('/api/wallet/create', { token: e.token, password: PASSWORD })).json.ok, true);
+    fs.chmodSync(folder, 0o500);
+    const out = await e.post('/api/wallet/export', { token: e.token, password: PASSWORD, path: path.join(folder, 'backup.json') });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, refusal('export_failed'), JSON.stringify(out.json));
+    clean(out.json, folder);
+    assert.deepEqual(fs.readdirSync(folder), [], 'nothing was left in the folder');
+    const lines = await entries(e);
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    assert.ok(lines[0]!.includes('(EACCES on open)') && !lines[0]!.includes(folder), lines[0]);
+  } finally {
+    fs.chmodSync(folder, 0o700);
+    await e.close();
+  }
+});
+
 /* The route a demo instance must never reach. Migration overwrites the plaintext key file and
    every backup beside it with random bytes and then unlinks them, which is not undoable, and a
    demo backend is a throwaway. The key path is scoped by the data directory now so there is

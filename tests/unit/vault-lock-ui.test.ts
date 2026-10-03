@@ -848,7 +848,7 @@ test('a migration the backend refuses on such a Mac is said in its sentence on t
    through the backend's own mapping (src/http/wallet.ts diskRefusal), in each restore the lock card
    offers: the line under the field is the table's one sentence, never the system's text or the key
    file's path. */
-test('a disk that refuses the wallet file in a restore from the lock card is one calm sentence, never the system\'s text or its path', async () => {
+test('a disk that refuses a key file in a restore or in Encrypt now on the lock card is one calm sentence, never the system\'s text or its path', async () => {
   const raw = diskError();
   assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
   const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
@@ -873,6 +873,19 @@ test('a disk that refuses the wallet file in a restore from the lock card is one
     assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
     for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
   }
+
+  // Encrypt now, on a readable key file the disk will not let the app read or replace.
+  const migrate = build(readableKeyFile(false), [LOCK]);
+  migrate.sandbox.PhosphorApi.walletMigrate = () => Promise.resolve(diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'migrate_failed'));
+  migrate.sandbox.PhosphorLock.boot();
+  const card = migrate.nodes['screen-lock'];
+  for (const field of find(card, 'input')) field.value = 'a long enough password';
+  find(card, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  const said = find(card, '.lock-card-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+  assert.deepEqual(said, [refusal('migrate_failed').error], `Encrypt now: ${JSON.stringify(said)}`);
+  for (const line of said) assert.ok(!RAW.test(line), `Encrypt now: ${line}`);
 });
 
 /* ---------- the first run ---------- */

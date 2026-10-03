@@ -1672,7 +1672,7 @@ test('every refusal the Vault can be handed reads as a sentence on the page, and
    through the backend's own mapping (src/http/wallet.ts diskRefusal), in a restore from a phrase, a
    restore from a key and Forget: the line is the table's one sentence, never the system's text or
    the key file's path. */
-test('a disk that refuses the wallet file in a restore or in Forget is one calm sentence in the tab, never the system\'s text or its path', async () => {
+test('a disk that refuses the wallet file in a restore, in Forget or in the encrypted copy is one calm sentence in the tab, never the system\'s text or its path', async () => {
   const raw = diskError();
   assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
   const quiet = { audit: { append: () => undefined } } as never;
@@ -1711,10 +1711,20 @@ test('a disk that refuses the wallet file in a restore or in Forget is one calm 
   await flush();
   await flush();
 
+  // The encrypted copy of a password wallet, saved to a folder the disk will not take it in.
+  const copy = build({ vault: { custody: 'software', backedUp: true, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
+  copy.answer.exportAnswer = diskRefusal(quiet, 'simulated', raw, 'export_failed');
+  buttonNamed(recovery(copy), 'Save an encrypted copy').click();
+  find(restoreFlow(copy), 'input[type="password"]')[0].value = 'proof-password-1';
+  find(restoreFlow(copy), 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+
   for (const [where, lines, sentence] of [
     ['a restore from a phrase', said(restoreFlow(phrase)), refusal('write_failed').error],
     ['a restore from a key', said(restoreFlow(key)), refusal('write_failed').error],
     ['Forget', said(danger), refusal('forget_failed').error],
+    ['the encrypted copy', said(restoreFlow(copy)), refusal('export_failed').error],
   ] as Array<[string, string[], string]>) {
     assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
     for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
