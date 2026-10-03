@@ -3,8 +3,9 @@
 // Boots the app in demo mode on a free port with a throwaway data directory (never the live
 // one, never a real key) seeded with six executed proposals, creates a demo wallet, then opens
 // the window in the automation browser over CDP and photographs the Pro screen's Activity
-// panel into docs/screenshots/activity.png. Same shape as window-proof.ts, smaller. Run:
-//   node scripts/activity-proof.ts
+// panel into scripts/scratch/activity-proof/activity.png (docs/screenshots/ with --docs, or
+// PROOF_OUT_DIR). Same shape as window-proof.ts, smaller. Run:
+//   node scripts/activity-proof.ts [--docs]
 // CDP_URL (default http://127.0.0.1:9333) and PLAYWRIGHT_CORE (a copy of the package; not a
 // dependency of this repo) point at the browser and the driver.
 
@@ -15,6 +16,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -22,7 +24,7 @@ const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/9833c18b2d85bc59/node_modules/playwright-core');
 const CDP_URL = process.env.CDP_URL ?? 'http://127.0.0.1:9333';
 // A working picture, not a deliverable: it goes to the temp dir, never into the repo.
-const SHOTS = process.env.PROOF_OUT_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-activity-shot-'));
+const SHOTS = proofOut('activity-proof', '');
 
 type Json = any;
 

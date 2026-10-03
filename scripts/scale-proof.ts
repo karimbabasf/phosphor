@@ -7,10 +7,11 @@
 // shoots Basic, Trade and Pro at four window sizes: the new minimum (960 x 700), a 13 inch
 // laptop (1280 x 800 and 1440 x 900) and a 27 inch screen (2560 x 1440). The trade pictures
 // carry the strip with a venue notice forced onto it, so the notice is in the picture even
-// when the demo venue has nothing to say. Pictures land in docs/screenshots/scale/.
+// when the demo venue has nothing to say. Pictures land in scripts/scratch/scale-proof/, or with
+// --docs in docs/screenshots/scale/.
 //
 // Fixture data only: the demo wallet on a temp directory, never the live one. Run:
-//   node scripts/scale-proof.ts
+//   node scripts/scale-proof.ts [--docs]
 // playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
 // playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary (Brave's, say).
 
@@ -21,12 +22,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = path.join(ROOT, 'docs', 'screenshots', 'scale');
+const SHOTS = proofOut('scale-proof', 'scale');
 
 // The four sizes. A 27 inch screen is shot at one device pixel per CSS pixel so the file
 // stays a picture rather than a download; the laptop sizes are shot at two, as the app is

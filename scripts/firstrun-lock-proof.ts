@@ -13,7 +13,8 @@
 // the lock card is up, and 30 again after.
 //
 // One line per check, then a summary line; exit 1 on any failure. The three moments are shot into
-// PROOF_OUT (a temp directory by default, so docs/ is never written).
+// scripts/scratch/firstrun-lock-proof/, which git ignores (docs/screenshots/firstrun-lock/ with --docs,
+// or PROOF_OUT).
 //
 // Fixture data only: temp directories, never the live wallet. Run:
 //   node scripts/firstrun-lock-proof.ts
@@ -27,12 +28,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-firstrun-lock-shots-'));
+const SHOTS = proofOut('firstrun-lock-proof', 'firstrun-lock');
 const PASSWORD = 'proof-password-1';
 
 type Json = any;

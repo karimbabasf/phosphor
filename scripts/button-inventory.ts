@@ -14,8 +14,8 @@
 // Fixture only: no backend, no wallet, a generated page over the stylesheets on disk. Run:
 //   node scripts/button-inventory.ts            the table, the json and both sheets
 //   node scripts/button-inventory.ts --list     the table alone, no browser
-// INVENTORY_OUT names the directory (default docs/superpowers/prompts/ready-for-people/
-// evidence-e/inventory). playwright-core is not a dependency of this repo; PLAYWRIGHT_CORE
+// INVENTORY_OUT names the directory (default scripts/scratch/button-inventory/, which git
+// ignores). playwright-core is not a dependency of this repo; PLAYWRIGHT_CORE
 // points at a copy, PROOF_BROWSER at a Chromium binary when playwright's own shell is absent.
 
 import { createRequire } from 'node:module';
@@ -23,6 +23,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { proofOut } from './proof-out.ts';
 import { RECIPES, type Recipe } from './button-inventory/recipes.ts';
 import { families, scan, type Family } from './button-inventory/scan.ts';
 
@@ -30,7 +31,7 @@ const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/705bc6b22212b352/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const OUT = process.env.INVENTORY_OUT ?? path.join(ROOT, 'docs/superpowers/prompts/ready-for-people/evidence-e/inventory');
+const OUT = process.env.INVENTORY_OUT ?? proofOut('button-inventory');
 const WIDTHS = [860, 400];
 
 // The floor every button is held to (docs/superpowers/specs/2026-09-20-quality-definitions.md,
