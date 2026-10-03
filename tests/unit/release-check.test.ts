@@ -15,7 +15,18 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
-import { checkApp, entitlementProblem, expectedEntitlements, payloadProblems, shellCarries, tauriEntitlements } from '../../scripts/release-check.ts';
+import {
+  checkApp,
+  compareVersions,
+  entitlementProblem,
+  expectedEntitlements,
+  minimumMacOS,
+  payloadProblems,
+  shellCarries,
+  supportedMacOS,
+  tauriEntitlements,
+  versionText,
+} from '../../scripts/release-check.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -137,11 +148,14 @@ test('the shell is read for the digest it was built for, as bytes', () => {
 
 const tooling = process.platform === 'darwin' && spawnSync('cc', ['--version']).status === 0 && spawnSync('codesign', ['-h']).status !== null;
 
+// The oldest macOS the app supports, which every binary in a release is built for.
+const FLOOR = versionText(supportedMacOS(ROOT));
+
 // A shell compiled with this digest as a string constant, as src-tauri/build.rs compiles one in.
-function compile(out: string, digest: string): void {
+function compile(out: string, digest: string, macos = FLOOR): void {
   const source = path.join(path.dirname(out), 'shell.c');
   fs.writeFileSync(source, `const char *phosphor_payload_digest = "${digest}";\nint main(void) { return phosphor_payload_digest[0] == 0; }\n`);
-  execFileSync('cc', ['-O0', '-o', out, source]);
+  execFileSync('cc', ['-O0', `-mmacosx-version-min=${macos}`, '-o', out, source]);
   fs.rmSync(source);
 }
 
@@ -234,6 +248,91 @@ test('after signing, an ad-hoc signature is not a release: every binary needs th
     assert.match(problems, /Contents\/MacOS\/phosphor-desktop carries entitlements other than the ones it should \(com\.apple\.security\.cs\.allow-jit/);
     assert.match(problems, /se-helper carries entitlements other than the ones it should \(com\.apple\.application-identifier, com\.apple\.developer\.team-identifier, keychain-access-groups\)/);
     assert.match(problems, /the certificate that signed the vault service is not in the profile/);
+  } finally {
+    fs.rmSync(path.dirname(app), { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+/* Mach-O headers made by hand: a thin binary with LC_BUILD_VERSION or the older
+   LC_VERSION_MIN_MACOSX, one that states nothing for macOS, a universal one whose newest slice
+   decides, and one cut short. */
+const packed = (major: number, minor: number, patch = 0): number => (major << 16) | (minor << 8) | patch;
+
+function command(cmd: number, size: number, words: number[]): Buffer {
+  const out = Buffer.alloc(size);
+  out.writeUInt32LE(cmd, 0);
+  out.writeUInt32LE(size, 4);
+  words.forEach((word, i) => out.writeUInt32LE(word, 8 + i * 4));
+  return out;
+}
+const buildVersion = (platform: number, version: number): Buffer => command(0x32, 24, [platform, version]);
+const versionMin = (version: number): Buffer => command(0x24, 16, [version]);
+const uuid = (): Buffer => command(0x1b, 24, []);
+
+function machO(commands: Buffer[]): Buffer {
+  const body = Buffer.concat(commands);
+  const head = Buffer.alloc(32);
+  head.writeUInt32LE(0xfeedfacf, 0);
+  head.writeUInt32LE(0x0100000c, 4);
+  head.writeUInt32LE(2, 12);
+  head.writeUInt32LE(commands.length, 16);
+  head.writeUInt32LE(body.length, 20);
+  return Buffer.concat([head, body]);
+}
+
+function universal(slices: Buffer[]): Buffer {
+  const head = Buffer.alloc(8 + slices.length * 20);
+  head.writeUInt32BE(0xcafebabe, 0);
+  head.writeUInt32BE(slices.length, 4);
+  const parts: Buffer[] = [];
+  let offset = 4096;
+  slices.forEach((slice, i) => {
+    head.writeUInt32BE(0x0100000c, 8 + i * 20);
+    head.writeUInt32BE(offset, 8 + i * 20 + 8);
+    head.writeUInt32BE(slice.length, 8 + i * 20 + 12);
+    head.writeUInt32BE(12, 8 + i * 20 + 16);
+    parts.push(slice, Buffer.alloc(4096 - slice.length));
+    offset += 4096;
+  });
+  return Buffer.concat([head, Buffer.alloc(4096 - head.length), ...parts]);
+}
+
+test('a Mach-O is read for the newest macOS any of its slices asks for', () => {
+  const dir = tempDir('release-check-macho-');
+  const file = (name: string, bytes: Buffer): string => {
+    fs.writeFileSync(path.join(dir, name), bytes);
+    return path.join(dir, name);
+  };
+  assert.deepEqual(minimumMacOS(file('built', machO([uuid(), buildVersion(1, packed(13, 5))]))), [13, 5, 0]);
+  assert.deepEqual(minimumMacOS(file('older', machO([versionMin(packed(10, 13))]))), [10, 13, 0]);
+  assert.equal(minimumMacOS(file('silent', machO([uuid()]))), null);
+  assert.equal(minimumMacOS(file('ios', machO([buildVersion(2, packed(17, 0))]))), null, 'an iOS build version says nothing about macOS');
+  const both = universal([machO([buildVersion(1, packed(13, 5))]), machO([buildVersion(1, packed(15, 0))])]);
+  assert.deepEqual(minimumMacOS(file('universal', both)), [15, 0, 0], 'the newest slice decides');
+  assert.throws(() => minimumMacOS(file('cut', machO([buildVersion(1, packed(13, 5))]).subarray(0, 40))), /ends inside its own header/);
+
+  assert.equal(compareVersions([13, 5], [13, 5, 0]), 0);
+  assert.ok(compareVersions([14, 0, 0], [13, 5]) > 0 && compareVersions([13, 4, 9], [13, 5]) < 0);
+  assert.equal(versionText([15, 0, 0]), '15.0');
+  assert.equal(versionText([13, 5, 2]), '13.5.2');
+  assert.match(FLOOR, /^\d+\.\d+$/, 'tauri.conf.json names the floor');
+});
+
+test('a binary that asks for a newer macOS than the app supports fails both stages', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {
+  const checkout = fakeCheckout();
+  const app = fakeApp(checkout);
+  const newer = `${supportedMacOS(ROOT)[0] + 1}.0`;
+  try {
+    // Built the way the vault service was before 0.10.15: for a newer macOS than the app's own.
+    const service = path.join(app, 'Contents', 'XPCServices', 'com.karimbabasf.phosphor.vault.xpc', 'Contents', 'MacOS', 'se-helper');
+    compile(service, payloadDigest(path.join(app, 'Contents', 'Resources', 'phosphor')).digest, newer);
+    sign(service);
+    const named = `Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc/Contents/MacOS/se-helper asks for macOS ${newer}, and the app supports ${FLOOR}`;
+    for (const stage of ['built', 'signed'] as const) assert.ok(checkApp(app, checkout, stage).includes(named), stage);
+    const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'release-check.ts'), '--app', app, '--checkout', checkout, '--stage', 'built'], { encoding: 'utf8' });
+    assert.equal(cli.status, 1);
+    assert.ok(cli.stderr.includes(named), cli.stderr);
   } finally {
     fs.rmSync(path.dirname(app), { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });

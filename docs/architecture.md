@@ -268,7 +268,10 @@ which lets only `v*` tags in and waits for the maintainer's approval (see
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
 first-party payload file byte for byte, the payload digest the
 shell carries, and the entitlements of every binary: the file Tauri's ad hoc pass was given on the
-app's executables, and none anywhere else. Then it runs `notarize-mac.sh`, which signs every
+app's executables, and none anywhere else. It also holds every binary to the oldest macOS the app
+supports, `minimumSystemVersion` in `tauri.conf.json` (13.5): a compiler builds for the Mac it runs
+on unless told otherwise, and the Secure Enclave service, built that way, asked for macOS 15.0 in
+0.10.13 and 0.10.14. Then it runs `notarize-mac.sh`, which signs every
 binary with the entitlements its path is given and none it arrived with: the shell
 `src-tauri/entitlements.plist` (no JIT), node `src-tauri/entitlements-node.plist` (`allow-jit`
 alone, which V8 needs), and the Secure Enclave service three made from its Developer ID

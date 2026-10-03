@@ -65,6 +65,16 @@ test('the service answers only a peer that passes its code signing requirement',
   assert.ok(/swiftc -O -D PHOSPHOR_STDIO[^\n]*"\$dev"/.test(build), 'only the dev build gets it');
 });
 
+test('both builds are for the oldest macOS the app supports, never the macOS that builds them', () => {
+  // swiftc's default target is the builder's own macOS: 0.10.13's service asked for 15.0, the
+  // release runner's, inside an app that says 13.5. scripts/release-check.ts names any binary that does.
+  assert.ok(build.includes('minimum="$(plutil -extract bundle.macOS.minimumSystemVersion raw -o - src-tauri/tauri.conf.json)"'));
+  assert.ok(build.includes('target="$arch-apple-macos$minimum"'));
+  const swiftc = build.split('\n').filter((l) => l.startsWith('swiftc '));
+  assert.equal(swiftc.length, 2, 'the service and the development build');
+  for (const line of swiftc) assert.ok(line.includes(' -target "$target" '), line);
+});
+
 test('both peer checks are the Developer ID branch of the requirement in Apple TN3127, team kept', () => {
   // TN3127, "Xcode designated requirement for Developer ID code": anchor apple generic and
   // identifier X and (certificate leaf[field.1.2.840.113635.100.6.1.9], the Mac App Store, or
