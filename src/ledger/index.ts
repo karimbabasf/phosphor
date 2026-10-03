@@ -42,6 +42,8 @@ export type Ledger = {
      one read at a time), so the day feed (src/ledger/day.ts) names its coins without a second
      copy of the list. Absent in demo mode, which reads no venue, and on hand-built ledgers. */
   tokens?(): Promise<OneClickToken[]>;
+  // The list as that client last read it, without a read: what a coin is called (src/proposals/coin-words.ts).
+  listed?(): OneClickToken[] | null;
 };
 
 /* The listeners, kept beside the ledger objects so demo and live share one shape. A listener
@@ -271,6 +273,7 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     refresh,
     onRefresh: listeners.add,
     tokens: () => oneClick.tokens(),
+    listed: () => oneClick.cached?.() ?? null,
   };
 }
 

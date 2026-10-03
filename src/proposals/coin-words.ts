@@ -40,9 +40,11 @@ export function coinWord(ref: string, list: readonly Named[] | null, held: reado
 }
 
 /* The same word off this app's own tables, without a read: the list the swap reads and the rails
-   last fetched (however old: a name does not age the way a price does) and the balance as the
-   ledger last read it, which holds every coin a move can spend. */
+   last fetched, else the one the ledger's balance read last fetched (however old: a name does not
+   age the way a price does), and the balance as the ledger last read it, which holds every coin a
+   move can spend. */
 export function coinWordOf(ctx: PCtx, ref: string): string | null {
   const read = ctx.ledger.intents();
-  return coinWord(ref, ctx.rails.swap?.listed?.() ?? null, read?.ok === true ? read.holdings : []);
+  const list = ctx.rails.swap?.listed?.() ?? ctx.ledger.listed?.() ?? null;
+  return coinWord(ref, list, read?.ok === true ? read.holdings : []);
 }

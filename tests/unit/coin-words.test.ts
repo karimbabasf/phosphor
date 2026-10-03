@@ -65,6 +65,9 @@ test('the app\'s own word reads the list the rails last fetched and the balance 
   assert.equal(coinWordOf(ctx, 'nep141:sol.omft.near'), 'SOL');
   const bare = { rails: {}, ledger: { intents: () => undefined } } as unknown as PCtx;
   assert.equal(coinWordOf(bare, USDC_NEAR), null);
+  // After a restart the rails have read nothing yet; the list the ledger's balance read keeps names it.
+  const booted = { rails: { swap: { listed: () => null } }, ledger: { intents: () => undefined, listed: () => LIST } } as unknown as PCtx;
+  assert.equal(coinWordOf(booted, HL_USDC_TWIN), 'USDC');
 });
 
 test('a propose call reaches the window with the word for each coin it names, and the call itself untouched', () => {
@@ -116,8 +119,12 @@ test('a row whose draft names its coin by id carries the word in its money and i
   assert.equal(view.money.toSymbol, 'SOL');
   assert.doesNotMatch(view.sentence, RAW_ID);
   assert.match(view.sentence, /^0\.05 USDC to SOL/);
-  // With no table the view says what the draft says, and the window names no coin for an id.
-  assert.equal(proposalView({ settle: (r) => r }, rowOf(SWAP)).money.symbol, HL_USDC_TWIN);
+  // With no table the money says what the draft says, and the window names no coin for an id; the
+  // sentence, which the agent quotes too, calls it "that coin" as every reason sentence does.
+  const unnamed = proposalView({ settle: (r) => r }, rowOf(SWAP));
+  assert.equal(unnamed.money.symbol, HL_USDC_TWIN);
+  assert.doesNotMatch(unnamed.sentence, RAW_ID);
+  assert.match(unnamed.sentence, /^0\.05 that coin to SOL/);
   // A trade's symbol is Hyperliquid's own name, never looked up as a coin of the balance.
   const trade = { kind: 'trade', op: 'open', plan: { symbol: 'kPEPE', side: 'long', sizeUsd: 20, stop: 0.01 }, amountUsd: 10 } as unknown as WriteDraft;
   assert.equal(proposalView({ settle: (r) => r, coin: () => 'WRONG' }, rowOf(trade)).money.symbol, 'kPEPE');

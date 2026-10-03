@@ -914,6 +914,11 @@ function coinWordFor(ctx: ViewCtx, draft: WriteDraft): (symbol: string) => strin
   return (symbol) => (symbol === '' ? symbol : (coin(symbol) ?? symbol));
 }
 
+// In the move's own sentence an id no table names is "that coin", as in every reason sentence.
+function sentenceWord(symbol: string): string {
+  return symbol.includes(':') ? 'that coin' : symbol;
+}
+
 /* THE ONE OBJECT. proposal_status returns it, /api/state carries it, the card draws it, the
    agent narrates it. Everything on it is read off the row or off the tables above; nothing here
    phrases a second opinion about what the row means. */
@@ -936,7 +941,7 @@ export function proposalView(ctx: ViewCtx, row: Proposal, now: number = Date.now
   return {
     id: p.id,
     kind: p.kind,
-    sentence: sentenceOf(p.draft, word),
+    sentence: sentenceOf(p.draft, (symbol) => sentenceWord(word(symbol))),
     changes: p.verdict.outcome === 'needs_approval' ? (p.verdict.changes ?? []) : [],
     stage,
     stageLabel: stageLabelOf(p, stage),
