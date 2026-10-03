@@ -260,7 +260,7 @@ admin fallback writes the app's path into a shell line run as root (`path_breaks
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.
 
-The release runs as four jobs, so that no job that can sign also runs code it did not write. The
+The release runs as five jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
 secret. The sign job installs nothing. It reads the signing secrets in the `release` environment,
 which lets only `v*` tags in and waits for the maintainer's approval (see
@@ -291,7 +291,13 @@ cannot vouch for the compiled programs (the shell, the bundled Node, the Secure 
 or for `node_modules`, which the build job made and the sign job signs as handed over; only a
 reproducible build could. The release build also does not run `npm audit signatures` or the
 key-process package test again: CI runs both on pushes to main and on pull requests, so a release
-is only as checked as the CI run on its commit. The publish
+is only as checked as the CI run on its commit. The smoke job holds no secret and no permission:
+it takes the signed files, checks them against the sign job's digests, and on each Apple silicon
+macOS that GitHub hosts (14, 15 and 26) runs the vault service by hand, from the app in the DMG and
+the app in the update. Each must reach `xpc_main`, which aborts with 134 and says it cannot be run
+directly; 137, a dyld error or any other answer fails the release before anything is published,
+because the publish job needs every one. No runner has macOS 13, so the floor of 13.5 is held by
+the release check above, not by a run. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone,
 in its own `release-site` environment, which lets only `v*` tags in and asks no approval. It
 starts only after the sign job the maintainer approved, so a release asks for one approval, and

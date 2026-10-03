@@ -4,9 +4,10 @@
 # (tests/unit/version-agrees.test.ts keeps those three together). The runner is a clean Apple
 # silicon Mac; nothing is built on a laptop.
 #
-# Four jobs, so that no job that can sign also runs code it did not write. The build pulls in a
+# Five jobs, so that no job that can sign also runs code it did not write. The build pulls in a
 # few thousand packages (npm, cargo build scripts, the Tauri CLI) and holds no secret at all; the
 # job that signs runs Apple's tools and this repo's scripts and installs nothing; the job that
+# starts the signed service on other versions of macOS holds nothing at all; the job that
 # publishes to GitHub holds no secret; the job that talks to the site holds the site's token
 # alone. tests/unit/release-workflow.test.ts holds the file to that.
 #
@@ -17,7 +18,12 @@
 #             key. notarize-mac.sh signs, notarizes and staples; the keychain is deleted right
 #             after it; scripts/updater-sign.ts signs the updater bundle with Node alone; the
 #             release gate checks everything an installed copy and Gatekeeper will check.
-#   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry run.
+#   smoke     no secret, no permission, no checkout. On each Apple silicon macOS that GitHub
+#             hosts, the vault service in the signed DMG and in the signed update is run by hand
+#             and must reach xpc_main, so a service an older macOS refuses stops the release
+#             here instead of on a person's Mac.
+#   publish   no secret, contents: write. The GitHub Release, only from a v* tag, never on a dry
+#             run, and only once the service started on every macOS in the smoke job.
 #   site      environment `release-site`: BLOB_READ_WRITE_TOKEN alone. scripts/site-upload installs
 #             its own lockfile and puts the DMG behind https://phosphor.money/download/mac.
 #
@@ -63,8 +69,8 @@
 #   release page could post a new file and a new checksum together, not a new attestation.
 #
 # A dry run (Actions, Release, Run workflow, on a branch the `release` environment lets in)
-# builds, signs, notarizes and runs the release gate, and publishes nothing: no attestation, no
-# GitHub Release, no site upload. Its signed files stay on the run for three days.
+# builds, signs, notarizes, runs the release gate and the smoke job, and publishes nothing: no
+# attestation, no GitHub Release, no site upload. Its signed files stay on the run for three days.
 #
 # Every third-party action is pinned to a commit, not a tag: a tag can be moved.
 
@@ -451,9 +457,65 @@ jobs:
           retention-days: 3
           compression-level: 0
 
+  # The signed files, on each Apple silicon macOS that GitHub hosts. The build is aarch64 alone,
+  # so the -intel and -large runners (x64) cannot run it. macos-14 is the oldest left: no runner
+  # has macOS 13, so 13.5, the floor in tauri.conf.json, is held by the release check's minimum
+  # version rule and not run here. GitHub retires macos-14 on 2026-11-02 and fails its jobs in
+  # brownout windows before then (actions/runner-images#13518): a run in a window fails here, so
+  # run the job again once the window ends, and take the label out when it retires.
+  smoke:
+    name: The vault service starts on ${{ matrix.os }}
+    needs: [build, sign]
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    permissions: {}
+    env:
+      VERSION: ${{ needs.build.outputs.version }}
+    steps:
+      - name: Take the signed files
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: signed
+          path: ${{ runner.temp }}/release
+
+      - name: They are the files the sign job made
+        env:
+          SUMS: ${{ needs.sign.outputs.sums }}
+        run: cd "$RUNNER_TEMP/release" && printf '%s\n' "$SUMS" | shasum -a 256 --check --strict
+
+      # Run by hand, the service reaches xpc_main, which says it cannot be run directly and
+      # aborts: 134 and that sentence. 137 is AMFI killing it before main, so this macOS refuses
+      # its profile, its entitlements or its certificate. dyld aborts with 134 too when the
+      # service needs a newer macOS than this one, so 134 alone is not a pass.
+      - name: The vault service in the DMG and in the update starts on this macOS
+        run: |
+          smoke() {
+            service="$1/Contents/XPCServices/com.karimbabasf.phosphor.vault.xpc"
+            program="$service/Contents/MacOS/$(plutil -extract CFBundleExecutable raw -o - "$service/Contents/Info.plist")"
+            code=0
+            "$program" < /dev/null > /dev/null 2> "$RUNNER_TEMP/said" || code=$?
+            echo "$2: the vault service run by hand gave $code: $(head -n 3 "$RUNNER_TEMP/said")"
+            if [ "$code" = 137 ]; then echo "$2: AMFI refused the vault service on macOS $(sw_vers -productVersion): it was killed before main" >&2; return 1; fi
+            if grep -q 'dyld' "$RUNNER_TEMP/said"; then echo "$2: dyld could not start the vault service on macOS $(sw_vers -productVersion)" >&2; return 1; fi
+            if [ "$code" != 134 ] || ! grep -q 'cannot be run directly' "$RUNNER_TEMP/said"; then echo "$2: the vault service did not reach xpc_main" >&2; return 1; fi
+          }
+          echo "macOS $(sw_vers -productVersion) on $(uname -m)"
+          failed=0
+          hdiutil attach "$RUNNER_TEMP/release/Phosphor-macOS-arm64.dmg" -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg"
+          smoke "$RUNNER_TEMP/dmg/Phosphor.app" "the DMG" || failed=1
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          mkdir "$RUNNER_TEMP/update"
+          tar -xzf "$RUNNER_TEMP/release/Phosphor_${VERSION}_aarch64.app.tar.gz" -C "$RUNNER_TEMP/update"
+          smoke "$RUNNER_TEMP/update/Phosphor.app" "the update" || failed=1
+          exit "$failed"
+
   publish:
     name: Publish the release
-    needs: [build, sign]
+    needs: [build, sign, smoke]
     if: needs.build.outputs.publish == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 15

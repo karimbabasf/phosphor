@@ -584,14 +584,18 @@ without those secrets fails before it signs anything. That job installs and buil
 build job, which holds no secret, does). Before it signs, it holds the unsigned app to its own
 checkout with `scripts/release-check.ts` (first-party payload files byte for byte, the digest the
 shell carries, the ad hoc pass's entitlements on the app's executables and none on any other
-binary). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
+binary, and no binary asking for a newer macOS than `minimumSystemVersion`, 13.5;
+`scripts/build-se-helper.sh` builds the service for that version, never for the Mac that builds
+it). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
 (this service's team and app id, Developer ID, more than a year left, listing the certificate
 that signed), each path's entitlements, that the service run by hand gets past AMFI (it aborts in
 `xpc_main` with 134; a refused one is killed with 137), and that the profile, the certificate and
 `APPLE_TEAM_ID` name one team. The job runs the same checks on the signed app in the DMG and in
 the update; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
-Node's own crypto. The same chain runs on
+Node's own crypto. Then the smoke job, which holds no secret, runs the service by hand from both
+signed apps on each Apple silicon macOS GitHub hosts (14, 15 and 26), and nothing is published
+until it reaches `xpc_main` on every one. The same chain, all but the smoke job, runs on
 a Mac, checks included, with nothing published:
 
     npm run notarize:local
