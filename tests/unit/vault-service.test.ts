@@ -414,10 +414,14 @@ test('every refusal of the keychain home has a calm sentence, and the lock scree
     assert.notEqual(said, 'That did not work.', code);
     assert.ok(!/marker|\bpin\b|\btag\b|group|commit|sweep|entitlement|-\d{4,5}/i.test(said), `${code} is said in the person's words: ${said}`);
   }
+  // The three that mean this Mac will not open the file have the lock card's own line, which
+  // points at the restore under it; every other code is the backend's sentence there
+  // (tests/unit/vault-lock-ui.test.ts drives both).
   const lock = fs.readFileSync(path.join(ROOT, 'ui/screens/lock.js'), 'utf8');
-  for (const code of ['keychain_unavailable', 'blob_refused', 'pin_mismatch', 'not_committed']) {
+  for (const code of ['blob_refused', 'pin_mismatch', 'not_committed']) {
     assert.ok(lock.includes(`code === '${code}'`), `the lock screen says ${code}`);
   }
+  assert.ok(lock.includes('custody.sentence(answer, fallback)'), 'the lock screen does not say the backend\'s sentence for the rest');
 });
 
 test('the stand-in keychain is never in a shipped build', { skip }, () => {

@@ -241,6 +241,13 @@ body[data-firstrun="true"] #page {
   color: var(--warn);
 }
 
+/* A cancel the person chose: the fine print's tone, no glyph. Amber stays for
+   a refusal that needs reading. */
+.lock-error[data-tone="quiet"] {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
 /* The one button: full width, 48 tall, the ink with the ground's letters on
    it. The arrow slides in from behind the word on hover. */
 .lock-unlock {
@@ -380,6 +387,11 @@ body[data-firstrun="true"] #page {
 .lock-restore-sure[hidden],
 .lock-restore > .lock-error[hidden] {
   display: none;
+}
+
+/* The cancel line sits under the buttons it answers. */
+.lock-restore-note {
+  margin-top: calc(var(--s-1) * -1);
 }
 
 .lock-phrase {

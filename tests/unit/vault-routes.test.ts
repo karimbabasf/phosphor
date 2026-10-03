@@ -1062,6 +1062,41 @@ test('a key restore is refused in words that quote none of it, over the same wal
   }
 });
 
+/* A wallet file Touch ID went through for and that still did not open (the service's crypto_failed,
+   said as damaged) is one this Mac cannot open, so the lock card's restore replaces it with no
+   proven backup asked and with its own key: the guards are for a wallet that opens. An open that
+   works puts them back. */
+test('a restore can replace a file that answered damaged, with its own key or another, and the guards come back once a file opens', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await keyWallet(b, false);
+    assert.equal((await b.post('/api/vault/restore', { key: w.key })).json.code, 'same_wallet');
+    b.keystore.lock();
+    b.refuseWith('crypto_failed', 'the wrap did not open');
+    assert.equal((await b.post('/api/vault/unlock', {})).json.code, 'damaged');
+    b.refuseWith(null);
+    const back = await b.post('/api/vault/restore', { key: w.key });
+    assert.equal(back.json.ok, true, JSON.stringify(back.json));
+    assert.equal(back.json.addresses.evm, w.evm);
+    assert.equal((await b.post('/api/vault/restore', { key: w.key })).json.code, 'same_wallet', 'the open that works did not put the guard back');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ mode: 'live' });
+  try {
+    await keyWallet(c, false);
+    c.keystore.lock();
+    c.refuseWith('crypto_failed', 'the wrap did not open');
+    assert.equal((await c.post('/api/vault/unlock', {})).json.code, 'damaged');
+    c.refuseWith(null);
+    const other = await c.post('/api/vault/restore', { key: generatePrivateKey() });
+    assert.equal(other.json.ok, true, `a file this Mac cannot open was guarded as one that opens: ${JSON.stringify(other.json)}`);
+  } finally {
+    await c.close();
+  }
+});
+
 /* The flag the bind flow reads belongs to the wallet it was proven for. A key file put in place
    from outside the app (here: a password wallet imported over a forgotten one, which no route
    clears the flag for) does not inherit it; forgetting through the app clears it. */

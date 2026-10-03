@@ -117,6 +117,16 @@ against the policy as it stands, and lands as something to click, small ones inc
 is not an approval. If the policy now refuses the move, it is refused whether or not there is a
 key to sign it with. See [Getting started](getting-started.md#the-five-minute-lock).
 
+## The lock card says the wallet file stayed closed
+
+Touch ID went through, and Phosphor still did not open the wallet file on this Mac, because the
+file is not the one Phosphor saved here, is an older copy, or cannot be read. Nothing moved, and
+asking Touch ID again opens nothing. The line ends with the way back, and the button under it,
+Restore from your private key (or Restore from your recovery phrase), opens the restore in the
+card: type your backup, press Restore twice, and one Touch ID opens your wallet here again. No
+proven backup is asked for first, since the file this Mac holds cannot be opened anyway. A
+cancelled Touch ID changes nothing, and the next press asks again before it replaces anything.
+
 ## A send was refused for a typo
 
 `propose_send` decodes the address for the place it is going before any quote is asked. An EVM

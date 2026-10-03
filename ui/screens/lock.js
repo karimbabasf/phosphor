@@ -314,7 +314,9 @@
   }
 
   function finePrint(card, text) {
-    card.appendChild(dom.el('p', 'lock-fine', text));
+    var node = dom.el('p', 'lock-fine', text);
+    card.appendChild(node);
+    return node;
   }
 
   /* The migration card. No field of its own: the window has exactly one, it
@@ -380,12 +382,23 @@
     form.appendChild(unlock);
     card.appendChild(form);
 
-    finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
+    var fine = finePrint(card, 'Your password opens Phosphor on this Mac. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
 
     /* A forgotten password is not the end of the wallet: the recovery phrase
        brings it back. Restoring puts it behind Touch ID, so the way is offered
-       where this Mac has Touch ID to put it behind. */
-    if (canRestore) forgotLink(card, form);
+       where this Mac has Touch ID to put it behind. While it is open the card
+       stops saying what the password does, to a person who forgot it. */
+    if (canRestore) {
+      var keyOnly = keyWallet();
+      restoreWay(card, [form, fine], {
+        label: keyOnly ? 'Forgot your password? Restore from your private key' : 'Forgot your password? Restore from your recovery phrase',
+        intro: keyOnly
+          ? 'Type your private key, 64 characters. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'
+          : 'Type your recovery phrase, 12 or 24 words. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.',
+        back: 'Use my password',
+        focus: function () { var field = form.querySelector('input'); if (field) field.focus(); }
+      });
+    }
 
     /* One unlock in flight at a time. The disabled button covers the click; this
        covers Enter in the password field, which submits the form without going
@@ -434,7 +447,7 @@
             if (answer.code === 'locked_out' && typeof answer.retryInSec === 'number' && answer.retryInSec > 0) {
               holdFor(answer.retryInSec);
             } else {
-              fail(error, reason(answer.code || answer.error, answer.retryInSec));
+              fail(error, reason(answer, 'That did not finish, so nothing changed. Try again.'));
             }
             shake(field);
             /* The field is cleared on a refusal and kept on a success, because
@@ -464,23 +477,25 @@
     input.focus();
   }
 
-  /* FORGOT THE PASSWORD. A quiet way under the card that opens the restore
-     step in the card itself: the phrase, typed, and a second press that says
-     what it replaces. The app writes the wallet from the phrase behind Touch
-     ID and opens it, and the lock goes on its own when the state says so. A
-     wallet with no phrase comes back the same way from its private key. */
-  function forgotLink(card, form) {
+  /* THE WAY BACK FROM THE BACKUP, in the card itself: a quiet button under
+     the card's words opens the restore step in its place, the phrase or the
+     key typed, and a second press that says what it replaces. The app writes
+     the wallet from it behind Touch ID and opens it, and the lock goes on its
+     own when the state says so. It is the password card's Forgot your
+     password, and the Touch ID card's answer to a wallet file this Mac will
+     not open (refusedHere): a person told their backup brings the wallet back
+     is given the way to use it, not a button that is refused again.
+     `hide` are the card's own parts the step takes the place of. */
+  function restoreWay(card, hide, opts) {
     var keyOnly = keyWallet();
-    var forgot = dom.el('button', 'lock-forgot');
-    forgot.type = 'button';
-    forgot.appendChild(dom.el('span', '', keyOnly ? 'Forgot your password? Restore from your private key' : 'Forgot your password? Restore from your recovery phrase'));
-    card.appendChild(forgot);
+    var way = dom.el('button', 'lock-forgot');
+    way.type = 'button';
+    way.appendChild(dom.el('span', '', opts.label));
+    card.appendChild(way);
 
     var step = dom.el('div', 'lock-restore');
     step.hidden = true;
-    step.appendChild(dom.el('p', 'lock-restore-text', keyOnly
-      ? 'Type your private key, 64 characters. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'
-      : 'Type your recovery phrase, 12 or 24 words. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'));
+    step.appendChild(dom.el('p', 'lock-restore-text', opts.intro));
     var input = dom.el('textarea', 'input phrase-input lock-phrase');
     input.name = keyOnly ? 'key' : 'phrase';
     input.rows = keyOnly ? 2 : 3;
@@ -503,54 +518,57 @@
     dom.setAttr(go, 'data-pending-label', 'Waiting for Touch ID');
     var back = dom.el('button', 'btn btn-quiet btn-sm');
     back.type = 'button';
-    back.appendChild(dom.el('span', 'btn-label', 'Use my password'));
+    back.appendChild(dom.el('span', 'btn-label', opts.back));
     tools.appendChild(go);
     tools.appendChild(back);
     step.appendChild(tools);
+    // A cancel is said under the buttons it answers, in the quiet tone.
+    var said = dom.el('p', 'lock-error lock-restore-note');
+    said.hidden = true;
+    step.appendChild(said);
     card.appendChild(step);
+
+    var asked = false;
+    function disarm() {
+      asked = false;
+      sure.hidden = true;
+    }
 
     function toggle(open) {
       var change = function () {
         dom.setHidden(step, !open);
-        dom.setHidden(form, open);
-        dom.setHidden(forgot, open);
+        for (var i = 0; i < hide.length; i += 1) dom.setHidden(hide[i], open);
+        dom.setHidden(way, open);
         if (open) input.focus();
         else {
           input.value = '';
-          sure.hidden = true;
+          disarm();
           error.hidden = true;
-          var field = form.querySelector('input');
-          if (field) field.focus();
+          said.hidden = true;
+          if (typeof opts.focus === 'function') opts.focus();
         }
       };
       var motion = window.PhosphorMotion;
-      if (motion && typeof motion.morph === 'function') motion.morph(card, change, { fade: open ? step : form });
+      if (motion && typeof motion.morph === 'function') motion.morph(card, change, { fade: open ? step : hide });
       else change();
     }
 
-    var asked = false;
-    dom.on(forgot, 'click', function () { toggle(true); });
-    dom.on(back, 'click', function () {
-      asked = false;
-      toggle(false);
-    });
+    dom.on(way, 'click', function () { toggle(true); });
+    dom.on(back, 'click', function () { toggle(false); });
     dom.on(input, 'input', function () {
-      asked = false;
-      sure.hidden = true;
+      disarm();
+      said.hidden = true;
     });
     dom.on(go, 'click', function () {
       var sent;
+      var custody = window.PhosphorCustody;
       if (keyOnly) {
-        var hex = keyOf(input.value);
-        if (!/^[0-9a-f]*$/.test(hex)) {
-          fail(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
+        var key = custody.readKey(input.value);
+        if (key.problem) {
+          fail(error, key.problem);
           return;
         }
-        if (hex.length !== 64) {
-          fail(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
-          return;
-        }
-        sent = function () { return api.vaultRestoreKey('0x' + hex); };
+        sent = function () { return api.vaultRestoreKey('0x' + key.hex); };
       } else {
         var clean = input.value.trim().toLowerCase();
         var words = clean ? clean.split(/\s+/) : [];
@@ -561,6 +579,7 @@
         sent = function () { return api.vaultRestore(words.join(' ')); };
       }
       error.hidden = true;
+      said.hidden = true;
       if (!asked) {
         asked = true;
         dom.setText(sure, keyOnly
@@ -573,19 +592,28 @@
       sent()
         .then(function (answer) {
           if (answer && answer.ok === false) {
+            // Every refusal is the end of this press: the next one asks again.
+            disarm();
+            if (answer.code === 'user_cancel') {
+              note(said, custody.CANCELLED);
+              return;
+            }
             fail(error, answer.code === 'bad_phrase'
               ? 'That phrase is not right. Check every word and the order they are in.'
               : answer.code === 'bad_key'
                 ? 'That key is not right. Check every character against your copy.'
-                : (answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing was changed.' : reason(answer.code || answer.error)));
+                : reason(answer, 'That did not finish, so nothing changed. Try again.'));
             return;
           }
           input.value = '';
+          var evm = answer && answer.addresses && typeof answer.addresses.evm === 'string' ? answer.addresses.evm : '';
+          if (evm && window.PhosphorToast) window.PhosphorToast.show('Restored. This Mac now holds the wallet ' + (evm.length > 12 ? evm.slice(0, 6) + '...' + evm.slice(-4) : evm) + '.');
           return window.PhosphorShell.refresh({});
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(go, false); });
     });
+    return way;
   }
 
   /* The enclave wallet. No field: the key that opens this file lives in the
@@ -608,7 +636,20 @@
     actions.appendChild(unlock);
     actions.appendChild(error);
     card.appendChild(actions);
-    finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
+    var fine = finePrint(card, 'Touch ID opens Phosphor on this Mac, and your Mac login password works too. Nothing new is sent while Phosphor is locked, except by a plan you armed; orders already on the exchange still run.');
+
+    /* A wallet file this Mac will not open is not one a second press opens:
+       the line says so, and the way under it is the backup. Shown only then. */
+    var keyOnly = keyWallet();
+    var way = restoreWay(card, [actions, fine], {
+      label: keyOnly ? 'Restore from your private key' : 'Restore from your recovery phrase',
+      intro: keyOnly
+        ? 'Type your private key, 64 characters. Phosphor opens your wallet from it here, behind Touch ID.'
+        : 'Type your recovery phrase, 12 or 24 words. Phosphor opens your wallet from it here, behind Touch ID.',
+      back: 'Back',
+      focus: function () { unlock.focus(); }
+    });
+    way.hidden = true;
 
     /* One dialog at a time. The request answers when the person has touched the
        sensor or cancelled, which can be most of the 150 s the backend allows, so
@@ -623,7 +664,10 @@
         .then(function (answer) {
           if (answer && answer.ok === false) {
             /* A cancel is not an error. The button simply comes back. */
-            if (answer.code !== 'user_cancel') fail(error, reason(answer.code || answer.error, answer.retryInSec));
+            if (answer.code !== 'user_cancel') {
+              fail(error, reason(answer, 'Touch ID did not finish, so nothing changed. Try again.'));
+              way.hidden = !refusedHere(answer.code);
+            }
             return;
           }
           return window.PhosphorShell.refresh({});
@@ -639,50 +683,64 @@
     unlock.focus();
   }
 
-  /* The custody routes answer { ok, error, code }: `error` is already a sentence a
-     person can read, and `code` is what a screen branches on. This table exists
-     because the window can say it better in context than a route can. */
   /* A wallet with no phrase comes back from its private key, so the lines that
      send a person to the backup name the one they have. */
   function keyWallet() {
     return (((store.get() || {}).vault) || {}).hasMnemonic === false;
   }
 
-  /* A private key as a person copies it, read the way the app reads it
-     (src/keystore/derive.ts): spaces, line breaks and dashes between the
-     groups dropped, 0x or not, either case. */
-  function keyOf(text) {
-    var raw = String(text || '');
-    var flat = (typeof raw.normalize === 'function' ? raw.normalize('NFKC') : raw).replace(/[\s\p{Pd}]+/gu, '').toLowerCase();
-    return flat.indexOf('0x') === 0 ? flat.slice(2) : flat;
+  /* The four answers that mean this Mac will not open the wallet file in
+     place, however often Touch ID is asked: not the file Phosphor saved, an
+     older copy, or a file that cannot be read. The backup is the way back,
+     and the backend lets a restore replace such a file without asking for
+     one first (src/http/custody.ts openableHere, src/http/vault.ts damaged). */
+  function refusedHere(code) {
+    return code === 'pin_mismatch' || code === 'not_committed' || code === 'blob_refused' || code === 'damaged';
   }
 
-  function reason(code, retryInSec) {
+  /* The custody routes answer { ok, error, code }: `error` is already a
+     sentence a person can read (src/http/wallet.ts says every code once), and
+     `code` is what a screen branches on. The lines here are the ones this card
+     says better in place: the four above point at the restore under them.
+     Anything else is the backend's sentence, never a code. */
+  function reason(answer, fallback) {
+    var code = answer && (answer.code || answer.error);
+    var backup = keyWallet() ? 'private key' : 'recovery phrase';
+    var restore = ' Restore your wallet from your ' + backup + ' to open it here.';
     if (code === 'wrong_password') return 'Wrong password. Try again.';
-    if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
-    if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your ' + (keyWallet() ? 'private key.' : 'recovery phrase.');
-    if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
+    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
+    if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your ' + backup + '.';
     if (code === 'locked_out') {
+      var retryInSec = answer && answer.retryInSec;
       var wait = typeof retryInSec === 'number' && retryInSec > 0
         ? 'Wait ' + retryInSec + (retryInSec === 1 ? ' second' : ' seconds')
         : 'Wait a moment';
       return 'Too many tries. ' + wait + ' and try again.';
     }
-    if (code === 'no_wallet') return 'There is no wallet on this computer yet.';
-    if (code === 'damaged') return 'The key file on this computer cannot be read. Your ' + (keyWallet() ? 'private key' : 'recovery words') + ' will bring the wallet back.';
-    if (code === 'keychain_unavailable') return 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.';
-    if (code === 'blob_refused') return 'This wallet file is an older copy. This Mac opens only the copy Phosphor keeps, so nothing was opened.';
+    if (code === 'no_wallet') return 'There is no wallet on this Mac yet.';
+    if (code === 'damaged') return 'The wallet file on this Mac cannot be read, and nothing moved.' + restore;
+    if (code === 'blob_refused') return 'This wallet file is an older copy, so Phosphor did not open it and nothing moved.' + restore;
     if (code === 'pin_mismatch' || code === 'not_committed') {
-      return 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.';
+      return 'This wallet file is not the one Phosphor saved on this Mac, so it stayed closed and nothing moved.' + restore;
     }
-    return 'That did not work.';
+    var custody = window.PhosphorCustody;
+    return custody ? custody.sentence(answer, fallback) : fallback;
   }
 
   /* A problem, in one line under the field: the warning glyph and the words,
      never a bar and never red, since nothing was lost. */
   function fail(node, message) {
     dom.clear(node);
+    dom.setAttr(node, 'data-tone', null);
     append(node, icon('warning', 'lock-error-icon'));
+    node.appendChild(dom.el('span', '', message));
+    node.hidden = false;
+  }
+
+  /* A cancel the person chose: the same line in the quiet tone, no glyph. */
+  function note(node, message) {
+    dom.clear(node);
+    dom.setAttr(node, 'data-tone', 'quiet');
     node.appendChild(dom.el('span', '', message));
     node.hidden = false;
   }
@@ -693,7 +751,7 @@
   function buildMigrate() {
     var card = shell();
     card.appendChild(dom.el('h1', 'title', 'Your keys are not encrypted'));
-    card.appendChild(dom.el('p', 'body dim', 'This app found a key file on this computer that anything running as you can read. Set a password and it gets encrypted, then the readable copy is destroyed.'));
+    card.appendChild(dom.el('p', 'body dim', 'This app found a key file on this Mac that anything running as you can read. Set a password and it gets encrypted, then the readable copy is destroyed.'));
 
     var form = dom.el('form', 'stack');
     var one = dom.el('div', 'field');
@@ -749,7 +807,7 @@
       api.walletMigrate(first.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, reason(answer.code || answer.error));
+            fail(error, reason(answer, 'That did not finish, so nothing changed. Try again.'));
             return;
           }
           buildMigrateDone(answer);
