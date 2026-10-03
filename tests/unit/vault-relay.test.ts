@@ -162,12 +162,14 @@ test('commit, sweep and status come back typed, read strictly, and probe carries
    writes is for the whole Mac, so a demo never hands the shell create, commit or sweep, whatever
    the service says it is, and has no enclave to make a wallet with. Reads and Touch IDs pass. */
 test('a relay that makes no keys answers create, commit and sweep itself, and the shell never sees one', async () => {
+  const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
+  const writes = [{ op: 'create' as const }, { op: 'commit' as const, ...material }, { op: 'sweep' as const }, { op: 'sweep' as const, label: 'run-1' }];
   for (const keychainHome of [true, false]) {
     const relay = createVaultRelay({ transportKey: transport, makesKeys: false });
     // Before the service has said what it is, too.
-    for (const op of ['create', 'sweep'] as const) {
-      const early = await relay.ask({ op });
-      assert.equal(!early.ok && early.error, 'no_keychain_home', `${op} before the probe`);
+    for (const request of writes) {
+      const early = await relay.ask(request);
+      assert.deepEqual(early, { ok: false, error: 'no_keychain_home', message: 'a demo makes no Touch ID key and writes nothing to the keychain' }, `${request.op} before the probe`);
     }
     assert.equal(relay.queued(), 0, 'a write reached the queue before the probe');
     const probe = relay.ask({ op: 'probe' });
@@ -177,15 +179,20 @@ test('a relay that makes no keys answers create, commit and sweep itself, and th
     assert.equal(relay.capability()?.keychainHome, keychainHome);
     assert.equal(relay.enclaveReady(), false, 'a demo was offered a Touch ID wallet');
 
-    const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
-    for (const request of [{ op: 'create' as const }, { op: 'commit' as const, ...material }, { op: 'sweep' as const }, { op: 'sweep' as const, label: 'run-1' }]) {
+    for (const request of writes) {
       const refused = await relay.ask(request);
       assert.equal(!refused.ok && refused.error, 'no_keychain_home', request.op);
       assert.equal(relay.queued(), 0, `${request.op} was queued for the shell`);
     }
     assert.equal(await relay.next(30), null, 'the shell was handed a write');
 
-    for (const op of ['status', 'unwrap', 'presence'] as const) {
+    // Reading still reaches the shell, and comes back typed.
+    const status = relay.ask({ op: 'status', ...material });
+    const read = await relay.next(1000);
+    assert.equal(read?.op, 'status');
+    relay.answer({ id: read!.id, ok: true, keychainHome, bound: false, key: null, marker: null });
+    assert.deepEqual(await status, { ok: true, op: 'status', status: { keychainHome, bound: false, key: null, marker: null } });
+    for (const op of ['unwrap', 'presence'] as const) {
       const pending = relay.ask({ op, ...material, reason: 'x' });
       const handed = await relay.next(1000);
       assert.equal(handed?.op, op);
