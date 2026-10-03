@@ -32,6 +32,7 @@ import { atomicWriteJson } from '../fsatomic.ts';
 import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
+import { osError } from '../err-text.ts';
 import { keyGroups, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
@@ -196,9 +197,18 @@ const REFUSALS: Record<string, string> = {
   bind_busy: 'Phosphor is already doing this. It finishes in a moment.',
   touch_waiting: 'A move is waiting for your Touch ID. Finish it, then try again.',
   install_pending: 'Your wallet is saved, and nothing moved. Phosphor finishes setting it up the next time you open it.',
+  // A readable key file on a Mac that keeps a Phosphor-only wallet (reaudit1b RA1B-01).
+  plaintext_refused: 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file, and nothing changed. If the file is your wallet, restore it from your backup.',
   // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
   proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
   write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',
+  // Forget overwrites the file before it removes it, so a disk that stops it part way may leave
+  // the file unreadable: never "nothing changed" here.
+  forget_failed: 'Phosphor could not finish removing the wallet file on this Mac. Your backup still brings the wallet back. Check that the Mac has free space, then try again.',
+  // The move from a readable key file writes the encrypted one before it destroys the readable
+  // copies, so a disk that stops it may have done the first half: not "nothing changed" either.
+  migrate_failed: 'Phosphor could not finish encrypting your keys on this Mac. Check that the Mac has free space, then try again.',
+  export_failed: 'Phosphor could not save the encrypted copy there, and your wallet is unchanged. Check that you can save to that folder and that the disk has free space, then try again.',
 };
 
 /* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
@@ -208,6 +218,18 @@ export function knownRefusal(code: string): boolean {
 
 export function refusalCodes(): string[] {
   return Object.keys(REFUSALS);
+}
+
+/* A disk that refused a key file (full, a permission, a directory where the file goes), said in
+   the words of this table and nothing of the system's: its text names the file's path (reaudit1b
+   RA1B-03). The audit line keeps the system's code and the call that failed. Null for a failure
+   the system did not raise: that is the app's own sentence, written on purpose, which may name
+   what a person needs, such as the file it left alone. */
+export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed' | 'migrate_failed' | 'export_failed'): JsonBody | null {
+  const os = osError(err);
+  if (os === null) return null;
+  ctx.audit.append('app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
+  return refusal(code);
 }
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -350,6 +372,8 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }
@@ -377,8 +401,20 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, addresses: out.addresses });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
+}
+
+/* Whether this Mac keeps a Phosphor-only wallet, any data folder's, asked of the vault service now
+   when it has not said so already. A backend the shell did not start has no service to ask and no
+   such wallet it could open, so false, as before. Null when the service did not answer. */
+async function phosphorOnlyHere(ctx: Ctx): Promise<boolean | null> {
+  if (!ctx.vault.fromShell()) return false;
+  if (ctx.vault.bound() === true) return true;
+  const asked = await ctx.vault.ask({ op: 'status' });
+  return asked.ok && asked.op === 'status' ? asked.status.bound : null;
 }
 
 export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -391,6 +427,15 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
      nothing real in reach. Three locks, because the failure here is irreversible. */
   if (ctx.cfg.mode === 'demo') {
     return fail(res, 403, 'demo mode never migrates a wallet, because migrating destroys a plaintext key file. Start Phosphor in live mode to do this.');
+  }
+  /* NOT ON A MAC THAT KEEPS A PHOSPHOR-ONLY WALLET (reaudit1b RA1B-01). No pin covers a readable
+     key file, so a program running as the owner can move the bound file aside and put its own
+     wallet here; encrypting it, then moving it behind Touch ID, would make that wallet the app's.
+     Asked of the service at this click, not read off the window's card. */
+  const here = await phosphorOnlyHere(ctx);
+  if (here !== false) {
+    ctx.audit.append('approve_attempt_rejected', 'a readable key file was not opened: this Mac keeps a Phosphor-only wallet, or the vault service did not say', { known: here === true });
+    return sendJson(res, 200, refusal(here === true ? 'plaintext_refused' : 'keychain_unavailable'));
   }
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
@@ -411,6 +456,8 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
       note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
     });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }
@@ -441,6 +488,8 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
     ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
     sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'the encrypted copy was not saved', err, 'export_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }

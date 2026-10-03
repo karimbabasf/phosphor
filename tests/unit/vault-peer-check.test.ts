@@ -14,12 +14,16 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { developerTools } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const work = tempDir('phosphor-peer-check-');
 const env = { ...process.env, TMPDIR: work };
-const tools = process.platform === 'darwin' && ['swiftc', 'clang', 'codesign'].every((t) => spawnSync('/usr/bin/which', [t], { env }).status === 0);
+// `which` finds the /usr/bin stubs even with no developer tools, and running one then offers to
+// install them in a dialog: xcode-select is asked first. The service here is the real one, with no
+// stand-in, so the host asks it for a probe and nothing else (tests/unit/no-dialog.test.ts).
+const tools = developerTools() && ['swiftc', 'clang', 'codesign'].every((t) => spawnSync('/usr/bin/which', [t], { env }).status === 0);
 
 function run(cmd: string, args: string[]): void {
   const r = spawnSync(cmd, args, { encoding: 'utf8', env });

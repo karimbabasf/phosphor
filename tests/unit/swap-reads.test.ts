@@ -583,7 +583,7 @@ test('the wallet read carries every quantity as an exact decimal beside the numb
   const ctx = {
     ledger: { snapshot: () => snapshot, intents: () => wnearHeld(), hyperliquid: () => undefined, refresh: async () => snapshot },
     keystore: { custody: () => null, enclave: () => null, state: () => 'no_wallet', header: () => null },
-    vault: { attached: () => false, enclaveReady: () => false, capability: () => null, waiting: () => null },
+    vault: { attached: () => false, enclaveReady: () => false, capability: () => null, bound: () => null, waiting: () => null },
     vaultPrefs: { get: () => ({ backedUp: false, backedUpAt: null, idleMinutes: 15 }) },
   } as unknown as Ctx;
   const out = captured();

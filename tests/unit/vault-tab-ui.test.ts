@@ -17,8 +17,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
-import { refusal, refusalCodes } from '../../src/http/wallet.ts';
-import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
 
 type Any = Record<string, any>;
 
@@ -1604,6 +1604,32 @@ test('the card is not offered where there is nothing to do, and a Phosphor-only 
   assert.equal(sub.hidden, false);
 });
 
+/* reaudit1b RA1B-02: Phosphor-only is said only for a file the service confirmed committed. A key in
+   Phosphor's keychain home it has not confirmed (asked before the service answered, or a file no
+   marker holds) reads as made on its day, with no Phosphor-only line and no step offered. */
+test('a Touch ID key the service has not confirmed committed is never called Phosphor-only', () => {
+  const said = (world: World): string => {
+    const out: string[] = [];
+    const walk = (n: Any): void => {
+      if (n.hidden) return;
+      if (n.childNodes.length === 0) {
+        if (n.textContent !== '') out.push(n.textContent);
+        return;
+      }
+      for (const child of n.childNodes) walk(child);
+    };
+    walk(keysRow(world));
+    return out.join(' ');
+  };
+  const world = build({ vault: { backedUp: true, enclave: { ...HOME, binding: 'unconfirmed' } } });
+  assert.doesNotMatch(said(world), /Phosphor-only|Only Phosphor/, said(world));
+  assert.ok(said(world).includes(`Made on ${day('Sep 14, 2026')}.`), said(world));
+  assert.equal(bindCard(world).hidden, true, 'the step was offered for a key that is not device-bound');
+  // Confirmed, the same row says it.
+  world.put({ vault: vaultState({ backedUp: true, enclave: { ...HOME, binding: 'app' } }) });
+  assert.ok(said(world).includes(`Phosphor-only since ${day('Sep 14, 2026')}.`), said(world));
+});
+
 /* ---------- every refusal, through the Vault's own lines ---------- */
 
 /* Each code the backend can say (and every code the service and the relays can answer), as the
@@ -1639,5 +1665,68 @@ test('every refusal the Vault can be handed reads as a sentence on the page, and
         for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}, ${where}: ${said}`);
       }
     }
+  }
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in a restore from a phrase, a
+   restore from a key and Forget: the line is the table's one sentence, never the system's text or
+   the key file's path. */
+test('a disk that refuses the wallet file in a restore, in Forget or in the encrypted copy is one calm sentence in the tab, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const quiet = { audit: { append: () => undefined } } as never;
+  const writeFailed = diskRefusal(quiet, 'simulated', raw, 'write_failed');
+  const forgetFailed = diskRefusal(quiet, 'simulated', raw, 'forget_failed');
+  assert.deepEqual([writeFailed, forgetFailed], [refusal('write_failed'), refusal('forget_failed')]);
+  const said = (root: Any): string[] => find(root, '.vault-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+  const backed = { hasMnemonic: true, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' };
+
+  const phrase = build({ vault: backed });
+  phrase.answer.restore = writeFailed;
+  buttonNamed(recovery(phrase), 'Restore from a phrase').click();
+  find(restoreFlow(phrase), 'textarea')[0].value = WORDS.slice(0, 12).join(' ');
+  buttonNamed(restoreFlow(phrase), 'Restore').click();
+  buttonNamed(restoreFlow(phrase), 'Restore').click();
+  await flush();
+  await flush();
+
+  const key = build({ vault: backed });
+  key.answer.restoreKey = writeFailed;
+  buttonNamed(recovery(key), 'Restore from a key').click();
+  find(restoreFlow(key), 'textarea')[0].value = GROUPS.join(' ');
+  buttonNamed(restoreFlow(key), 'Restore').click();
+  buttonNamed(restoreFlow(key), 'Restore').click();
+  await flush();
+  await flush();
+
+  const forget = build({ vault: backed });
+  forget.answer.forget = forgetFailed;
+  const danger = row(forget, 'danger');
+  buttonNamed(danger, 'Forget this wallet').click();
+  const field = find(find(danger, '.vault-confirm')[0], 'input')[0];
+  field.value = 'FORGET';
+  field.dispatch('input');
+  buttonNamed(danger, 'Forget it').click();
+  await flush();
+  await flush();
+
+  // The encrypted copy of a password wallet, saved to a folder the disk will not take it in.
+  const copy = build({ vault: { custody: 'software', backedUp: true, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
+  copy.answer.exportAnswer = diskRefusal(quiet, 'simulated', raw, 'export_failed');
+  buttonNamed(recovery(copy), 'Save an encrypted copy').click();
+  find(restoreFlow(copy), 'input[type="password"]')[0].value = 'proof-password-1';
+  find(restoreFlow(copy), 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+
+  for (const [where, lines, sentence] of [
+    ['a restore from a phrase', said(restoreFlow(phrase)), refusal('write_failed').error],
+    ['a restore from a key', said(restoreFlow(key)), refusal('write_failed').error],
+    ['Forget', said(danger), refusal('forget_failed').error],
+    ['the encrypted copy', said(restoreFlow(copy)), refusal('export_failed').error],
+  ] as Array<[string, string[], string]>) {
+    assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
+    for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
   }
 });

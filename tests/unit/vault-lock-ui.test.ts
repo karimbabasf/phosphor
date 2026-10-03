@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
-import { refusal, refusalCodes } from '../../src/http/wallet.ts';
-import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
 
 type Any = Record<string, any>;
 
@@ -722,6 +722,170 @@ test('a cancelled restore on the lock card says so under the buttons, quietly, a
   await flush();
   assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, posts, 'the next single press went straight to Touch ID');
   assert.equal(sure.hidden, false, 'the next press did not ask again');
+});
+
+/* ---------- a readable key file ---------- */
+
+/* reaudit1b RA1B-01: on a Mac that keeps a Phosphor-only wallet, Phosphor does not open a readable key
+   file. The card says so in plain words, offers no password and no Encrypt now, and its way back
+   takes the recovery phrase or the private key, told apart by what was typed. Elsewhere the card is
+   the one every older install has seen. */
+function readableKeyFile(here: boolean | null): Any {
+  return {
+    lock: { state: 'needs_migration', idleLocksInSec: null, verified: here !== true },
+    vault: vaultState({
+      custody: 'software',
+      state: 'needs_migration',
+      hasMnemonic: false,
+      enclave: { attached: true, ready: true, capability: { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true }, keyMadeAt: null, binding: null, phosphorOnlyHere: here },
+    }),
+  };
+}
+
+/* What a person can read: leaf text with no hidden parent. */
+function shownText(root: Any): string[] {
+  const out: string[] = [];
+  const walk = (n: Any): void => {
+    if (n.hidden) return;
+    if (n.childNodes.length === 0) {
+      if (n.textContent !== '') out.push(n.textContent);
+      return;
+    }
+    for (const child of n.childNodes) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+test('a readable key file on a Mac that keeps a Phosphor-only wallet: the card says it stayed closed and offers the backup, never Encrypt now', async () => {
+  for (const here of [null, false]) {
+    const before = build(readableKeyFile(here), [LOCK]);
+    before.sandbox.PhosphorLock.boot();
+    assert.ok(textOf(before.nodes['screen-lock']).includes('Your keys are not encrypted'), `phosphorOnlyHere ${here}: the card every older install has seen`);
+    assert.ok(buttonNamed(before.nodes['screen-lock'], 'Encrypt now'));
+  }
+
+  const world = build(readableKeyFile(null), [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  // The service answers after the first frame: the card is replaced in place.
+  world.put(readableKeyFile(true));
+  assert.deepEqual(shownText(screen), [
+    'This key file stayed closed',
+    'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open the readable key file it found here, and nothing moved.',
+    'If this file is your wallet, restore it from your backup: your recovery phrase, or your private key if it has no phrase.',
+    'Restore from your backup',
+  ]);
+  assert.equal(find(screen, 'input').length, 0, 'a password field on a file Phosphor did not open');
+  assert.equal(buttonNamed(screen, 'Encrypt now'), undefined);
+  const way = find(screen, 'button.lock-forgot')[0];
+  assert.equal(way.focused, true, 'focus did not land on the way back');
+  way.click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.equal(step.hidden, false);
+  const field = find(step, 'textarea')[0];
+  assert.equal(field.getAttribute('aria-label'), 'Recovery phrase or private key');
+  const go = buttonNamed(step, 'Restore');
+  field.value = 'one two';
+  go.click();
+  assert.ok(textOf(step).includes('That is 2 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
+  field.value = PHRASE;
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press restored');
+  go.click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.equal(post?.mnemonic, PHRASE);
+  assert.equal(post?.key, undefined);
+  for (const said of [...shownText(screen), ...textOf(step)]) assert.ok(!RAW.test(said), said);
+
+  // A private key, typed in the groups its backup shows, goes as a key.
+  const other = build(readableKeyFile(true), [LOCK]);
+  other.sandbox.PhosphorLock.boot();
+  find(other.nodes['screen-lock'], 'button.lock-forgot')[0].click();
+  const keyStep = find(other.nodes['screen-lock'], '.lock-restore')[0];
+  find(keyStep, 'textarea')[0].value = GROUPS.join(' ');
+  buttonNamed(keyStep, 'Restore').click();
+  await flush();
+  assert.ok(textOf(keyStep).includes('This puts the wallet your backup opens on this Mac, behind Touch ID, in place of the key file found here. Press Restore again to go ahead.'));
+  buttonNamed(keyStep, 'Restore').click();
+  await flush();
+  await flush();
+  const keyPost = other.calls.find((c) => c.route === '/api/vault/restore');
+  assert.equal(keyPost?.key, '0x' + GROUPS.join(''));
+  assert.equal(keyPost?.mnemonic, undefined);
+  for (const said of textOf(keyStep)) assert.ok(!RAW.test(said), said);
+});
+
+/* The migration's own answer when the window's card was drawn before the service said: the route
+   refuses, and the card says it in the backend's sentence, never a code. */
+test('a migration the backend refuses on such a Mac is said in its sentence on the card', async () => {
+  const world = build(readableKeyFile(null), [LOCK]);
+  const refused = refusal('plaintext_refused');
+  world.sandbox.PhosphorApi.walletMigrate = (password: string) => {
+    world.calls.push({ route: '/api/wallet/migrate', password });
+    return Promise.resolve(refused);
+  };
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const fields = find(screen, 'input');
+  fields[0].value = 'a long enough password';
+  fields[1].value = 'a long enough password';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/migrate'));
+  assert.match(refused.error as string, /^Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file/);
+  assert.ok(textOf(screen).includes(refused.error as string), JSON.stringify(textOf(screen)));
+  assert.ok(!RAW.test(refused.error as string), refused.error as string);
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in each restore the lock card
+   offers: the line under the field is the table's one sentence, never the system's text or the key
+   file's path. */
+test('a disk that refuses a key file in a restore or in Encrypt now on the lock card is one calm sentence, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
+  const sentence = refusal('write_failed').error as string;
+  const cards: Array<[string, Any, string]> = [
+    ['the password card', { lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, PHRASE],
+    ['a readable key file kept closed', readableKeyFile(true), GROUPS.join(' ')],
+  ];
+  for (const [where, state, typed] of cards) {
+    const world = build(state, [LOCK]);
+    world.answer.restore = answer;
+    world.sandbox.PhosphorLock.boot();
+    const screen = world.nodes['screen-lock'];
+    find(screen, 'button.lock-forgot')[0].click();
+    const step = find(screen, '.lock-restore')[0];
+    find(step, 'textarea')[0].value = typed;
+    buttonNamed(step, 'Restore').click();
+    buttonNamed(step, 'Restore').click();
+    await flush();
+    await flush();
+    const lines = find(step, '.lock-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+    assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
+    for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
+  }
+
+  // Encrypt now, on a readable key file the disk will not let the app read or replace.
+  const migrate = build(readableKeyFile(false), [LOCK]);
+  migrate.sandbox.PhosphorApi.walletMigrate = () => Promise.resolve(diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'migrate_failed'));
+  migrate.sandbox.PhosphorLock.boot();
+  const card = migrate.nodes['screen-lock'];
+  for (const field of find(card, 'input')) field.value = 'a long enough password';
+  find(card, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  const said = find(card, '.lock-card-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+  assert.deepEqual(said, [refusal('migrate_failed').error], `Encrypt now: ${JSON.stringify(said)}`);
+  for (const line of said) assert.ok(!RAW.test(line), `Encrypt now: ${line}`);
 });
 
 /* ---------- the first run ---------- */

@@ -8,6 +8,8 @@
 // which no build script passes; the binary is built here, into a test's temp folder, and the backend
 // meets it only through the relay, which is the shell's job in the app
 // (tests/unit/vault-service.test.ts, "the stand-in keychain is never in a shipped build").
+//
+// It never opens a dialog: presence is refused before the service sees it (./no-dialog.ts).
 
 import { spawnSync } from 'node:child_process';
 import assert from 'node:assert/strict';
@@ -15,6 +17,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { DIALOG_OPS, developerTools, refuseDialog } from './no-dialog.ts';
 import { tempDir } from './tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
@@ -25,7 +28,7 @@ export const GROUP = `${TEAM}.com.karimbabasf.phosphor.vault`;
 export const T0 = 1_800_000_000;
 
 const work = tempDir('phosphor-vault-double-');
-export const swiftc = process.platform === 'darwin' && spawnSync('swiftc', ['--version'], { env: { ...process.env, TMPDIR: work } }).status === 0;
+export const swiftc = developerTools() && spawnSync('swiftc', ['--version'], { env: { ...process.env, TMPDIR: work } }).status === 0;
 
 let built: string | null = null;
 
@@ -58,6 +61,7 @@ export class VaultDouble {
   }
 
   run(request: Record<string, unknown>): Answer {
+    refuseDialog(request);
     const env: Record<string, string> = {
       PATH: '/usr/bin:/bin',
       PHOSPHOR_TEST_STORE: this.store,
@@ -99,6 +103,7 @@ export type Shell = { seen: Request[]; stop(): Promise<void> };
 /* `post` sends to the backend with the relay secret, the way the shell does. */
 export function relayTo(post: Post, double: VaultDouble, transport: Buffer, hook: (request: Request) => Hook | Promise<Hook> = () => ({ kind: 'run' })): Shell {
   const seen: Request[] = [];
+  const refused: string[] = [];
   let running = true;
   const loop = (async () => {
     while (running) {
@@ -116,7 +121,12 @@ export function relayTo(post: Post, double: VaultDouble, transport: Buffer, hook
       if (what.kind === 'drop') continue;
       let answer: Answer | 'drop';
       if (what.kind === 'answer') answer = what.answer;
-      else {
+      else if (DIALOG_OPS.has(request.op)) {
+        // Never handed to the service (refuseDialog). Answered with a refusal so the backend is not
+        // left waiting out its 150 seconds, and the test fails when its shell stops.
+        refused.push(request.op);
+        answer = { ok: false, error: 'interaction_required', message: 'a test never opens a real Touch ID dialog' };
+      } else {
         const asked = { ...request, ...(request.op === 'unwrap' ? { transportKey: transport.toString('base64') } : {}) };
         const ran = double.run(asked);
         answer = what.kind === 'after' ? await what.edit(ran) : ran;
@@ -134,6 +144,7 @@ export function relayTo(post: Post, double: VaultDouble, transport: Buffer, hook
     stop: async () => {
       running = false;
       await loop.catch(() => undefined);
+      assert.deepEqual(refused, [], `the shell was asked ${refused.join(', ')}, which would open a real Touch ID dialog on this Mac: answer it in the test's relay hook`);
     },
   };
 }

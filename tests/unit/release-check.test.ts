@@ -27,6 +27,7 @@ import {
   tauriEntitlements,
   versionText,
 } from '../../scripts/release-check.ts';
+import { developerTools } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -146,7 +147,7 @@ test('the shell is read for the digest it was built for, as bytes', () => {
   assert.equal(shellCarries(Buffer.from(`\0${'cd'.repeat(32)}\0`), digest), false);
 });
 
-const tooling = process.platform === 'darwin' && spawnSync('cc', ['--version']).status === 0 && spawnSync('codesign', ['-h']).status !== null;
+const tooling = developerTools() && spawnSync('cc', ['--version']).status === 0 && spawnSync('codesign', ['-h']).status !== null;
 
 // The oldest macOS the app supports, which every binary in a release is built for.
 const FLOOR = versionText(supportedMacOS(ROOT));

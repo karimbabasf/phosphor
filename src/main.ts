@@ -236,7 +236,7 @@ if (transportKey !== null) {
     if (probe.ok && probe.op === 'probe') {
       audit.append('app_start', probe.capability.secureEnclave ? 'the Secure Enclave is reachable through the shell' : 'this Mac has no Secure Enclave the shell can reach', { ...probe.capability });
       // A wallet file a crash left half put in place is finished or removed before anyone asks.
-      settleAtStart({ keystore, vault, audit, announce: () => announceLock?.() });
+      void settleAtStart({ keystore, vault, audit, announce: () => announceLock?.() });
     } else if (!probe.ok) {
       audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
     }

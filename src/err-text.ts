@@ -10,3 +10,11 @@ export function errText(err: unknown): string {
   const message = typeof err === 'object' && err !== null ? (err as { message?: unknown }).message : undefined;
   return typeof message === 'string' ? message : 'no reason was given';
 }
+
+/* The system's part of a failure, when the system raised it: its code (ENOSPC, EACCES, EISDIR) and
+   the call that failed. Never its message, which names the file's path. */
+export function osError(err: unknown): { code: string; syscall: string } | null {
+  if (typeof err !== 'object' || err === null) return null;
+  const { code, syscall } = err as { code?: unknown; syscall?: unknown };
+  return typeof code === 'string' && typeof syscall === 'string' ? { code, syscall } : null;
+}

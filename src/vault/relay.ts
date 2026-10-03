@@ -75,7 +75,12 @@ export type Waiting = { id: string; op: VaultOp; reason: string; since: number }
 export type VaultRelay = {
   /** A shell has polled within RELAY_STALE_MS. Without one, every ask fails fast. */
   attached(): boolean;
+  /** This backend was started by the desktop shell (its handshake carried a transport key), polling or not. */
+  fromShell(): boolean;
   capability(): Capability | null;
+  /** Whether this Mac keeps a Phosphor-only wallet, any data folder's, as the service has said: true from
+   *  the first status or commit that shows a marker (no op deletes one), null before any answer. */
+  bound(): boolean | null;
   /** attached, and the shell reported an enclave the person can authenticate to, on a relay that makes keys. */
   enclaveReady(): boolean;
   ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult>;
@@ -128,6 +133,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
   let waiter: { resolve: (r: VaultRequest | null) => void; timer: NodeJS.Timeout } | null = null;
   let lastPoll = 0;
   let capability: Capability | null = null;
+  let bound: boolean | null = null;
   let stopped = false;
 
   function attached(): boolean {
@@ -278,6 +284,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
           settle(entry, { ok: false, error: 'garbled', message: 'the enclave answered a commit for another key' });
           return { ok: true };
         }
+        bound = true;
         settle(entry, { ok: true, op: 'commit', keyBlob: body.keyBlob, at: typeof body.at === 'string' ? body.at : null });
         return { ok: true };
       }
@@ -287,7 +294,12 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
         return { ok: true };
       }
       case 'status': {
-        settle(entry, { ok: true, op: 'status', status: statusOf(body) });
+        const status = statusOf(body);
+        bound = bound === true || status.bound;
+        /* The probe's one read of the markers can fail while the build has a keychain home (reaudit1b
+           RA1B-02); a later answer that read them says what the build is. */
+        if (status.keychainHome && capability !== null && !capability.keychainHome) capability = { ...capability, keychainHome: true };
+        settle(entry, { ok: true, op: 'status', status });
         return { ok: true };
       }
     }
@@ -321,8 +333,10 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
 
   return {
     attached,
+    fromShell: () => transport !== null,
     authenticate,
     capability: () => capability,
+    bound: () => bound,
     enclaveReady: () => makesKeys && attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
     ask,
     waiting,

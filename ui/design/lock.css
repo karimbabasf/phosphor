@@ -347,6 +347,14 @@ body[data-firstrun="true"] #page {
   .lock-forgot:hover { color: var(--text); }
 }
 
+/* On a plain card the way back keeps to its words' width, its text on the
+   paragraph's left edge, with room for its focus ring under the words. */
+.screen-card > .lock-forgot {
+  align-self: flex-start;
+  margin-top: calc(var(--s-2) * -1);
+  margin-left: calc(var(--s-2) * -1);
+}
+
 /* Under a refusal on the Touch ID card, the way back sits with the line that
    names it, its words on the line's own left edge (the glyph and its gap). */
 .lock-form > .lock-forgot {

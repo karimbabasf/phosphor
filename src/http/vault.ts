@@ -17,9 +17,9 @@ import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
-import { announce, depositRoute, guarded, refusal } from './wallet.ts';
+import { announce, depositRoute, diskRefusal, guarded, refusal } from './wallet.ts';
 import type { IntentsReceiveToken } from './wallet.ts';
-import { afterBoundOpen, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
+import { afterBoundOpen, bindingOf, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { StagedFile } from '../keystore/store.ts';
@@ -128,8 +128,14 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       // 'device': a blob any process on this Mac can load behind its own dialog: every wallet made
       // before the vault profile shipped, and any an ad hoc build makes. 'app': a key in Phosphor's
       // keychain home, which only Phosphor's signed vault service can reach, made by a Developer ID
-      // build's create or by POST /api/vault/bind. The window says which.
-      binding: enclave === null ? null : enclave.keyBlob.startsWith('keychain:') ? 'app' : 'device',
+      // build's create or by POST /api/vault/bind, and only once the service has said this file is
+      // the one committed for it; until then 'unconfirmed' (src/http/custody.ts bindingOf). The
+      // window says Phosphor-only for 'app' alone.
+      binding: enclave === null ? null : bindingOf(ctx),
+      // Whether this Mac keeps a Phosphor-only wallet, any data folder's, as the service has said;
+      // null before it has. Where it does, a readable key file is not opened, and the lock card
+      // says so and offers the backup (reaudit1b RA1B-01).
+      phosphorOnlyHere: ctx.vault.bound(),
     },
     foreign,
     waiting: ctx.vault.waiting(),
@@ -154,6 +160,12 @@ type Reply = { json: JsonBody } | { fail: number; error: string };
 function reply(res: http.ServerResponse, r: Reply): void {
   if ('fail' in r) fail(res, r.fail, r.error);
   else sendJson(res, 200, r.json);
+}
+
+/* A step stopped by a throw: the disk's refusal in the app's words when the system raised it
+   (wallet.ts diskRefusal), else the app's own sentence, as these steps always answered. */
+function refusedOr409(disk: JsonBody | null, err: unknown): Reply {
+  return disk === null ? { fail: 409, error: errText(err) } : { json: disk };
 }
 
 /* One Touch ID with the given reason, and what `use` makes of the data key it releases, all under
@@ -225,7 +237,7 @@ export async function handleVaultCreate(ctx: Ctx, req: http.IncomingMessage, res
       try {
         staged = ctx.keystore.stageNew(fresh.key);
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed'), err);
       }
       const made = await proveAndInstall(ctx, staged, CREATE_REASON, 'open');
       if ('refused' in made) {
@@ -491,7 +503,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
       try {
         staged = ctx.keystore.stageImport(fresh.key, from);
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'a wallet was not restored', err, 'write_failed'), err);
       }
       const restored = await proveAndInstall(ctx, staged, fromKey ? RESTORE_KEY_REASON : RESTORE_REASON, 'open');
       if ('refused' in restored) {
@@ -578,7 +590,7 @@ export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res
       try {
         gone = ctx.keystore.forget();
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'the wallet was not forgotten', err, 'forget_failed'), err);
       }
       ctx.keystore.dropStaged();
       foreign = false;

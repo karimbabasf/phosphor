@@ -17,8 +17,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
-import { refusal, refusalCodes } from '../../src/http/wallet.ts';
-import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
 
 type Any = Record<string, any>;
 
@@ -793,5 +793,65 @@ test('every refusal a first-run restore can be handed reads as a sentence, and n
       for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}: ${said}`);
       assert.equal(line.getAttribute('data-tone'), code === 'user_cancel' ? 'quiet' : null, code);
     }
+  }
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in each first-run create and
+   restore, with Touch ID and with a password: the line is the table's one sentence, never the
+   system's text or the key file's path. */
+test('a disk that refuses the wallet file in a first-run create or restore is one calm sentence, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
+  assert.deepEqual(answer, refusal('write_failed'));
+  const said = (screen: Any): string[] => find(screen, '.firstrun-error').filter((n: Any) => !n.hidden).map((n: Any) => visibleText(n).join(' '));
+  const sentence = refusal('write_failed').error as string;
+  const PASSWORD_ONLY = { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } };
+  const flows: Array<[string, (world: World) => Promise<void>]> = [
+    ['create with Touch ID', async (world) => {
+      world.sandbox.PhosphorApi.vaultCreate = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      buttonNamed(world.screen, 'Create a new wallet').click();
+    }],
+    ['restore with Touch ID', async (world) => {
+      world.answers['/api/vault/restore'] = answer as Answer;
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      buttonNamed(world.screen, 'I already have a wallet').click();
+      find(world.screen, 'textarea')[0].value = KEY_GROUPS;
+      buttonNamed(world.screen, 'Restore').click();
+    }],
+    ['create with a password', async (world) => {
+      world.store.put({ ...world.store.get(), vault: PASSWORD_ONLY });
+      world.sandbox.PhosphorApi.walletCreate = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      (find(world.screen, '.choice').find((c: Any) => c.textContent.startsWith('Create a new wallet')) as Any).click();
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+      buttonNamed(world.screen, 'Continue').click();
+    }],
+    ['restore with a password', async (world) => {
+      world.store.put({ ...world.store.get(), vault: PASSWORD_ONLY });
+      world.sandbox.PhosphorApi.walletImport = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      (find(world.screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have a wallet')) as Any).click();
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'textarea')[0].value = PHRASE;
+      buttonNamed(world.screen, 'Continue').click();
+    }],
+  ];
+  for (const [name, run] of flows) {
+    const world = build();
+    await run(world);
+    await flush();
+    await flush();
+    assert.deepEqual(said(world.screen), [sentence], `${name}: ${JSON.stringify(said(world.screen))}`);
+    for (const line of said(world.screen)) assert.ok(!RAW.test(line), `${name}: ${line}`);
   }
 });

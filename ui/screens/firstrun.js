@@ -1073,7 +1073,7 @@
       api.walletCreate(draft.password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.code || answer.error));
+            fail(error, saidOr(answer, walletProblem(answer.code || answer.error)));
             return;
           }
           /* The words come back exactly once, on this response, and are never
@@ -1312,7 +1312,7 @@
       api.walletImport(key ? { password: draft.password, keys: { evm: '0x' + key.hex } } : { password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.code || answer.error));
+            fail(error, saidOr(answer, walletProblem(answer.code || answer.error)));
             return;
           }
           f.input.value = '';
@@ -1626,6 +1626,13 @@
     if (code === 'exists') return 'There is already a wallet on this Mac.';
     if (code === 'no_wallet') return 'There is no wallet on this Mac.';
     return 'That did not finish, so nothing changed. Try again.';
+  }
+
+  /* A password route's refusal: the backend's sentence when it reads as one (a disk that would not
+     take the wallet file, say), else this screen's words (ui/core/custody.js). */
+  function saidOr(answer, fallback) {
+    var custody = window.PhosphorCustody;
+    return custody ? custody.sentence(answer, fallback) : fallback;
   }
 
   /* A vault route's refusal on a step. A cancel is the person's own choice,

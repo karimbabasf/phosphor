@@ -254,6 +254,10 @@ export function createServer(deps: ServerDeps): PhosphorServer {
      shell's handshake, and a relay with no transport key otherwise, which is what every test
      and every bare `npm run app` gets: no enclave, the password path, no behaviour change. */
   const vault = deps.vault ?? createVaultRelay({ transportKey: null });
+  /* A readable key file is vouched for only where the vault service has said this Mac keeps no
+     Phosphor-only wallet, or where there is no service to ask: a backend the shell did not start
+     can open no such wallet (reaudit1b RA1B-01). */
+  keystore.vouchForPlaintextWhen(() => !vault.fromShell() || vault.bound() === false);
   const vaultPrefs = createVaultPrefs(cfg.dataDir);
   const terms = createTerms(cfg.dataDir);
   const routeHealth = deps.routeHealth;

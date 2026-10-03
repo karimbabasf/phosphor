@@ -31,6 +31,7 @@ import {
   smokeProblem,
   teamProblems,
 } from '../../scripts/signing-gate.ts';
+import { developerTools } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -39,7 +40,7 @@ const TEAM = '35Z6P26CBD';
 const GROUP = `${TEAM}.com.karimbabasf.phosphor.vault`;
 const DAY = 24 * 60 * 60 * 1000;
 const macos = process.platform === 'darwin' && spawnSync('security', ['-h']).status !== null;
-const tooling = macos && spawnSync('cc', ['--version']).status === 0;
+const tooling = macos && developerTools() && spawnSync('cc', ['--version']).status === 0;
 
 const profile = (): Profile => readProfile(path.join(ROOT, PROFILE));
 

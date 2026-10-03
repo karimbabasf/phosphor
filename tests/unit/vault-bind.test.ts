@@ -31,11 +31,13 @@ import { createVaultRelay } from '../../src/vault/relay.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
 import { BIND_REASON, CREATE_REASON, MIGRATE_REASON, RESTORE_KEY_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
 import { refusal } from '../../src/http/wallet.ts';
+import { settleAtStart } from '../../src/http/custody.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import { privateKeyToAccount } from 'viem/accounts';
 import { identityProof } from '../../src/http/respond.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { RAW } from '../fixtures/vault-refusal-codes.ts';
 import { tempDir } from './helpers/tmp.ts';
 import { relayTo, swiftc, T0, TEAM, VaultDouble } from './helpers/vault-double.ts';
 import type { Answer, Hook, Request } from './helpers/vault-double.ts';
@@ -704,6 +706,322 @@ test('a substitute wallet file is refused before any Touch ID, in words a person
     }
     assert.equal(b.double.touches().length, touches, 'no dialog was shown for the substitute');
     assert.equal(b.keystore.state(), 'locked');
+  } finally {
+    await b.close();
+  }
+});
+
+/* REAUDIT1B, RA1B-01 (LOW). The pin covers a substitute key file of version 2. A same-user process
+   can instead move the bound file aside and put a readable keys.json of its own wallet where a wallet
+   from before encryption lives: the next start serves that wallet's addresses as verified, with no
+   pin, no service question and no Touch ID, and its lock card asks the person to encrypt it. RED until
+   a Mac that holds a marker stops vouching for a plaintext key file. */
+test('RA1B-01: on a Mac that holds a marker, a plaintext key file put where the bound wallet was is not served as a verified wallet', { skip }, async () => {
+  const b = await boot();
+  const { double, dataDir } = b;
+  const theirKey = `0x${'22'.repeat(32)}` as const;
+  const theirs = privateKeyToAccount(theirKey).address;
+  try {
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true, 'the real wallet is committed, so this Mac holds a marker');
+    assert.notEqual(made.json.addresses.evm.toLowerCase(), theirs.toLowerCase());
+    b.keystore.lock();
+    fs.renameSync(b.live, path.join(path.dirname(b.live), '.moved-aside'));
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address: theirs, privateKey: theirKey } }) + '\n');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    assert.equal(c.double.state().markers.length, 1, 'the marker of the real wallet is still on this Mac');
+    const touches = c.double.touches().length;
+    const lock = (await c.get('/api/state')).json.lock;
+    assert.equal(lock.state, 'needs_migration');
+    assert.equal(String(lock.addresses.evm).toLowerCase(), theirs.toLowerCase(), 'the window and every reader now see the other wallet');
+    assert.equal(c.double.touches().length, touches, 'no Touch ID and no service check stood in the way');
+    assert.notEqual(lock.verified, true, 'RA1B-01: a plaintext key file on a Mac that holds a marker is served as a verified wallet');
+  } finally {
+    await c.close();
+  }
+});
+
+/* RA1B-01, the whole path on a Mac that keeps a Phosphor-only wallet: the readable key file is served
+   unverified, the window is told why, the migration is refused at the click whatever card was drawn,
+   and the backup brings the person's own wallet back. */
+test('a readable key file on a Mac that keeps a Phosphor-only wallet is not opened: unverified, never migrated, and the backup brings the wallet back', { skip }, async () => {
+  const b = await boot();
+  const { double, dataDir } = b;
+  const theirKey = `0x${'22'.repeat(32)}` as const;
+  let phrase = '';
+  let mine = '';
+  try {
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    mine = made.json.addresses.evm;
+    phrase = ((await b.post('/api/vault/reveal')).json.words as string[]).join(' ');
+    b.keystore.lock();
+    fs.renameSync(b.live, path.join(path.dirname(b.live), '.moved-aside'));
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address: privateKeyToAccount(theirKey).address, privateKey: theirKey } }) + '\n');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit });
+    const state = (await c.get('/api/state')).json;
+    assert.equal(state.lock.state, 'needs_migration');
+    assert.equal(state.lock.verified, false);
+    assert.equal(state.vault.enclave.phosphorOnlyHere, true, 'the window is told why');
+    assert.equal((await c.get('/api/receive')).json.verified, false);
+    const before = fs.readFileSync(c.keysPath, 'utf8');
+    const touches = c.double.touches().length;
+    const migrated = await c.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.equal(migrated.json.code, 'plaintext_refused', JSON.stringify(migrated.json));
+    assert.equal(migrated.json.error, refusal('plaintext_refused').error);
+    assert.equal(fs.readFileSync(c.keysPath, 'utf8'), before, 'the readable file is untouched');
+    assert.equal(fs.existsSync(c.live), false, 'nothing was encrypted from it');
+    assert.equal(c.double.touches().length, touches);
+
+    const restored = await c.post('/api/vault/restore', { mnemonic: phrase });
+    assert.equal(restored.json.ok, true, JSON.stringify(restored.json));
+    assert.equal(c.keystore.addresses().evm, mine, 'the person\'s own wallet is back');
+    assert.equal(statusOf(c, liveRequest(c)).pinMatches, true, 'and committed');
+    assert.equal((await c.get('/api/state')).json.lock.verified, true);
+  } finally {
+    await c.close();
+  }
+});
+
+/* RA1B-01: elsewhere the readable key file is the wallet from before encryption, as it always was.
+   Until the service has said whether the Mac keeps a Phosphor-only wallet it is not vouched for. (A
+   backend the shell did not start has no service to ask and vouches as before: wallet-routes.test.ts.) */
+test('on a Mac with no Phosphor-only wallet a readable key file is served and migrated as before', { skip }, async () => {
+  const key = `0x${'33'.repeat(32)}` as const;
+  const address = privateKeyToAccount(key).address;
+  const b = await boot();
+  try {
+    fs.mkdirSync(path.dirname(b.keysPath), { recursive: true });
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address, privateKey: key } }) + '\n');
+    assert.equal((await b.get('/api/state')).json.lock.verified, false, 'vouched for before the service said');
+    await settleAtStart({ keystore: b.keystore, vault: b.vault, audit: b.audit });
+    const state = (await b.get('/api/state')).json;
+    assert.equal(state.vault.enclave.phosphorOnlyHere, false);
+    assert.equal(state.lock.verified, true);
+    assert.equal(state.lock.addresses.evm, address);
+    const migrated = await b.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.equal(migrated.json.ok, true, JSON.stringify(migrated.json));
+    assert.equal(fs.existsSync(b.keysPath), false, 'the readable copy is destroyed');
+    assert.equal(b.keystore.custody(), 'software');
+    assert.equal(b.keystore.addresses().evm, address);
+  } finally {
+    await b.close();
+  }
+});
+
+/* REAUDIT1B, RA1B-02 (MEDIUM). proveAndInstall commits only when the start-up probe said keychainHome,
+   and that answer is false whenever the probe's one read of the markers failed, while the service
+   still makes every new key in the keychain group. So a create, restore or move from a password after
+   such a probe installs a keychain wallet with no marker, which the window calls Phosphor-only. Ten
+   minutes after any wallet on the Mac is committed it answers not_committed, and the next sweep deletes
+   its key: without a backup the wallet is gone. RED until a keychain key is committed whatever the
+   probe said. */
+test('RA1B-02: a wallet made after a start-up probe that could not read the markers is committed all the same, and keeps opening', { skip }, async () => {
+  const double = new VaultDouble();
+  double.fail = 'markers=-25308';
+  const b = await boot({ double });
+  try {
+    assert.equal(b.vault.capability()?.keychainHome, false, 'the start-up probe could not read the markers');
+    double.fail = undefined;
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    const live = liveRequest(b);
+    assert.ok(live.keyBlob.startsWith('keychain:'), 'the service made the key in the keychain group');
+    assert.equal((await b.get('/api/vault')).json.enclave.binding, 'app', 'the window says Phosphor-only');
+    assert.equal(statusOf(b, live).pinMatches, true, 'RA1B-02: the new Phosphor-only wallet was never committed: no marker holds its pin');
+
+    // Another wallet made Phosphor-only on this Mac, then ten minutes: the first still opens and keeps its key.
+    const other = await boot({ double });
+    try {
+      assert.equal((await other.post('/api/vault/create')).json.ok, true);
+    } finally {
+      await other.close();
+    }
+    double.now = T0 + 601;
+    b.keystore.lock();
+    assert.equal((await b.post('/api/vault/unlock')).json.ok, true, 'the first wallet still opens');
+    double.run({ op: 'sweep' });
+    assert.ok(double.state().keys.some((k) => `keychain:${k.tag}` === live.keyBlob), 'a sweep keeps its key');
+  } finally {
+    await b.close();
+  }
+});
+
+/* RA1B-02, the window's half: Phosphor-only is said from the service's answer about the file in place,
+   never from the start-up probe. Before the service answers nothing is Phosphor-only, and a file no
+   marker holds (what an install with no commit left behind) never is. */
+test('the window calls a wallet Phosphor-only only once the service confirmed its file committed, never for an uncommitted install', { skip }, async () => {
+  const double = new VaultDouble();
+  const b = await boot({ double });
+  const dataDir = b.dataDir;
+  try {
+    assert.equal((await b.post('/api/vault/create')).json.ok, true);
+    assert.equal((await b.get('/api/vault')).json.enclave.binding, 'app', 'a commit that landed is the service saying so');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'unconfirmed', 'before the service answers, nothing is Phosphor-only');
+    assert.equal(await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit }), 'none');
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'app', 'the start-up check confirmed the committed file');
+  } finally {
+    await c.close();
+  }
+
+  fs.writeFileSync(double.store, JSON.stringify({ ...double.state(), markers: [] }));
+  const d = await boot({ double, dataDir });
+  try {
+    await settleAtStart({ keystore: d.keystore, vault: d.vault, audit: d.audit });
+    assert.equal(statusOf(d, liveRequest(d)).pinMatches, false, 'no marker holds this file');
+    assert.equal((await d.get('/api/vault')).json.enclave.binding, 'unconfirmed', 'an uncommitted install is called Phosphor-only');
+    assert.equal((await d.get('/api/state')).json.vault.enclave.binding, 'unconfirmed');
+  } finally {
+    await d.close();
+  }
+});
+
+/* RA1B-02: with the probe's answer stale, a commit that does not land still ends the step, in the calm
+   words, and the wallet in place stays exactly as it was. */
+test('after a start-up probe that could not read the markers, a commit that does not land makes nothing and keeps the wallet in place', { skip }, async () => {
+  const double = new VaultDouble();
+  double.fail = 'markers=-25308';
+  const b = await boot({ double });
+  let evm = '';
+  try {
+    assert.equal(b.vault.capability()?.keychainHome, false);
+    double.fail = 'addMarker=-25308';
+    const made = await b.post('/api/vault/create');
+    double.fail = undefined;
+    assert.equal(made.json.code, 'keychain_unavailable', JSON.stringify(made.json));
+    assert.equal(made.json.error, refusal('keychain_unavailable').error);
+    assert.equal(fs.existsSync(b.live), false, 'no wallet was put in place');
+    assert.equal(fs.existsSync(b.staged), false, 'nothing staged is left');
+    assert.equal(b.keystore.state(), 'no_wallet');
+    assert.equal(b.vault.capability()?.keychainHome, true, 'the service answered what the probe could not read');
+    const again = await b.post('/api/vault/create');
+    assert.equal(again.json.ok, true, JSON.stringify(again.json));
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true);
+    evm = again.json.addresses.evm;
+  } finally {
+    await b.close();
+  }
+
+  double.fail = 'markers=-25308';
+  const c = await boot({ double, dataDir: b.dataDir });
+  double.fail = undefined;
+  try {
+    assert.equal(c.vault.capability()?.keychainHome, false);
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true);
+    c.prefs.markBackedUp(Date.now, evm);
+    const before = fs.readFileSync(c.live, 'utf8');
+    double.fail = 'addMarker=-25308';
+    const restored = await c.post('/api/vault/restore', { key: `0x${'11'.repeat(32)}` });
+    double.fail = undefined;
+    assert.equal(restored.json.code, 'keychain_unavailable', JSON.stringify(restored.json));
+    assert.equal(fs.readFileSync(c.live, 'utf8'), before, 'the wallet file is byte for byte the one that was there');
+    assert.equal(fs.existsSync(c.staged), false);
+    c.keystore.lock();
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true, 'and it still opens');
+    assert.equal(c.keystore.addresses().evm, evm);
+  } finally {
+    await c.close();
+  }
+});
+
+/* RA1B-02, the smaller effect: a committed file a crash left is put in place by the service's answer,
+   never kept on a stale probe for the next staged file to write over. */
+test('after a start-up probe that could not read the markers, what a crash left is settled by the service all the same', { skip }, async () => {
+  const double = new VaultDouble();
+  const b = await boot({ double });
+  let bytes = '';
+  try {
+    await blobWallet(b);
+    const made = double.run({ op: 'create' });
+    const s = b.keystore.stageRewrap({ keyBlob: made.keyBlob as string, publicKey: made.publicKey as string, createdAt: new Date(T0 * 1000).toISOString() });
+    assert.equal(double.run({ op: 'commit', ...material(s.request) }).ok, true, 'a bind stopped between its commit and its rename');
+    bytes = s.bytes;
+  } finally {
+    await b.close();
+  }
+
+  double.fail = 'markers=-25308';
+  const c = await boot({ double, dataDir: b.dataDir });
+  double.fail = undefined;
+  try {
+    assert.equal(c.vault.capability()?.keychainHome, false, 'the start-up probe could not read the markers');
+    assert.equal(await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit }), 'installed');
+    assert.equal(fs.readFileSync(c.live, 'utf8'), bytes, 'the committed file is in place');
+    assert.equal(fs.existsSync(c.staged), false);
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'app');
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true, 'and it opens');
+  } finally {
+    await c.close();
+  }
+});
+
+/* REAUDIT1B, RA1B-03: a disk that refuses the wallet file during create, restore or forget is said in
+   the words of the one refusal table, never the system's text, which names the key file's path. The
+   audit line keeps the system's code and the call that failed, and no path. Each disk error is real:
+   a directory where the staged file goes (EISDIR on rename), a key file the owner cannot write
+   (EACCES on open). */
+test('a disk that refuses the wallet file is said in calm words in create, restore and forget, never the system\'s text or the path', { skip }, async () => {
+  // Forget asks presence, which the service answers with the real Touch ID (no stand-in covers it):
+  // the shell answers it here, so no system dialog ever opens on the Mac running the tests.
+  const b = await boot({ hook: (r) => (r.op === 'presence' ? { kind: 'answer', answer: { ok: true } } : { kind: 'run' }) });
+  const clean = (json: { error?: unknown }): void => {
+    assert.ok(typeof json.error === 'string' && !RAW.test(json.error), String(json.error));
+    assert.ok(!JSON.stringify(json).includes(b.dataDir), JSON.stringify(json));
+  };
+  const audited = (code: string): void => {
+    const line = b.audit.tail(20).find((e) => e.msg.includes(`the disk refused the wallet file (${code} on`));
+    assert.ok(line, `no audit line for ${code}`);
+    assert.ok(!JSON.stringify(line).includes(b.dataDir), 'the audit line names the path');
+  };
+  try {
+    fs.mkdirSync(b.staged, { recursive: true });
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.status, 200);
+    assert.deepEqual(made.json, refusal('write_failed'), JSON.stringify(made.json));
+    clean(made.json);
+    assert.equal(fs.existsSync(b.live), false, 'no wallet was made');
+    audited('EISDIR');
+
+    fs.rmdirSync(b.staged);
+    const real = await b.post('/api/vault/create');
+    assert.equal(real.json.ok, true, JSON.stringify(real.json));
+    b.prefs.markBackedUp(Date.now, real.json.addresses.evm);
+    const before = fs.readFileSync(b.live, 'utf8');
+    fs.mkdirSync(b.staged);
+    const restored = await b.post('/api/vault/restore', { key: `0x${'11'.repeat(32)}` });
+    assert.deepEqual(restored.json, refusal('write_failed'), JSON.stringify(restored.json));
+    clean(restored.json);
+    assert.equal(fs.readFileSync(b.live, 'utf8'), before, 'the wallet in place is untouched');
+    fs.rmdirSync(b.staged);
+
+    fs.chmodSync(b.live, 0o400);
+    try {
+      const forgot = await b.post('/api/vault/forget', { confirm: 'FORGET' });
+      assert.deepEqual(forgot.json, refusal('forget_failed'), JSON.stringify(forgot.json));
+      clean(forgot.json);
+      assert.equal(fs.readFileSync(b.live, 'utf8'), before, 'the file the disk would not let go is still whole');
+      audited('EACCES');
+    } finally {
+      fs.chmodSync(b.live, 0o600);
+    }
   } finally {
     await b.close();
   }

@@ -15,12 +15,14 @@ import path from 'node:path';
 
 import { assertOutsideRepo, loadConfig } from '../../src/config.ts';
 import { createKeystore, destroyPlaintext } from '../../src/keystore/store.ts';
+import { walletFromMnemonic } from '../../src/keystore/derive.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { tempDir } from './helpers/tmp.ts';
 
-// The address a legacy key file would leak if the scoping were wrong. It is a plain address
-// with no private key beside it, which is enough: addresses() falls back to it, so seeing it
-// out of a scratch instance is the leak itself.
+// The address a legacy key file would leak if the scoping were wrong: the BIP39 test vector's,
+// written with its key as every legacy key file holds one (an address with no key behind it is
+// served as nothing, reaudit1b RA1B-01). Seeing it out of a scratch instance is the leak itself.
+const LEGACY = walletFromMnemonic('abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about');
 const LEGACY_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 
 function scratch(prefix: string): string {
@@ -53,7 +55,7 @@ function homeWithLegacyKeys(): string {
   fs.mkdirSync(path.join(home, '.phosphor'), { recursive: true });
   fs.writeFileSync(
     path.join(home, '.phosphor', 'keys.json'),
-    JSON.stringify({ evm: { address: LEGACY_EVM } }, null, 2),
+    JSON.stringify({ evm: { address: LEGACY.addresses.evm, privateKey: LEGACY.keys.evm } }, null, 2),
   );
   return home;
 }
