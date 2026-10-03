@@ -68,7 +68,7 @@ import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUr
 import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
 import { heldToPin, pinnedAssets } from './asset-pin.ts';
-import { intentsDepositAddress, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
+import { intentsDepositAddress, networkByVenue, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
 import type { PayFamily, PoaToken } from './intents-address.ts';
 import { depositFloorOf, needsTarget, ownDepositChain, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
 import type { DepositFloor, OwnDeposit, PayNote } from './pay-rules.ts';
@@ -293,6 +293,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
   type Plan = {
     chain: string;
     originAsset: string; // the 1Click id spent, the flavor held
+    originNetwork: string; // the chain that flavor came in on, by name: the summary names it, never the id
     destinationAsset: string; // the 1Click id the receiver is paid in
     native: boolean; // the destination is the chain's own coin
     tokenId: string | null; // the destination token's contract or mint, for the balance read
@@ -390,6 +391,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return {
       chain,
       originAsset: origin.assetId,
+      originNetwork: networkByVenue(held.blockchain)?.name ?? held.blockchain,
       destinationAsset: paid.assetId,
       native: destination.native,
       tokenId: destination.native ? null : (tokens[chain as ChainId]?.[draft.symbol.toUpperCase()]?.tokenId ?? null),
@@ -499,7 +501,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return [
       `intents pay: ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER} by ${draft.from} -> ` +
         `${oneLine(quote.amountOutFormatted, 40)} ${draft.symbol} paid out to ${p.to} on ${label}` +
-        (p.originAsset === p.destinationAsset ? '' : ` (swapped from the ${oneLine(p.originAsset, 40)} flavor on the way)`),
+        (p.originAsset === p.destinationAsset ? '' : ` (swapped on the way from the ${draft.symbol} from ${p.originNetwork})`),
       `fee ${feeUsd === null ? 'unknown' : '$' + feeUsd.toFixed(4)}${fee === null ? '' : `, of which ${fee} ${draft.symbol} is the bridge's flat fee`}, ` +
         `eta ~${Number(quote.timeEstimate)}s, solver floor ${units(baseUnits(quote.minAmountOut, 'minAmountOut'), p.decimals)} ${draft.symbol}, ` +
         `draft floor ${units(p.minReceivedBase, p.decimals)} ${draft.symbol}`,

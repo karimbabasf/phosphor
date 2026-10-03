@@ -24,6 +24,7 @@ import type { ReasonCode } from '../rails/reasons.ts';
 import { buildCtx, errText, mergePatch, newProposal, ownBook } from './lifecycle.ts';
 import { land } from './execute.ts';
 import type { PCtx } from './lifecycle.ts';
+import { coinWordOf } from './coin-words.ts';
 
 /* How old a spot price may be before this app stops sizing money against it.
 
@@ -258,7 +259,7 @@ export async function proposeRail(
      holding worth far more would otherwise run on its own under the ask line. A move the app
      cannot measure stops for a human, whatever its size. */
   if (rail !== null && draft.kind === 'swap' && liftableByQuote(ctx, verdict, draft, snapshot)) {
-    const unpriced = `This swap spends ${draft.fromSymbol}, which the app cannot price, so it is valued off what the quote says arrives.`;
+    const unpriced = `This swap spends ${coinWordOf(ctx, draft.fromSymbol) ?? 'a coin'}, which the app cannot price, so it is valued off what the quote says arrives.`;
     simulation = await simulated(rail);
     const repriced = simulation.ok ? pricedOffQuote(ctx, draft, simulation, snapshot) : draft;
     if (!simulation.ok || repriced === draft) {

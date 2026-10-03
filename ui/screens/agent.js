@@ -189,6 +189,15 @@
     return String(name || '').replace(/^mcp__phosphor__/, '');
   }
 
+  /* The kind of move a propose call drafts. One tool, propose_send, drafts either send: a real
+     chain in `where` is a payout, and its first frame names that chain like the row will. */
+  function proposeKind(name, input) {
+    var id = bareName(name);
+    if (!Object.prototype.hasOwnProperty.call(PROPOSE_KINDS, id)) return '';
+    var where = input && typeof input.where === 'string' ? input.where.trim().toLowerCase() : '';
+    return id === 'propose_send' && where && where !== 'intents' ? 'intents_pay' : PROPOSE_KINDS[id];
+  }
+
   /* typeof, not truthiness: the tool id arrives from a language model, and a
      lookup on a plain object hands back Object.prototype's own members for ids
      like `constructor`. */
@@ -1613,6 +1622,7 @@
     return {
       name: block.name,
       input: block.input,
+      words: block.words,
       at: block.at,
       open: block.open !== false,
       onToggle: function (open) { block.open = open; },
@@ -1887,11 +1897,13 @@
       if (turn) turn.state = 'calling';
       /* SOMETHING ON SCREEN THE MOMENT A MOVE IS ASKED FOR. The propose call already names
          the pair and the amount, so the card is drawn from it now, working, and becomes the
-         row's own card when the row lands. */
-      var kind = PROPOSE_KINDS[bareName(event.name)];
+         row's own card when the row lands. The coins are drawn by the words the app sent
+         beside the call (src/http/chats.ts), never by the agent's own string, which may be an
+         asset id: "Swap 1.7147 nep141:17208628...a1 to SOL" (Karim, 2026-10-02). */
+      var kind = proposeKind(event.name, event.input);
       if (kind) {
         openSteps = null;
-        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, data: { placeholder: true, kind: kind }, at: at, open: true, replayed: replay, waiting: replay ? false : undefined });
+        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, words: event.words, data: { placeholder: true, kind: kind }, at: at, open: true, replayed: replay, waiting: replay ? false : undefined });
         return;
       }
       if (!replay) renderAll();

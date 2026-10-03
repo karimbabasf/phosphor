@@ -22,6 +22,26 @@ import type { WalletPrints } from '../web-gate.ts';
 import { PROJECT_DIR } from './context.ts';
 import type { Chat, ChatRegistry, SseHub } from './context.ts';
 
+/* THE WORDS A MOVE'S FIRST FRAME DRAWS. The window draws a move's card from the propose call
+   itself, before anything is filed or priced, and an agent may name a coin there by its asset id:
+   on 0.10.13 a swap first read "Swap 1.7147 nep141:17208628...a1 to SOL" until its row landed
+   (Karim, 2026-10-02). So each coin the call names goes out with the word its row will carry. The
+   call stays as the agent wrote it: developer mode shows it, and the audit keeps it. */
+const COIN_FIELDS = ['fromSymbol', 'toSymbol', 'symbol'] as const;
+
+export function withWords(event: DriverEvent, coinWord: ((ref: string) => string | null) | undefined): DriverEvent {
+  if (event.kind !== 'tool' || coinWord === undefined || !/^(mcp__phosphor__)?propose_/.test(event.name)) return event;
+  const input = event.input;
+  if (input === null || typeof input !== 'object') return event;
+  const words: Record<string, string> = {};
+  for (const field of COIN_FIELDS) {
+    const asked = (input as Record<string, unknown>)[field];
+    const word = typeof asked === 'string' ? coinWord(asked) : null;
+    if (word !== null) words[field] = word;
+  }
+  return Object.keys(words).length === 0 ? event : { ...event, words };
+}
+
 export function createChatRegistry(deps: {
   cfg: AppConfig;
   audit: Audit;
@@ -39,8 +59,10 @@ export function createChatRegistry(deps: {
   onEvent?: (chat: Chat, event: DriverEvent) => void;
   // This wallet's own addresses and figures, for the driver's check of a web search's query.
   prints?: () => WalletPrints;
+  // What a person calls a coin named by ticker or by id (src/proposals/coin-words.ts).
+  coinWord?: (ref: string) => string | null;
 }): ChatRegistry {
-  const { cfg, audit, agents, getView, sse, makeDriver, onIdle, onEvent, prints } = deps;
+  const { cfg, audit, agents, getView, sse, makeDriver, onIdle, onEvent, prints, coinWord } = deps;
 
   // THE DRIVER'S SEATS, PLURAL SINCE 2026-08-21.
   //
@@ -87,12 +109,13 @@ export function createChatRegistry(deps: {
     return vendorFor(readPick(cfg.dataDir)?.agent ?? null);
   }
 
-  function driverEvent(chat: Chat, event: DriverEvent): void {
+  function driverEvent(chat: Chat, raw: DriverEvent): void {
     // The developer's line: the audit log keeps it, and the chat never shows it.
-    if (event.kind === 'debug') {
-      audit.append('tool_call', event.message, { source: 'driver', chat: chat.id });
+    if (raw.kind === 'debug') {
+      audit.append('tool_call', raw.message, { source: 'driver', chat: chat.id });
       return;
     }
+    const event = withWords(raw, coinWord);
     /* A delta is the answer being written. It reaches the window and nothing else: the `text`
        event that closes the same block is what the transcript keeps, so a window that reloads
        gets each block once, whole. */

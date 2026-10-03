@@ -16,6 +16,7 @@
 // Both fail toward saying less rather than toward stating a stale number as fact.
 
 import type { BasicHolding, BasicView, ChainId, Proposal, WalletView, WriteDraft } from '../types.ts';
+import { looksLikeAssetId } from '../intents.ts';
 
 export type BasicInput = {
   wallet: WalletView;
@@ -50,8 +51,14 @@ const PLAIN_CHAIN: Record<string, string> = {
   near: 'NEAR',
 };
 
-function plainSymbol(symbol: string): string {
+function holdingName(symbol: string): string {
   return PLAIN_SYMBOL[symbol.toUpperCase()] ?? symbol;
+}
+
+// A move's draft can name its coin by the venue's id (src/proposals/coin-words.ts), which is no word
+// a person reads: in a sentence it is "that coin", as on the move's own line (src/proposals/view.ts).
+function plainSymbol(symbol: string): string {
+  return looksLikeAssetId(symbol) ? 'that coin' : holdingName(symbol);
 }
 
 function plainChain(chain: string): string {
@@ -204,7 +211,7 @@ function buildHoldings(wallet: WalletView, unread: boolean): Held {
     }
     (at.priced ? priced : unpriced).push({
       symbol: at.symbol,
-      name: plainSymbol(at.symbol),
+      name: holdingName(at.symbol),
       quantityLine: quantity(at.qty),
       valueLine: at.priced ? money(at.usd) : null,
       valueUsd: at.priced ? at.usd : null,

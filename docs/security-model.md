@@ -993,7 +993,10 @@ SOL (`NATIVE_ASSET` in `src/intents.ts`); a list that files one of them under an
 refused before the card is priced. The six registry coins 1Click did not list when they were
 pinned carry `null` and are never quoted (`tests/unit/asset-pins.test.ts`). A coin outside the
 registry takes the id the list gives when its card is priced, and the card's pin holds it from
-then on.
+then on. The card names each coin by the ticker this app's own tables give for its id
+(`src/proposals/coin-words.ts`), from the propose call's first frame on, and never prints the id:
+an id no table knows names no coin on the card. The id stays on the draft and in its pins, and
+only the id decides what is signed.
 
 **One stated exception: an invite code.** A code is a key of its own:
 `keccak256("phosphor-invite-v1" || secret)` over 128 random bits, and its account inside

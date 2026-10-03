@@ -19,6 +19,7 @@ const MARKDOWN_SOURCE = read('../../ui/core/markdown.js');
 const CARDS_SOURCE = read('../../ui/screens/cards.js');
 const DECISION_SOURCE = read('../../ui/screens/decision.js');
 const AGENT_SOURCE = read('../../ui/screens/agent.js');
+const MARKS_SOURCE = read('../../ui/design/marks.js');
 import { fillChains } from '../fixtures/chains.ts';
 import { reasonFor } from '../../src/vault/reason.ts';
 import type { IntentsPayDraft } from '../../src/types.ts';
@@ -137,7 +138,9 @@ function stateWord(card: Any): string {
   return all(card, 'mcard-state-word')[0].textContent;
 }
 
-function build() {
+/* `marks` puts the real ui/design/marks.js in place of the stub, for the tests that read which
+   logo file a card drew or which monogram it fell back to. */
+function build(opts: { marks?: boolean } = {}) {
   const driverHandlers: Array<(frame: unknown) => void> = [];
   const busHandlers: Record<string, Array<(payload: unknown) => void>> = {};
   const opened: unknown[] = [];
@@ -207,6 +210,7 @@ function build() {
   runInContext(CARDS_SOURCE, sandbox, { filename: 'ui/screens/cards.js' });
   runInContext(DECISION_SOURCE, sandbox, { filename: 'ui/screens/decision.js' });
   runInContext(AGENT_SOURCE, sandbox, { filename: 'ui/screens/agent.js' });
+  if (opts.marks === true) runInContext(MARKS_SOURCE, sandbox, { filename: 'ui/design/marks.js' });
 
   const agent = win.PhosphorAgent as { mount: (h: unknown, o: unknown) => void; start: () => void };
   agent.mount(host, { composerHost });
@@ -1577,4 +1581,124 @@ test('turning the agent off after a trade shows the empty card, not the old rece
   const later = withView({ ...done, id: 'q2', createdAt: new Date(Date.now() + 5000).toISOString() });
   world.proposals([done, later]);
   assert.equal(world.cardNodes('move').length, 1);
+});
+
+/* THE FIRST FRAME NAMES ITS COINS (Karim, 2026-10-02). On 0.10.13 a swap the agent named by the
+   asset id swap_assets gave first drew as "Swap 1.7147 nep141:17208628...a1 to SOL" over a gray
+   "N" and "1" (the id split at its colons) and became a normal card a moment later. The card is
+   drawn from the propose call itself, before any row exists, so the app sends the word for each
+   coin the call names beside it (src/http/chats.ts withWords), and the card never prints or marks
+   anything that is not a name. */
+const USDC_NEAR = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+const HL_USDC_TWIN = '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054';
+const RAW_ID = /nep141:|nep245:|omft\.near|1cs_v1:|\b[0-9a-f]{64}\b/i;
+const PAYEE = '0x1111111111111111111111111111111111111111';
+
+/* The head's marks as a person sees them: the logo file each drew, the monogram it fell back to,
+   or the kind's own glyph. */
+function marksOf(card: Any): Array<{ token: string | null; src: string | null; monogram: string | null; glyph: boolean }> {
+  const host = all(card, 'mcard-marks')[0];
+  return host.children.map((n: Any) => {
+    const img = n.children.find((c: Any) => c.tag === 'img');
+    const initial = all(n, 'logo-initial')[0];
+    return { token: n.getAttribute('data-token'), src: img ? String(img.src) : null, monogram: initial ? initial.textContent : null, glyph: String(n.className).includes('mcard-glyph') };
+  });
+}
+
+function swapRow(id: string, draft: Record<string, unknown>, coin?: (ref: string) => string | null): Any {
+  const row = {
+    id, kind: 'swap', status: 'pending', createdAt: new Date().toISOString(),
+    draft: { ...SWAP_DRAFT, ...draft },
+    verdict: { outcome: 'needs_approval', reasons: [] },
+    simulation: { ok: true, summary: 'swap', swap: { receives: '0.0124', receivesAtLeast: '0.0122', feeUsd: 0.01, etaSeconds: 5 } },
+  };
+  return { ...row, view: proposalView(coin === undefined ? { settle: (r) => r } : { settle: (r) => r, coin }, row as never) };
+}
+
+test('a swap named by its asset id says the coin and wears its logo from the first frame, and the row says the same', () => {
+  const world = build({ marks: true });
+  world.ask('swap 1.7147 of my near usdc to sol');
+  const input = { fromSymbol: USDC_NEAR, toSymbol: 'SOL', amountIn: '1.7147' };
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input, words: { fromSymbol: 'USDC', toSymbol: 'SOL' } });
+  const card = world.cardNodes('move')[0];
+  assert.equal(stateWord(card), 'Checking prices');
+  assert.match(faceOf(card), /^Swap 1\.7147 USDC to SOL/, faceOf(card));
+  assert.doesNotMatch(faceOf(card), RAW_ID);
+  assert.deepEqual(marksOf(card), [
+    { token: 'USDC', src: './logos/usdc.svg', monogram: null, glyph: false },
+    { token: 'SOL', src: './logos/sol.svg', monogram: null, glyph: false },
+  ]);
+
+  const filed = swapRow('p1', { chain: 'near', toChain: 'sol', fromSymbol: 'USDC', toSymbol: 'SOL', amountIn: 1.7147, amountInExact: '1.7147' });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input, data: filed });
+  world.proposals([filed]);
+  const landed = world.cardNodes('move')[0];
+  assert.equal(landed, card, 'the row drew a second card');
+  assert.match(faceOf(landed), /^Swap 1\.7147 USDC to SOL/, faceOf(landed));
+  assert.deepEqual(marksOf(landed).map((m) => m.token), ['USDC', 'SOL']);
+});
+
+test('an asset id nobody can name is never printed, and never drawn as a monogram of its first letter', () => {
+  const world = build({ marks: true });
+  world.ask('swap it all to that coin');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_swap', input: { fromSymbol: USDC_NEAR, toSymbol: 'nep141:junk.listed.near', amountIn: '1.7147' } });
+  const card = world.cardNodes('move')[0];
+  assert.doesNotMatch(faceOf(card), RAW_ID);
+  assert.ok(!faceOf(card).includes('junk.listed'), faceOf(card));
+  assert.match(faceOf(card), /^Swap Checking prices$/, faceOf(card));
+  assert.deepEqual(marksOf(card).map((m) => [m.monogram, m.glyph]), [[null, true]], 'a monogram stood in for a coin with no name');
+
+  /* Its row lands with a draft that keeps an id for its coin (two coins under one ticker on one
+     network) and no table to name it: the row prints no id either. */
+  const row = swapRow('p2', { chain: 'hypercore', fromSymbol: HL_USDC_TWIN, toSymbol: 'SOL' });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__propose_swap', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { fromSymbol: HL_USDC_TWIN, toSymbol: 'SOL', amountIn: '0.05' }, data: row });
+  world.proposals([row]);
+  const landed = world.cardNodes('move')[0];
+  assert.equal(landed.getAttribute('data-state'), 'needs_you');
+  assert.doesNotMatch(faceOf(landed) + ' ' + detailsOf(landed).join(' '), RAW_ID);
+  assert.ok(marksOf(landed).every((m) => m.monogram === null), JSON.stringify(marksOf(landed)));
+});
+
+test('a row whose draft names its coin by id reads by the word the view carries for it', () => {
+  const world = build({ marks: true });
+  world.ask('swap 0.05 of my hyperliquid usdc to sol');
+  const row = swapRow('p3', { chain: 'hypercore', fromSymbol: HL_USDC_TWIN, toSymbol: 'SOL' }, (ref) => (ref === HL_USDC_TWIN ? 'USDC' : ref));
+  assert.equal(row.view.money.symbol, 'USDC');
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__propose_swap', input: { fromSymbol: HL_USDC_TWIN, chain: 'hypercore', toSymbol: 'SOL', amountIn: '0.05' }, data: row });
+  world.proposals([row]);
+  const card = world.cardNodes('move')[0];
+  assert.match(faceOf(card), /^Swap 0\.05 USDC to SOL/, faceOf(card));
+  assert.match(faceOf(card), /You pay 0\.05 USDC/, faceOf(card));
+  assert.doesNotMatch(faceOf(card) + ' ' + detailsOf(card).join(' '), RAW_ID);
+  assert.deepEqual(marksOf(card).map((m) => m.src), ['./logos/usdc.svg', './logos/sol.svg']);
+});
+
+test('a payout\'s first frame is a payout: the chain it lands on is on its line from the first paint', () => {
+  const world = build({ marks: true });
+  world.ask('pay 2 usdc to my base address');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__propose_send', input: { symbol: 'usdc', amount: 2, to: PAYEE, where: 'base', confirmed: true }, words: { symbol: 'USDC' } });
+  const card = world.cardNodes('move')[0];
+  assert.equal(card.getAttribute('data-kind'), 'intents_pay');
+  assert.match(faceOf(card), /^2 USDC 0x11111111\.\.\.11111111 on Base/, faceOf(card));
+  assert.deepEqual(marksOf(card).map((m) => m.src), ['./logos/usdc.svg']);
+});
+
+test('every kind\'s first frame names its coin the way its row will, whatever case the agent typed', () => {
+  const cases: Array<{ name: string; input: Record<string, unknown>; words: Record<string, string>; face: RegExp }> = [
+    { name: 'propose_swap', input: { fromSymbol: 'usdc', chain: 'eth', toSymbol: 'sol', amountIn: '2' }, words: { fromSymbol: 'USDC', toSymbol: 'SOL' }, face: /^Swap 2 USDC to SOL/ },
+    { name: 'propose_send', input: { symbol: 'usdc', amount: 1, to: 'alice.near', where: 'intents', confirmed: true }, words: { symbol: 'USDC' }, face: /^1 USDC alice\.near/ },
+    { name: 'propose_send', input: { symbol: 'near', amount: 3, to: 'alice.near', where: 'intents', confirmed: true }, words: { symbol: 'wNEAR' }, face: /3 NEAR alice\.near/ },
+    { name: 'propose_hl_deposit', input: { symbol: 'usdc', amount: 10 }, words: { symbol: 'USDC' }, face: /^10 USDC trading account/ },
+    { name: 'propose_hl_withdraw', input: { amount: 8 }, words: {}, face: /^8 USDC your balance/ },
+  ];
+  for (const c of cases) {
+    const world = build({ marks: true });
+    world.ask('move it');
+    world.emit({ kind: 'tool', name: `mcp__phosphor__${c.name}`, input: c.input, words: c.words });
+    const card = world.cardNodes('move')[0];
+    assert.match(faceOf(card), c.face, `${c.name}: ${faceOf(card)}`);
+    assert.ok(marksOf(card).every((m) => m.monogram === null), `${c.name}: ${JSON.stringify(marksOf(card))}`);
+  }
 });
