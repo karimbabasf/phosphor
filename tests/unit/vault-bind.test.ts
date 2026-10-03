@@ -31,6 +31,7 @@ import { createVaultRelay } from '../../src/vault/relay.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
 import { BIND_REASON, CREATE_REASON, MIGRATE_REASON, RESTORE_KEY_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
 import { refusal } from '../../src/http/wallet.ts';
+import { settleAtStart } from '../../src/http/custody.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import { privateKeyToAccount } from 'viem/accounts';
 import { identityProof } from '../../src/http/respond.ts';
@@ -780,6 +781,120 @@ test('RA1B-02: a wallet made after a start-up probe that could not read the mark
     assert.ok(double.state().keys.some((k) => `keychain:${k.tag}` === live.keyBlob), 'a sweep keeps its key');
   } finally {
     await b.close();
+  }
+});
+
+/* RA1B-02, the window's half: Phosphor-only is said from the service's answer about the file in place,
+   never from the start-up probe. Before the service answers nothing is Phosphor-only, and a file no
+   marker holds (what an install with no commit left behind) never is. */
+test('the window calls a wallet Phosphor-only only once the service confirmed its file committed, never for an uncommitted install', { skip }, async () => {
+  const double = new VaultDouble();
+  const b = await boot({ double });
+  const dataDir = b.dataDir;
+  try {
+    assert.equal((await b.post('/api/vault/create')).json.ok, true);
+    assert.equal((await b.get('/api/vault')).json.enclave.binding, 'app', 'a commit that landed is the service saying so');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'unconfirmed', 'before the service answers, nothing is Phosphor-only');
+    assert.equal(await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit }), 'none');
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'app', 'the start-up check confirmed the committed file');
+  } finally {
+    await c.close();
+  }
+
+  fs.writeFileSync(double.store, JSON.stringify({ ...double.state(), markers: [] }));
+  const d = await boot({ double, dataDir });
+  try {
+    await settleAtStart({ keystore: d.keystore, vault: d.vault, audit: d.audit });
+    assert.equal(statusOf(d, liveRequest(d)).pinMatches, false, 'no marker holds this file');
+    assert.equal((await d.get('/api/vault')).json.enclave.binding, 'unconfirmed', 'an uncommitted install is called Phosphor-only');
+    assert.equal((await d.get('/api/state')).json.vault.enclave.binding, 'unconfirmed');
+  } finally {
+    await d.close();
+  }
+});
+
+/* RA1B-02: with the probe's answer stale, a commit that does not land still ends the step, in the calm
+   words, and the wallet in place stays exactly as it was. */
+test('after a start-up probe that could not read the markers, a commit that does not land makes nothing and keeps the wallet in place', { skip }, async () => {
+  const double = new VaultDouble();
+  double.fail = 'markers=-25308';
+  const b = await boot({ double });
+  let evm = '';
+  try {
+    assert.equal(b.vault.capability()?.keychainHome, false);
+    double.fail = 'addMarker=-25308';
+    const made = await b.post('/api/vault/create');
+    double.fail = undefined;
+    assert.equal(made.json.code, 'keychain_unavailable', JSON.stringify(made.json));
+    assert.equal(made.json.error, refusal('keychain_unavailable').error);
+    assert.equal(fs.existsSync(b.live), false, 'no wallet was put in place');
+    assert.equal(fs.existsSync(b.staged), false, 'nothing staged is left');
+    assert.equal(b.keystore.state(), 'no_wallet');
+    assert.equal(b.vault.capability()?.keychainHome, true, 'the service answered what the probe could not read');
+    const again = await b.post('/api/vault/create');
+    assert.equal(again.json.ok, true, JSON.stringify(again.json));
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true);
+    evm = again.json.addresses.evm;
+  } finally {
+    await b.close();
+  }
+
+  double.fail = 'markers=-25308';
+  const c = await boot({ double, dataDir: b.dataDir });
+  double.fail = undefined;
+  try {
+    assert.equal(c.vault.capability()?.keychainHome, false);
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true);
+    c.prefs.markBackedUp(Date.now, evm);
+    const before = fs.readFileSync(c.live, 'utf8');
+    double.fail = 'addMarker=-25308';
+    const restored = await c.post('/api/vault/restore', { key: `0x${'11'.repeat(32)}` });
+    double.fail = undefined;
+    assert.equal(restored.json.code, 'keychain_unavailable', JSON.stringify(restored.json));
+    assert.equal(fs.readFileSync(c.live, 'utf8'), before, 'the wallet file is byte for byte the one that was there');
+    assert.equal(fs.existsSync(c.staged), false);
+    c.keystore.lock();
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true, 'and it still opens');
+    assert.equal(c.keystore.addresses().evm, evm);
+  } finally {
+    await c.close();
+  }
+});
+
+/* RA1B-02, the smaller effect: a committed file a crash left is put in place by the service's answer,
+   never kept on a stale probe for the next staged file to write over. */
+test('after a start-up probe that could not read the markers, what a crash left is settled by the service all the same', { skip }, async () => {
+  const double = new VaultDouble();
+  const b = await boot({ double });
+  let bytes = '';
+  try {
+    await blobWallet(b);
+    const made = double.run({ op: 'create' });
+    const s = b.keystore.stageRewrap({ keyBlob: made.keyBlob as string, publicKey: made.publicKey as string, createdAt: new Date(T0 * 1000).toISOString() });
+    assert.equal(double.run({ op: 'commit', ...material(s.request) }).ok, true, 'a bind stopped between its commit and its rename');
+    bytes = s.bytes;
+  } finally {
+    await b.close();
+  }
+
+  double.fail = 'markers=-25308';
+  const c = await boot({ double, dataDir: b.dataDir });
+  double.fail = undefined;
+  try {
+    assert.equal(c.vault.capability()?.keychainHome, false, 'the start-up probe could not read the markers');
+    assert.equal(await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit }), 'installed');
+    assert.equal(fs.readFileSync(c.live, 'utf8'), bytes, 'the committed file is in place');
+    assert.equal(fs.existsSync(c.staged), false);
+    assert.equal((await c.get('/api/vault')).json.enclave.binding, 'app');
+    assert.equal((await c.post('/api/vault/unlock')).json.ok, true, 'and it opens');
+  } finally {
+    await c.close();
   }
 });
 

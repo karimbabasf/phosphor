@@ -3,15 +3,16 @@
 //
 // ONE SHAPE FOR EVERY NEW FILE. Create, restore, the move from a password and the bind all write
 // the new file to the staged path (keys.enc.json.bind) and leave the live file alone. The enclave
-// is asked to open exactly the bytes written (the one Touch ID), the file is committed on a build
-// with a keychain home (the service's marker holds its pin), and only then do the bytes replace
-// the live file, in one rename. The proof and the commit are built from the bytes this process
-// holds and never from a read of the disk: a file swapped in between is not what gets proven or
-// pinned. Until the rename the live file is the old one, whole, and a failed step changes nothing.
+// is asked to open exactly the bytes written (the one Touch ID), a file wrapped to a key in
+// Phosphor's keychain home is committed (the service's marker holds its pin), and only then do the
+// bytes replace the live file, in one rename. The proof and the commit are built from the bytes
+// this process holds and never from a read of the disk: a file swapped in between is not what gets
+// proven or pinned. Until the rename the live file is the old one, whole, and a failed step changes
+// nothing.
 //
 // WHAT A CRASH LEAVES, and the rule for each (settleStaged). It is asked again at the start of
 // every custody step and once the shell's first probe answers, by the service's answer about the
-// staged file (status, no dialog) and nothing else:
+// staged file (status, no dialog) and nothing else, never by what the probe said:
 // - staged, not committed: no marker holds its pin. It is shredded. The live file is untouched and
 //   opens as before; the key the staged file was wrapped to is swept once it is past its minutes.
 // - committed, not renamed: the marker for its key holds its pin. It is put in place, and the open
@@ -19,8 +20,8 @@
 // - renamed: no staged file, or one equal to the live file byte for byte, which is removed. The
 //   first open of the bound file goes through the pin check like every open after it.
 // No answer (no shell, a keychain the service cannot read) means nothing is touched, and nothing
-// that would write the staged path again runs until there is one. A build with no keychain home
-// can commit nothing, so it leaves a staged file where it is and may write over it.
+// that would write the staged path again runs until there is one. A build the service says has no
+// keychain home can commit nothing, so it leaves a staged file where it is and may write over it.
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -29,7 +30,7 @@ import type { JsonBody } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { announce, knownRefusal, refusal } from './wallet.ts';
 import type { Audit } from '../audit.ts';
-import type { EnclaveRef, Keystore, StagedFile } from '../keystore/store.ts';
+import type { EnclaveRef, EnclaveUnwrapRequest, Keystore, StagedFile } from '../keystore/store.ts';
 import { shredFile } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
@@ -53,6 +54,38 @@ export async function newEnclaveKey(ctx: Pick<Ctx, 'vault'>): Promise<{ key: Enc
 
 const keychainHome = (vault: VaultRelay): boolean => vault.capability()?.keychainHome === true;
 
+// ---------- whether the live file is the committed one ----------
+
+/* The window calls a wallet Phosphor-only only once the service has said that the live file is the
+   one committed for its key: a commit of these bytes that landed, or a status whose pin matched
+   them. Never from the start-up probe, whose one read of the markers can fail (reaudit1b RA1B-02).
+   Kept per keystore as the file's material, so a file put in its place since reads as unconfirmed. */
+const confirmed = new WeakMap<object, string>();
+
+const materialOf = (r: EnclaveUnwrapRequest): string => [r.keyBlob, r.ephemeralPublicKey, r.ciphertext, r.aad, r.addresses].join('\n');
+
+function noteCommitted(keystore: Keystore, request: EnclaveUnwrapRequest): void {
+  confirmed.set(keystore, materialOf(request));
+}
+
+/* 'app': a key in Phosphor's keychain home whose file the service confirmed. 'device': a blob any
+   process on this Mac can load behind its own dialog. 'unconfirmed': a keychain key the service has
+   not confirmed for this file, not asked yet or with no marker that holds its pin. */
+export function bindingOf(ctx: Pick<Ctx, 'keystore'>): 'app' | 'device' | 'unconfirmed' | null {
+  const live = ctx.keystore.enclaveRequest();
+  if (live === null) return null;
+  if (!live.keyBlob.startsWith('keychain:')) return 'device';
+  return confirmed.get(ctx.keystore) === materialOf(live) ? 'app' : 'unconfirmed';
+}
+
+/* What the service says about the live file, with no dialog. Asked whatever the probe said, so its
+   answer also corrects a probe that could not read the markers (src/vault/relay.ts). */
+async function readBinding(deps: Pick<SettleDeps, 'keystore' | 'vault'>): Promise<void> {
+  const live = deps.keystore.enclaveRequest();
+  const asked = await deps.vault.ask(live === null ? { op: 'status' } : { op: 'status', ...live });
+  if (live !== null && asked.ok && asked.op === 'status' && asked.status.pinMatches === true) noteCommitted(deps.keystore, live);
+}
+
 // ---------- what a crash left ----------
 
 export type Settled = 'none' | 'dropped' | 'installed' | 'undecided' | 'kept' | 'unreadable';
@@ -71,12 +104,16 @@ export async function settleStaged(deps: SettleDeps): Promise<Settled> {
     deps.keystore.dropStaged();
     return 'dropped';
   }
-  if (!keychainHome(deps.vault)) return 'kept';
+  // The service's answer decides, never the cached probe: a probe whose one read of the markers
+  // failed says no keychain home on a build that has one, and kept a committed file that a new
+  // staged file then wrote over (reaudit1b RA1B-02).
   const asked = deps.vault.attached() ? await deps.vault.ask({ op: 'status', ...found.staged.request }) : null;
-  if (asked === null || !asked.ok || asked.op !== 'status' || !asked.status.keychainHome) return 'undecided';
+  if (asked === null || !asked.ok || asked.op !== 'status') return 'undecided';
+  if (!asked.status.keychainHome) return 'kept';
   if (asked.status.pinMatches === true) {
     const put = deps.keystore.installStaged(found.staged, null, 'keep');
     if (!put.ok) return 'undecided';
+    noteCommitted(deps.keystore, found.staged.request);
     deps.audit.append('app_start', 'a new wallet file that was ready before Phosphor stopped is now in place', { finished: 'committed' });
     deps.announce?.();
     return 'installed';
@@ -91,13 +128,18 @@ export function settleFor(ctx: Ctx): Promise<Settled> {
   return settleStaged({ keystore: ctx.keystore, vault: ctx.vault, audit: ctx.audit, announce: () => announce(ctx) });
 }
 
-/* After the shell's first probe: a crashed create leaves no live file at all, so without this the
-   window would offer a new wallet over one the service already committed. */
-export function settleAtStart(deps: SettleDeps): void {
-  if (!keychainHome(deps.vault)) return;
-  void custodyLock(deps.keystore)
-    .run(() => settleStaged(deps))
-    .catch(() => undefined);
+/* After the shell's first probe, whatever it said: what the service says about the live file, then
+   what a crash left. A crashed create leaves no live file at all, so without this the window would
+   offer a new wallet over one the service already committed. */
+export function settleAtStart(deps: SettleDeps): Promise<Settled | null> {
+  return custodyLock(deps.keystore)
+    .run(async () => {
+      await readBinding(deps);
+      const settled = await settleStaged(deps);
+      deps.announce?.();
+      return settled;
+    })
+    .catch(() => null);
 }
 
 // ---------- prove, commit, put in place ----------
@@ -131,7 +173,12 @@ export async function proveAndInstall(ctx: Ctx, staged: StagedFile, reason: stri
     ctx.keystore.dropStaged();
     return { refused: refusal('proof_failed') };
   }
-  const commits = staged.request.keyBlob.startsWith('keychain:') && keychainHome(ctx.vault);
+  /* Every key in Phosphor's keychain home is committed, whatever the start-up probe said: the
+     service makes one only on a build with a keychain home, and a probe whose one read of the
+     markers failed used to install it with no marker, called Phosphor-only, until ten minutes after
+     any commit on the Mac it stopped opening and a sweep deleted its key (reaudit1b RA1B-02). A
+     commit that does not land ends the step, and the wallet in place stays as it was. */
+  const commits = staged.request.keyBlob.startsWith('keychain:');
   if (commits) {
     const committed = await commitStaged(ctx, staged);
     if (committed.landed !== 'yes') {
@@ -139,11 +186,12 @@ export async function proveAndInstall(ctx: Ctx, staged: StagedFile, reason: stri
       if (committed.landed === 'no') ctx.keystore.dropStaged();
       return { refused: committed.refused };
     }
+    noteCommitted(ctx.keystore, staged.request);
   }
   const put = ctx.keystore.installStaged(staged, dek, after);
   if (!put.ok) {
     // Committed, the staged file is the one that opens, and the next start puts it in place. Not
-    // committed (a build with no keychain home), it is nothing yet, and goes.
+    // committed (a device-bound key, from a build with no keychain home), it is nothing yet, and goes.
     if (commits) return { refused: refusal('install_pending') };
     ctx.keystore.dropStaged();
     return { refused: refusal('write_failed') };
@@ -249,7 +297,10 @@ async function bindNow(ctx: Ctx, backedUp: () => boolean): Promise<JsonBody> {
   if (live === null) return refusal('no_wallet');
   if (live.keyBlob.startsWith('keychain:')) {
     const asked = await ctx.vault.ask({ op: 'status', ...live });
-    if (asked.ok && asked.op === 'status' && asked.status.pinMatches === true) return { ok: true, binding: 'app' };
+    if (asked.ok && asked.op === 'status' && asked.status.pinMatches === true) {
+      noteCommitted(ctx.keystore, live);
+      return { ok: true, binding: 'app' };
+    }
   }
   if (!ctx.keystore.isUnlocked()) return refusal('wallet_locked');
   if (!backedUp()) return refusal('not_backed_up');

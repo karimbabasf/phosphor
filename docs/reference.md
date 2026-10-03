@@ -636,13 +636,18 @@ rules against a stand-in keychain compiled into the test alone.
 **Every new key file, and the bind** (`src/http/custody.ts`). Create, restore, the move from a
 password and `POST /api/vault/bind` all write the new file to `keys.enc.json.bind` beside the live
 one and leave the live file alone. One Touch ID unwraps exactly the bytes this process wrote, held
-in memory; on a build with a keychain home `commit` pins those same bytes; only then do they
-replace `keys.enc.json` in one rename, and the file they replace is overwritten through a
+in memory; `commit` pins those same bytes for every key in the keychain home, whatever the
+start-up probe said (its one read of the markers can fail on a build that has the home); only then
+do they replace `keys.enc.json` in one rename, and the file they replace is overwritten through a
 descriptor taken before it. Nothing in that sequence reads the staged file back from disk, so a
 file swapped in while the dialog is up is never what gets proven, pinned or put in place. A new
 wallet therefore never exists unbound on such a build, and a failed step changes nothing: a
 cancelled touch or a refused commit shreds the staged file and leaves the wallet that was there.
-A commit whose answer was lost is settled by `status` before anything is dropped.
+A commit whose answer was lost is settled by `status` before anything is dropped. The vault slice
+says `binding: 'app'` (the window's Phosphor-only) only once the service has said the file in place
+is the committed one: a commit of its bytes that landed, or a `status` asked once the shell's probe
+answers. Until then a key in the keychain home reads `'unconfirmed'`, and a later `status` that
+reads the markers corrects a probe that could not.
 
 The bind takes a wallet whose key is a device-bound blob into the keychain home. A person reads it
 as one plain name on every screen, in the Touch ID sentence ("Make your wallet Phosphor-only on this
@@ -666,8 +671,9 @@ without a sentence fails, and `vault-routes.test.ts` sends each one back on a cr
 a reveal. A reveal whose Touch ID went through on an open wallet and still could not read it answers
 `reveal_failed` (the wallet is fine), never `damaged`.
 
-A crash leaves at most a staged file, and the next start (once the shell's probe answers) and every
-custody step after it settle it by the service's answer about it, with no dialog: staged and not
+A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
+it said) and every custody step after it settle it by the service's answer about it, never by the
+probe's, with no dialog: staged and not
 committed, it is shredded and the live file opens as before; committed and not renamed, it is put
 in place and the open goes on with it; renamed, there is nothing staged, or a staged file equal to
 the live one, which is removed. With no answer (no shell, a keychain the service cannot read)

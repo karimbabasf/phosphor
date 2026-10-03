@@ -19,7 +19,7 @@ import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
 import { announce, depositRoute, guarded, refusal } from './wallet.ts';
 import type { IntentsReceiveToken } from './wallet.ts';
-import { afterBoundOpen, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
+import { afterBoundOpen, bindingOf, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { StagedFile } from '../keystore/store.ts';
@@ -128,8 +128,10 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       // 'device': a blob any process on this Mac can load behind its own dialog: every wallet made
       // before the vault profile shipped, and any an ad hoc build makes. 'app': a key in Phosphor's
       // keychain home, which only Phosphor's signed vault service can reach, made by a Developer ID
-      // build's create or by POST /api/vault/bind. The window says which.
-      binding: enclave === null ? null : enclave.keyBlob.startsWith('keychain:') ? 'app' : 'device',
+      // build's create or by POST /api/vault/bind, and only once the service has said this file is
+      // the one committed for it; until then 'unconfirmed' (src/http/custody.ts bindingOf). The
+      // window says Phosphor-only for 'app' alone.
+      binding: enclave === null ? null : bindingOf(ctx),
     },
     foreign,
     waiting: ctx.vault.waiting(),

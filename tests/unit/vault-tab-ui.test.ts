@@ -1604,6 +1604,32 @@ test('the card is not offered where there is nothing to do, and a Phosphor-only 
   assert.equal(sub.hidden, false);
 });
 
+/* reaudit1b RA1B-02: Phosphor-only is said only for a file the service confirmed committed. A key in
+   Phosphor's keychain home it has not confirmed (asked before the service answered, or a file no
+   marker holds) reads as made on its day, with no Phosphor-only line and no step offered. */
+test('a Touch ID key the service has not confirmed committed is never called Phosphor-only', () => {
+  const said = (world: World): string => {
+    const out: string[] = [];
+    const walk = (n: Any): void => {
+      if (n.hidden) return;
+      if (n.childNodes.length === 0) {
+        if (n.textContent !== '') out.push(n.textContent);
+        return;
+      }
+      for (const child of n.childNodes) walk(child);
+    };
+    walk(keysRow(world));
+    return out.join(' ');
+  };
+  const world = build({ vault: { backedUp: true, enclave: { ...HOME, binding: 'unconfirmed' } } });
+  assert.doesNotMatch(said(world), /Phosphor-only|Only Phosphor/, said(world));
+  assert.ok(said(world).includes(`Made on ${day('Sep 14, 2026')}.`), said(world));
+  assert.equal(bindCard(world).hidden, true, 'the step was offered for a key that is not device-bound');
+  // Confirmed, the same row says it.
+  world.put({ vault: vaultState({ backedUp: true, enclave: { ...HOME, binding: 'app' } }) });
+  assert.ok(said(world).includes(`Phosphor-only since ${day('Sep 14, 2026')}.`), said(world));
+});
+
 /* ---------- every refusal, through the Vault's own lines ---------- */
 
 /* Each code the backend can say (and every code the service and the relays can answer), as the

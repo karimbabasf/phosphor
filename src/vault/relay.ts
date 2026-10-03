@@ -287,7 +287,11 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
         return { ok: true };
       }
       case 'status': {
-        settle(entry, { ok: true, op: 'status', status: statusOf(body) });
+        const status = statusOf(body);
+        /* The probe's one read of the markers can fail while the build has a keychain home (reaudit1b
+           RA1B-02); a later answer that read them says what the build is. */
+        if (status.keychainHome && capability !== null && !capability.keychainHome) capability = { ...capability, keychainHome: true };
+        settle(entry, { ok: true, op: 'status', status });
         return { ok: true };
       }
     }
