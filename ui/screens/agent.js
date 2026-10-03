@@ -1936,13 +1936,22 @@
            said "Swapping" for good (2026-10-02). It ends the way a call that never reached the
            wallet ends. */
         var body = event.data;
-        if (bareName(event.name).indexOf('propose_') === 0 && body !== null && typeof body === 'object' && typeof body.error === 'string' && typeof body.id !== 'string') {
+        var noRow = body !== null && typeof body === 'object' && typeof body.error === 'string' && typeof body.id !== 'string';
+        if (noRow && bareName(event.name).indexOf('propose_') === 0) {
           var refused = openPlaceholder(event.name);
           if (refused) {
             refused.data = { placeholder: true, failed: true, kind: refused.data.kind };
             refused.rev = (refused.rev || 0) + 1;
           }
           if (!replay) renderAll();
+          return;
+        }
+        /* A READ THAT ANSWERED WITH AN ERROR HOLDS NO MOVE either (proposal_status for an id the
+           app does not hold): no move card, which would work for good with no row behind it. The
+           chat says the app's own line instead. */
+        if (noRow) {
+          var line = String(body.error).replace(/\s+/g, ' ').trim();
+          if (line) pushBlock({ type: 'error', text: line.length > 280 ? line.slice(0, 277).replace(/\s+\S*$/, '') + '...' : line });
           return;
         }
         /* A move already on the thread is updated where it stands: its placeholder, or the

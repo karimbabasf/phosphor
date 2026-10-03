@@ -1739,3 +1739,19 @@ test('a propose answered with an error and no row of its own ends calmly, and ne
   card = cards[2];
   assert.equal(card.id || '', '', 'the refused repeat took the first move\'s id');
 });
+
+/* A READ THAT ANSWERED WITH AN ERROR HOLDS NO MOVE (2026-10-02). proposal_status for an id the app
+   does not hold came back { error }, and the window drew a move card for it with no row behind it,
+   working for good. It draws no move card now, and the chat says the app's own line instead. */
+test('a read of a move that answers with an error draws no move card, and the chat says the app\'s line', () => {
+  const world = build();
+  world.ask('how is my swap doing');
+  world.emit({ kind: 'tool', name: 'mcp__phosphor__proposal_status', input: { id: 'p_gone' } });
+  world.emit({ kind: 'tool_result', name: 'mcp__phosphor__proposal_status', ok: true });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__proposal_status', input: { id: 'p_gone' }, data: { error: 'unknown proposal id: p_gone' } });
+  world.emit({ kind: 'tool_data', name: 'mcp__phosphor__receipts', input: {}, data: { error: 'the history could not be read' } });
+  world.emit({ kind: 'turn_end', error: false, turns: 2 });
+  assert.equal(world.cardNodes('move').length, 0, 'a move card was drawn for a read that found nothing');
+  const lines = all(world.host, 'chat-error').map((n: Any) => faceOf(n));
+  assert.deepEqual(lines, ['The app unknown proposal id: p_gone', 'The app the history could not be read']);
+});

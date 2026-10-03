@@ -19,7 +19,8 @@ Built 2026-10-02. Tagged v0.10.14 on 2026-10-02.
   swaps on the way by where it came from ("the USDC from Ethereum"), never by an id.
 - A move the app turned away before filing it, such as an amount below zero or a repeat of a swap
   that is still running, now says it did not go through and that nothing moved. Its card used to
-  say Swapping for good.
+  say Swapping for good. A check on a move the app does not hold draws no card and says so in one
+  line.
 - Your wallet, your keys and your settings stay as they were.
 
 ## 0.10.13
