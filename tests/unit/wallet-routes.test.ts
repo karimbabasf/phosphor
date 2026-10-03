@@ -560,6 +560,33 @@ test('revealing the private keys hands back the EVM key and nothing else', async
     assert.match(out.json.keys.evm, /^0x[0-9a-f]{64}$/);
     assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
+    assert.equal(out.json.groups.join(''), out.json.keys.evm.slice(2));
+    assert.deepEqual(out.json.prove, [], 'a wallet with a phrase backs up its phrase, so its key reveal asks nothing back');
+  } finally {
+    await b.close();
+  }
+});
+
+/* A password wallet brought in as a key has no phrase either, so its key reveal leaves the same
+   proof the enclave's does (src/http/vault.ts, reveal-key): three groups, typed back under the
+   window token, mark it backed up. */
+test('a password wallet with no phrase proves its key the way an enclave one does', async () => {
+  const b = await boot();
+  try {
+    const key = `0x${crypto.randomBytes(32).toString('hex')}`;
+    assert.equal((await b.post('/api/wallet/import', { token: b.token, password: PASSWORD, keys: { evm: key } })).json.ok, true);
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    const out = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(out.json.keys.evm, key);
+    const groups: string[] = out.json.groups;
+    const asked: number[] = out.json.prove;
+    assert.equal(groups.length, 16);
+    assert.equal(new Set(asked).size, 3);
+    const wrong = await b.post('/api/vault/key-proven', { token: b.token, groups: asked.map((index, i) => ({ index, group: i === 0 ? 'zzzz' : groups[index] })) });
+    assert.equal(wrong.json.code, 'wrong_groups');
+    const right = await b.post('/api/vault/key-proven', { token: b.token, groups: asked.map((index) => ({ index, group: groups[index] })) });
+    assert.equal(right.json.ok, true, JSON.stringify(right.json));
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {
     await b.close();
   }

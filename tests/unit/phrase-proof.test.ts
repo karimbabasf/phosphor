@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import { checkPhrase, forgetPhrase, PHRASE_PROOF_MISSES, PHRASE_PROOF_MS, PHRASE_PROOF_WORDS, rememberPhrase } from '../../src/vault/phrase-proof.ts';
+import { checkKey, checkPhrase, forgetPhrase, PHRASE_PROOF_MISSES, PHRASE_PROOF_MS, PHRASE_PROOF_WORDS, rememberKey, rememberPhrase } from '../../src/vault/phrase-proof.ts';
 
 const WORDS = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 const WALLET = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
@@ -94,4 +94,48 @@ test('the proof leaves memory when its half hour is up, with no check to notice,
   assert.equal(await checkPhrase(right(asked), WALLET, 2000), 'match', 'the first reveal\'s timer wiped the second');
   t.mock.timers.tick(15 * 60_000);
   assert.equal(await checkPhrase(right(asked), WALLET, 2000), 'none');
+});
+
+// ---------- a key's groups, for a wallet with no phrase ----------
+
+// Sixteen groups of four, as the Vault shows a private key. Random per run: no key-shaped literal.
+const GROUPS = Array.from({ length: 16 }, () => Math.floor(Math.random() * 0x10000).toString(16).padStart(4, '0'));
+const group = (index: number, typed = GROUPS[index]!) => ({ index, word: typed });
+
+test('a key reveal asks for three of its sixteen groups, and those groups prove it however they are typed', async () => {
+  const asked = rememberKey(GROUPS, WALLET, FAST(), 1000);
+  assert.equal(asked.length, 3);
+  assert.equal(new Set(asked).size, 3, 'a group was asked twice');
+  assert.ok(asked.every((p) => Number.isInteger(p) && p >= 0 && p < 16));
+  // Upper case and a space inside a group are how a person copies four characters off paper.
+  const typed = asked.map((index) => group(index, ` ${GROUPS[index]!.slice(0, 2).toUpperCase()} ${GROUPS[index]!.slice(2)} `));
+  assert.equal(await checkKey(typed.reverse(), WALLET.toLowerCase(), 2000), 'match');
+});
+
+test('a key proof is a miss at any other three groups, with one group wrong, and after five tries', async () => {
+  const asked = rememberKey(GROUPS, WALLET, FAST(), 1000);
+  const others = GROUPS.map((_, i) => i).filter((i) => !asked.includes(i)).slice(0, 3);
+  assert.equal(await checkKey(others.map((i) => group(i)), WALLET, 2000), 'mismatch');
+  const flipped = (GROUPS[asked[1]!] === 'ffff' ? '0000' : 'ffff');
+  const wrong = [group(asked[0]!), group(asked[1]!, flipped), group(asked[2]!)];
+  assert.equal(await checkKey(wrong, WALLET, 2000), 'mismatch');
+  for (let i = 2; i < PHRASE_PROOF_MISSES; i += 1) assert.equal(await checkKey(wrong, WALLET, 2000), 'mismatch');
+  assert.equal(await checkKey(asked.map((i) => group(i)), WALLET, 2000), 'none', 'the right groups after the wall still need a fresh reveal');
+});
+
+/* One proof at a time, of one kind. The words of a phrase never prove a key and a key's groups
+   never prove a phrase, even when the strings typed are the very ones that were shown. */
+test('a key proof cannot be spent as a phrase proof, nor a phrase proof as a key proof', async () => {
+  let asked = rememberKey(GROUPS, WALLET, FAST(), 1000);
+  assert.equal(await checkPhrase(asked.map((i) => group(i)), WALLET, 2000), 'none');
+  assert.equal(await checkKey(asked.map((i) => group(i)), WALLET, 2000), 'none', 'and the crossing wiped the proof');
+
+  asked = rememberPhrase(WORDS, WALLET, FAST(), 1000);
+  assert.equal(await checkKey(right(asked), WALLET, 2000), 'none');
+  assert.equal(await checkPhrase(right(asked), WALLET, 2000), 'none');
+
+  // A wallet keeps the three it was asked across reveals of its own kind only.
+  const keyAsked = rememberKey(GROUPS, WALLET, FAST(), 1000);
+  assert.deepEqual(rememberKey(GROUPS, WALLET, FAST(), 1000), keyAsked);
+  assert.equal(await checkKey(keyAsked.map((i) => group(i)), WALLET, 2000), 'match');
 });

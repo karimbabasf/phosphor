@@ -40,6 +40,8 @@ import { createSession } from '../../src/keystore/session.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+import { base58Encode } from '../../src/chain/near.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 
@@ -84,11 +86,13 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
   };
 }
 
-async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth } = {}) {
+async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void } = {}) {
   const dataDir = tempDir('phosphor-vault-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
+  // A key file already on disk when the app starts, which this process has never opened.
+  opts.seed?.(keysPath);
   const keystore = createKeystore({ keysPath, mode: opts.mode ?? 'demo', kdf: fast });
   const transport = crypto.randomBytes(32);
   const relaySecret = crypto.randomBytes(32).toString('hex');
@@ -759,5 +763,374 @@ test('"Reveal your recovery phrase" shows the words and leaves a locked wallet l
   } finally {
     useKeystore(null);
     await b.close();
+  }
+});
+
+// ---------- a wallet with no phrase backs up its private key ----------
+
+const PASSWORD = 'a long enough password';
+
+/* A wallet the way the oldest ones came to be: a plaintext keys.json from the first keygen, an EVM
+   key and a NEAR and a Solana key drawn at random beside it, encrypted under a password and then
+   moved behind the enclave. No phrase anywhere, and the two older keys still sealed in the file.
+   Every key is made fresh per run, so no key-shaped literal sits in the tree. */
+async function keyWallet(b: Awaited<ReturnType<typeof boot>>, legacy = true): Promise<{ key: `0x${string}`; evm: string }> {
+  const key = generatePrivateKey();
+  const evm = privateKeyToAccount(key).address;
+  const ed25519 = () => {
+    const pair = crypto.generateKeyPairSync('ed25519');
+    const seed = Buffer.from(pair.privateKey.export({ format: 'jwk' }).d as string, 'base64url');
+    const pub = Buffer.from(pair.publicKey.export({ format: 'jwk' }).x as string, 'base64url');
+    return { secret: base58Encode(Buffer.concat([seed, pub])), pub };
+  };
+  const solana = ed25519();
+  const near = ed25519();
+  fs.mkdirSync(path.dirname(b.keysPath), { recursive: true });
+  fs.writeFileSync(b.keysPath, JSON.stringify({
+    evm: { address: evm, privateKey: key },
+    ...(legacy
+      ? {
+          solana: { address: base58Encode(solana.pub), secretKey: solana.secret },
+          near: { accountId: near.pub.toString('hex'), secretKey: 'ed25519:' + near.secret },
+        }
+      : {}),
+  }), { mode: 0o600 });
+  await b.keystore.migrate(PASSWORD);
+  const moved = await b.post('/api/vault/migrate', { password: PASSWORD });
+  assert.equal(moved.json.ok, true, JSON.stringify(moved.json));
+  const vault = (await b.get('/api/vault')).json;
+  assert.deepEqual([vault.custody, vault.hasMnemonic, vault.backedUp], ['secure-enclave', false, false]);
+  return { key, evm };
+}
+
+const typedGroups = (groups: string[], at: number[]) => at.map((index) => ({ index, group: groups[index] }));
+
+test('"Reveal your private key" shows a wallet with no phrase its key in sixteen groups, behind its own touch, and leaves a locked wallet locked', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await keyWallet(b);
+    b.keystore.lock();
+    const shown = await b.post('/api/vault/reveal-key', {});
+    assert.equal(shown.json.ok, true, JSON.stringify(shown.json));
+    const groups: string[] = shown.json.groups;
+    assert.equal(groups.length, 16);
+    assert.ok(groups.every((g) => /^[0-9a-f]{4}$/.test(g)), JSON.stringify(groups.map((g) => g.length)));
+    assert.equal(`0x${groups.join('')}`, w.key, 'the groups are the key, in order');
+    assert.equal(shown.json.address, w.evm, 'and they name the wallet they open');
+    const asked: number[] = shown.json.prove;
+    assert.equal(new Set(asked).size, 3);
+    assert.ok(asked.every((i) => Number.isInteger(i) && i >= 0 && i < 16));
+    assert.equal(shown.json.words, undefined);
+    assert.deepEqual(b.seen.filter((s) => s === 'unwrap:Reveal your private key'), ['unwrap:Reveal your private key']);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(b.keystore.state(), 'locked', 'a reveal opens nothing');
+    assert.equal(b.releases(), 0);
+
+    // An open wallet still takes its own touch, and a reveal made again asks the same three.
+    assert.equal((await b.post('/api/vault/unlock', {})).json.ok, true);
+    const again = await b.post('/api/vault/reveal-key', {});
+    assert.deepEqual(again.json.prove, asked);
+    assert.equal(b.seen.filter((s) => s === 'unwrap:Reveal your private key').length, 2);
+    assert.equal((await b.get('/api/vault')).json.backedUp, false, 'shown is not proven');
+  } finally {
+    await b.close();
+  }
+});
+
+test('three groups typed back prove the key; a wrong one says nothing about which, and a proof is spent once', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    await keyWallet(b, false);
+    const shown = await b.post('/api/vault/reveal-key', {});
+    const groups: string[] = shown.json.groups;
+    const asked: number[] = shown.json.prove;
+
+    const flip = (g: string) => (g === 'ffff' ? '0000' : 'ffff');
+    for (const bad of [0, 1, 2]) {
+      const answers = typedGroups(groups, asked).map((a, i) => (i === bad ? { ...a, group: flip(a.group!) } : a));
+      const wrong = await b.post('/api/vault/key-proven', { groups: answers });
+      assert.deepEqual(wrong.json, { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' }, 'the answer is the same whichever group was wrong');
+    }
+    const elsewhere = groups.map((_, i) => i).filter((i) => !asked.includes(i)).slice(0, 3);
+    const unasked = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, elsewhere) });
+    assert.equal(unasked.json.code, 'wrong_groups', 'right groups at three positions the app did not name proved the key');
+    const tooFew = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked.slice(0, 2)) });
+    assert.equal(tooFew.json.code, 'wrong_groups');
+    const shapeless = await b.post('/api/vault/key-proven', { groups: [...typedGroups(groups, asked.slice(0, 2)), { index: asked[2], word: groups[asked[2]!] }] });
+    assert.equal(shapeless.json.code, 'wrong_groups', 'an answer in the phrase\'s shape is not a group');
+    assert.equal((await b.get('/api/vault')).json.backedUp, false);
+
+    // As a person copies four characters off paper: upper case, a space inside.
+    const right = await b.post('/api/vault/key-proven', { groups: asked.map((index) => ({ index, group: ` ${groups[index]!.slice(0, 2).toUpperCase()} ${groups[index]!.slice(2)}` })) });
+    assert.equal(right.json.ok, true, JSON.stringify(right.json));
+    assert.match(right.json.backedUpAt, /^\d{4}-\d{2}-\d{2}T/);
+    const vault = (await b.get('/api/vault')).json;
+    assert.deepEqual([vault.backedUp, vault.backedUpAt], [true, right.json.backedUpAt]);
+    assert.equal((await b.get('/api/state')).json.vault.backedUp, true, 'the state carries the one flag');
+
+    const spent = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) });
+    assert.equal(spent.json.code, 'reveal_again', 'one reveal, one proof');
+  } finally {
+    await b.close();
+  }
+});
+
+test('five misses wear the key proof out, and the phrase\'s route never proves a key', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    await keyWallet(b, false);
+    let shown = await b.post('/api/vault/reveal-key', {});
+    let groups: string[] = shown.json.groups;
+    let asked: number[] = shown.json.prove;
+    const wrong = typedGroups(groups, asked).map((a, i) => (i === 0 ? { ...a, group: a.group === 'ffff' ? '0000' : 'ffff' } : a));
+    for (let i = 0; i < 5; i += 1) assert.equal((await b.post('/api/vault/key-proven', { groups: wrong })).json.code, 'wrong_groups');
+    assert.equal((await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) })).json.code, 'reveal_again');
+
+    shown = await b.post('/api/vault/reveal-key', {});
+    groups = shown.json.groups;
+    asked = shown.json.prove;
+    const crossed = await b.post('/api/vault/backup-proven', { words: asked.map((index) => ({ index, word: groups[index] })) });
+    assert.equal(crossed.json.ok, false);
+    assert.equal(crossed.json.code, 'reveal_again');
+    assert.equal((await b.get('/api/vault')).json.backedUp, false);
+  } finally {
+    await b.close();
+  }
+});
+
+test('the key reveal is refused without the window token, for a wallet with a phrase before any dialog, and on a cancelled touch', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    for (const route of ['/api/vault/reveal-key', '/api/vault/key-proven']) {
+      const knock = await b.post(route, { groups: [] }, false);
+      assert.equal(knock.status, 403, route);
+    }
+    assert.ok(JSON.stringify(b.audit.tail(20)).includes('POST /api/vault/reveal-key rejected'), 'a knock without the token is audited');
+
+    const none = await b.post('/api/vault/reveal-key', {});
+    assert.equal(none.json.ok, false, 'no wallet, nothing to show');
+
+    await b.post('/api/vault/create', {});
+    const phrased = await b.post('/api/vault/reveal-key', {});
+    assert.deepEqual(phrased.json, { ok: false, error: 'This wallet has a recovery phrase. Back up the phrase instead.', code: 'has_mnemonic' });
+    assert.equal(b.seen.includes('unwrap:Reveal your private key'), false, 'a wallet with a phrase was asked for a touch');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ mode: 'live' });
+  try {
+    await keyWallet(c, false);
+    c.setMode('cancel');
+    const cancelled = await c.post('/api/vault/reveal-key', {});
+    assert.equal(cancelled.json.ok, false);
+    assert.equal(cancelled.json.code, 'user_cancel');
+    assert.equal(cancelled.json.groups, undefined);
+    c.setMode('answer');
+    const nothing = await c.post('/api/vault/key-proven', { groups: [{ index: 0, group: 'abcd' }, { index: 1, group: 'abcd' }, { index: 2, group: 'abcd' }] });
+    assert.equal(nothing.json.code, 'reveal_again', 'a cancelled reveal left a proof behind');
+  } finally {
+    await c.close();
+  }
+});
+
+/* "The key never appears in any log, audit line, frame, state, error or file." Checked as text:
+   the key whole, and every run of three groups, which is 48 bits no hash or id here repeats by
+   chance. */
+test('the key reaches no audit line, no state, no error and no file in the data directory', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await keyWallet(b);
+    const shown = await b.post('/api/vault/reveal-key', {});
+    const groups: string[] = shown.json.groups;
+    const asked: number[] = shown.json.prove;
+    const wrong = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked).map((a, i) => (i === 0 ? { ...a, group: 'zzzz' } : a)) });
+    const right = await b.post('/api/vault/key-proven', { groups: typedGroups(groups, asked) });
+    assert.equal(right.json.ok, true);
+    const refusals = [
+      await b.post('/api/vault/restore', { key: w.key.slice(0, 60) }),
+      await b.post('/api/vault/restore', { key: `${w.key}zz` }),
+      await b.post('/api/vault/restore', { key: w.key }),
+    ];
+    assert.deepEqual(refusals.map((r) => r.json.code), ['bad_key', 'bad_key', 'same_wallet']);
+
+    const hex = w.key.slice(2);
+    const runs = groups.slice(0, 14).map((_, i) => groups.slice(i, i + 3).join(''));
+    const leaks = (label: string, text: string): void => {
+      const lower = text.toLowerCase().replace(/\s+/g, '');
+      assert.ok(!lower.includes(hex), `${label} holds the key`);
+      for (const run of runs) assert.ok(!lower.includes(run), `${label} holds three groups of the key`);
+    };
+    leaks('the audit log', JSON.stringify(b.audit.tail(500)));
+    leaks('the state', JSON.stringify((await b.get('/api/state')).json));
+    leaks('the vault status', JSON.stringify((await b.get('/api/vault')).json));
+    leaks('the answers', JSON.stringify([wrong.json, right.json, ...refusals.map((r) => r.json)]));
+    const dataDir = path.dirname(path.dirname(b.keysPath));
+    const files: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const at = path.join(dir, entry.name);
+        if (entry.isDirectory()) walk(at);
+        else files.push(at);
+      }
+    };
+    walk(dataDir);
+    assert.ok(files.length > 2, files.join(', '));
+    for (const file of files) leaks(path.relative(dataDir, file), fs.readFileSync(file).toString('utf8'));
+    assert.ok(JSON.stringify(b.audit.tail(500)).includes('the private key was revealed in the window after a Touch ID'), 'the reveal is audited, as the phrase\'s is');
+    assert.ok(JSON.stringify(b.audit.tail(500)).includes('the private key was proven backed up'));
+  } finally {
+    await b.close();
+  }
+});
+
+/* The round trip the bind flow depends on: what the backup showed, typed into a new data
+   directory, is the same wallet. The older NEAR and Solana keys are not in the backup (they sign
+   nothing and no screen shows them), so they do not come back. */
+test('restore takes the key back exactly as the backup shows it, and a new data directory holds the same wallet', async () => {
+  const first = await boot({ mode: 'live' });
+  let shown: { groups: string[]; address: string; prove: number[] };
+  let evm: string;
+  try {
+    evm = (await keyWallet(first)).evm;
+    shown = (await first.post('/api/vault/reveal-key', {})).json;
+    assert.equal((await first.post('/api/vault/key-proven', { groups: typedGroups(shown.groups, shown.prove) })).json.ok, true);
+  } finally {
+    await first.close();
+  }
+
+  const copies = [
+    shown.groups.join(' '),
+    `0x${shown.groups.join('')}`,
+    `${shown.groups.slice(0, 8).join(' ').toUpperCase()}\n${shown.groups.slice(8).join(' ').toUpperCase()}`,
+  ];
+  for (const copy of copies) {
+    const next = await boot({ mode: 'live' });
+    try {
+      assert.equal(next.keystore.state(), 'no_wallet');
+      const restored = await next.post('/api/vault/restore', { key: copy });
+      assert.equal(restored.json.ok, true, JSON.stringify(restored.json));
+      assert.equal(restored.json.addresses.evm, evm, `the same wallet from ${JSON.stringify(copy.slice(0, 4))}...`);
+      assert.equal(restored.json.addresses.evm, shown.address);
+      assert.deepEqual([restored.json.addresses.solana, restored.json.addresses.near], [null, null]);
+      assert.ok(next.seen.includes('unwrap:Restore a wallet from its private key'), 'the restore names itself');
+      const vault = (await next.get('/api/vault')).json;
+      assert.deepEqual([vault.custody, vault.hasMnemonic, vault.backedUp], ['secure-enclave', false, true]);
+      assert.equal(next.keystore.state(), 'unlocked');
+      assert.equal(next.keystore.evmPrivateKey(), `0x${shown.groups.join('')}`);
+      // And the restored wallet backs up the same key again.
+      const again = await next.post('/api/vault/reveal-key', {});
+      assert.deepEqual(again.json.groups, shown.groups);
+    } finally {
+      await next.close();
+    }
+  }
+});
+
+test('a key restore is refused in words that quote none of it, over the same wallet this Mac opens, and over an unbacked one', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    for (const key of ['', 'not a key at all', `0x${'00'.repeat(32)}`, `0x${'ab'.repeat(31)}`]) {
+      const bad = await b.post('/api/vault/restore', { key });
+      assert.equal(bad.json.ok, false);
+      assert.equal(bad.json.code, 'bad_key');
+      assert.ok(!bad.json.error.includes('abab') && !bad.json.error.includes('not a key'), bad.json.error);
+    }
+    assert.equal(b.keystore.state(), 'no_wallet', 'a bad key wrote nothing');
+
+    const w = await keyWallet(b, false);
+    const same = await b.post('/api/vault/restore', { key: w.key });
+    assert.deepEqual(same.json, { ok: false, error: 'This Mac already holds that wallet, and it opens with Touch ID.', code: 'same_wallet' });
+    const other = await b.post('/api/vault/restore', { key: generatePrivateKey() });
+    assert.equal(other.json.code, 'not_backed_up', 'an unbacked wallet this Mac opens was replaced');
+    assert.equal(b.keystore.addresses().evm, w.evm);
+
+    // On another Mac the file cannot be opened, so the same key is how the wallet comes back.
+    b.keystore.lock();
+    b.swapMac();
+    assert.equal((await b.post('/api/vault/unlock', {})).json.code, 'foreign');
+    const back = await b.post('/api/vault/restore', { key: w.key });
+    assert.equal(back.json.ok, true, JSON.stringify(back.json));
+    assert.equal(back.json.addresses.evm, w.evm);
+    assert.equal((await b.get('/api/vault')).json.foreign, false);
+  } finally {
+    await b.close();
+  }
+});
+
+/* The flag the bind flow reads belongs to the wallet it was proven for. A key file put in place
+   from outside the app (here: a password wallet imported over a forgotten one, which no route
+   clears the flag for) does not inherit it; forgetting through the app clears it. */
+test('a proven backup belongs to its wallet: a different wallet in its place reads as not backed up', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    await keyWallet(b, false);
+    const shown = await b.post('/api/vault/reveal-key', {});
+    assert.equal((await b.post('/api/vault/key-proven', { groups: typedGroups(shown.json.groups, shown.json.prove) })).json.ok, true);
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
+
+    b.keystore.forget();
+    const imported = await b.post('/api/wallet/import', { password: PASSWORD, keys: { evm: generatePrivateKey() } });
+    assert.equal(imported.json.ok, true, JSON.stringify(imported.json));
+    const vault = (await b.get('/api/vault')).json;
+    assert.deepEqual([vault.backedUp, vault.backedUpAt], [false, null]);
+    assert.equal((await b.get('/api/state')).json.vault.backedUp, false);
+    const forget = await b.post('/api/vault/forget', { confirm: 'FORGET' });
+    assert.equal(forget.json.code, 'not_backed_up', 'another wallet\'s proof let this one be forgotten');
+  } finally {
+    await b.close();
+  }
+});
+
+/* Prove it checks three groups of sixteen; Check my copy checks the rest. It must never be a
+   restore in disguise: no Touch ID, nothing written, and the answer is yes or no. */
+test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID and nothing written', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await keyWallet(b, false);
+    const before = fs.readFileSync(b.keystore.path(), 'utf8');
+    const touches = b.seen.length;
+    const groups = w.key.slice(2).match(/.{4}/g) as string[];
+    for (const copy of [w.key, groups.join(' '), `0X${groups.join(' ').toUpperCase()}`, `${groups.slice(0, 8).join('-')}\n${groups.slice(8).join('-')}`]) {
+      const said = await b.post('/api/vault/key-check', { key: copy });
+      assert.deepEqual(said.json, { ok: true, matches: true }, JSON.stringify(copy.slice(0, 6)));
+    }
+    // One character off is another wallet, and the answer does not say where.
+    const slip = `${w.key.slice(0, 40)}${w.key[40] === 'a' ? 'b' : 'a'}${w.key.slice(41)}`;
+    const wrong = await b.post('/api/vault/key-check', { key: slip });
+    assert.deepEqual(wrong.json, { ok: true, matches: false });
+    const bad = await b.post('/api/vault/key-check', { key: w.key.slice(0, 50) });
+    assert.equal(bad.json.code, 'bad_key');
+    assert.equal(b.seen.length, touches, 'a check asked for a Touch ID');
+    assert.equal(fs.readFileSync(b.keystore.path(), 'utf8'), before, 'a check wrote the key file');
+    assert.equal((await b.get('/api/vault')).json.backedUp, false, 'a check is not a proof');
+    const log = JSON.stringify(b.audit.tail(100));
+    assert.ok(log.includes('a copy of the private key was checked in the window: it matches this wallet'));
+    assert.ok(log.includes('it does not match this wallet'));
+    assert.ok(!log.includes(w.key.slice(2)) && !log.includes(slip.slice(2)), 'the audit log holds a key');
+    assert.equal((await b.post('/api/vault/key-check', { key: w.key }, false)).status, 403, 'a check without the window token');
+  } finally {
+    await b.close();
+  }
+
+  // A wallet this process has never opened has only its header's address, which nothing has
+  // checked, so the check waits for an open rather than answer against it.
+  const key = generatePrivateKey();
+  const c = await boot({
+    mode: 'live',
+    seed: (keysPath) => {
+      const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+      const pub = Buffer.concat([Buffer.from([0x04]), Buffer.from(ec.x, 'base64url'), Buffer.from(ec.y, 'base64url')]).toString('base64');
+      createKeystore({ keysPath, kdf: fast }).importWithEnclave({ keyBlob: crypto.randomBytes(64).toString('base64'), publicKey: pub, createdAt: new Date().toISOString() }, { keys: { evm: key } });
+    },
+  });
+  try {
+    assert.equal(c.keystore.state(), 'locked');
+    assert.equal(c.keystore.addressReport().verified, false);
+    const unopened = await c.post('/api/vault/key-check', { key });
+    assert.equal(unopened.json.ok, false);
+    assert.equal(unopened.json.code, 'unverified');
+  } finally {
+    await c.close();
   }
 });

@@ -234,6 +234,7 @@ function build(state: Any, sources: string[]): World {
     vaultUnlock: (purpose?: string) => { calls.push({ route: '/api/vault/unlock', purpose }); return Promise.resolve(answer.unlock); },
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve(answer.create); },
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
+    vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restore); },
     walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: [], addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
     driver: () => Promise.resolve({}),
@@ -544,6 +545,38 @@ test('a forgotten password has a way back where this Mac has Touch ID: the phras
   assert.equal(find(bare.nodes['screen-lock'], 'button.lock-forgot').length, 0, 'a restore offered where it cannot run');
 });
 
+// Sixteen made-up groups of four, a private key as the Vault's backup shows one.
+const GROUPS = ['3f9a', '07c2', 'b41e', '5d68', 'e2a0', '9b17', '4c3d', 'f805', '1a6e', 'c9b2', '7e41', '0d5f', 'a8c3', '62e9', 'd07b', '3b14'];
+
+test('a password wallet with no phrase comes back from its private key, in the same card', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', hasMnemonic: false }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const forgot = find(screen, 'button.lock-forgot')[0];
+  assert.equal(forgot.textContent, 'Forgot your password? Restore from your private key');
+  forgot.click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.ok(textOf(step).includes('Type your private key, 64 characters. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'));
+  const field = find(step, 'textarea')[0];
+  assert.equal(field.getAttribute('aria-label'), 'Private key');
+  const go = buttonNamed(step, 'Restore');
+  field.value = GROUPS.slice(0, 15).join(' ');
+  go.click();
+  assert.ok(textOf(step).includes('That is 60 characters. A private key is 64.'));
+  field.value = GROUPS.join(' ');
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press replaced the wallet');
+  assert.ok(textOf(step).some((t) => t.startsWith('This replaces the wallet on this Mac with the one your key opens.')));
+  go.click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'the restore was not posted');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  assert.equal(post.mnemonic, undefined);
+});
+
 /* ---------- the first run ---------- */
 
 test('with the enclave ready, the first run is the welcome, Create wallet, the addresses, the assistant, then Home', async () => {
@@ -636,6 +669,32 @@ test('a file made on another Mac opens, after the welcome, on Restore: one field
   assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
 });
 
+/* A file with no phrase, carried to a new Mac (Migration Assistant does this), comes back from the
+   key its owner backed up. The header says which backup it is, and it reads without the enclave. */
+test('a file with no phrase made on another Mac asks for its private key, and takes it as the backup shows it', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  buttonNamed(screen, 'Get started').click();
+  assert.ok(textOf(screen).includes('Made on another Mac'));
+  assert.ok(textOf(screen).includes('The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your private key to bring the wallet here.'));
+  assert.ok(textOf(screen).includes('Private key, 64 characters'));
+  const field = find(screen, 'textarea')[0];
+  const restore = buttonNamed(screen, 'Restore');
+  field.value = 'not a key';
+  restore.click();
+  await flush();
+  assert.ok(textOf(screen).includes('A private key has only the digits 0 to 9 and the letters a to f.'));
+  field.value = `0x ${GROUPS.join(' ').toUpperCase()}`;
+  restore.click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'nothing was posted');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
+});
+
 test('without an enclave the software first run keeps its screens after the welcome: nine steps from Get started', () => {
   const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
@@ -692,6 +751,12 @@ test('the shell routes deposit frames to the store and the card, and says "not b
   assert.equal(notice.hidden, true, 'the line stayed after the phrase was proven');
   world.put({ vault: vaultState({ custody: null, state: 'no_wallet', backedUp: false }) });
   assert.equal(notice.hidden, true, 'a backup line with no wallet to back up');
+  // A wallet with no phrase is told about the backup it has: its private key.
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: false, hasMnemonic: false }) });
+  assert.equal(text.textContent, 'Private key not backed up.');
+  assert.equal(act.textContent, 'Back it up');
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: true, hasMnemonic: false }) });
+  assert.equal(notice.hidden, true, 'the line stayed after the key was proven');
 
   // The line is a way in.
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: false }) });

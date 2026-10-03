@@ -150,6 +150,10 @@ const WORDS = ('abandon ability able about above absent absorb abstract absurd a
 // The three positions the app names with the words, the only three it checks (src/vault/phrase-proof.ts).
 const PROVE = [2, 6, 11];
 const EVM = '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d';
+// A wallet with no phrase backs up its key in sixteen groups of four. Made up, and kept as groups
+// so no key-shaped string sits in the tree; KEY_PROVE are the three the app names.
+const GROUPS = ['3f9a', '07c2', 'b41e', '5d68', 'e2a0', '9b17', '4c3d', 'f805', '1a6e', 'c9b2', '7e41', '0d5f', 'a8c3', '62e9', 'd07b', '3b14'];
+const KEY_PROVE = [2, 6, 11];
 
 function vaultState(overrides: Any = {}): Any {
   return Object.assign({
@@ -191,6 +195,10 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   const answer: Any = {
     reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" }, prove: PROVE.slice() },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
+    revealKey: { ok: true, groups: GROUPS.slice(), address: EVM, prove: KEY_PROVE.slice() } as Any,
+    keyProven: (groups: Any[]) => (groups.every((g) => GROUPS[g.index] === g.group) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' }),
+    restoreKey: { ok: true, addresses: { evm: EVM } } as Any,
+    keyCheck: { ok: true, matches: true } as Any,
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
     migrate: { ok: true },
@@ -259,6 +267,10 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     intentsReceive: () => Promise.resolve({ data: { networks: [{ id: 'eth', address: EVM, accepts: [{ symbol: 'USDC' }] }, { id: 'sol', address: 'SOLADDR', accepts: [{ symbol: 'SOL' }] }] } }),
     vaultReveal: () => { calls.push({ route: '/api/vault/reveal' }); return Promise.resolve(answer.reveal); },
     vaultBackupProven: (words: Any[]) => { calls.push({ route: '/api/vault/backup-proven', words }); return Promise.resolve(answer.proven(words)); },
+    vaultRevealKey: () => { calls.push({ route: '/api/vault/reveal-key' }); return Promise.resolve(answer.revealKey); },
+    vaultKeyProven: (groups: Any[]) => { calls.push({ route: '/api/vault/key-proven', groups }); return Promise.resolve(answer.keyProven(groups)); },
+    vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restoreKey); },
+    vaultKeyCheck: (key: string) => { calls.push({ route: '/api/vault/key-check', key }); return Promise.resolve(answer.keyCheck); },
     vaultForget: () => { calls.push({ route: '/api/vault/forget' }); return Promise.resolve(answer.forget); },
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
     vaultMigrate: (password: string) => { calls.push({ route: '/api/vault/migrate', password }); return Promise.resolve(answer.migrate); },
@@ -519,8 +531,11 @@ test('the phrase row says the truth and leads to the reveal; proven, it says whe
 
   const none = build({ vault: { custody: null } });
   assert.equal(backup(none), 'There is nothing to back up until a wallet exists.');
+  // A wallet with no phrase is not told its file is its backup any more: it backs up its key here.
   const keys = build({ vault: { hasMnemonic: false } });
-  assert.ok(backup(keys).startsWith('This wallet was brought in as a key, so it has no phrase.'));
+  assert.equal(find(row(keys, 'backup'), '.vault-row-title')[0].textContent, 'Private key');
+  assert.ok(backup(keys).startsWith('Not backed up yet. This wallet has no recovery phrase, so its key is the only way back'), backup(keys));
+  assert.equal(buttonNamed(row(keys, 'backup'), 'Back it up').hidden, false);
 });
 
 /* ---------- a password wallet: the same row, the password typed into it ---------- */
@@ -794,6 +809,191 @@ test('a cancelled Touch ID on the reveal shows nothing and says nothing', async 
   assert.equal(world.toasts.length, 0);
 });
 
+/* ---------- a wallet with no phrase: its private key, in the same row ---------- */
+
+const keyText = (world: World): string[] => find(flow(world), '.word').map((w: Any) => w.childNodes[1].textContent);
+
+test('a wallet with no phrase backs up its key in the same row: one line says why Touch ID, and Back it up posts the key reveal', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent === 'Showing it takes Touch ID, so only you can see it.') as Any;
+  assert.ok(why && !why.hidden, 'the row does not say why the key takes a Touch ID');
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/vault/reveal-key'), 'Back it up did not ask for the key');
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal'), false, 'the phrase was asked of a wallet with none');
+  const panel = flow(world);
+  assert.equal(panel.dataset.step, 'key');
+  assert.deepEqual(keyText(world), GROUPS, 'the sixteen groups are not on screen in order');
+  assert.deepEqual(find(panel, '.word').map((w: Any) => w.childNodes[0].textContent), GROUPS.map((_, i) => String(i + 1)), 'the groups are not numbered');
+  assert.ok(String(find(panel, 'ol')[0].className).split(' ').includes('vault-key'), 'the key is not set as a key');
+  assert.ok(textOf(panel).includes('On this screen only. Anyone who reads this key can take your money.'));
+  assert.ok(textOf(panel).includes('It opens the wallet 0x7d4e...0e1d.'), String(textOf(panel)));
+  const labels = find(panel, 'button').map((b: Any) => b.textContent);
+  assert.deepEqual(labels, ['I wrote it down', 'Print', 'Done']);
+  assert.equal(labels.some((l: string) => /copy/i.test(l)), false, 'a Copy button on the key');
+  assert.equal(buttonNamed(row(world, 'backup'), 'Back it up').hidden, true, 'Back it up stayed beside the key');
+  assert.equal(why.hidden, true, 'the Touch ID line stayed once the key was on screen');
+  assert.equal(find(panel, '.banner').length, 0);
+});
+
+test('Prove it asks the three groups the app named, checks each is four characters before it spends a try, and only a right answer clears "not backed up"', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'I wrote it down').click();
+  let panel = flow(world);
+  assert.equal(panel.dataset.step, 'prove');
+  let inputs = find(panel, 'input');
+  assert.deepEqual(inputs.map((i: Any) => Number(i.dataset.index)), KEY_PROVE);
+  assert.deepEqual(find(panel, 'label').map((l: Any) => l.textContent), KEY_PROVE.map((i) => 'Group ' + (i + 1)));
+  assert.ok(textOf(panel).includes('Type three groups back, by their number, from the copy you made.'));
+
+  buttonNamed(panel, 'Prove it').click();
+  assert.ok(textOf(panel).includes('Type all three groups.'));
+  inputs.forEach((input: Any) => { input.value = 'zz9'; });
+  buttonNamed(panel, 'Prove it').click();
+  assert.ok(textOf(panel).includes('Each group is four characters, 0 to 9 and a to f.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-proven'), false, 'a group that cannot be right spent a try');
+
+  // Two misses: the backend refuses each the same way, and the second shows the key again.
+  inputs.forEach((input: Any) => { input.value = 'ffff'; });
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  assert.ok(textOf(panel).includes('Those groups do not match. Look at your copy again.'));
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  assert.equal(flow(world).dataset.step, 'key', 'two misses did not show the key again');
+  assert.ok(textOf(flow(world)).includes('Two tries did not match. Check your copy, then try again.'));
+
+  // The right groups, copied the way a person copies them: upper case, a space inside.
+  buttonNamed(flow(world), 'I wrote it down').click();
+  panel = flow(world);
+  inputs = find(panel, 'input');
+  inputs.forEach((input: Any) => { const g = GROUPS[Number(input.dataset.index)]; input.value = ` ${g.slice(0, 2).toUpperCase()} ${g.slice(2)} `; });
+  buttonNamed(panel, 'Prove it').click();
+  await flush();
+  const posts = world.calls.filter((c) => c.route === '/api/vault/key-proven');
+  assert.equal(posts.length, 3);
+  assert.deepEqual(Array.from(posts[2].groups, (g: Any) => [g.index, g.group]), KEY_PROVE.map((i) => [i, GROUPS[i]]));
+  assert.deepEqual(world.toasts, ['Backed up. Your copy of the key is right.']);
+  assert.ok(world.calls.some((c) => c.route === 'refresh'));
+  assert.equal(flow(world).hidden, true);
+  assert.equal(find(flow(world), '.word').length, 0, 'the key survived the wipe');
+});
+
+test('proven, the key row reads as done: the tick, the day, Show my key, and no Touch ID line', () => {
+  const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.equal(find(row(world, 'backup'), '.vault-row-title')[0].textContent, 'Private key');
+  assert.equal(backup(world), 'Backed up. You proved your copy on Sep 14, 2026.');
+  assert.equal(find(row(world, 'backup'), '.vault-text')[0].getAttribute('data-backed'), 'true');
+  assert.equal(buttonNamed(row(world, 'backup'), 'Show my key').hidden, false);
+  assert.equal(buttonNamed(row(world, 'backup'), 'Back it up') === undefined, true, 'Back it up on a proven key');
+  const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent.startsWith('Showing it takes Touch ID')) as Any;
+  assert.equal(why.hidden, true);
+});
+
+test('Print prints the numbered groups and the wallet they open, and takes the sheet away after', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'Print').click();
+  const printed = world.calls.find((c) => c.route === 'print');
+  assert.ok(printed && printed.sheet);
+  assert.deepEqual(find(printed.sheet, 'li').map((li: Any) => li.textContent), GROUPS);
+  assert.ok(textOf(printed.sheet).includes(`It opens the wallet ${EVM}.`));
+  assert.ok(textOf(printed.sheet).includes('Phosphor private key'));
+  assert.equal(world.sandbox.document.body.childNodes.includes(printed.sheet), false);
+});
+
+test('Done, a lock, or leaving the tab wipes the key, and a cancelled touch shows nothing', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  assert.equal(keyText(world).length, 16);
+  buttonNamed(flow(world), 'Done').click();
+  assert.equal(keyText(world).length, 0);
+
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  world.put({ lock: { state: 'locked', idleLocksInSec: null } });
+  assert.equal(keyText(world).length, 0, 'the key stayed on a locked window');
+
+  const cancelled = build({ vault: { hasMnemonic: false } });
+  cancelled.answer.revealKey = { ok: false, error: 'cancelled', code: 'user_cancel' };
+  buttonNamed(row(cancelled, 'backup'), 'Back it up').click();
+  await flush();
+  assert.equal(flow(cancelled).hidden, true);
+  assert.equal(cancelled.toasts.length, 0);
+
+  const short = build({ vault: { hasMnemonic: false } });
+  short.answer.revealKey = { ok: true, groups: GROUPS.slice(0, 15), prove: KEY_PROVE.slice() };
+  buttonNamed(row(short, 'backup'), 'Back it up').click();
+  await flush();
+  assert.ok(textOf(flow(short)).includes('No key came back.'), 'a key cut short was shown as a key');
+});
+
+/* Prove it checks three groups of sixteen. A key has no checksum, so the rest is checked whole,
+   here, with no Touch ID and nothing written: never by trying a restore, which would replace the
+   wallet with whatever a slip in the copy makes. */
+test('a proven key offers Check my copy: the whole key typed, checked with nothing written, and a slip named as another wallet', async () => {
+  const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.equal(buttonNamed(build({ vault: { hasMnemonic: false } }).view, 'Check my copy').hidden, true, 'a check offered before there is a proven copy');
+  assert.equal(buttonNamed(build({ vault: { backedUp: true } }).view, 'Check my copy').hidden, true, 'a key check offered to a wallet with a phrase');
+  buttonNamed(row(world, 'backup'), 'Check my copy').click();
+  const panel = flow(world);
+  assert.equal(panel.dataset.step, 'check');
+  assert.ok(textOf(panel).includes('Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+  assert.equal(buttonNamed(row(world, 'backup'), 'Show my key').hidden, true, 'Show my key stayed beside the check');
+  const input = find(panel, 'textarea')[0];
+  input.value = GROUPS.slice(0, 15).join(' ');
+  buttonNamed(panel, 'Check').click();
+  assert.ok(textOf(panel).includes('That is 60 characters. A private key is 64.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-check'), false);
+
+  input.value = GROUPS.join(' ').toUpperCase();
+  buttonNamed(panel, 'Check').click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/key-check');
+  assert.ok(post, 'the copy was never checked');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  const right = find(panel, '.vault-check-line')[0];
+  assert.equal(right.hidden, false);
+  assert.ok(textOf(right).includes('Your copy is right, to the last character.'));
+  assert.equal(input.value, '', 'a checked key stayed in the field');
+
+  world.answer.keyCheck = { ok: true, matches: false };
+  input.value = GROUPS.join('');
+  input.dispatch('input');
+  buttonNamed(panel, 'Check').click();
+  await flush();
+  assert.equal(right.hidden, true);
+  assert.ok(textOf(panel).includes('That copy opens a different wallet. Show your key and check it group by group.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal-key' || c.route === '/api/vault/restore' || c.route === 'refresh'), false, 'a check reached past itself');
+
+  buttonNamed(panel, 'Done').click();
+  assert.equal(flow(world).hidden, true);
+  assert.equal(find(flow(world), 'textarea').length, 0, 'the typed key survived Done');
+});
+
+test('a password wallet with no phrase shows its key behind the password typed in the row', async () => {
+  const world = build({ vault: { custody: 'software', hasMnemonic: false, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
+  const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent.startsWith('Showing it takes Touch ID')) as Any;
+  assert.equal(why.hidden, true, 'a password wallet was told about a Touch ID');
+  world.answer.revealFetch = { ok: true, what: 'keys', keys: { evm: '0x' + GROUPS.join('') }, groups: GROUPS.slice(), prove: KEY_PROVE.slice() };
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  const panel = flow(world);
+  assert.equal(panel.dataset.step, 'password');
+  assert.ok(textOf(panel).includes('Type your password to see your private key. It shows here once and is not saved anywhere.'));
+  find(panel, 'input[type="password"]')[0].value = 'proof-password-1';
+  find(panel, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/reveal' && c.what === 'keys'), 'the password reveal did not ask for the key');
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal-key'), false, 'Touch ID was asked of a password wallet');
+  assert.equal(flow(world).dataset.step, 'key');
+  assert.deepEqual(keyText(world), GROUPS);
+});
+
 /* ---------- restore ---------- */
 
 test('Restore takes 12 or 24 words, asks once more in place, and posts /api/vault/restore', async () => {
@@ -832,6 +1032,7 @@ test('a restore the backend refuses says why, in the tab', async () => {
   await flush();
   await flush();
   assert.ok(textOf(panel).some((t) => t.includes('not proven backed up')));
+  assert.equal(find(panel, '.vault-confirm-text')[0].hidden, true, '"press Restore again" stayed under a refusal');
 });
 
 test('a password wallet can restore where this Mac has Touch ID, and only once its phrase is backed up', async () => {
@@ -847,6 +1048,70 @@ test('a password wallet can restore where this Mac has Touch ID, and only once i
 
   const noTouch = build({ vault: { custody: 'software', backedUp: true, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
   assert.equal(buttonNamed(recovery(noTouch), 'Restore from a phrase').hidden, true, 'a restore offered where it cannot run');
+  assert.equal(buttonNamed(recovery(noTouch), 'Restore from a key').hidden, true);
+  assert.equal(buttonNamed(recovery(guarded), 'Restore from a key').hidden, true, 'a key restore offered over a password wallet that is not backed up');
+});
+
+test('Restore from a key takes the key the way the backup shows it, asks once more, and names the wallet it brought', async () => {
+  const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.ok(textOf(recovery(world)).includes('Your private key brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.'));
+  buttonNamed(recovery(world), 'Restore from a key').click();
+  const panel = restoreFlow(world);
+  assert.equal(panel.dataset.step, 'restore-key');
+  assert.ok(textOf(panel).includes('Private key'));
+  const input = find(panel, 'textarea')[0];
+
+  input.value = GROUPS.join(' ').slice(0, -1);
+  buttonNamed(panel, 'Restore').click();
+  assert.ok(textOf(panel).includes('That is 63 characters. A private key is 64.'), String(textOf(panel)));
+  input.value = `zz${GROUPS.join('').slice(2)}`;
+  buttonNamed(panel, 'Restore').click();
+  assert.ok(textOf(panel).includes('A private key has only the digits 0 to 9 and the letters a to f.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'a key that cannot be right was posted');
+
+  // As written from the backup: 0x, upper case, the groups on two lines.
+  input.value = `0X${GROUPS.slice(0, 8).join(' ').toUpperCase()}\n${GROUPS.slice(8).join(' ').toUpperCase()}`;
+  input.dispatch('input');
+  buttonNamed(panel, 'Restore').click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press replaced the wallet');
+  assert.ok(textOf(panel).includes('This Mac will hold the wallet that key opens instead of the one it holds now. Nothing moves. Press Restore again to go ahead.'));
+  buttonNamed(panel, 'Restore').click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'nothing was posted');
+  assert.equal(post.key, '0x' + GROUPS.join(''), 'the key was not posted as 0x and 64 lower-case characters');
+  assert.equal(post.mnemonic, undefined);
+  assert.deepEqual(world.toasts, ['Restored. This Mac now holds the wallet 0x7d4e...0e1d.']);
+  assert.equal(input.value, '', 'the key stayed in the field');
+});
+
+test('a key restore the backend refuses says why in the tab, in words for a key', async () => {
+  const cases: Array<[Any, string]> = [
+    [{ ok: false, error: 'a private key is 64 characters', code: 'bad_key' }, 'That key is not right. Check every character against your copy.'],
+    [{ ok: false, error: 'already', code: 'same_wallet' }, 'This Mac already holds that wallet, and it opens. Nothing to restore.'],
+    [{ ok: false, error: 'not backed up', code: 'not_backed_up' }, 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its key first.'],
+    [{ ok: false, error: 'cancelled', code: 'user_cancel' }, 'Touch ID was cancelled. Nothing changed.'],
+  ];
+  for (const [answer, said] of cases) {
+    const world = build({ vault: { hasMnemonic: false } });
+    world.answer.restoreKey = answer;
+    buttonNamed(recovery(world), 'Restore from a key').click();
+    const panel = restoreFlow(world);
+    find(panel, 'textarea')[0].value = GROUPS.join('');
+    buttonNamed(panel, 'Restore').click();
+    buttonNamed(panel, 'Restore').click();
+    await flush();
+    await flush();
+    assert.ok(textOf(panel).includes(said), `${answer.code}: ${String(textOf(panel))}`);
+    // The refusal ends that press: the line that said to press again goes, and the next press asks first.
+    const sure = find(panel, '.vault-confirm-text')[0];
+    assert.equal(sure.hidden, true, `${answer.code}: "press Restore again" stayed under a refusal`);
+    buttonNamed(panel, 'Restore').click();
+    await flush();
+    assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, 1, `${answer.code}: one press after a refusal posted again`);
+  }
 });
 
 test('the encrypted copy is saved in place: the password in the row, and a full path asked for only when the app needs one', async () => {
@@ -1026,6 +1291,22 @@ test('Forget waits for the backup: until the phrase is proven its way is Back up
   first.click();
   assert.ok(world.calls.some((c) => c.route === '/api/vault/reveal'), 'Back up first did not start the backup');
   assert.equal(find(danger, '.vault-confirm')[0].hidden, true, 'the forget step opened anyway');
+});
+
+/* A wallet with no phrase used to be offered Forget outright, and the app refused it every time,
+   because nothing could prove its backup. Now its key can be proven, so it waits the same way. */
+test('a wallet with no phrase waits for its key backup before Forget, and Back up first opens the key', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  const danger = row(world, 'danger');
+  assert.equal(buttonNamed(danger, 'Forget this wallet') === undefined, true, 'Forget is offered while the app would refuse it');
+  assert.ok(textOf(danger).includes('Removes this wallet from this Mac. The app allows it once your private key is backed up, so nothing is lost.'));
+  buttonNamed(danger, 'Back up first').click();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/vault/reveal-key'), 'Back up first did not open the key');
+
+  const proven = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.equal(buttonNamed(row(proven, 'danger'), 'Forget this wallet').hidden, false);
+  assert.ok(textOf(row(proven, 'danger')).includes('Removes this wallet from this Mac. Your private key brings it back, here or on any Mac.'));
 });
 
 test('Forget opens in place, is an outline until FORGET is typed, posts, shows a refusal in words, and Escape puts it away; none of it red', async () => {

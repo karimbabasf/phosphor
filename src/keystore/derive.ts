@@ -1,8 +1,8 @@
 // Twelve words to one key.
 //
-// A person cannot back up a raw private key. They can write twelve words down, and every
-// wallet they have ever used works that way, so a new Phosphor wallet is a BIP39 mnemonic and
-// its one key is derived from it:
+// A raw private key is sixty-four characters nobody wants to copy by hand. Twelve words are easy
+// to write down, and every wallet a person has ever used works that way, so a new Phosphor wallet
+// is a BIP39 mnemonic and its one key is derived from it:
 //
 //   EVM      m/44'/60'/0'/0/0    through viem, which owns the secp256k1 and the EIP-55 casing
 //
@@ -116,6 +116,46 @@ export function walletFromMnemonic(rawMnemonic: string): Wallet {
 export function newWallet(): { mnemonic: string; wallet: Wallet } {
   const mnemonic = newMnemonic();
   return { mnemonic, wallet: walletFromMnemonic(mnemonic) };
+}
+
+// ---------- the key, as a backup holds it ----------
+
+/* A wallet brought in as a key has no phrase, so its backup is the EVM key itself, written down
+   from the Vault tab in sixteen groups of four (src/http/vault.ts, reveal-key). A restore takes it
+   back however a person copies it: with or without 0x, in either case, with spaces, line breaks or
+   dashes between the groups. Nothing here quotes the input back: a sentence that names a character
+   it found is a sentence that puts part of a key in a log. */
+export const KEY_GROUP_LENGTH = 4;
+
+function bareHex(raw: string): string {
+  const flat = raw.normalize('NFKC').replace(/[\s\p{Pd}]+/gu, '').toLowerCase();
+  return flat.startsWith('0x') ? flat.slice(2) : flat;
+}
+
+export function keyProblem(raw: string): string | null {
+  const hex = bareHex(raw);
+  if (!/^[0-9a-f]*$/.test(hex)) return 'a private key holds only the digits 0 to 9 and the letters a to f';
+  if (hex.length !== 64) return `a private key is 64 characters; this one has ${hex.length}`;
+  try {
+    // Zero and anything past the curve's order are 64 hex characters and no key at all.
+    privateKeyToAccount(`0x${hex}`);
+  } catch {
+    return 'that is not a valid private key';
+  }
+  return null;
+}
+
+export function keyFrom(raw: string): `0x${string}` {
+  const problem = keyProblem(raw);
+  if (problem !== null) throw new Error(problem);
+  return `0x${bareHex(raw)}`;
+}
+
+export function keyGroups(key: string): string[] {
+  const hex = bareHex(key);
+  const out: string[] = [];
+  for (let at = 0; at < hex.length; at += KEY_GROUP_LENGTH) out.push(hex.slice(at, at + KEY_GROUP_LENGTH));
+  return out;
 }
 
 // ---------- addresses from raw keys ----------

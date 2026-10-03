@@ -527,6 +527,25 @@
   .vault-words { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* A private key in sixteen groups of four: read one character at a time,
+   so Geist Mono, and four to a row wherever four fit (this rule comes after
+   the words' three and two), which keeps a row of the screen a row of the
+   printed sheet. Under that, two to a row, as the words go. */
+.vault-key {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.vault-key .word-text,
+.vault-key-input {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: 0.04em;
+}
+
+@container (max-width: 330px) {
+  .vault-key { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* ---------- limits ----------
 
    One tile, a short list of what the app will do: the rule's name at the

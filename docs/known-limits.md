@@ -26,13 +26,15 @@ switches to another user, when you close the window, and when you press Lock now
 in memory while the Mac sleeps. When the screen locks, the Mac switches user or the window closes,
 a move that has not been signed yet gets its signature first, two minutes at most, while nothing
 new starts. Copies of the key, and of your recovery phrase, that an unlock, a signature, a new
-wallet or words shown to you left as text are not overwritten: JavaScript cannot wipe them, so
+wallet or words or a key shown to you left as text are not overwritten: JavaScript cannot wipe them, so
 they stay in memory until it is reused, after the lock too. The check behind Prove it, made when a
 wallet is created or its words are shown, also outlives a lock: it goes when the words are proven
 or shown again, after five wrong tries, after half an hour with the Mac awake, or when the app
 quits. It keeps only the three positions it asks for and one slow hash of those three words, the
 same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
-guesses to make before it learns them, and three words of twelve do not open the wallet.
+guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
+with no phrase backs up its private key instead, and its check keeps three of the key's sixteen
+groups under the same hash: 281 trillion guesses, and 208 bits of the key still unknown after them.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right

@@ -318,10 +318,15 @@
      way to do it and an X that puts it away until the next start. The panel's foot says the
      same thing, so this never shouts over it, and green stays the waiting move's and its
      Approve's. */
+  // A wallet with no phrase backs up its private key instead (the Vault's Private key row).
+  function keyOnly() {
+    return ((store.get() || {}).vault || {}).hasMnemonic === false;
+  }
+
   function buildBackupLine(host, done) {
     dom.clear(host);
     var line = dom.el('div', 'chat-sheet-line');
-    line.appendChild(dom.el('span', 'chat-sheet-words', 'Your recovery phrase is not backed up yet.'));
+    line.appendChild(dom.el('span', 'chat-sheet-words', keyOnly() ? 'Your private key is not backed up yet.' : 'Your recovery phrase is not backed up yet.'));
     var go = dom.el('button', 'btn btn-quiet btn-sm chat-sheet-go');
     go.type = 'button';
     go.appendChild(dom.el('span', 'btn-label', 'Back it up'));
@@ -356,7 +361,9 @@
     dom.on(away, 'click', function () { done(); });
     head.appendChild(away);
     host.appendChild(head);
-    host.appendChild(dom.el('p', 'body dim', 'Your recovery phrase is the only way back to this wallet. Reveal it once, write it down, and type three words back to prove it.'));
+    host.appendChild(dom.el('p', 'body dim', keyOnly()
+      ? 'Your private key is the only way back to this wallet. Reveal it once, write it down, and type three groups back to prove it.'
+      : 'Your recovery phrase is the only way back to this wallet. Reveal it once, write it down, and type three words back to prove it.'));
     var actions = dom.el('div', 'screen-actions');
     var go = dom.el('button', 'btn');
     go.type = 'button';
