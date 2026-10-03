@@ -125,8 +125,11 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   password and the bind write the new file beside the live one, prove it with one Touch ID and
   commit it from the bytes held in memory, and only then put those bytes in place; the staged file
   is never read back. A crash leaves the old file whole or the new one committed, and the next
-  start finishes or removes the staged file by the service's answer about it. Proof:
-  `vault-bind.test.ts` (a staged file swapped during the touch is never pinned; the crash matrix).
+  start finishes or removes the staged file by the service's answer about it. A restore that is
+  cancelled or refused leaves the wallet that was there exactly as it was; it used to shred it
+  before the Touch ID, so the window token alone could wipe a wallet. Proof: `vault-bind.test.ts`
+  (a staged file swapped during the touch is never pinned; a cancelled restore; the crash matrix,
+  for a bind and a restore).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.

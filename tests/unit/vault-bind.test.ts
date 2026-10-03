@@ -575,6 +575,45 @@ test('new wallets are committed at creation: create, restore and the move from a
   }
 });
 
+test('a restore replaces the wallet only after its Touch ID and its commit: a cancel or a refusal leaves it exactly as it was', { skip }, async () => {
+  const b = await boot();
+  try {
+    const { evm } = await blobWallet(b);
+    b.prefs.markBackedUp(Date.now, evm);
+    const before = fs.readFileSync(b.live, 'utf8');
+    const other = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+    const otherKey = `0x${'11'.repeat(32)}`;
+    const intact = (why: string): void => {
+      assert.equal(fs.readFileSync(b.live, 'utf8'), before, `${why}: the wallet file is byte for byte the one that was there`);
+      assert.equal(fs.existsSync(b.staged), false, `${why}: nothing staged is left`);
+      assert.equal(b.keystore.addresses().evm, evm, `${why}: the same wallet`);
+    };
+    // A window-token holder used to be able to wipe the wallet here with no presence at all: the
+    // file was shredded before the Touch ID it then cancelled.
+    b.double.touch = 'cancel';
+    for (const body of [{ mnemonic: other }, { key: otherKey }]) {
+      const got = await b.post('/api/vault/restore', body);
+      assert.equal(got.json.code, 'user_cancel', JSON.stringify(got.json));
+      intact(`cancelled (${Object.keys(body)[0]})`);
+    }
+    b.double.touch = undefined;
+    b.double.fail = 'addMarker=-25308';
+    assert.equal((await b.post('/api/vault/restore', { mnemonic: other })).json.code, 'keychain_unavailable');
+    b.double.fail = undefined;
+    intact('a commit that did not land');
+    b.keystore.lock();
+    assert.equal((await b.post('/api/vault/unlock')).json.ok, true, 'and it still opens');
+    assert.equal(b.double.state().markers.length, 0);
+
+    const restored = await b.post('/api/vault/restore', { key: otherKey });
+    assert.equal(restored.json.ok, true, JSON.stringify(restored.json));
+    assert.notEqual(b.keystore.addresses().evm, evm);
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true, 'a restored wallet is committed at creation');
+  } finally {
+    await b.close();
+  }
+});
+
 test('a substitute wallet file is refused before any Touch ID, in words a person can act on', { skip }, async () => {
   const b = await boot();
   try {
@@ -850,7 +889,7 @@ test('no shipped source, and no script that builds or signs what ships, names th
   assert.equal(fs.readFileSync(path.join(ROOT, 'src-tauri/se-helper/main.swift'), 'utf8').split('PHOSPHOR_TESTSEAM').length, 3);
 });
 
-// ---------- the crash matrix: real backends, killed at each step of a bind ----------
+// ---------- the crash matrix: real backends, killed at each step of a bind and a restore ----------
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -954,104 +993,111 @@ async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => 
   };
 }
 
-test('the crash matrix: a bind killed before its commit, between commit and rename, and after the rename opens correctly on the next start', { skip, timeout: 240_000 }, async () => {
+test('the crash matrix: a bind and a restore killed before the commit, between commit and rename, and after the rename open correctly on the next start', { skip, timeout: 300_000 }, async () => {
   type Point = 'before commit' | 'between commit and rename' | 'after rename';
-  for (const point of ['before commit', 'between commit and rename', 'after rename'] as Point[]) {
-    const dir = tempDir('phosphor-crash-');
-    const double = new VaultDouble(path.join(dir, 'keychain.json'));
-    const live = path.join(dir, 'keys', 'keys.enc.json');
-    const staged = path.join(dir, 'keys', 'keys.enc.json.bind');
+  for (const flow of ['bind', 'restore'] as const) {
+    for (const point of ['before commit', 'between commit and rename', 'after rename'] as Point[]) {
+      const at = `${flow}, ${point}`;
+      const dir = tempDir('phosphor-crash-');
+      const double = new VaultDouble(path.join(dir, 'keychain.json'));
+      const live = path.join(dir, 'keys', 'keys.enc.json');
+      const staged = path.join(dir, 'keys', 'keys.enc.json.bind');
 
-    // A device-bound wallet, made the way 0.10.14 made Karim's, backed up.
-    double.team = '';
-    let app = await backend(dir, double);
-    const made = await app.post('/api/vault/create');
-    assert.equal(made.json.ok, true, point);
-    const revealed = await app.post('/api/vault/reveal');
-    const words = revealed.json.words as string[];
-    assert.equal((await app.post('/api/vault/backup-proven', { words: (revealed.json.prove as number[]).map((index) => ({ index, word: words[index] })) })).json.ok, true);
-    await app.stop();
-    const blob = fs.readFileSync(live, 'utf8');
-    const address = made.json.addresses.evm as string;
-    assert.ok(!JSON.parse(blob).header.enclave.keyBlob.startsWith('keychain:'), 'a device-bound wallet');
-
-    // The Developer ID build starts, the wallet opens, and the bind is killed at `point`.
-    double.team = TEAM;
-    let killed = false;
-    let killing: Promise<void> | null = null;
-    app = await backend(dir, double, (r) => {
-      const stop = (): void => {
-        killed = true;
-        killing = app.kill();
-      };
-      if (point === 'before commit' && r.op === 'commit') {
-        stop();
-        return { kind: 'drop' };
-      }
-      if (point === 'between commit and rename' && r.op === 'commit') {
-        return {
-          kind: 'after',
-          edit: (a: Answer) => {
-            assert.equal(a.ok, true, 'the commit ran');
-            stop();
-            return 'drop';
-          },
-        };
-      }
-      if (point === 'after rename' && r.op === 'sweep') {
-        stop();
-        return { kind: 'drop' };
-      }
-      return { kind: 'run' };
-    });
-    assert.equal((await app.post('/api/vault/unlock')).json.ok, true, `${point}: the device-bound wallet opens on the Developer ID build`);
-    await app.post('/api/vault/bind').catch(() => null);
-    while (!killed) await new Promise((r) => setTimeout(r, 20));
-    await killing;
-
-    const markers = double.state().markers.length;
-    if (point === 'before commit') {
-      assert.equal(fs.readFileSync(live, 'utf8'), blob, `${point}: the live file is untouched`);
-      assert.equal(fs.existsSync(staged), true);
-      assert.equal(markers, 0);
-    } else if (point === 'between commit and rename') {
-      assert.equal(fs.readFileSync(live, 'utf8'), blob);
-      assert.equal(fs.existsSync(staged), true);
-      assert.equal(markers, 1);
-    } else {
-      assert.notEqual(fs.readFileSync(live, 'utf8'), blob, `${point}: the bound file is in place`);
-      assert.equal(fs.existsSync(staged), false);
-      assert.equal(markers, 1);
-    }
-
-    // The next start: the shell's probe settles what was left, and the next open opens the right file.
-    app = await backend(dir, double);
-    try {
-      const opened = await app.post('/api/vault/unlock');
-      assert.equal(opened.json.ok, true, `${point}: ${JSON.stringify(opened.json)}`);
-      assert.equal(fs.existsSync(staged), false, `${point}: nothing staged is left`);
-      const file = JSON.parse(fs.readFileSync(live, 'utf8'));
-      assert.equal(String(file.header.addresses.evm).toLowerCase(), address.toLowerCase(), `${point}: the same wallet`);
-      const bound = String(file.header.enclave.keyBlob).startsWith('keychain:');
-      assert.equal(bound, point !== 'before commit', `${point}: bound exactly when the commit landed`);
-
-      if (point === 'before commit') {
-        // The bind is asked again, and goes through: the Mac is bound from here on.
-        assert.deepEqual((await app.post('/api/vault/bind')).json, { ok: true, binding: 'app' });
-      }
-      // No orphan key past a sweep: once every key made in this run is past its first minutes,
-      // the keychain holds the bound key and its marker, and nothing else.
-      double.now = T0 + 3600;
-      const swept = double.run({ op: 'sweep' });
-      assert.equal(swept.ok, true, JSON.stringify(swept));
-      const left = double.state();
-      const current = JSON.parse(fs.readFileSync(live, 'utf8')).header.enclave.keyBlob.slice('keychain:'.length);
-      assert.deepEqual(left.keys.map((k) => k.tag), [current], `${point}: one key, the bound one`);
-      assert.deepEqual(left.markers.map((m) => m.tag), [current], `${point}: one marker, for it`);
-      const pin = double.run({ op: 'status', ...material(liveRequestOf(live)) });
-      assert.equal(pin.pinMatches, true, `${point}: the file in place is the committed one`);
-    } finally {
+      // A device-bound wallet, made the way 0.10.14 made Karim's, backed up.
+      double.team = '';
+      let app = await backend(dir, double);
+      const made = await app.post('/api/vault/create');
+      assert.equal(made.json.ok, true, at);
+      const revealed = await app.post('/api/vault/reveal');
+      const words = revealed.json.words as string[];
+      assert.equal((await app.post('/api/vault/backup-proven', { words: (revealed.json.prove as number[]).map((index) => ({ index, word: words[index] })) })).json.ok, true);
       await app.stop();
+      const blob = fs.readFileSync(live, 'utf8');
+      const address = made.json.addresses.evm as string;
+      assert.ok(!JSON.parse(blob).header.enclave.keyBlob.startsWith('keychain:'), 'a device-bound wallet');
+
+      // The Developer ID build starts, the wallet opens, and the step is killed at `point`. The
+      // restore brings back the same wallet from its own words (a demo backend never puts one wallet
+      // in the place of another); what is under test is the file that replaces the live one.
+      double.team = TEAM;
+      let killed = false;
+      let killing: Promise<void> | null = null;
+      app = await backend(dir, double, (r) => {
+        const stop = (): void => {
+          killed = true;
+          killing = app.kill();
+        };
+        if (point === 'before commit' && r.op === 'commit') {
+          stop();
+          return { kind: 'drop' };
+        }
+        if (point === 'between commit and rename' && r.op === 'commit') {
+          return {
+            kind: 'after',
+            edit: (a: Answer) => {
+              assert.equal(a.ok, true, 'the commit ran');
+              stop();
+              return 'drop';
+            },
+          };
+        }
+        if (point === 'after rename' && r.op === 'sweep') {
+          stop();
+          return { kind: 'drop' };
+        }
+        return { kind: 'run' };
+      });
+      assert.equal((await app.post('/api/vault/unlock')).json.ok, true, `${at}: the device-bound wallet opens on the Developer ID build`);
+      const step = flow === 'bind' ? app.post('/api/vault/bind') : app.post('/api/vault/restore', { mnemonic: words.join(' ') });
+      await step.catch(() => null);
+      while (!killed) await new Promise((r) => setTimeout(r, 20));
+      await killing;
+
+      const markers = double.state().markers.length;
+      if (point === 'before commit') {
+        assert.equal(fs.readFileSync(live, 'utf8'), blob, `${at}: the live file is untouched`);
+        assert.equal(fs.existsSync(staged), true);
+        assert.equal(markers, 0);
+      } else if (point === 'between commit and rename') {
+        assert.equal(fs.readFileSync(live, 'utf8'), blob, `${at}: the live file is untouched`);
+        assert.equal(fs.existsSync(staged), true);
+        assert.equal(markers, 1);
+      } else {
+        assert.notEqual(fs.readFileSync(live, 'utf8'), blob, `${at}: the new file is in place`);
+        assert.equal(fs.existsSync(staged), false);
+        assert.equal(markers, 1);
+      }
+
+      // The next start: the shell's probe settles what was left, and the next open opens the right file.
+      app = await backend(dir, double);
+      try {
+        const opened = await app.post('/api/vault/unlock');
+        assert.equal(opened.json.ok, true, `${at}: ${JSON.stringify(opened.json)}`);
+        assert.equal(fs.existsSync(staged), false, `${at}: nothing staged is left`);
+        const file = JSON.parse(fs.readFileSync(live, 'utf8'));
+        assert.equal(String(file.header.addresses.evm).toLowerCase(), address.toLowerCase(), `${at}: the same wallet`);
+        const bound = String(file.header.enclave.keyBlob).startsWith('keychain:');
+        assert.equal(bound, point !== 'before commit', `${at}: the new file is in place exactly when its commit landed`);
+
+        if (point === 'before commit') {
+          // Asked again, it goes through: the Mac is bound from here on.
+          const again = flow === 'bind' ? await app.post('/api/vault/bind') : await app.post('/api/vault/restore', { mnemonic: words.join(' ') });
+          assert.equal(again.json.ok, true, `${at}: ${JSON.stringify(again.json)}`);
+        }
+        // No orphan key past a sweep: once every key made in this run is past its first minutes,
+        // the keychain holds the bound key and its marker, and nothing else.
+        double.now = T0 + 3600;
+        const swept = double.run({ op: 'sweep' });
+        assert.equal(swept.ok, true, JSON.stringify(swept));
+        const left = double.state();
+        const current = JSON.parse(fs.readFileSync(live, 'utf8')).header.enclave.keyBlob.slice('keychain:'.length);
+        assert.deepEqual(left.keys.map((k) => k.tag), [current], `${at}: one key, the bound one`);
+        assert.deepEqual(left.markers.map((m) => m.tag), [current], `${at}: one marker, for it`);
+        const pin = double.run({ op: 'status', ...material(liveRequestOf(live)) });
+        assert.equal(pin.pinMatches, true, `${at}: the file in place is the committed one`);
+      } finally {
+        await app.stop();
+      }
     }
   }
 });
