@@ -14,14 +14,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
 import { execFileSync, spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { readWindowToken, WINDOW_TOKEN_VAR } from '../../src/http/auth.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -102,7 +101,7 @@ test('the environment variable is not a way in any more', async () => {
 
 // The whole point, against a real backend: the token reaches it and `ps eww` cannot show it.
 test('a real backend takes its token off stdin, and ps cannot read it back', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-tokenpipe-'));
+  const dataDir = tempDir('phosphor-tokenpipe-');
   const token = crypto.randomBytes(32).toString('hex');
   const port = 4300 + Math.floor(Math.random() * 60);
 

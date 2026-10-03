@@ -10,7 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
@@ -21,11 +20,12 @@ import { beginDraining, isDraining, resetDrainingForTests } from '../../src/drai
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
 import { seatSecretPath } from '../../src/agents.ts';
 import type { LogEvent } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-shutdown-'));
+  return tempDir('phosphor-shutdown-');
 }
 
 function harness(over: Partial<{ settle: (ms: number) => Promise<boolean>; close: () => Promise<void> }> = {}): {

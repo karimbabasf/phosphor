@@ -9,7 +9,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -27,6 +26,7 @@ import { savePolicy } from '../../src/policy/file.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalView, Rail, RiskRow } from '../../src/types.ts';
 import type { ProposalView as View } from '../../src/proposals/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..', '..');
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -53,7 +53,7 @@ const rail: Rail = {
 };
 
 async function boot(): Promise<{ url: string; close: () => Promise<void>; id: string }> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-status-view-'));
+  const dataDir = tempDir('phosphor-status-view-');
   const cfg: AppConfig = { mode: 'live', port: 0, addresses: { evm: SELF }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json') };
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const ledger = {

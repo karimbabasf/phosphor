@@ -6,8 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { readFileSync, mkdtempSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 import {
@@ -22,6 +21,7 @@ import {
   normaliseColour,
   readTheme,
 } from '../../src/view/theme.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const SLOTS = ['accent', 'background', 'up', 'down', 'agent'] as const;
 
@@ -243,7 +243,7 @@ test('reset goes back to the colourway, whatever the slots were', () => {
    reset, or by a set_theme that changed one slot, holds the old shipped values for the rest; they
    meant "the colourway", so they read back as today's, and a slot somebody chose stays theirs. */
 test('a theme file holding the colourway\'s old slots reads as the warm charcoal, and a chosen slot stays', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'phosphor-theme-'));
+  const dir = tempDir('phosphor-theme-');
   writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#3fff6c', background: '#0e0f13', up: '#3fff6c', down: '#ff5a6e', agent: '#c9b3ff', profile: 'green-on-black' }));
   const read = readTheme(dir);
   assert.equal(read.background, '#161210');
@@ -262,7 +262,7 @@ test('a white ground is refused because the gate red cannot be read on it', () =
 });
 
 test('a theme file from before the colourways comes back as green on black, and one naming it keeps its slots', () => {
-  const dir = mkdtempSync(path.join(tmpdir(), 'phosphor-theme-'));
+  const dir = tempDir('phosphor-theme-');
   writeFileSync(path.join(dir, 'theme.json'), JSON.stringify({ accent: '#5b8def', background: '#0b0d10', up: '#33ff66', down: '#ff5a6e', agent: '#b79cff' }));
   const old = readTheme(dir);
   assert.equal(old.profile, 'green-on-black');

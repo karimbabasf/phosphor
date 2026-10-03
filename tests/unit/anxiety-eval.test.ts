@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -11,6 +10,7 @@ import { counts, markdownTable, worstThree, type RowResult } from '../../scripts
 import { scoreFlow } from '../../scripts/anxiety/flows.ts';
 import { endingReply, fill } from '../../scripts/anxiety/agent.ts';
 import { claimedRows } from '../../scripts/anxiety/scenes.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -40,7 +40,7 @@ test('the rubric in judge.ts is the definitions file term 6(b) verbatim', () => 
    purpose, NEAR AI Cloud offers no vision model, and a fake `claude` answers: the judge must fall
    to claude -p without one request to openrouter.ai. A leg that comes back fails here. */
 test('the judge probe skips OpenRouter even with a key in the env file', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-judge-'));
+  const dir = tempDir('phosphor-judge-');
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const shot = path.join(dir, 'probe.png');
   fs.writeFileSync(shot, Buffer.from('89504e470d0a1a0a', 'hex'));

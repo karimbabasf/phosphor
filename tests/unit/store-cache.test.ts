@@ -15,14 +15,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createStore, CorruptStateError } from '../../src/store.ts';
 import type { Proposal, ProposalStatus } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-store-cache-'));
+  return tempDir('phosphor-store-cache-');
 }
 
 function row(id: string, status: ProposalStatus = 'executed'): Proposal {

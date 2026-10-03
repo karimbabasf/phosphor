@@ -7,7 +7,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { Hex } from 'viem';
@@ -29,6 +28,7 @@ import { buildNonce } from '../../src/relay/payload.ts';
 import { CHAIN_SALT, balanceOf, freshChain, netOn, oneclickFetchOn, oneclickOn, setBalance, settle, verdict } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const PASS = 'a long passphrase for the invite file';
@@ -48,7 +48,7 @@ type Bench = {
 };
 
 async function bench(): Promise<Bench> {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-convert-'));
+  const home = tempDir('phosphor-invite-convert-');
   const file = path.join(home, '.phosphor-invites', 'invites.enc.json');
   const chain = freshChain();
   const signed: string[] = [];

@@ -16,7 +16,6 @@ import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
@@ -35,6 +34,7 @@ import { defaultPolicy } from '../src/policy/file.ts';
 import { loadDemoLedger, loadDemoReads } from '../src/ledger/demo.ts';
 import { buildWallet } from '../src/wallet.ts';
 import { venueAllowlist } from '../src/rails/index.ts';
+import { tempDir } from './unit/helpers/tmp.ts';
 
 type Json = any;
 
@@ -151,7 +151,7 @@ function auditLines(): LogEvent[] {
 }
 
 before(async () => {
-  dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-injection-'));
+  dataDir = tempDir('phosphor-injection-');
   port = await freePort();
   base = `http://127.0.0.1:${port}`;
   // Module-scoped, because the worker-surface test below starts a SECOND mcp.ts against this

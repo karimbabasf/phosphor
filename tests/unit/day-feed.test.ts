@@ -16,7 +16,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -35,6 +34,7 @@ import {
   parseMarkets,
   type DayAnswer,
 } from '../../src/ledger/day.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Row = Record<string, any>;
 
@@ -479,7 +479,7 @@ test('GET /api/day answers the assets the window names, every listed one with no
 /* ---------- the list it names its coins from ---------- */
 
 test('the feed reads the token list the ledger already keeps: one fetch, not a second fetcher', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-day-'));
+  const dir = tempDir('phosphor-day-');
   const cfg: AppConfig = { mode: 'live', keysPath: path.join(dir, 'keys.json'), port: 4177, addresses: {}, candleProducts: [], dataDir: dir };
   let listReads = 0;
   const fetchImpl = (async (input: string | URL | Request) => {

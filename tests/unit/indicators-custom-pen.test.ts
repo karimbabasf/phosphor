@@ -6,7 +6,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { Candle } from '../../src/types.ts';
@@ -15,9 +14,10 @@ import { normaliseParams } from '../../src/indicators.ts';
 import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
 import { translatePine } from '../../src/indicators-custom/pine.ts';
 import { customIndicatorSchema } from '../../src/indicators-custom/schema.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function scratch(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pen-'));
+  return tempDir('phosphor-pen-');
 }
 
 function candles(n: number): Candle[] {

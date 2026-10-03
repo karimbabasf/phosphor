@@ -8,7 +8,6 @@
 // refuse clearing one that is not an idea.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -25,6 +24,7 @@ import type { LiveSocket } from '../../src/market/live.ts';
 import type { Catalog, MarketRef, Provider } from '../../src/market/catalog.ts';
 import type { AppConfig, Candle, LedgerSnapshot, ProposalService, ViewMode } from '../../src/types.ts';
 import { stubView } from './view.ts';
+import { tempDir } from '../unit/helpers/tmp.ts';
 
 const COINS = ['BTC', 'ETH', 'SOL'];
 
@@ -125,7 +125,7 @@ export async function bootChartServer(
     tradeRead?: (symbol?: string) => unknown;
   } = {},
 ): Promise<ChartHarness> {
-  const dataDir = opts.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chart-'));
+  const dataDir = opts.dataDir ?? tempDir('phosphor-chart-');
   // Files a test drops into the indicators folder before the server reads it at boot, the way
   // a human would: name to body, read by the real loader through the real resolver.
   if (opts.indicators !== undefined) {

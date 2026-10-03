@@ -1,10 +1,7 @@
 // The propose door driven in process: handlePropose over a real duplicate guard and whatever
 // proposal service the test hands in, with the HTTP response captured as JSON.
 
-import fs from 'node:fs';
 import type http from 'node:http';
-import os from 'node:os';
-import path from 'node:path';
 
 import type { Proposal, ProposalService } from '../../../src/types.ts';
 import type { Ctx } from '../../../src/http/context.ts';
@@ -16,6 +13,7 @@ import { createAudit } from '../../../src/audit.ts';
 import type { Audit } from '../../../src/audit.ts';
 import type { DuplicateGuard } from '../../../src/duplicates.ts';
 import { stubView } from '../../fixtures/view.ts';
+import { tempDir } from './tmp.ts';
 
 export type Reply = { status: number; json: Record<string, unknown> };
 
@@ -75,7 +73,7 @@ export function makeHttp(over: { proposals: ProposalService; audit?: Audit; data
   const duplicates = createDuplicateGuard(over.now ?? Date.now, undefined, {
     inFlight: (id) => stillInFlight(over.proposals.get(id)),
   });
-  const audit = over.audit ?? createAudit(over.dataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-http-')));
+  const audit = over.audit ?? createAudit(over.dataDir ?? tempDir('phosphor-http-'));
   const ctx = {
     proposals: over.proposals,
     duplicates,

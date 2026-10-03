@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createChartSlots } from '../../src/charts.ts';
@@ -22,12 +21,13 @@ import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
 import { createMarkingsFile, createMarkingsKeeper, MARKINGS_FILE, MARKINGS_MAX_BYTES, parseMarkings } from '../../src/markings.ts';
 import type { SavedMarkings } from '../../src/markings.ts';
 import { bootChartServer } from '../fixtures/chart-server.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const T0 = 1_760_000_000;
 const FIXTURES = path.join(import.meta.dirname, '..', 'fixtures', 'indicators');
 
 function tmp(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-markings-'));
+  return tempDir('phosphor-markings-');
 }
 
 function logged(): { lines: string[]; log: (line: string) => void } {

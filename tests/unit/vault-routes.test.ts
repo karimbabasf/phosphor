@@ -11,7 +11,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -41,6 +40,7 @@ import { createSession } from '../../src/keystore/session.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
 import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -85,7 +85,7 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
 }
 
 async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth } = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-vault-'));
+  const dataDir = tempDir('phosphor-vault-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -567,7 +567,7 @@ test('the window asks the route for the exact asset before it draws an address: 
 });
 
 test('with no shell relaying, the enclave verbs say so and the password path is untouched', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-vault-bare-'));
+  const dataDir = tempDir('phosphor-vault-bare-');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: fast });
   const token = crypto.randomBytes(32).toString('hex');
@@ -673,7 +673,7 @@ async function walletWithLockedPlan(b: Awaited<ReturnType<typeof boot>>) {
   b.keystore.updatePayload((p) => ({ ...p, hyperliquidAgents: { mainnet: { privateKey: TRADING_KEY, address: '0x3333333333333333333333333333333333333333' } } }));
   b.keystore.lock();
   useKeystore(b.keystore);
-  const store = createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-plans-')));
+  const store = createPlanStore(tempDir('phosphor-plans-'));
   const at = new Date().toISOString();
   store.put({
     id: 'p1', symbol: 'SOL', side: 'long', sizeUsd: 100, leverage: 2, entry: { type: 'market', maxSlippageBps: 30 }, stop: 90,

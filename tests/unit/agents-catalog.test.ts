@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +30,7 @@ import {
   type ConnectionSpec,
   type Run,
 } from '../../src/agents-catalog.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const FIXTURES = path.join(ROOT, 'tests', 'fixtures');
@@ -38,7 +38,7 @@ const fixture = (name: string): string => path.join(FIXTURES, name);
 
 // A home with nothing in it and a PATH that names nothing, so only the override finds a binary.
 function bareHome(): { home: string; env: NodeJS.ProcessEnv } {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-agents-'));
+  const home = tempDir('phosphor-agents-');
   return { home, env: { HOME: home, PATH: '/nonexistent' } };
 }
 
@@ -362,7 +362,7 @@ test('a registration that fails says so in a detail line and never claims a writ
 /* ---------- the pick ---------- */
 
 test('the pick lands in agent.json and comes back; a broken file is no pick rather than an error', () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-pick-'));
+  const dataDir = tempDir('phosphor-pick-');
   assert.equal(readPick(dataDir), null);
   const pick = writePick(dataDir, 'codex', () => Date.parse('2026-09-20T12:00:00Z'));
   assert.deepEqual(pick, { agent: 'codex', pickedAt: '2026-09-20T12:00:00.000Z' });

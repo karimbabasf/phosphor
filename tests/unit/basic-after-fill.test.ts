@@ -6,12 +6,11 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { AppConfig } from '../../src/types.ts';
 import { createLedger } from '../../src/ledger/index.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -31,7 +30,7 @@ function cfgFor(mode: AppConfig['mode'], dataDir: string): AppConfig {
 }
 
 test('the demo ledger re-stamps its read on every refresh', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-after-fill-'));
+  const dataDir = tempDir('phosphor-after-fill-');
   const ledger = createLedger(cfgFor('demo', dataDir));
   const first = stampOf(ledger.snapshot().fetchedAt);
   await sleep(5);
@@ -40,7 +39,7 @@ test('the demo ledger re-stamps its read on every refresh', async () => {
 });
 
 test('the live ledger stamps the read when it starts, and again on every refresh', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-after-fill-'));
+  const dataDir = tempDir('phosphor-after-fill-');
   // No key on disk, so the verifier and the venue are not read; a fetch that fails after a
   // pause stands in for the price reads and makes the start and the end of a refresh distinct.
   const slowOffline = (async () => {

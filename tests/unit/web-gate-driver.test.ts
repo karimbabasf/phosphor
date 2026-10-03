@@ -6,7 +6,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -17,6 +16,7 @@ import { checkPage, walletPrints } from '../../src/web-gate.ts';
 import type { WalletPrints } from '../../src/web-gate.ts';
 import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
 import { bootDriverServer } from '../fixtures/driver-server.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const SETTINGS = lockdownCopy();
@@ -29,7 +29,7 @@ async function until(check: () => boolean, ms = 20_000): Promise<void> {
 }
 
 function world(seat: string, prints?: () => WalletPrints) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-web-gate-'));
+  const dir = tempDir('phosphor-web-gate-');
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   const events: DriverEvent[] = [];
@@ -143,7 +143,7 @@ test('the same search with no prints to check against records its links and clos
    and its driver got no prints, so a search of its that carried them sealed nothing. Through the
    real crew and the real driver over the stand-in: the crew hands the worker the chat's prints. */
 test('a worker\'s search that carries the wallet\'s figure and address closes its page reading', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-web-gate-crew-'));
+  const dir = tempDir('phosphor-web-gate-crew-');
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   let seat = '';

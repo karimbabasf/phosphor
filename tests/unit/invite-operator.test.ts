@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { Hex } from 'viem';
@@ -26,6 +25,7 @@ import { readTerminalLine } from '../../scripts/invite/tty.ts';
 import { NOT_A_TERMINAL, main } from '../../scripts/invite.ts';
 import { freshChain, netOn, relayOn, verdict } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const PASS = 'a long passphrase for the invite file';
@@ -43,7 +43,7 @@ type Bench = {
 };
 
 function bench(): Bench {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-op-'));
+  const home = tempDir('phosphor-invite-op-');
   const file = path.join(home, '.phosphor-invites', 'invites.enc.json');
   const chain = freshChain();
   const signed: string[] = [];
@@ -140,7 +140,7 @@ test('every command refuses a stdin that is not a terminal, before it asks for a
 });
 
 test('the real script, run with a piped stdin, refuses and makes nothing', () => {
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-pipe-'));
+  const home = tempDir('phosphor-invite-pipe-');
   const file = path.join(home, 'invites.enc.json');
   for (const command of ['treasury', 'status']) {
     const r = spawnSync(process.execPath, [path.join(REPO, 'scripts', 'invite.ts'), command, '--file', file], {

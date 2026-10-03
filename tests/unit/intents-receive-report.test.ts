@@ -8,7 +8,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type http from 'node:http';
 
@@ -21,6 +20,7 @@ import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Any = Record<string, any>;
 
@@ -216,7 +216,7 @@ test('verified is read fresh on every call, never from the cached bridge half', 
 });
 
 test('PHOSPHOR_DEMO_RECEIVE stands in for the bridge in demo mode only, and may name only some networks', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-receive-'));
+  const dir = tempDir('phosphor-receive-');
   const file = path.join(dir, 'receive.json');
   fs.writeFileSync(file, JSON.stringify({
     addresses: { eth: '0xfixture', base: '0xfixture', sol: 'SoLfixture', btc: 'bc1fixture' },
@@ -466,7 +466,7 @@ function routesFor(table: Record<string, RouteVerdict['state']>, byAsset: Record
 }
 
 test('a network NEAR Intents has paused draws no address, says why in one sentence, and links the status page', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-route-'));
+  const dataDir = tempDir('phosphor-route-');
   const { routes, asked } = routesFor({ ton: 'closed', base: 'degraded' });
   const b = bridge({ tokens: [USDC_ROW, ETH_ROW, TON_ROW, TON_USDT_ROW] });
   let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;

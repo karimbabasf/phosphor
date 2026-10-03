@@ -15,17 +15,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit, hashLine, readTip, verifyChain, TIP_FILENAME } from '../../src/audit.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // What these boots pipe as the window token, which health wants before it says anything about the
 // audit chain (src/http/health.ts).
 const TOKEN = 'c'.repeat(64);
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-audit-tip-'));
+  return tempDir('phosphor-audit-tip-');
 }
 
 function seeded(lines = 8): { dir: string; file: string; audit: ReturnType<typeof createAudit> } {

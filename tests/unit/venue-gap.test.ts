@@ -11,7 +11,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -24,6 +23,7 @@ import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
 import { missingVenues, proposeVenueGap, venueGapSentence } from '../../src/policy/venues.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -39,7 +39,7 @@ function policyWithout(...absent: string[]): Policy {
 }
 
 function setup(policy: Policy) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-venuegap-'));
+  const dataDir = tempDir('phosphor-venuegap-');
   const cfg: AppConfig = {
     mode: 'demo',
     keysPath: path.join(dataDir, 'keys.json'),

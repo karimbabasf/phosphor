@@ -9,7 +9,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -26,6 +25,7 @@ import { defaultParams } from '../../src/keystore/kdf.ts';
 import { lockCodeOf, lockReasonFor } from '../../src/keystore/lock-reason.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const PASSWORD = 'a long enough password';
 const SNAPSHOT: LedgerSnapshot = { mode: 'demo', fetchedAt: new Date().toISOString(), prices: {} };
@@ -43,7 +43,7 @@ const row = (id: string, status: ProposalStatus): Proposal =>
   }) as unknown as Proposal;
 
 async function boot(rows: Proposal[] = []) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lockreason-'));
+  const dataDir = tempDir('phosphor-lockreason-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   fs.writeFileSync(path.join(dataDir, 'proposals.json'), JSON.stringify(rows));

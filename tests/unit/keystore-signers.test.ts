@@ -11,7 +11,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { liveIntentsSigner } from '../../src/rails/intents-native.ts';
@@ -20,6 +19,7 @@ import { readApiWallet } from '../../src/runner/keys.ts';
 import { createKeystore, evmAddress, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { walletFromMnemonic } from '../../src/keystore/derive.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const VECTOR_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
@@ -31,7 +31,7 @@ function fast(): ReturnType<typeof defaultParams> {
 }
 
 async function walletOnDisk(): Promise<{ keysPath: string; store: ReturnType<typeof createKeystore> }> {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-signers-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-signers-'), 'keys.json');
   const store = createKeystore({ keysPath, kdf: fast });
   await store.importWallet(PASSWORD, { mnemonic: VECTOR });
   useKeystore(store);
@@ -77,7 +77,7 @@ test('while locked every signer refuses, and says the wallet is locked', async (
 });
 
 test('the runner asks for the API wallet key and is told the wallet is locked, not that there is none', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-agentkey-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-agentkey-'), 'keys.json');
   // A plaintext file with an approved agent, migrated into the envelope, so the agent key
   // travels with everything else rather than being a second file.
   fs.writeFileSync(
@@ -104,7 +104,7 @@ test('the runner asks for the API wallet key and is told the wallet is locked, n
 });
 
 test('with no wallet at all the signers name what to do instead of throwing about a file', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-nowallet-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-nowallet-'), 'keys.json');
   useKeystore(createKeystore({ keysPath, kdf: fast }));
   assert.throws(() => evmAddress(keysPath), /Create a wallet in the app window|no wallet/i);
   assert.equal(readApiWallet(keysPath).source, 'absent');

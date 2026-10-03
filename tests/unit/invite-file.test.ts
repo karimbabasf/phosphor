@@ -7,7 +7,6 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { codeAddress, formatCode, generateSecret } from '../../src/invite/code.ts';
@@ -16,12 +15,13 @@ import type { InviteBook } from '../../scripts/invite/book.ts';
 import { INVITE_FILE_ENV, MIN_PASSPHRASE_CHARS, createInviteFile, defaultInviteFile, inviteFilePath, openInviteFile, passphraseChars, takeLock } from '../../scripts/invite/file.ts';
 import { newTreasury } from '../../scripts/invite/money.ts';
 import { START, countingRandom } from './helpers/invite-chain.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const PASS = Buffer.from('correct horse battery staple, twice over', 'utf8');
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-file-'));
+  return tempDir('phosphor-invite-file-');
 }
 
 // A book with one batch of `count` codes, every key and code made at run time.

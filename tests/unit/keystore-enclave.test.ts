@@ -12,18 +12,18 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { canonical } from '../../src/keystore/envelope.ts';
 import { seUnwrapWithSoftwareKey, seWrap } from '../../src/keystore/sewrap.ts';
 import { createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
 import type { EnclaveRef, Keystore } from '../../src/keystore/store.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const FAST_KDF = () => ({ name: 'scrypt' as const, N: 2 ** 14, r: 8, p: 1, salt: crypto.randomBytes(16).toString('hex') });
 
 function tmpKeys(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-enclave-'));
+  const dir = tempDir('phosphor-enclave-');
   return path.join(dir, 'keys.json');
 }
 

@@ -10,7 +10,6 @@
 // nothing, which is what keeps the rest of the suite from launching agents.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import type { AddressInfo } from 'node:net';
@@ -26,6 +25,7 @@ import { createMarketData } from '../../src/market/index.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import type { DriverState } from '../../src/driver.ts';
 import { stubView } from './view.ts';
+import { tempDir } from '../unit/helpers/tmp.ts';
 
 const FETCHED_AT = '2026-08-20T00:00:00.000Z';
 
@@ -80,7 +80,7 @@ export type BootOptions = {
 };
 
 export async function bootDriverServer(opts: BootOptions = {}): Promise<Booted> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-'));
+  const dataDir = tempDir('phosphor-driver-');
   const cfg: AppConfig = {
     mode: 'demo',
     port: 0,

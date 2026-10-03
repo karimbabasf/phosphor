@@ -15,7 +15,6 @@ import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { createContext, runInContext } from 'node:vm';
@@ -37,6 +36,7 @@ import { stubView } from '../fixtures/view.ts';
 import { CODE, freshWorld, oneclickOf, relayOf, verifierOf } from './helpers/invite-world.ts';
 import type { World } from './helpers/invite-world.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Any = any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
@@ -72,7 +72,7 @@ function snapshot(): LedgerSnapshot {
 }
 
 async function boot(): Promise<Backend> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-firstrun-e2e-'));
+  const dataDir = tempDir('phosphor-firstrun-e2e-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');

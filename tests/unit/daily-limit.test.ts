@@ -18,8 +18,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
@@ -30,12 +28,13 @@ import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import type { AppConfig, Policy, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
 import { makeCtx, railThat, seededPolicy } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-daily-'));
+  return tempDir('phosphor-daily-');
 }
 
 function serviceOn(dir: string, policy?: Policy): ProposalService {

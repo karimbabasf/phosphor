@@ -9,7 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import {
@@ -24,6 +23,7 @@ import {
   recordLearned,
 } from '../../src/profile/index.ts';
 import type { Profile } from '../../src/profile/index.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const HOSTILE = JSON.parse(
   fs.readFileSync(new URL('../fixtures/hostile.json', import.meta.url), 'utf8'),
@@ -44,7 +44,7 @@ const SAMPLE = [
 ].join('\n');
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-profile-'));
+  return tempDir('phosphor-profile-');
 }
 
 // ---------- parsing ----------

@@ -9,7 +9,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -26,6 +25,7 @@ import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import type { EnclaveRef } from '../../src/keystore/store.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import type { VaultRelay, VaultRequest } from '../../src/vault/relay.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const riskRows = (JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
@@ -77,7 +77,7 @@ async function playShell(relay: VaultRelay, priv: crypto.KeyObject, transport: B
 }
 
 function setup() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-touch-'));
+  const dataDir = tempDir('phosphor-touch-');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const cfg: AppConfig = {
     mode: 'demo',

@@ -10,13 +10,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
 import { handleMutation, thresholdRefusal } from '../../src/http/mutation.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const TOKEN = 'b'.repeat(64);
 
@@ -24,7 +24,7 @@ type Line = { type: string; msg: string; data?: Record<string, unknown> };
 type App = { url: string; dataDir: string; lines: Line[]; close: () => Promise<void> };
 
 async function boot(): Promise<App> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-threshold-'));
+  const dataDir = tempDir('phosphor-threshold-');
   savePolicy(dataDir, defaultPolicy());
   const lines: Line[] = [];
   const ctx = {

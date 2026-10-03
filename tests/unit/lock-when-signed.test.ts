@@ -10,9 +10,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -24,12 +22,13 @@ import type { Ctx } from '../../src/http/context.ts';
 import { mayStillSign } from '../../src/proposals.ts';
 import type { Proposal } from '../../src/types.ts';
 import { makeCtx, slowRail } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const TOKEN = 'w'.repeat(64);
 const PASSWORD = 'a long enough password';
 
 async function openWallet() {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-signed-'));
+  const dir = tempDir('phosphor-signed-');
   const keysPath = path.join(dir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });
   await keystore.create(PASSWORD);

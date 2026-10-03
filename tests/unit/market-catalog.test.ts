@@ -4,12 +4,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import os from 'node:os';
 import path from 'node:path';
 
 import type { Candle } from '../../src/types.ts';
 import { createCatalog, normalizeQuery } from '../../src/market/catalog.ts';
 import { createProviders, pageBackward, planBase, COINBASE_NATIVES, HYPERLIQUID_NATIVES } from '../../src/market/providers.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const HL_META = {
   universe: [{ name: 'BTC' }, { name: 'ETH' }, { name: 'SOL' }, { name: 'HYPE' }, { name: 'WIF' }, { name: 'OLD', isDelisted: true }],
@@ -199,7 +199,7 @@ test('a window asked for behind a moment ends there on both venues, not at now',
     }
     return { ok: true, json: async () => CB_PRODUCTS, text: async () => '', headers: new Headers() };
   }) as unknown as typeof fetch;
-  const catalog = createCatalog({ fetchImpl, cachePath: path.join(os.tmpdir(), `phosphor-catalog-${process.pid}-${Date.now()}.json`) });
+  const catalog = createCatalog({ fetchImpl, cachePath: path.join(tempDir('phosphor-catalog-'), 'catalog.json') });
   await catalog.refresh();
   const providers = createProviders({ catalog, fetchImpl, now: () => 1_800_000_000_000 });
 

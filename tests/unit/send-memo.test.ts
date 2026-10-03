@@ -10,7 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -19,6 +18,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 import type { Proposal } from '../../src/types.ts';
 import { makeHttp, serviceThatAnswers } from './helpers/http.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const XRP_TO = 'rHb9CJAWyB4rj91VRWn96DkukG4bwdtyTh';
@@ -48,7 +48,7 @@ test('the door refuses a memo, tag or comment on a send, with the reason, and a 
 });
 
 test('the propose_send schema refuses an extra key with the memo sentence before the app hears of it', async () => {
-  const data = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-send-memo-'));
+  const data = tempDir('phosphor-send-memo-');
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [path.join(ROOT, 'src', 'mcp.ts')],

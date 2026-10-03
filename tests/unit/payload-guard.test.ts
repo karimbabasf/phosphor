@@ -10,6 +10,7 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 
 import { installResolveGuard, outsidePayload } from '../../src/payload-guard.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = '/Applications/Phosphor.app/Contents/Resources/phosphor';
 
@@ -30,7 +31,7 @@ test('the predicate turns away a file outside the payload and keeps every one in
 });
 
 test('the live hook refuses an outside module and lets an inside one load', async () => {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-guard-'));
+  const base = tempDir('phosphor-guard-');
   const root = path.join(base, 'payload');
   const inside = path.join(root, 'pkg');
   const outside = path.join(base, 'outside');

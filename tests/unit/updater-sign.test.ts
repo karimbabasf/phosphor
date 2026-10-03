@@ -6,9 +6,9 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { decodeSecretKey, keyIdHex, scryptParams, signFile, verifyFile } from '../../scripts/updater-sign.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const root = new URL('../../', import.meta.url);
 const tauri = new URL('node_modules/.bin/tauri', root).pathname;
@@ -16,7 +16,7 @@ const script = new URL('scripts/updater-sign.ts', root).pathname;
 
 /* A throwaway key from `tauri signer generate`, in a private temporary folder. */
 function throwaway(password: string): { dir: string; key: string; pub: string } {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-updater-sign-'));
+  const dir = tempDir('phosphor-updater-sign-');
   const key = path.join(dir, 'throwaway.key');
   execFileSync(tauri, ['signer', 'generate', '--ci', '-p', password, '-w', key], { stdio: 'pipe' });
   return { dir, key, pub: fs.readFileSync(`${key}.pub`, 'utf8') };

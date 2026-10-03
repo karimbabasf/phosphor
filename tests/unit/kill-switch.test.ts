@@ -10,7 +10,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -18,13 +17,14 @@ import { createKill, FREEZE_UNREADABLE, LEFT_OPEN_LOCKED, LEFT_OPEN_NO_KEY, UNFR
 import { defaultPolicy, loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { handle } from '../../src/http/router.ts';
 import type { Ctx } from '../../src/http/context.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const TOKEN = 'k'.repeat(64);
 
 type Venue = { open: boolean; child: 'on' | 'off'; key: 'present' | 'absent' | 'locked' };
 
 function world(policy: 'readable' | 'unreadable', venue: Venue = { open: false, child: 'off', key: 'present' }) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-kill-'));
+  const dataDir = tempDir('phosphor-kill-');
   if (policy === 'readable') savePolicy(dataDir, defaultPolicy());
   else fs.writeFileSync(path.join(dataDir, 'policy.json'), '{ not json');
   const calls: string[] = [];

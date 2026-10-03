@@ -18,19 +18,19 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 import { createAudit, hashLine, readTip, TIP_FILENAME } from '../../src/audit.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const AUDIT_MODULE = path.join(ROOT, 'src', 'audit.ts');
 const CRASH_MODULE = path.join(ROOT, 'src', 'crash.ts');
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-tip-durable-'));
+  return tempDir('phosphor-tip-durable-');
 }
 
 function lines(dir: string): string[] {

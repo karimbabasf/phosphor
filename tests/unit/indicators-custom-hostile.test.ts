@@ -8,7 +8,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { z } from 'zod';
 
@@ -23,6 +22,7 @@ import { compile } from '../../src/indicators-custom/evaluate.ts';
 import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
 import { translatePine } from '../../src/indicators-custom/pine.ts';
 import { customIndicatorSchema } from '../../src/indicators-custom/schema.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const HEAD = '//@version=5\nindicator("T")\n';
 const UI = path.join(import.meta.dirname, '..', '..', 'ui', 'chart');
@@ -35,7 +35,7 @@ const BEL = String.fromCodePoint(0x07);
 const NBSP = String.fromCodePoint(0xa0);
 
 function scratch(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hostile-'));
+  return tempDir('phosphor-hostile-');
 }
 
 function candles(n: number): Candle[] {

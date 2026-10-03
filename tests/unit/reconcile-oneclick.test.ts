@@ -9,8 +9,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
@@ -24,11 +22,12 @@ import type { IntentsActivity } from '../../src/chainscan/index.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { hlDepositCredited } from '../../src/proposals/reconcile.ts';
 import type { AppConfig, Proposal, ProposalService, ProposalStatus, RiskRow } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-oneclick-'));
+  return tempDir('phosphor-oneclick-');
 }
 
 function statusOf(over: Partial<OneClickStatus>): OneClickStatus {

@@ -21,7 +21,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
@@ -34,11 +33,12 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { fetchIntentsHoldings } from '../../src/ledger/intents.ts';
 import type { LogEvent, Proposal } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-failure-'));
+  return tempDir('phosphor-failure-');
 }
 
 // The window token these boots are piped, as the shell pipes one. Every read carries it.

@@ -15,8 +15,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
@@ -29,11 +27,12 @@ import { venueAllowlist } from '../../src/rails/index.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
 import { reservationMade, reservationState, withReservation } from '../../src/proposals/reservation.ts';
 import type { AppConfig, ProposalService, Rail, RiskRow, WriteDraft } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lock-'));
+  return tempDir('phosphor-lock-');
 }
 
 // ---------- the queue itself, in isolation ----------
