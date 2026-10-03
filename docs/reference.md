@@ -93,7 +93,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 
 | Write tool | Does |
 |---|---|
-| `propose_swap` | Swaps one token for another inside `intents.near`, over the balance the app already holds there: one signed intent, nothing moves on any chain. `chain` and `toChain` name each asset's home chain, never a place money goes, and are passed only when a network was named. `amountIn` is `"all"` (the balance to the last base unit) or an exact decimal string; the app asks for one quote per proposal and sets `minAmountOut` one percent under it unless the agent names one |
+| `propose_swap` | Swaps one token for another inside `intents.near`, over the balance the app already holds there: one signed intent, nothing moves on any chain. `chain` and `toChain` name each asset's home chain, never a place money goes, and are passed only when a network was named. `amountIn` is `"all"` (the balance to the last base unit) or an exact decimal string; the app asks for one quote per proposal and sets `minAmountOut` one percent under it unless the agent names one. The solver relay is asked first, and a pair it offers no price for goes through 1Click, decided before the card is priced |
 | `propose_policy_change` | Proposes a patch to the policy rules. Always waits for a human click |
 | `propose_trade` | Arms a plan on Hyperliquid perpetuals, whole or by the id of one drawn with `trade_plan`. Priced at the collateral it puts at stake: the click threshold is the only wall |
 | `propose_trade_change` | Changes an armed plan: a new stop or target, cancel, or close. A change that only takes risk off lands without the wall; one that widens is priced like a new plan |

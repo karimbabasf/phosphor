@@ -10,7 +10,8 @@
 //   1. 'swap' is a balance inside the verifier changing what it holds, and two rails do it:
 //      the solver relay (one atomic token_diff, src/rails/intents-relay.ts) and the 1Click
 //      transfer it replaced (src/rails/intents-native.ts), kept one config line away for a
-//      month after the flip (`swap.rail`, src/config.ts). Both are built; the draft's venue
+//      month after the flip (`swap.rail`, src/config.ts) and the route of a relay swap the relay
+//      offers no price for (src/proposals/swap-route.ts). Both are built; the draft's venue
 //      picks, so a row written under either rail reaches the rail that wrote it. The
 //      chain-side 1Click venue went with the chain wallets (2026-09-16); rows it wrote still
 //      render as history.

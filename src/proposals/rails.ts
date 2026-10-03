@@ -13,6 +13,7 @@ import type {
   IntentsPayDraft,
   IntentsSendDraft,
   Proposal,
+  Rail,
   SendParams,
   SendRecipient,
   SimulationResult,
@@ -46,6 +47,7 @@ import type { PCtx } from './lifecycle.ts';
 import { RELAY_DEADLINE_GRACE_MS } from './reconcile.ts';
 import { draftSymbolOf, pickSwapSides } from './swap-reads.ts';
 import type { SidePick, SwapSide } from './swap-reads.ts';
+import { oneClickRoute } from './swap-route.ts';
 
 /* A SWAP PROPOSAL IN TWO HALVES, so the spend queue never waits on the network.
    prepareSwap reads the world: the balance, the price the floor is cut from, the simulation.
@@ -161,10 +163,12 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
 
   // The venue is the config switch's word at the moment of the ask (`swap.rail`), pinned into
   // the draft so the row is executed, retried and reconciled by the rail it was drafted for
-  // whatever the switch says later. Both rails share the one counterparty: the verifier.
+  // whatever the switch says later; a relay with no price for the pair moves it to 1Click below,
+  // before anything is priced for the card (./swap-route.ts). Both rails share the one
+  // counterparty: the verifier.
   const relay = swapRailOf(ctx.cfg) === 'relay';
   const ask = amountAsk(params.amountIn);
-  const draft: SwapDraft = {
+  let draft: SwapDraft = {
     kind: 'swap',
     venue: relay ? INTENTS_RELAY_VENUE : 'intents-native',
     chain,
@@ -181,7 +185,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
     quote: null,
   };
   if (ask === null) refuse('The amount has to be "all" or a number above zero, like 1.5.', 'invalid_request');
-  const rail = ctx.rails.for(draft);
+  let rail = ctx.rails.for(draft);
 
   /* THE EXACT AMOUNT, AND NEVER MORE THAN IS HELD. The rail names the coin spent and reads what
      the verifier holds of it; "all" is that figure to the last base unit, an amount is cut to
@@ -217,14 +221,12 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
      refusal says its real cause: the venue not listing a coin used to read as "nobody offered a
      price" because every error here was swallowed (R1, 2026-09-23). */
   if (params.minAmountOut === undefined && problems.length === 0) {
-    let priced: number | null = null;
-    let failure: unknown = null;
-    if (rail !== null && typeof rail.quote === 'function') {
-      try {
-        priced = await rail.quote(draft);
-      } catch (err) {
-        failure = err;
-      }
+    let { priced, failure } = await floorlessPrice(rail, draft);
+    // Nobody on the relay: the same question on 1Click, and the floor comes off its answer.
+    const other = failure === null && !(priced !== null && priced > 0) ? oneClickRoute(ctx, draft) : null;
+    if (other !== null) {
+      ({ draft, rail } = other);
+      ({ priced, failure } = await floorlessPrice(rail, draft));
     }
     if (failure !== null) refuse(`No floor could be set for ${fromSymbol} to ${toSymbol}: ${errText(failure)}`, reasonOf(failure) ?? 'simulation_failed');
     else if (priced === null || !(priced > 0)) {
@@ -235,7 +237,13 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   }
 
   if (problems.length > 0) return { params, draft, refusal: { problems, code }, simulation: null };
-  const simulation = await presimulate(ctx, 'swap', draft);
+  let simulation = await presimulate(ctx, 'swap', draft);
+  // A floor the agent named asks for no price above, so a relay with nobody on the pair says so here.
+  const oneClick = params.minAmountOut !== undefined && simulation?.ok === false && simulation.reason === 'no_price' ? oneClickRoute(ctx, draft) : null;
+  if (oneClick !== null) {
+    draft = oneClick.draft;
+    simulation = await presimulate(ctx, 'swap', draft);
+  }
 
   /* A LISTED PRICE IS BOUNDED BY THE QUOTE. A coin priced only by 1Click's list is governed at the
      larger of the list's value and the quote's own value of what arrives: 1 WBTC listed at $84, a
@@ -253,6 +261,16 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
     }
   }
   return { params, draft, refusal: null, simulation, ask: unchecked };
+}
+
+// A rail's price with no floor in the question: a number, null when nobody offers one, or what went wrong.
+async function floorlessPrice(rail: Rail | null, draft: SwapDraft): Promise<{ priced: number | null; failure: unknown }> {
+  if (rail === null || typeof rail.quote !== 'function') return { priced: null, failure: null };
+  try {
+    return { priced: await rail.quote(draft), failure: null };
+  } catch (err) {
+    return { priced: null, failure: err };
+  }
 }
 
 /* The base units a swap spends, or why it cannot: "all" is the balance read a moment ago, an

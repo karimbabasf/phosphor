@@ -285,9 +285,12 @@ is refused before any price is asked. The app asks for a price once per swap and
 the least you will get, one percent under that quote. A floor you name yourself is kept, but a
 floor of zero, or one more than 20 percent below the app's quote, is refused. By default the
 price comes from the solver relay, which signs nothing it quotes, so the app checks it against a
-quote 1Click signs for the same swap. Under the click
-threshold a swap runs on its own, unless your assistant read text from outside Phosphor (a web
-page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
+quote 1Click signs for the same swap. The relay prices only the pairs a solver on it serves (on
+2026-10-02 none for USDC to ETH, wNEAR or Base ETH). When it offers no price, the same swap goes
+through 1Click instead, under 1Click's own checks, and the card shows 1Click's figures and time.
+The route is picked before the card is drawn, and a swap never changes route after that. Under
+the click threshold a swap runs on its own, unless your assistant read text from outside Phosphor
+(a web page, the news, a chain read, a venue's words the app does not know) earlier in that session, was
 started outside Phosphor and is not allowed yet, the swap spends a coin the app cannot price,
 1Click puts no dollar figure on one of its coins, the relay's price could not be checked
 against a quote 1Click signed, or an earlier swap of the same coin may still go through;

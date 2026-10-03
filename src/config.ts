@@ -105,7 +105,8 @@ export const DEFAULT_SWAP_RAIL: SwapRail = 'relay';
 
 /* The one reader of the switch. The registry builds both rails and picks by the venue the
    draft carries; proposeSwap stamps that venue from here. A config with no swap block runs the
-   relay, which is the flip the spec's phase 3 describes. */
+   relay, which is the flip the spec's phase 3 describes, and a pair the relay offers no price for
+   goes through 1Click (src/proposals/swap-route.ts). */
 export function swapRailOf(cfg: Pick<AppConfig, 'swap'>): SwapRail {
   return cfg.swap?.rail ?? DEFAULT_SWAP_RAIL;
 }

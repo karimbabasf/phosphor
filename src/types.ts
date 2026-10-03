@@ -228,9 +228,10 @@ export type SwapDraft = {
   // transfers nothing on any chain. 'intents-relay' signs one atomic token_diff through the
   // solver relay (docs/superpowers/specs/2026-09-20-swap-relay-design.md); 'intents-native'
   // is the 1Click transfer it replaces, kept behind `swap.rail` until the relay has settled
-  // real money. 'oneclick' (wallet funds to a per-quote deposit address) and 'uniswap-v3' are
-  // retired: state/proposals.json holds executed rows naming them, and the history readers
-  // take the venue as a string, so nothing has to type those rows.
+  // real money, and the route of a relay swap the relay offers no price for
+  // (src/proposals/swap-route.ts). 'oneclick' (wallet funds to a per-quote deposit address) and
+  // 'uniswap-v3' are retired: state/proposals.json holds executed rows naming them, and the
+  // history readers take the venue as a string, so nothing has to type those rows.
   venue: 'intents-native' | 'intents-relay';
   // The home chains of the two ASSETS, which is how the 1Click token list names an asset
   // ("USDC from eth" and "USDC from arb" are two ids). Neither is a place money moves to or
