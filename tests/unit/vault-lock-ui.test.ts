@@ -12,8 +12,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
-import { refusal, refusalCodes } from '../../src/http/wallet.ts';
-import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
 
 type Any = Record<string, any>;
 
@@ -842,6 +842,37 @@ test('a migration the backend refuses on such a Mac is said in its sentence on t
   assert.match(refused.error as string, /^Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file/);
   assert.ok(textOf(screen).includes(refused.error as string), JSON.stringify(textOf(screen)));
   assert.ok(!RAW.test(refused.error as string), refused.error as string);
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in each restore the lock card
+   offers: the line under the field is the table's one sentence, never the system's text or the key
+   file's path. */
+test('a disk that refuses the wallet file in a restore from the lock card is one calm sentence, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
+  const sentence = refusal('write_failed').error as string;
+  const cards: Array<[string, Any, string]> = [
+    ['the password card', { lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, PHRASE],
+    ['a readable key file kept closed', readableKeyFile(true), GROUPS.join(' ')],
+  ];
+  for (const [where, state, typed] of cards) {
+    const world = build(state, [LOCK]);
+    world.answer.restore = answer;
+    world.sandbox.PhosphorLock.boot();
+    const screen = world.nodes['screen-lock'];
+    find(screen, 'button.lock-forgot')[0].click();
+    const step = find(screen, '.lock-restore')[0];
+    find(step, 'textarea')[0].value = typed;
+    buttonNamed(step, 'Restore').click();
+    buttonNamed(step, 'Restore').click();
+    await flush();
+    await flush();
+    const lines = find(step, '.lock-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+    assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
+    for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
+  }
 });
 
 /* ---------- the first run ---------- */

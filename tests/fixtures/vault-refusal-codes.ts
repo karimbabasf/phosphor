@@ -23,5 +23,13 @@ export const VAULT_REFUSAL_CODES: readonly string[] = [...new Set([...service, .
    does not hold), "access control: ..." and the relay's own words. */
 export const SERVICE_MESSAGE = 'no user present; keychain key -25300; access control: SecAccessControlCreate failed; keyBlob names no vault key';
 
-/* What the window may never print: a code, an OS phrase, a status number. */
-export const RAW = /[a-z]+_[a-z_]+|no user present|-\d{4,5}\b|access control|keyBlob|SecAccess|the enclave answered|\benclave\b|keychain|\bmarker\b|\bpin\b|\bblob\b|\bbind\b|\bbound\b/i;
+/* What the window may never print: a code, an OS phrase, a status number, and what a disk error
+   carries (reaudit1b RA1B-03): the system's code, its words, a path, the key file's name. */
+export const RAW = /[a-z]+_[a-z_]+|no user present|-\d{4,5}\b|access control|keyBlob|SecAccess|the enclave answered|\benclave\b|keychain|\bmarker\b|\bpin\b|\bblob\b|\bbind\b|\bbound\b|\bE(?:ACCES|PERM|NOENT|ISDIR|NOTDIR|NOSPC|EXIST|BUSY|IO|ROFS|MFILE|NFILE|XDEV|LOOP|NOTEMPTY|DQUOT)\b|illegal operation|no such file|permission denied|operation not permitted|no space left|(?:^|[\s'"(])(?:\/[\w.@-]+){2,}|keys\.enc\.json|\.tmp\b/i;
+
+/* A disk error as the system raises it while a wallet file is written: the shape the backend is
+   handed (code and call beside a message that names the key file's path). Made up, path included. */
+export function diskError(): Error {
+  const message = "EISDIR: illegal operation on a directory, rename '/Users/someone/Library/Application Support/Phosphor/keys/.keys.enc.json.bind.4242.0a1b2c3d.tmp' -> '/Users/someone/Library/Application Support/Phosphor/keys/keys.enc.json.bind'";
+  return Object.assign(new Error(message), { code: 'EISDIR', errno: -21, syscall: 'rename', path: '/Users/someone/Library/Application Support/Phosphor/keys/.keys.enc.json.bind.4242.0a1b2c3d.tmp' });
+}

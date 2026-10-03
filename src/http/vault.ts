@@ -17,7 +17,7 @@ import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { sameOrigin } from './auth.ts';
 import type { Ctx } from './context.ts';
-import { announce, depositRoute, guarded, refusal } from './wallet.ts';
+import { announce, depositRoute, diskRefusal, guarded, refusal } from './wallet.ts';
 import type { IntentsReceiveToken } from './wallet.ts';
 import { afterBoundOpen, bindingOf, bindWallet, enclaveRefusal, newEnclaveKey, openableHere, proveAndInstall, settleFor, sweepSoon } from './custody.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
@@ -162,6 +162,12 @@ function reply(res: http.ServerResponse, r: Reply): void {
   else sendJson(res, 200, r.json);
 }
 
+/* A step stopped by a throw: the disk's refusal in the app's words when the system raised it
+   (wallet.ts diskRefusal), else the app's own sentence, as these steps always answered. */
+function refusedOr409(disk: JsonBody | null, err: unknown): Reply {
+  return disk === null ? { fail: 409, error: errText(err) } : { json: disk };
+}
+
 /* One Touch ID with the given reason, and what `use` makes of the data key it releases, all under
    the custody lock (src/vault/custody-lock.ts): the file the enclave was asked about is the file
    `use` opens, and no bind replaces it in between. A staged file a crash left is settled first
@@ -231,7 +237,7 @@ export async function handleVaultCreate(ctx: Ctx, req: http.IncomingMessage, res
       try {
         staged = ctx.keystore.stageNew(fresh.key);
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed'), err);
       }
       const made = await proveAndInstall(ctx, staged, CREATE_REASON, 'open');
       if ('refused' in made) {
@@ -497,7 +503,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
       try {
         staged = ctx.keystore.stageImport(fresh.key, from);
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'a wallet was not restored', err, 'write_failed'), err);
       }
       const restored = await proveAndInstall(ctx, staged, fromKey ? RESTORE_KEY_REASON : RESTORE_REASON, 'open');
       if ('refused' in restored) {
@@ -584,7 +590,7 @@ export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res
       try {
         gone = ctx.keystore.forget();
       } catch (err) {
-        return { fail: 409, error: errText(err) };
+        return refusedOr409(diskRefusal(ctx, 'the wallet was not forgotten', err, 'forget_failed'), err);
       }
       ctx.keystore.dropStaged();
       foreign = false;

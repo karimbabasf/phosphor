@@ -32,6 +32,7 @@ import { atomicWriteJson } from '../fsatomic.ts';
 import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
+import { osError } from '../err-text.ts';
 import { keyGroups, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
@@ -201,6 +202,9 @@ const REFUSALS: Record<string, string> = {
   // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
   proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
   write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',
+  // Forget overwrites the file before it removes it, so a disk that stops it part way may leave
+  // the file unreadable: never "nothing changed" here.
+  forget_failed: 'Phosphor could not finish removing the wallet file on this Mac. Your backup still brings the wallet back. Check that the Mac has free space, then try again.',
 };
 
 /* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
@@ -210,6 +214,17 @@ export function knownRefusal(code: string): boolean {
 
 export function refusalCodes(): string[] {
   return Object.keys(REFUSALS);
+}
+
+/* A disk that refused the wallet file (full, a permission, a directory where the file goes), said
+   in the words of this table and nothing of the system's: its text names the key file's path
+   (reaudit1b RA1B-03). The audit line keeps the system's code and the call that failed. Null for a
+   failure the system did not raise, which is the app's own sentence. */
+export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed'): JsonBody | null {
+  const os = osError(err);
+  if (os === null) return null;
+  ctx.audit.append('app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
+  return refusal(code);
 }
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -352,6 +367,8 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }
@@ -379,6 +396,8 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
     announce(ctx);
     sendJson(res, 200, { ok: true, addresses: out.addresses });
   } catch (err) {
+    const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
     fail(res, 400, errText(err));
   }
 }

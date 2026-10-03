@@ -37,6 +37,7 @@ import { privateKeyToAccount } from 'viem/accounts';
 import { identityProof } from '../../src/http/respond.ts';
 import type { AppConfig, LedgerSnapshot, Proposal } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { RAW } from '../fixtures/vault-refusal-codes.ts';
 import { tempDir } from './helpers/tmp.ts';
 import { relayTo, swiftc, T0, TEAM, VaultDouble } from './helpers/vault-double.ts';
 import type { Answer, Hook, Request } from './helpers/vault-double.ts';
@@ -969,6 +970,60 @@ test('after a start-up probe that could not read the markers, what a crash left 
     assert.equal((await c.post('/api/vault/unlock')).json.ok, true, 'and it opens');
   } finally {
     await c.close();
+  }
+});
+
+/* REAUDIT1B, RA1B-03: a disk that refuses the wallet file during create, restore or forget is said in
+   the words of the one refusal table, never the system's text, which names the key file's path. The
+   audit line keeps the system's code and the call that failed, and no path. Each disk error is real:
+   a directory where the staged file goes (EISDIR on rename), a key file the owner cannot write
+   (EACCES on open). */
+test('a disk that refuses the wallet file is said in calm words in create, restore and forget, never the system\'s text or the path', { skip }, async () => {
+  // Forget asks presence, which the service answers with the real Touch ID (no stand-in covers it):
+  // the shell answers it here, so no system dialog ever opens on the Mac running the tests.
+  const b = await boot({ hook: (r) => (r.op === 'presence' ? { kind: 'answer', answer: { ok: true } } : { kind: 'run' }) });
+  const clean = (json: { error?: unknown }): void => {
+    assert.ok(typeof json.error === 'string' && !RAW.test(json.error), String(json.error));
+    assert.ok(!JSON.stringify(json).includes(b.dataDir), JSON.stringify(json));
+  };
+  const audited = (code: string): void => {
+    const line = b.audit.tail(20).find((e) => e.msg.includes(`the disk refused the wallet file (${code} on`));
+    assert.ok(line, `no audit line for ${code}`);
+    assert.ok(!JSON.stringify(line).includes(b.dataDir), 'the audit line names the path');
+  };
+  try {
+    fs.mkdirSync(b.staged, { recursive: true });
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.status, 200);
+    assert.deepEqual(made.json, refusal('write_failed'), JSON.stringify(made.json));
+    clean(made.json);
+    assert.equal(fs.existsSync(b.live), false, 'no wallet was made');
+    audited('EISDIR');
+
+    fs.rmdirSync(b.staged);
+    const real = await b.post('/api/vault/create');
+    assert.equal(real.json.ok, true, JSON.stringify(real.json));
+    b.prefs.markBackedUp(Date.now, real.json.addresses.evm);
+    const before = fs.readFileSync(b.live, 'utf8');
+    fs.mkdirSync(b.staged);
+    const restored = await b.post('/api/vault/restore', { key: `0x${'11'.repeat(32)}` });
+    assert.deepEqual(restored.json, refusal('write_failed'), JSON.stringify(restored.json));
+    clean(restored.json);
+    assert.equal(fs.readFileSync(b.live, 'utf8'), before, 'the wallet in place is untouched');
+    fs.rmdirSync(b.staged);
+
+    fs.chmodSync(b.live, 0o400);
+    try {
+      const forgot = await b.post('/api/vault/forget', { confirm: 'FORGET' });
+      assert.deepEqual(forgot.json, refusal('forget_failed'), JSON.stringify(forgot.json));
+      clean(forgot.json);
+      assert.equal(fs.readFileSync(b.live, 'utf8'), before, 'the file the disk would not let go is still whole');
+      audited('EACCES');
+    } finally {
+      fs.chmodSync(b.live, 0o600);
+    }
+  } finally {
+    await b.close();
   }
 });
 

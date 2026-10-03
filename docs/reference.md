@@ -676,7 +676,12 @@ never the sentence; a code with no sentence yet is said as "That did not finish,
 Try again." `tests/unit/refusal-words.test.ts` reads the codes off the three sources, so a new one
 without a sentence fails, and `vault-routes.test.ts` sends each one back on a create, an unlock and
 a reveal. A reveal whose Touch ID went through on an open wallet and still could not read it answers
-`reveal_failed` (the wallet is fine), never `damaged`.
+`reveal_failed` (the wallet is fine), never `damaged`. A disk that refuses the wallet file (full, a
+permission, a directory where the file goes) answers from the same table: `write_failed` when a
+create or a restore, by Touch ID or by password, could not write it, and `forget_failed` when Forget
+could not finish removing it. The system's own text names the key file's path, so it never reaches
+a window; the audit line keeps only the system's code and the call that failed
+(`diskRefusal` in `src/http/wallet.ts`).
 
 A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
 it said) and every custody step after it settle it by the service's answer about it, never by the

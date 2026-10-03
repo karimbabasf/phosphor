@@ -23,7 +23,9 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { refusal } from '../../src/http/wallet.ts';
 import { stubView } from '../fixtures/view.ts';
+import { RAW } from '../fixtures/vault-refusal-codes.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
@@ -410,6 +412,39 @@ test('migrate encrypts a plaintext file, destroys it, and says the state changed
     assert.ok(!fs.existsSync(b.keysPath));
     assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
   } finally {
+    await b.close();
+  }
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file during the password create or import (the
+   first run on a Mac with no Touch ID) is said in the words of the one refusal table, never the
+   system's text and the path it names. The disk error is real: a file where the keys folder goes,
+   so the write cannot make its folder (EEXIST on mkdir). */
+test('a disk that refuses the wallet file is said in calm words in the password create and import, never the system\'s text or the path', async () => {
+  const b = await boot('live');
+  const folder = path.dirname(b.keysPath);
+  try {
+    fs.writeFileSync(folder, 'not a folder');
+    for (const [route, body] of [
+      ['/api/wallet/create', { token: b.token, password: PASSWORD }],
+      ['/api/wallet/import', { token: b.token, password: PASSWORD, mnemonic: VECTOR }],
+    ] as const) {
+      const out = await b.post(route, body);
+      assert.equal(out.status, 200, route);
+      assert.deepEqual(out.json, refusal('write_failed'), `${route}: ${JSON.stringify(out.json)}`);
+      assert.ok(!RAW.test(String(out.json.error)), `${route}: ${String(out.json.error)}`);
+      assert.ok(!JSON.stringify(out.json).includes(path.dirname(folder)), route);
+    }
+    assert.equal(b.keystore.state(), 'no_wallet');
+    const entries = (await b.get('/api/log?limit=50')).json as unknown[];
+    const lines = entries.map((e) => JSON.stringify(e)).filter((l) => l.includes('the disk refused the wallet file'));
+    assert.equal(lines.length, 2, JSON.stringify(lines));
+    for (const line of lines) {
+      assert.ok(line.includes('(EEXIST on mkdir)'), line);
+      assert.ok(!line.includes(folder), 'the audit line names the path');
+    }
+  } finally {
+    fs.rmSync(folder, { force: true });
     await b.close();
   }
 });

@@ -58,6 +58,9 @@ export class VaultDouble {
   }
 
   run(request: Record<string, unknown>): Answer {
+    // The service answers presence with the real Touch ID: no stand-in covers it, so it would put a
+    // system dialog in front of whoever runs the tests. A test answers presence itself (a hook).
+    assert.notEqual(request.op, 'presence', 'presence would open a real Touch ID dialog on this Mac: answer it in the test');
     const env: Record<string, string> = {
       PATH: '/usr/bin:/bin',
       PHOSPHOR_TEST_STORE: this.store,
@@ -116,7 +119,11 @@ export function relayTo(post: Post, double: VaultDouble, transport: Buffer, hook
       if (what.kind === 'drop') continue;
       let answer: Answer | 'drop';
       if (what.kind === 'answer') answer = what.answer;
-      else {
+      else if (request.op === 'presence') {
+        // Never handed to the service, which would open a real Touch ID dialog (VaultDouble.run):
+        // refused in words a test's assertion shows, rather than a loop that dies and a 150 s wait.
+        answer = { ok: false, error: 'interaction_required', message: 'tests never open a real Touch ID dialog: answer presence in the hook' };
+      } else {
         const asked = { ...request, ...(request.op === 'unwrap' ? { transportKey: transport.toString('base64') } : {}) };
         const ran = double.run(asked);
         answer = what.kind === 'after' ? await what.edit(ran) : ran;
