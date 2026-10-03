@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
 import { checkApp, entitlementProblem, expectedEntitlements, payloadProblems, shellCarries, tauriEntitlements } from '../../scripts/release-check.ts';
+import { developerTools } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -135,7 +136,7 @@ test('the shell is read for the digest it was built for, as bytes', () => {
   assert.equal(shellCarries(Buffer.from(`\0${'cd'.repeat(32)}\0`), digest), false);
 });
 
-const tooling = process.platform === 'darwin' && spawnSync('cc', ['--version']).status === 0 && spawnSync('codesign', ['-h']).status !== null;
+const tooling = developerTools() && spawnSync('cc', ['--version']).status === 0 && spawnSync('codesign', ['-h']).status !== null;
 
 // A shell compiled with this digest as a string constant, as src-tauri/build.rs compiles one in.
 function compile(out: string, digest: string): void {

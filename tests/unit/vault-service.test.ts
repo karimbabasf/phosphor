@@ -17,6 +17,7 @@ import { refusal } from '../../src/http/wallet.ts';
 import { canonical } from '../../src/keystore/envelope.ts';
 import { createKeystore } from '../../src/keystore/store.ts';
 import type { EnclaveUnwrapRequest, Keystore } from '../../src/keystore/store.ts';
+import { developerTools, refuseDialog } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -27,7 +28,7 @@ const GROUP = `${TEAM}.com.karimbabasf.phosphor.vault`;
 const T0 = 1_800_000_000;
 
 const work = tempDir('phosphor-vault-service-');
-const swiftc = process.platform === 'darwin' && spawnSync('swiftc', ['--version'], { env: { ...process.env, TMPDIR: work } }).status === 0;
+const swiftc = developerTools() && spawnSync('swiftc', ['--version'], { env: { ...process.env, TMPDIR: work } }).status === 0;
 const skip = swiftc ? false : 'needs macOS with swiftc';
 
 /* One compile per run, into this file's own temp folder, with its module cache and the compiler's
@@ -48,6 +49,7 @@ class Mac {
   readonly store = path.join(tempDir('phosphor-vault-mac-'), 'keychain.json');
 
   ask(request: Record<string, unknown>, opts: Opts = {}): Answer {
+    refuseDialog(request);
     const env: Record<string, string> = {
       PATH: '/usr/bin:/bin',
       PHOSPHOR_TEST_STORE: this.store,
