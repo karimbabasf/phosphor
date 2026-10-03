@@ -223,7 +223,14 @@ const transportKey = /^[0-9a-f]{64}$/i.test(transportHex) ? Buffer.from(transpor
 const relaySecret = /^[0-9a-f]{64}$/i.test(handshake[4] ?? '') ? (handshake[4] as string) : null;
 // No relay secret means no relay: a transport key with nothing to gate the routes would let the
 // page play the shell, so both must arrive or neither counts.
-const vault = createVaultRelay({ transportKey: relaySecret !== null ? transportKey : null, secret: relaySecret });
+// A demo makes no Touch ID key and writes nothing to the keychain (src/vault/relay.ts, makesKeys).
+// PHOSPHOR_DEMO_ENCLAVE=1 lets a test or proof harness that runs this backend from a checkout make
+// keys in demo mode; the shell never passes it (src-tauri/src/backend.rs).
+const vault = createVaultRelay({
+  transportKey: relaySecret !== null ? transportKey : null,
+  secret: relaySecret,
+  makesKeys: cfg.mode === 'live' || process.env.PHOSPHOR_DEMO_ENCLAVE === '1',
+});
 if (transportKey !== null) {
   void vault.ask({ op: 'probe' }).then((probe) => {
     if (probe.ok && probe.op === 'probe') {

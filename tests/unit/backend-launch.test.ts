@@ -107,13 +107,14 @@ function namesTheBackendReads(): Map<string, Set<string>> {
 }
 
 /* Read by the backend and deliberately not handed to it by the shell. The reasons for the first
-   three, and for the invite proof's knob, are written beside BACKEND_ENV in backend.rs too, where
-   the next person to edit the list will read them. */
+   three, and for the invite proof's and the demo keys' knobs, are written beside BACKEND_ENV in
+   backend.rs too, where the next person to edit the list will read them. */
 const WITHHELD: Record<string, string> = {
   ACC_PORT: 'the shell probes PHOSPHOR_PORT only, so a backend on ACC_PORT is one the shell never finds',
   ACC_DATA_DIR: 'PHOSPHOR_DATA_DIR is always set by the shell and wins',
   PHOSPHOR_NO_PARENT_WATCH: 'the shell is the parent the watch exists for',
   PHOSPHOR_DEMO_INVITE: 'a proof knob: scripts/invite-window-proof.ts runs the backend from a checkout, never through the shell',
+  PHOSPHOR_DEMO_ENCLAVE: 'a test knob: a demo of a signed release must never write to the keychain group, so only a backend run from a checkout makes keys in demo mode',
   [WINDOW_TOKEN_VAR]: 'the token goes down stdin, never the environment (tests/unit/token-stdin.test.ts)',
 };
 
@@ -140,7 +141,7 @@ test('the shell passes nothing the backend does not read, and nothing it withhol
   assert.equal(new Set(passed).size, passed.length, 'BACKEND_ENV names a variable twice');
   assert.deepEqual(passed.filter((name) => !reads.has(name)), [], 'BACKEND_ENV passes these and nothing in src/ reads them');
   assert.deepEqual(passed.filter((name) => name in WITHHELD), []);
-  for (const name of ['ACC_PORT', 'ACC_DATA_DIR', 'PHOSPHOR_NO_PARENT_WATCH']) {
+  for (const name of ['ACC_PORT', 'ACC_DATA_DIR', 'PHOSPHOR_NO_PARENT_WATCH', 'PHOSPHOR_DEMO_ENCLAVE']) {
     assert.ok(BACKEND_RS.includes(name), `backend.rs says why ${name} is withheld`);
   }
 });

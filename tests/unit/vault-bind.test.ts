@@ -981,8 +981,10 @@ type Backend = {
 };
 
 /* The real backend (src/main.ts) in its own process, on a scratch data dir and a fake home, with
-   the handshake the shell gives it, and the test playing the shell over HTTP. */
-async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => Hook | Promise<Hook>): Promise<Backend> {
+   the handshake the shell gives it, and the test playing the shell over HTTP. It runs in demo mode,
+   which makes no keys (src/vault/relay.ts, makesKeys) unless told it may, as a test run from a
+   checkout can be: `keys: false` is the demo as an installed app runs it. */
+async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => Hook | Promise<Hook>, opts: { keys?: boolean } = {}): Promise<Backend> {
   const port = await freePort();
   assert.notEqual(port, 4177);
   const base = `http://127.0.0.1:${port}`;
@@ -1007,6 +1009,7 @@ async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => 
       PHOSPHOR_KEYS: path.join(dir, 'keys', 'keys.json'),
       PHOSPHOR_PORT: String(port),
       ACC_MODE: 'demo',
+      ...(opts.keys === false ? {} : { PHOSPHOR_DEMO_ENCLAVE: '1' }),
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });
@@ -1038,8 +1041,10 @@ async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => 
     const res = await fetch(`${base}${route}`, { headers: { 'x-phosphor-token': token } });
     return { status: res.status, json: (await res.json().catch(() => null)) as any };
   };
+  // Up once the shell's probe has answered: ready, or for a demo that makes no keys, a capability.
   for (let i = 0; i < 100; i += 1) {
-    if ((await get('/api/vault')).json?.enclave?.ready === true) break;
+    const enclave = (await get('/api/vault')).json?.enclave;
+    if (opts.keys === false ? enclave?.capability != null : enclave?.ready === true) break;
     await new Promise((r) => setTimeout(r, 50));
   }
   return {
@@ -1061,6 +1066,37 @@ async function backend(dir: string, double: VaultDouble, hook?: (r: Request) => 
     },
   };
 }
+
+/* audit1b AU1B-02: one marker in the group refuses every device-bound wallet on the Mac, so a demo
+   of a signed release, run before the owner's own wallet is Phosphor-only, must write nothing there.
+   The real backend in demo mode, as the shell starts it, against the service's own rules with a
+   keychain home: every step that would make a key is refused before the shell sees it, and the
+   window is offered the password path. */
+test('a demo backend writes nothing to the keychain home: create, restore, the move from a password and the bind leave it empty', { skip, timeout: 60_000 }, async () => {
+  const dir = tempDir('phosphor-demo-keys-');
+  const double = new VaultDouble(path.join(dir, 'keychain.json'));
+  const app = await backend(dir, double, undefined, { keys: false });
+  try {
+    const vault = (await app.get('/api/vault')).json;
+    assert.equal(vault.enclave.capability?.keychainHome, true, 'the service under test has a keychain home, as a signed release does');
+    assert.equal(vault.enclave.ready, false, 'a demo was offered a Touch ID wallet');
+    const key = `0x${crypto.randomBytes(32).toString('hex')}`;
+    assert.equal((await app.post('/api/vault/create')).json.code, 'enclave_unavailable');
+    assert.equal((await app.post('/api/vault/restore', { key })).json.code, 'enclave_unavailable');
+    // The demo's own wallet is a password wallet, and nothing moves it behind a new key.
+    const password = 'a long enough password';
+    assert.equal((await app.post('/api/wallet/create', { password })).json.ok, true);
+    assert.equal((await app.post('/api/vault/migrate', { password })).json.code, 'enclave_unavailable');
+    assert.equal((await app.post('/api/vault/restore', { key })).json.code, 'enclave_unavailable');
+    assert.equal((await app.post('/api/vault/bind')).json.code, 'not_enclave');
+  } finally {
+    await app.stop();
+  }
+  assert.deepEqual(app.shell.seen.filter((r) => r.op === 'create' || r.op === 'commit' || r.op === 'sweep').map((r) => r.op), [], 'the shell was handed a write');
+  const mac = double.state();
+  assert.deepEqual([mac.keys.length, mac.markers.length], [0, 0], 'the keychain home holds a key or a marker');
+  assert.deepEqual(mac.calls.filter((c) => /^(makeKey|addMarker|deleteKey)/.test(c)), []);
+});
 
 test('the crash matrix: a bind and a restore killed before the commit, between commit and rename, and after the rename open correctly on the next start', { skip, timeout: 300_000 }, async () => {
   type Point = 'before commit' | 'between commit and rename' | 'after rename';

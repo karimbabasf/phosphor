@@ -95,9 +95,12 @@ with one Touch ID, once its backup is proven. The service of such a release
 makes new keys only in that group, never a device key, and a wallet bound there carries a pin only
 the service can write, so a wallet file someone else wrapped to the same key, or an edited one, is
 refused before any Touch ID. Once a wallet on the Mac is bound, device-bound key files stop opening
-in Phosphor there, copies included. A signed update still verifies either way: the updater checks
-the bundle's own update signature, and then its Developer ID code signature against Phosphor's Team
-ID, before it replaces anything.
+in Phosphor there, copies included, and so does every other wallet on that Mac that is not
+Phosphor-only yet, in any folder: the first wallet a signed release makes Phosphor-only, or makes
+new, is enough. Make your own wallet Phosphor-only, or prove its backup, before you make another;
+Restore from the backup brings such a wallet back. A demo run makes no key, so it never does this.
+A signed update still verifies either way: the updater checks the bundle's own update signature,
+and then its Developer ID code signature against Phosphor's Team ID, before it replaces anything.
 
 ## Old copies of a wallet file still open on this Mac until the keys change
 

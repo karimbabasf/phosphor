@@ -76,7 +76,7 @@ export type VaultRelay = {
   /** A shell has polled within RELAY_STALE_MS. Without one, every ask fails fast. */
   attached(): boolean;
   capability(): Capability | null;
-  /** attached, and the shell reported an enclave the person can authenticate to. */
+  /** attached, and the shell reported an enclave the person can authenticate to, on a relay that makes keys. */
   enclaveReady(): boolean;
   ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult>;
   waiting(): Waiting | null;
@@ -109,10 +109,19 @@ type Inflight = {
   since: number;
 };
 
-export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: string | null; now?: () => number; askTimeoutMs?: number }): VaultRelay {
+export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: string | null; now?: () => number; askTimeoutMs?: number; makesKeys?: boolean }): VaultRelay {
   const now = opts.now ?? Date.now;
   const askTimeout = opts.askTimeoutMs ?? ASK_TIMEOUT_MS;
   const transport = opts.transportKey;
+  /* A DEMO MAKES NO KEYS. On a signed release the service makes every new key in Phosphor's keychain
+     group, and the marker a commit writes there is for the whole Mac: from the first one on, every
+     device-bound wallet here stops opening in Phosphor (src-tauri/se-helper/main.swift, admit),
+     whichever data folder or copy of the app made it, including the owner's real wallet before it
+     is Phosphor-only. A demo is a throwaway and must never do that. So a relay that makes no keys
+     (src/main.ts: every mode but live) answers create, commit and sweep itself and never hands one to
+     the shell, whatever the service says it is, and has no enclave to make a wallet with: the window
+     takes the password path, as on a Mac without Touch ID. Reads and Touch IDs pass as always. */
+  const makesKeys = opts.makesKeys ?? true;
   const secret = opts.secret ?? null;
   const secretDigest = secret === null ? null : crypto.createHash('sha256').update(secret).digest();
   const queue: Inflight[] = [];
@@ -153,6 +162,9 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
 
   function ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult> {
     if (stopped) return Promise.resolve({ ok: false, error: 'stopped', message: 'the relay is shut' });
+    if (!makesKeys && (request.op === 'create' || request.op === 'commit' || request.op === 'sweep')) {
+      return Promise.resolve({ ok: false, error: 'no_keychain_home', message: 'a demo makes no Touch ID key and writes nothing to the keychain' });
+    }
     if (transport === null) {
       return Promise.resolve({ ok: false, error: 'no_relay', message: 'this backend was not started by the desktop shell, so it has no enclave' });
     }
@@ -311,7 +323,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
     attached,
     authenticate,
     capability: () => capability,
-    enclaveReady: () => attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
+    enclaveReady: () => makesKeys && attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
     ask,
     waiting,
     next,

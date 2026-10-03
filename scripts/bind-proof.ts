@@ -82,6 +82,8 @@ async function startBackend(dir: string, double: VaultDouble, hook?: (r: Request
       HOME: home,
       CFFIXED_USER_HOME: home,
       PHOSPHOR_MODE: 'demo',
+      // A demo makes no keys unless run from a checkout like this (src/vault/relay.ts, makesKeys).
+      PHOSPHOR_DEMO_ENCLAVE: '1',
       PHOSPHOR_PORT: String(port),
       PHOSPHOR_DATA_DIR: path.join(dir, 'state'),
       PHOSPHOR_KEYS: path.join(dir, 'keys', 'keys.json'),

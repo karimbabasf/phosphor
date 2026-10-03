@@ -118,9 +118,13 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   key: its public half is in the file. On a Developer ID build that carries the keychain
   entitlement, a bound wallet's file is checked against a pin only the vault service can write,
   before any Touch ID, so a substitute or an edited file is refused, and once a wallet on this Mac
-  is bound, no device-bound key file opens on it. Such a build never falls back to a device key,
-  and a signed release is such a build: its service carries the vault profile. Proof:
-  `vault-service.test.ts` (the service's own rules against a stand-in keychain).
+  is bound, no device-bound key file opens on it. That last rule is for the whole Mac: the first
+  wallet a signed release binds or makes, in any data folder, stops every device-bound wallet here
+  from opening, the owner's own included, until it is restored from its backup. A demo makes no
+  key and writes nothing to the keychain group, whatever build runs it. Such a build never falls
+  back to a device key, and a signed release is such a build: its service carries the vault
+  profile. Proof: `vault-service.test.ts` (the service's own rules against a stand-in keychain);
+  `vault-bind.test.ts` and `vault-relay.test.ts` (a demo backend writes nothing to the keychain).
 - **A wallet file swapped while it is being made or bound.** Create, restore, the move from a
   password and the bind write the new file beside the live one, prove it with one Touch ID and
   commit it from the bytes held in memory, and only then put those bytes in place; the staged file

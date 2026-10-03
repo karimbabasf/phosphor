@@ -185,6 +185,14 @@ then says Phosphor-only since that day. Copies of your wallet file saved before 
 backup, a sync folder) still open the old way, so approve a Touch ID prompt only when you started
 it. [Known limits](known-limits.md) says more.
 
+Phosphor-only is one rule for the whole Mac, not for one wallet. The first time a signed release
+makes a wallet Phosphor-only, or makes a new wallet, in any folder and from any copy of Phosphor,
+every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in Phosphor, even
+one in another folder. Its lock card then offers Restore, and its backup brings it back. So before
+you make or restore a second wallet on this Mac, make the one you have Phosphor-only, or at least
+prove its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
+alone.
+
 ## The five minute lock
 
 The wallet locks after five minutes with nobody at the window, when the Mac wakes from a sleep of

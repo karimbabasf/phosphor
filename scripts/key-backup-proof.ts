@@ -133,6 +133,8 @@ async function startBackend(name: string): Promise<Backend> {
       HOME: home,
       CFFIXED_USER_HOME: home,
       PHOSPHOR_MODE: 'demo',
+      // A demo makes no keys unless run from a checkout like this (src/vault/relay.ts, makesKeys).
+      PHOSPHOR_DEMO_ENCLAVE: '1',
       PHOSPHOR_PORT: String(port),
       PHOSPHOR_DATA_DIR: path.join(dataDir, 'state'),
       PHOSPHOR_KEYS: path.join(dataDir, 'keys', 'keys.json'),

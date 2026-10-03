@@ -432,7 +432,11 @@ live chain, and there is no setting that points them anywhere else. Nothing here
   moves nothing, anywhere, ever. An invite claim there is refused before any read, unless
   `PHOSPHOR_DEMO_INVITE` names the pretend world `scripts/invite-window-proof.ts` writes
   (`src/invite/demo.ts`): then the claim is signed as always and run in memory, and nothing leaves
-  the Mac.
+  the Mac. A demo makes no Touch ID key and writes nothing to Phosphor's keychain group, whatever
+  build runs it, because one marker there stops every device-bound wallet on the Mac from opening
+  (`src/vault/relay.ts`, `makesKeys`): its wallet is a password wallet. `PHOSPHOR_DEMO_ENCLAVE=1`
+  lets a test or proof harness that runs the backend from a checkout make keys in demo mode; the
+  shell never passes it.
 
 Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
 codebase because the test suite and the e2e proof run against it offline.

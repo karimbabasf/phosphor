@@ -158,6 +158,48 @@ test('commit, sweep and status come back typed, read strictly, and probe carries
   assert.equal(relay.capability()?.keychainHome, false);
 });
 
+/* A demo's relay (src/main.ts: makesKeys only in live mode). The marker a signed release's commit
+   writes is for the whole Mac, so a demo never hands the shell create, commit or sweep, whatever
+   the service says it is, and has no enclave to make a wallet with. Reads and Touch IDs pass. */
+test('a relay that makes no keys answers create, commit and sweep itself, and the shell never sees one', async () => {
+  for (const keychainHome of [true, false]) {
+    const relay = createVaultRelay({ transportKey: transport, makesKeys: false });
+    const probe = relay.ask({ op: 'probe' });
+    const asked = await relay.next(1000);
+    relay.answer({ id: asked!.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome });
+    assert.equal((await probe).ok, true);
+    assert.equal(relay.capability()?.keychainHome, keychainHome);
+    assert.equal(relay.enclaveReady(), false, 'a demo was offered a Touch ID wallet');
+
+    const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
+    for (const request of [{ op: 'create' as const }, { op: 'commit' as const, ...material }, { op: 'sweep' as const }, { op: 'sweep' as const, label: 'run-1' }]) {
+      const refused = await relay.ask(request);
+      assert.equal(!refused.ok && refused.error, 'no_keychain_home', request.op);
+      assert.equal(relay.queued(), 0, `${request.op} was queued for the shell`);
+    }
+    assert.equal(await relay.next(30), null, 'the shell was handed a write');
+
+    for (const op of ['status', 'unwrap', 'presence'] as const) {
+      const pending = relay.ask({ op, ...material, reason: 'x' });
+      const handed = await relay.next(1000);
+      assert.equal(handed?.op, op);
+      relay.answer({ id: handed!.id, ok: false, error: 'user_cancel', message: 'cancelled' });
+      await pending;
+    }
+  }
+
+  // The live app's relay is unchanged: it makes keys.
+  const live = createVaultRelay({ transportKey: transport });
+  const probe = live.ask({ op: 'probe' });
+  const asked = await live.next(1000);
+  live.answer({ id: asked!.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true });
+  await probe;
+  assert.equal(live.enclaveReady(), true);
+  void live.ask({ op: 'create' });
+  assert.equal((await live.next(1000))?.op, 'create');
+  live.stop();
+});
+
 test('the dialog sentence comes from the draft fields and never from agent text', () => {
   const swap = reasonFor({
     draft: {
