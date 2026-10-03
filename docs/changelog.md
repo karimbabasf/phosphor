@@ -21,6 +21,10 @@ Built 2026-10-02. Tagged v0.10.14 on 2026-10-02.
   that is still running, now says it did not go through and that nothing moved. Its card used to
   say Swapping for good. A check on a move the app does not hold draws no card and says so in one
   line.
+- Tauri is 2.12.0 and its updater plugin 2.13.1, which still checks every update against the same
+  key: the 0.10.12 and 0.10.13 downloads both pass it. The MCP SDK is 1.31.0 and viem 2.57.1.
+- For people who build Phosphor: `npm test` fails when a run leaves a temp folder behind, and proof
+  scripts write their pictures into scripts/scratch/ unless you pass `--docs`.
 - Your wallet, your keys and your settings stay as they were.
 
 ## 0.10.13
