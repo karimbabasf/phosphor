@@ -146,6 +146,20 @@ click.
 
 What closes it: the relay signing what it quotes.
 
+## A relay that answers nothing moves a swap to 1Click
+
+The solver relay is asked first for every swap. When it offers no price for a pair, the same swap
+goes through 1Click, under 1Click's own checks. On the relay a swap is one step: both sides move
+together or neither does. On 1Click your coins go to 1Click's solver first, and what you bought
+arrives a few seconds later; if the swap fails, your coins come back as a refund.
+
+What it means: whoever runs the relay can send a swap to 1Click by answering nothing. The relay and
+1Click have one operator, who is already trusted for the price on both routes, so no new party is
+trusted; what changes is that this operator holds your coins for those few seconds.
+
+What closes it: a click on every swap that leaves the relay. This build does not ask for one,
+because the operator who could send a swap there already sets its price on either route.
+
 ## Names a venue lists do not mark the agent
 
 A page, the news, a chain read or a venue's error text marks the agent that reads it, and its

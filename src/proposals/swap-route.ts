@@ -12,7 +12,10 @@
 // ONLY "NO PRICE" MOVES A SWAP. A relay price past the cap stays a refusal, and so does every other
 // cause (a coin the list does not name, a balance too small, a list that names another coin): each
 // would hold on the other route too, or is a reason to stop. Whoever answers for the relay can send
-// a swap here by answering nothing, which buys them no more than the 1Click rail's own checks allow.
+// a swap here by answering nothing. That buys them the 1Click route as it always was: its checks
+// hold the price, and the coins sit with 1Click's solver for the seconds until it delivers, where
+// the relay moves both sides at once. Both venues have one operator, already trusted for the price
+// on both routes (docs/known-limits.md).
 //
 // DECIDED BEFORE THE CARD IS PRICED. The route is the draft's venue, pinned when the proposal lands
 // as it always was, so the card shows the figures of the route that runs, and execute, a held retry
