@@ -377,8 +377,15 @@ export async function handleVaultKeyCheck(ctx: Ctx, req: http.IncomingMessage, r
   const raw = typeof body.key === 'string' ? body.key : '';
   const problem = keyProblem(raw);
   if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_key' });
-  const wallet = ctx.keystore.addressReport().addresses.evm;
+  const report = ctx.keystore.addressReport();
+  const wallet = report.addresses.evm;
   if (wallet === null) return sendJson(res, 200, refusal('no_wallet'));
+  /* "Your copy is right" is a fact about the wallet, so it is checked against addresses this
+     process derived from the keys, never against a header nothing has checked: any process running
+     as the owner can edit that one. The window cannot reach this while the wallet is locked. */
+  if (!report.verified) {
+    return sendJson(res, 200, { ok: false, error: 'Open your wallet with Touch ID first, so the copy is checked against the wallet itself.', code: 'unverified' });
+  }
   const matches = (addressesFromKeys({ evm: keyFrom(raw) }).evm ?? '').toLowerCase() === wallet.toLowerCase();
   ctx.audit.append('app_start', `a copy of the private key was checked in the window: it ${matches ? 'matches' : 'does not match'} this wallet`, {});
   sendJson(res, 200, { ok: true, matches });

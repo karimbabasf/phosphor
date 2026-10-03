@@ -86,11 +86,13 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
   };
 }
 
-async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth } = {}) {
+async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void } = {}) {
   const dataDir = tempDir('phosphor-vault-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
+  // A key file already on disk when the app starts, which this process has never opened.
+  opts.seed?.(keysPath);
   const keystore = createKeystore({ keysPath, mode: opts.mode ?? 'demo', kdf: fast });
   const transport = crypto.randomBytes(32);
   const relaySecret = crypto.randomBytes(32).toString('hex');
@@ -1109,5 +1111,26 @@ test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID
     assert.equal((await b.post('/api/vault/key-check', { key: w.key }, false)).status, 403, 'a check without the window token');
   } finally {
     await b.close();
+  }
+
+  // A wallet this process has never opened has only its header's address, which nothing has
+  // checked, so the check waits for an open rather than answer against it.
+  const key = generatePrivateKey();
+  const c = await boot({
+    mode: 'live',
+    seed: (keysPath) => {
+      const ec = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+      const pub = Buffer.concat([Buffer.from([0x04]), Buffer.from(ec.x, 'base64url'), Buffer.from(ec.y, 'base64url')]).toString('base64');
+      createKeystore({ keysPath, kdf: fast }).importWithEnclave({ keyBlob: crypto.randomBytes(64).toString('base64'), publicKey: pub, createdAt: new Date().toISOString() }, { keys: { evm: key } });
+    },
+  });
+  try {
+    assert.equal(c.keystore.state(), 'locked');
+    assert.equal(c.keystore.addressReport().verified, false);
+    const unopened = await c.post('/api/vault/key-check', { key });
+    assert.equal(unopened.json.ok, false);
+    assert.equal(unopened.json.code, 'unverified');
+  } finally {
+    await c.close();
   }
 });
