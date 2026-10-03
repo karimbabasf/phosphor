@@ -17,6 +17,10 @@
 //   bind-cancelled  the person cancelled it: said in the card, nothing changed
 //   bind-done       bound: the tick, and the old copies binding cannot reach
 //   keys-bound      the Keys row after the window opens again
+//   firstrun-create   a new Mac with no wallet: Create, and I already have a wallet beside it
+//   firstrun-restore  that second path: the phrase or the key, behind one Touch ID
+//   firstrun-short    a key typed one character short, said before anything is sent
+//   firstrun-restored the wallet brought back, the first run going on to the addresses
 //
 // The app is dark only (src/view/theme.ts has one colourway), so there is no light picture.
 // Run: node scripts/bind-proof.ts. playwright-core is not a dependency of this repo; point
@@ -174,6 +178,15 @@ async function main(): Promise<void> {
 
   const button = (label: string): string => `${KEYS} button:has(.btn-label:text-is("${label}"))`;
 
+  async function shootFirstRun(p: Json, size: { tag: string }, state: string): Promise<void> {
+    await p.evaluate('document.fonts.ready');
+    await sleep(600);
+    const file = path.join(SHOTS, `${state}-${size.tag}.png`);
+    await p.screenshot({ path: file });
+    const says = (await p.evaluate(`(document.querySelector('#screen-firstrun') || { innerText: '' }).innerText.split('\\n').map(function (t) { return t.trim(); }).filter(Boolean)`)) as string[];
+    results.shots.push({ file, state, size: size.tag, says });
+  }
+
   try {
     for (const size of SIZES) {
       const dir = path.join(scratch, size.tag);
@@ -244,6 +257,44 @@ async function main(): Promise<void> {
       p = await page(b, size);
       await shoot(p, size, 'keys-bound');
       await p.close();
+      await b.stop();
+    }
+
+    // A new Mac with Touch ID and no wallet: the first run's second path, for a wallet that exists.
+    for (const size of SIZES) {
+      const dir = path.join(scratch, `first-${size.tag}`);
+      const b = await startBackend(dir, new VaultDouble(path.join(dir, 'keychain.json')));
+      running.push(b);
+      await post(b, '/api/terms/accept');
+      const p: Json = await browser.newPage({ viewport: { width: size.width, height: size.height }, deviceScaleFactor: 2 });
+      p.on('pageerror', (err: unknown) => b.log.push(`[page] ${String(err)}\n`));
+      await p.goto(`${b.base}/?token=${b.token}`, { waitUntil: 'load' });
+      await p.waitForSelector('#screen-firstrun:not([hidden])', { timeout: 20_000 });
+      await p.click('#screen-firstrun button:has(.btn-label:text-is("Get started"))');
+      const skip = await p.waitForSelector('#screen-firstrun button:has(.btn-label:text-is("Skip"))', { timeout: 5_000 }).catch(() => null);
+      if (skip) await skip.click();
+      const first = (state: string): Promise<void> => shootFirstRun(p, size, state);
+      await p.waitForSelector('#screen-firstrun button:has(.btn-label:text-is("I already have a wallet"))', { timeout: 10_000 });
+      await first('firstrun-create');
+      await p.click('#screen-firstrun button:has(.btn-label:text-is("I already have a wallet"))');
+      await p.waitForSelector('#screen-firstrun textarea', { timeout: 10_000 });
+      await first('firstrun-restore');
+      const key = generatePrivateKey().slice(2);
+      await p.fill('#screen-firstrun textarea', (key.slice(0, -1).match(/.{1,4}/g) as string[]).join(' '));
+      await p.click('#screen-firstrun button:has(.btn-label:text-is("Restore"))');
+      await sleep(300);
+      await first('firstrun-short');
+      await p.fill('#screen-firstrun textarea', (key.match(/.{4}/g) as string[]).join(' '));
+      await p.click('#screen-firstrun button:has(.btn-label:text-is("Restore"))');
+      // A selector, not a predicate: the window's CSP refuses the eval a polled predicate needs.
+      await p.waitForSelector('#screen-firstrun h1:text-is("Your addresses")', { timeout: 15_000 }).catch(async (err: unknown) => {
+        const said = await p.evaluate(`(document.querySelector('#screen-firstrun') || { innerText: '' }).innerText`);
+        throw new Error(`the restore did not reach the addresses: ${String(err)}\nthe screen says: ${said}\nbackend: ${b.log.join('').slice(-1500)}`);
+      });
+      await first('firstrun-restored');
+      await p.close();
+      const vault = await get(b, '/api/vault');
+      results.checks[`firstRunRestored-${size.tag}`] = vault.custody === 'secure-enclave' && vault.enclave?.binding === 'app' && vault.backedUp === true;
       await b.stop();
     }
   } finally {
