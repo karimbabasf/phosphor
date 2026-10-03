@@ -746,6 +746,80 @@ test('RA1B-01: on a Mac that holds a marker, a plaintext key file put where the 
   }
 });
 
+/* RA1B-01, the whole path on a Mac that keeps a Phosphor-only wallet: the readable key file is served
+   unverified, the window is told why, the migration is refused at the click whatever card was drawn,
+   and the backup brings the person's own wallet back. */
+test('a readable key file on a Mac that keeps a Phosphor-only wallet is not opened: unverified, never migrated, and the backup brings the wallet back', { skip }, async () => {
+  const b = await boot();
+  const { double, dataDir } = b;
+  const theirKey = `0x${'22'.repeat(32)}` as const;
+  let phrase = '';
+  let mine = '';
+  try {
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    mine = made.json.addresses.evm;
+    phrase = ((await b.post('/api/vault/reveal')).json.words as string[]).join(' ');
+    b.keystore.lock();
+    fs.renameSync(b.live, path.join(path.dirname(b.live), '.moved-aside'));
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address: privateKeyToAccount(theirKey).address, privateKey: theirKey } }) + '\n');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit });
+    const state = (await c.get('/api/state')).json;
+    assert.equal(state.lock.state, 'needs_migration');
+    assert.equal(state.lock.verified, false);
+    assert.equal(state.vault.enclave.phosphorOnlyHere, true, 'the window is told why');
+    assert.equal((await c.get('/api/receive')).json.verified, false);
+    const before = fs.readFileSync(c.keysPath, 'utf8');
+    const touches = c.double.touches().length;
+    const migrated = await c.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.equal(migrated.json.code, 'plaintext_refused', JSON.stringify(migrated.json));
+    assert.equal(migrated.json.error, refusal('plaintext_refused').error);
+    assert.equal(fs.readFileSync(c.keysPath, 'utf8'), before, 'the readable file is untouched');
+    assert.equal(fs.existsSync(c.live), false, 'nothing was encrypted from it');
+    assert.equal(c.double.touches().length, touches);
+
+    const restored = await c.post('/api/vault/restore', { mnemonic: phrase });
+    assert.equal(restored.json.ok, true, JSON.stringify(restored.json));
+    assert.equal(c.keystore.addresses().evm, mine, 'the person\'s own wallet is back');
+    assert.equal(statusOf(c, liveRequest(c)).pinMatches, true, 'and committed');
+    assert.equal((await c.get('/api/state')).json.lock.verified, true);
+  } finally {
+    await c.close();
+  }
+});
+
+/* RA1B-01: elsewhere the readable key file is the wallet from before encryption, as it always was.
+   Until the service has said whether the Mac keeps a Phosphor-only wallet it is not vouched for. (A
+   backend the shell did not start has no service to ask and vouches as before: wallet-routes.test.ts.) */
+test('on a Mac with no Phosphor-only wallet a readable key file is served and migrated as before', { skip }, async () => {
+  const key = `0x${'33'.repeat(32)}` as const;
+  const address = privateKeyToAccount(key).address;
+  const b = await boot();
+  try {
+    fs.mkdirSync(path.dirname(b.keysPath), { recursive: true });
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address, privateKey: key } }) + '\n');
+    assert.equal((await b.get('/api/state')).json.lock.verified, false, 'vouched for before the service said');
+    await settleAtStart({ keystore: b.keystore, vault: b.vault, audit: b.audit });
+    const state = (await b.get('/api/state')).json;
+    assert.equal(state.vault.enclave.phosphorOnlyHere, false);
+    assert.equal(state.lock.verified, true);
+    assert.equal(state.lock.addresses.evm, address);
+    const migrated = await b.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.equal(migrated.json.ok, true, JSON.stringify(migrated.json));
+    assert.equal(fs.existsSync(b.keysPath), false, 'the readable copy is destroyed');
+    assert.equal(b.keystore.custody(), 'software');
+    assert.equal(b.keystore.addresses().evm, address);
+  } finally {
+    await b.close();
+  }
+});
+
 /* REAUDIT1B, RA1B-02 (MEDIUM). proveAndInstall commits only when the start-up probe said keychainHome,
    and that answer is false whenever the probe's one read of the markers failed, while the service
    still makes every new key in the keychain group. So a create, restore or move from a password after

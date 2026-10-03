@@ -123,6 +123,18 @@ What it means: once a wallet is Phosphor-only, delete the old copies you know of
 Touch ID dialog only for something you started in Phosphor. What closes it: moving to new keys that never existed outside
 the keychain, so the old key holds nothing. The chip vault plans that; it is not built.
 
+## A readable key file is trusted only on a Mac with no Phosphor-only wallet
+
+A wallet from before encryption lives in a readable `keys.json`, and nothing pins that file to a
+wallet. On a Mac where any wallet is Phosphor-only, Phosphor does not open one: a program running as
+you could have put its own wallet where the Phosphor-only file was. The lock card says the key file
+stayed closed and offers Restore from your backup, and Phosphor will not encrypt the file. On a Mac
+with no Phosphor-only wallet, Phosphor still reads it as your wallet and offers to encrypt it, as it
+always has.
+
+What it means: "Your keys are not encrypted" is only for a wallet made before Phosphor encrypted
+keys. If you never had one, do not set a password there.
+
 ## The venues are not ours
 
 Money inside NEAR Intents is held by the verifier and moved by solvers; money on Hyperliquid is

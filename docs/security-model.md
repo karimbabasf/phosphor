@@ -222,6 +222,9 @@ your money.
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
   yourself. What closes it: moving to new keys that never existed outside the keychain, so the
   old key holds nothing. The chip vault plans that; it is not built.
+- **A readable key file is trusted only on a Mac with no Phosphor-only wallet.** Where any wallet
+  on this Mac is Phosphor-only, Phosphor leaves a readable `keys.json` closed and points to the
+  backup; elsewhere it still reads one as a wallet from before encryption, which nothing pins.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed

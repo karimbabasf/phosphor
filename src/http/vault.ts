@@ -132,6 +132,10 @@ export function vaultStatus(ctx: Ctx): JsonBody {
       // the one committed for it; until then 'unconfirmed' (src/http/custody.ts bindingOf). The
       // window says Phosphor-only for 'app' alone.
       binding: enclave === null ? null : bindingOf(ctx),
+      // Whether this Mac keeps a Phosphor-only wallet, any data folder's, as the service has said;
+      // null before it has. Where it does, a readable key file is not opened, and the lock card
+      // says so and offers the backup (reaudit1b RA1B-01).
+      phosphorOnlyHere: ctx.vault.bound(),
     },
     foreign,
     waiting: ctx.vault.waiting(),

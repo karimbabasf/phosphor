@@ -78,8 +78,10 @@ export function bindingOf(ctx: Pick<Ctx, 'keystore'>): 'app' | 'device' | 'uncon
   return confirmed.get(ctx.keystore) === materialOf(live) ? 'app' : 'unconfirmed';
 }
 
-/* What the service says about the live file, with no dialog. Asked whatever the probe said, so its
-   answer also corrects a probe that could not read the markers (src/vault/relay.ts). */
+/* What the service says about the live file, with no dialog: whether it is the committed one, and
+   whether this Mac keeps a Phosphor-only wallet at all (the relay keeps that). Asked whatever the
+   probe said, so its answer also corrects a probe that could not read the markers
+   (src/vault/relay.ts). */
 async function readBinding(deps: Pick<SettleDeps, 'keystore' | 'vault'>): Promise<void> {
   const live = deps.keystore.enclaveRequest();
   const asked = await deps.vault.ask(live === null ? { op: 'status' } : { op: 'status', ...live });

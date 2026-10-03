@@ -539,6 +539,13 @@ An install with an older plaintext `keys.json` reads as `needs_migration` and ke
 EVM address is unchanged, and only then overwrites the plaintext with random bytes, fsyncs,
 truncates and unlinks it, along with every `keys.json.bak*` beside it. On APFS with snapshots an
 overwrite is not an erasure, so the honest answer after migrating is to rotate to a fresh wallet.
+Its addresses are only the ones the keys in it derive: an address the file names with no key
+behind it is not served, here or in any opened payload. On a Mac where the vault service says any
+wallet is Phosphor-only (`vault.enclave.phosphorOnlyHere`), nothing pins such a file, so it is
+served with `verified: false`, the lock card says it stayed closed and offers the restore, and the
+migration route asks the service at the click and refuses with `plaintext_refused` before it reads
+the file. A backend the shell started serves the file unverified until the service has answered;
+one it did not start has no service to ask and vouches for it as before.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and

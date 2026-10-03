@@ -214,6 +214,10 @@ export type Keystore = {
   // address in front of a person reads this one; addresses() stays for the signers and readers
   // that only need the string.
   addressReport(): AddressReport;
+  /* When a readable key file (the plaintext keys.json from before encryption) may be served as
+     verified: the server asks the vault service whether this Mac keeps a Phosphor-only wallet
+     (src/server.ts). Until it is called, always, as before. */
+  vouchForPlaintextWhen(test: () => boolean): void;
   header(): KeystoreHeader | null;
   unlock(password: string): Promise<UnlockResult>;
   // Proves a password against the file and changes nothing. What a route that re-asks for the
@@ -395,6 +399,10 @@ export function readHeader(keysPath: string): KeystoreHeader | null {
   }
 }
 
+/* The addresses the keys in a payload derive, and no other. An address a file only names, with no
+   key behind it, is a claim: it used to stand in for a derived one, so a file that held no key
+   and named the proven public address read as that wallet, verified and backed up (reaudit1b
+   RA1B-01). Every file this app writes holds the key for each address it names. */
 function addressesOf(keys: KeysPayload): StoredAddresses {
   const derived = addressesFromKeys({
     evm: keys.evm?.privateKey as `0x${string}` | undefined,
@@ -402,10 +410,10 @@ function addressesOf(keys: KeysPayload): StoredAddresses {
     nearSecret: keys.near?.secretKey,
   });
   return {
-    evm: derived.evm ?? keys.evm?.address ?? null,
-    solana: derived.solana ?? keys.solana?.address ?? null,
-    near: derived.near ?? keys.near?.accountId ?? null,
-    nearPublicKey: derived.nearPublicKey ?? keys.near?.publicKey ?? null,
+    evm: derived.evm ?? null,
+    solana: derived.solana ?? null,
+    near: derived.near ?? null,
+    nearPublicKey: derived.nearPublicKey ?? null,
   };
 }
 
@@ -481,6 +489,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // Set when a correct password proved the header's addresses are not the ones this file was
   // written with. From then on this store serves no address at all.
   let tampered = false;
+  let plaintextVouched: () => boolean = () => true;
   /* SHUT TO EVERYTHING NEW, OPEN TO WHAT IS ALREADY SIGNING. A closer keeps the payload held
      after the wallet has been told to lock, until its `done` says the signatures it waits for are
      made, or its cap runs out. state() says locked from the first closer on, so nothing new starts
@@ -531,9 +540,12 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     // Before migration the addresses come from the plaintext file, which is the only place
     // they exist yet. Same answer, worse storage, and the migration screen says so. Derived
     // from the keys in it rather than copied out of it, so they are as good as an unlock.
+    // Except where the vault service says this Mac keeps a Phosphor-only wallet: no pin covers
+    // this file, so a program running as the owner could have put its own wallet where the bound
+    // file was, and nothing here may vouch for it (reaudit1b RA1B-01).
     if (plain === null && !hasKeystore() && fs.existsSync(keysPath)) {
       try {
-        return { addresses: addressesOf(JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload), verified: true, tampered: false };
+        return { addresses: addressesOf(JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload), verified: plaintextVouched(), tampered: false };
       } catch {
         return { addresses: NO_ADDRESSES, verified: false, tampered: false };
       }
@@ -1323,6 +1335,9 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     lockWhen,
     addresses,
     addressReport,
+    vouchForPlaintextWhen: (test) => {
+      plaintextVouched = test;
+    },
     header: () => readHeader(keysPath),
     unlock,
     verify,

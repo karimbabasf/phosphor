@@ -398,7 +398,10 @@ test('migrate encrypts a plaintext file, destroys it, and says the state changed
       JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }),
       { mode: 0o600 },
     );
-    assert.equal((await b.get('/api/state')).json.lock.state, 'needs_migration');
+    const lock = (await b.get('/api/state')).json.lock;
+    assert.equal(lock.state, 'needs_migration');
+    // A backend the shell did not start has no vault service to ask, and vouches as it always did.
+    assert.equal(lock.verified, true);
 
     const out = await b.post('/api/wallet/migrate', { token: b.token, password: PASSWORD });
     assert.equal(out.status, 200);
