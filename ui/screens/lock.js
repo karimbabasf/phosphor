@@ -467,24 +467,28 @@
   /* FORGOT THE PASSWORD. A quiet way under the card that opens the restore
      step in the card itself: the phrase, typed, and a second press that says
      what it replaces. The app writes the wallet from the phrase behind Touch
-     ID and opens it, and the lock goes on its own when the state says so. */
+     ID and opens it, and the lock goes on its own when the state says so. A
+     wallet with no phrase comes back the same way from its private key. */
   function forgotLink(card, form) {
+    var keyOnly = keyWallet();
     var forgot = dom.el('button', 'lock-forgot');
     forgot.type = 'button';
-    forgot.appendChild(dom.el('span', '', 'Forgot your password? Restore from your recovery phrase'));
+    forgot.appendChild(dom.el('span', '', keyOnly ? 'Forgot your password? Restore from your private key' : 'Forgot your password? Restore from your recovery phrase'));
     card.appendChild(forgot);
 
     var step = dom.el('div', 'lock-restore');
     step.hidden = true;
-    step.appendChild(dom.el('p', 'lock-restore-text', 'Type your recovery phrase, 12 or 24 words. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'));
+    step.appendChild(dom.el('p', 'lock-restore-text', keyOnly
+      ? 'Type your private key, 64 characters. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'
+      : 'Type your recovery phrase, 12 or 24 words. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'));
     var input = dom.el('textarea', 'input phrase-input lock-phrase');
-    input.name = 'phrase';
-    input.rows = 3;
+    input.name = keyOnly ? 'key' : 'phrase';
+    input.rows = keyOnly ? 2 : 3;
     input.autocomplete = 'off';
     input.spellcheck = false;
     input.setAttribute('autocapitalize', 'off');
     input.setAttribute('autocorrect', 'off');
-    input.setAttribute('aria-label', 'Recovery phrase');
+    input.setAttribute('aria-label', keyOnly ? 'Private key' : 'Recovery phrase');
     step.appendChild(input);
     var error = dom.el('p', 'lock-error');
     error.hidden = true;
@@ -535,26 +539,45 @@
       sure.hidden = true;
     });
     dom.on(go, 'click', function () {
-      var clean = input.value.trim().toLowerCase();
-      var words = clean ? clean.split(/\s+/) : [];
-      if (words.length !== 12 && words.length !== 24) {
-        fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
-        return;
+      var sent;
+      if (keyOnly) {
+        var hex = keyOf(input.value);
+        if (!/^[0-9a-f]*$/.test(hex)) {
+          fail(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
+          return;
+        }
+        if (hex.length !== 64) {
+          fail(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+          return;
+        }
+        sent = function () { return api.vaultRestoreKey('0x' + hex); };
+      } else {
+        var clean = input.value.trim().toLowerCase();
+        var words = clean ? clean.split(/\s+/) : [];
+        if (words.length !== 12 && words.length !== 24) {
+          fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+          return;
+        }
+        sent = function () { return api.vaultRestore(words.join(' ')); };
       }
       error.hidden = true;
       if (!asked) {
         asked = true;
-        dom.setText(sure, 'This replaces the wallet on this Mac with the one your phrase makes. If the phrase is for a different wallet, the one here now cannot be opened again. Press Restore again to go ahead.');
+        dom.setText(sure, keyOnly
+          ? 'This replaces the wallet on this Mac with the one your key opens. If the key is for a different wallet, the one here now cannot be opened again. Press Restore again to go ahead.'
+          : 'This replaces the wallet on this Mac with the one your phrase makes. If the phrase is for a different wallet, the one here now cannot be opened again. Press Restore again to go ahead.');
         sure.hidden = false;
         return;
       }
       window.PhosphorShell.setPending(go, true);
-      api.vaultRestore(words.join(' '))
+      sent()
         .then(function (answer) {
           if (answer && answer.ok === false) {
             fail(error, answer.code === 'bad_phrase'
               ? 'That phrase is not right. Check every word and the order they are in.'
-              : (answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing was changed.' : reason(answer.code || answer.error)));
+              : answer.code === 'bad_key'
+                ? 'That key is not right. Check every character against your copy.'
+                : (answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing was changed.' : reason(answer.code || answer.error)));
             return;
           }
           input.value = '';
@@ -619,10 +642,25 @@
   /* The custody routes answer { ok, error, code }: `error` is already a sentence a
      person can read, and `code` is what a screen branches on. This table exists
      because the window can say it better in context than a route can. */
+  /* A wallet with no phrase comes back from its private key, so the lines that
+     send a person to the backup name the one they have. */
+  function keyWallet() {
+    return (((store.get() || {}).vault) || {}).hasMnemonic === false;
+  }
+
+  /* A private key as a person copies it, read the way the app reads it
+     (src/keystore/derive.ts): spaces, line breaks and dashes between the
+     groups dropped, 0x or not, either case. */
+  function keyOf(text) {
+    var raw = String(text || '');
+    var flat = (typeof raw.normalize === 'function' ? raw.normalize('NFKC') : raw).replace(/[\s\p{Pd}]+/gu, '').toLowerCase();
+    return flat.indexOf('0x') === 0 ? flat.slice(2) : flat;
+  }
+
   function reason(code, retryInSec) {
     if (code === 'wrong_password') return 'Wrong password. Try again.';
     if (code === 'enclave_unavailable') return 'The Secure Enclave did not answer. Phosphor may be running outside its desktop shell.';
-    if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your recovery phrase.';
+    if (code === 'foreign') return 'This wallet was made on another Mac. Restore it from your ' + (keyWallet() ? 'private key.' : 'recovery phrase.');
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
     if (code === 'locked_out') {
       var wait = typeof retryInSec === 'number' && retryInSec > 0
@@ -631,7 +669,7 @@
       return 'Too many tries. ' + wait + ' and try again.';
     }
     if (code === 'no_wallet') return 'There is no wallet on this computer yet.';
-    if (code === 'damaged') return 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.';
+    if (code === 'damaged') return 'The key file on this computer cannot be read. Your ' + (keyWallet() ? 'private key' : 'recovery words') + ' will bring the wallet back.';
     return 'That did not work.';
   }
 

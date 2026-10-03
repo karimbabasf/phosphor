@@ -95,7 +95,8 @@ Vault tab, see [Policy](policy.md#changing-a-rule).
 
 A wallet file made on a different Mac cannot be opened here, because its key lives in that Mac's
 enclave. The window says Made on another Mac and asks for your recovery phrase, twelve or
-twenty-four words, to bring the wallet here.
+twenty-four words, to bring the wallet here. A wallet that has no phrase asks for its private key
+instead (see [A wallet with no phrase](#a-wallet-with-no-phrase)).
 
 ## The backup words
 
@@ -115,6 +116,21 @@ forget a wallet whose phrase has not been proven backed up: its Forget row says 
 
 A password wallet shows its words at creation. In the Vault tab, Show my words (in the Recovery
 phrase row) and Save an encrypted copy (in the Restore row) both ask for the password.
+
+### A wallet with no phrase
+
+A wallet brought in as a key has no recovery phrase, so its backup is the private key itself, and
+anyone who has it has your money. Under Safety its row is Private key, and it works the way the
+phrase's row does: Back it up and a Touch ID (or your password, on a password wallet) show the key
+in that row only, in sixteen numbered groups of four characters, with the wallet it opens under
+them. Write the groups down or Print them, click I wrote it down, then Prove it and type three of
+the groups back by their number. Only that turns the row to Backed up, the line at the foot of the
+window says Private key not backed up until then, and Forget waits for it the same way.
+
+To bring the wallet back, on this Mac or another one, use Restore from a key in the Restore row
+(or the Made on another Mac screen). Type the key as you wrote it: with or without 0x, with or
+without the spaces between the groups. The note that says Restored names the wallet it brought,
+so check it against the one your copy opens.
 
 ## Touch ID and the Secure Enclave
 

@@ -502,7 +502,9 @@
     }
     var vault = state.vault || {};
     if (vault.custody && vault.backedUp === false) {
-      return { icon: 'lock', text: 'Recovery phrase not backed up.', act: 'Back it up', run: openBackup };
+      // A wallet with no phrase backs up its private key (the Vault's Private key row).
+      var text = vault.hasMnemonic === false ? 'Private key not backed up.' : 'Recovery phrase not backed up.';
+      return { icon: 'lock', text: text, act: 'Back it up', run: openBackup };
     }
     return null;
   }

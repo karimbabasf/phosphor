@@ -641,25 +641,41 @@
   }
 
   /* A version 2 file another Mac made. Its key lives in that Mac's Secure
-     Enclave and nothing here can ask it, so the only way in is the phrase. */
+     Enclave and nothing here can ask it, so the only way in is the backup:
+     the phrase, or the private key of a wallet that has no phrase (the file's
+     header says which, and it reads without the enclave). */
   function screenForeign() {
+    var keyOnly = (stateNow().vault || {}).hasMnemonic === false;
     card.appendChild(dom.el('h1', 'title', 'Made on another Mac'));
-    card.appendChild(dom.el('p', 'body dim', 'The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your recovery phrase to bring the wallet here.'));
+    card.appendChild(dom.el('p', 'body dim', 'The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your ' + (keyOnly ? 'private key' : 'recovery phrase') + ' to bring the wallet here.'));
 
-    var f = phraseField('Recovery phrase, 12 or 24 words');
+    var f = phraseField(keyOnly ? 'Private key, 64 characters' : 'Recovery phrase, 12 or 24 words');
+    if (keyOnly) {
+      f.input.name = 'key';
+      f.input.rows = 2;
+    }
     card.appendChild(f.node);
     var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
     actions('Restore', function (button) {
-      var words = wordsOf(f.input.value);
-      if (words.length !== 12 && words.length !== 24) {
-        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      var sent;
+      if (keyOnly) {
+        var hex = keyOf(f.input.value);
+        if (!/^[0-9a-f]*$/.test(hex)) return fail(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
+        if (hex.length !== 64) return fail(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+        sent = api.vaultRestoreKey('0x' + hex);
+      } else {
+        var words = wordsOf(f.input.value);
+        if (words.length !== 12 && words.length !== 24) {
+          return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+        }
+        sent = api.vaultRestore(words.join(' '));
       }
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
-      api.vaultRestore(words.join(' '))
+      sent
         .then(function (answer) {
           if (answer && answer.ok === false) {
             fail(error, vaultProblem(answer.code || answer.error));
@@ -1453,6 +1469,7 @@
     if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing was changed.';
     if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
+    if (code === 'bad_key') return 'That key is not right. Check every character against your copy.';
     if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
     if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
     return walletProblem(code);
@@ -1477,6 +1494,15 @@
   function wordsOf(text) {
     var clean = String(text || '').trim().toLowerCase();
     return clean ? clean.split(/\s+/) : [];
+  }
+
+  /* A private key as a person copies it, read the way the app reads it
+     (src/keystore/derive.ts): spaces, line breaks and dashes between the
+     groups dropped, 0x or not, either case. */
+  function keyOf(text) {
+    var raw = String(text || '');
+    var flat = (typeof raw.normalize === 'function' ? raw.normalize('NFKC') : raw).replace(/[\s\p{Pd}]+/gu, '').toLowerCase();
+    return flat.indexOf('0x') === 0 ? flat.slice(2) : flat;
   }
 
   /* A password input carries a name and an autocomplete hint so a password

@@ -711,6 +711,17 @@ test('with money in and the phrase not proven, the backup card is up once per st
   assert.equal(world.card(), card, 'the reminder came back inside one session');
 });
 
+test('a wallet with no phrase is reminded of the backup it has, its private key, and the same press opens it', async () => {
+  const world = build({ vault: { custody: 'secure-enclave', backedUp: false, hasMnemonic: false } });
+  world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 12.5 } }));
+  const card = world.card();
+  assert.ok(card, 'no reminder for a wallet with no phrase');
+  assert.ok(textOf(card).includes('Your private key is not backed up yet.'), String(textOf(card)));
+  assert.equal(textOf(card).some((t) => t.includes('recovery phrase')), false, 'a wallet with no phrase was told about a phrase');
+  find(card, 'button')[0].click();
+  assert.ok(world.calls.some((c) => c.route === 'startReveal'));
+});
+
 test('the reminder waits while a request is waiting, and never shows for an empty or proven wallet', async () => {
   const waiting = build({ vault: { custody: 'secure-enclave', backedUp: false } });
   waiting.store.put(Object.assign({}, waiting.store.get(), { basic: { totalUsd: 12.5 }, proposals: [{ id: 'p1', status: 'pending' }] }));
