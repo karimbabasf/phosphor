@@ -1,7 +1,7 @@
 // The window, proven in a real browser against a demo backend.
 //
 // Boots the app in demo mode on a free port with a throwaway data directory, plays the shell
-// far enough to get past the first-run card, seeds the chart and the rail with fixture objects
+// through the terms and the first-run card, seeds the chart and the rail with fixture objects
 // through the agent door (a level, a line, a zone, an idea plan, a highlight), then drives
 // headless Chromium through playwright-core: the trade screen at 1280 x 800 and, with a two
 // chart layout up, at 1440 x 900, into docs/screenshots/. Then it measures, ten samples each:
@@ -124,7 +124,11 @@ async function agent(op: string, tool: string, args: Record<string, unknown>): P
 
 // ---------- fixtures ----------
 
+// The terms first, as the window's card accepts them: until then the card covers the whole window,
+// the Trade tab with it (ui/screens/terms.js).
 async function createWallet(): Promise<void> {
+  const terms = await post('/api/terms/accept', { token });
+  if (terms.status !== 200) throw new Error(`terms accept refused: ${terms.status} ${JSON.stringify(terms.json)}`);
   const created = await post('/api/wallet/create', { token, password: 'proof-password-1' });
   if (created.status !== 200) throw new Error(`wallet create refused: ${created.status} ${JSON.stringify(created.json)}`);
 }
