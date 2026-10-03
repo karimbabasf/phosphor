@@ -23,11 +23,15 @@ Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026
 - Phosphor-only is one rule for the whole Mac. Once any wallet on it is Phosphor-only, in any
   folder, an older wallet on the Mac stops opening in Phosphor until you restore it from its
   backup. Make your own wallet Phosphor-only, or at least back it up, before you make a second one.
-  A demo makes a password wallet and never does this. [Known limits](known-limits.md) has the
-  three limits that stay.
+  A demo makes a password wallet and never does this. On such a Mac, Phosphor does not open a
+  readable key file from before wallets were encrypted either: the lock card says it stayed closed
+  and offers Restore from your backup. [Known limits](known-limits.md) has the four limits that
+  stay.
 - Before every Touch ID, Phosphor checks that a Phosphor-only wallet's file is the one it saved. A
   file put in its place from outside the app, even one made for the same key, is refused, and the
   lock card says the file stayed closed, says why, and offers the restore that opens your wallet.
+  The Vault says Phosphor-only only once Phosphor has confirmed that the file in place is that one.
+- An address a key file names without the key behind it is no longer shown as the wallet's.
 - A wallet with no recovery phrase can back up its private key. Under Safety, Private key, Back it
   up shows the key behind its own Touch ID in sixteen numbered groups of four, with Print and never
   Copy. Type the whole key back from your copy: only a copy that opens this very wallet counts, and
@@ -42,7 +46,9 @@ Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026
 - A restore no longer deletes the wallet on the Mac before its Touch ID. Every new wallet file,
   from a create, a restore, Protect with Touch ID or Make it Phosphor-only, is written beside the
   one in place and replaces it only once a Touch ID has opened it, so a cancel, a refusal or a crash
-  leaves the wallet that was there. The next start finishes or clears what a crash left.
+  leaves the wallet that was there. The next start finishes or clears what a crash left. A new
+  Touch ID wallet is made Phosphor-only even when Phosphor could not read its saved keys as it
+  started; if that step does not finish, nothing is made and the wallet you had stays as it was.
 - A new Mac's first run offers I already have a wallet beside Create a new wallet: your recovery
   phrase or your private key, and one Touch ID. Your wallet is back then names the wallet that came
   back, with its full address, before anything else, and That is not my wallet goes back to the
@@ -57,6 +63,9 @@ Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026
 - A refused Touch ID is said in plain words, and a cancelled one quietly, with no warning sign.
   Text macOS writes for its logs never reaches the window. A refused restore no longer says Press
   Restore again to go ahead under the refusal.
+- When the disk will not take a key file during a create, a restore, Forget, encrypting a readable
+  key file or saving an encrypted copy, Phosphor says so in plain words and suggests checking free
+  space; the system's message and the file's path no longer reach the window.
 - The Touch ID vault now runs on macOS 13.5 and later, as the app always said; before this release
   it needed macOS 15. On macOS 13.5 to 14 the Secure Enclave helper could not start, so the app
   made a password wallet and the Keys row said Touch ID is not available on this Mac right now.

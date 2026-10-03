@@ -91,7 +91,7 @@ makes is Phosphor-only from the start. Before it asks for Touch ID, Phosphor che
 Phosphor-only wallet's file is the one it saved, so a file someone else made for the same key, or
 an edited one, is refused. A signed update verifies either way: the updater checks the bundle's own
 update signature, and then its Developer ID code signature against Phosphor's Team ID, before it
-replaces anything. Three limits stay, below.
+replaces anything. Four limits stay, below.
 
 ## Phosphor-only is one rule for the whole Mac
 
