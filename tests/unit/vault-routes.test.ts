@@ -21,7 +21,7 @@ import { createAudit } from '../../src/audit.ts';
 import { createStore } from '../../src/store.ts';
 import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
-import { createKeystore } from '../../src/keystore/index.ts';
+import { createKeystore, keystorePathFor } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
@@ -88,8 +88,9 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
   };
 }
 
-async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void } = {}) {
-  const dataDir = tempDir('phosphor-vault-');
+async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void; dataDir?: string; mac?: Enclave } = {}) {
+  // A data directory and a Mac given by the test are a restart: the same files, the same enclave.
+  const dataDir = opts.dataDir ?? tempDir('phosphor-vault-');
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -203,7 +204,7 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
 
   /* The fake shell. `mac` is the enclave it answers with; a request wrapped to a different
      enclave fails as the real one would, with crypto_failed. */
-  const mac = enclave();
+  const mac = opts.mac ?? enclave();
   /* `refuse` answers every request but the probe with that code and message, as the service or a
      relay refuses: the message is the kind of text the service writes for its logs. */
   const dialog: { mode: Mode; refuse: { error: string; message: string } | null } = { mode: 'answer', refuse: null };
@@ -1118,6 +1119,60 @@ test('a proven backup belongs to its wallet: a different wallet in its place rea
     assert.equal(forget.json.code, 'not_backed_up', 'another wallet\'s proof let this one be forgotten');
   } finally {
     await b.close();
+  }
+});
+
+/* The proof is checked against the address an open derived, never the file's header (audit1b,
+   AU1B-01): an address is public, so a file swapped in from outside the app can copy the proven one
+   into its header. After a restart nothing has been opened, so the answer is null, not known yet,
+   for the real file and the swapped one alike; the open tells them apart. */
+test('after a restart the proof waits for an open: the proven wallet reads backed up, and a file that copies its address into its header loses the flag', async () => {
+  const mac = enclave();
+  const first = await boot({ mode: 'live', mac });
+  const dataDir = path.dirname(path.dirname(first.keysPath));
+  let evm: string;
+  try {
+    evm = (await keyWallet(first, false)).evm;
+    const shown = await first.post('/api/vault/reveal-key', {});
+    assert.equal((await first.post('/api/vault/key-proven', { key: typedCopy(shown.json.groups) })).json.ok, true);
+    assert.equal((await first.get('/api/vault')).json.backedUp, true);
+  } finally {
+    await first.close();
+  }
+  const live = keystorePathFor(path.join(dataDir, 'keys', 'keys.json'));
+  const real = fs.readFileSync(live, 'utf8');
+
+  // Another wallet, wrapped to this Mac's enclave key, with the proven address in its header.
+  const other = path.join(tempDir('phosphor-vault-other-'), 'keys.json');
+  createKeystore({ keysPath: other, kdf: fast }).importWithEnclave({ keyBlob: crypto.randomBytes(64).toString('base64'), publicKey: mac.pub, createdAt: new Date().toISOString() }, { keys: { evm: generatePrivateKey() } });
+  const swapped = JSON.parse(fs.readFileSync(keystorePathFor(other), 'utf8'));
+  swapped.header.addresses.evm = evm;
+  fs.writeFileSync(live, JSON.stringify(swapped, null, 2) + '\n', { mode: 0o600 });
+
+  const s = await boot({ mode: 'live', mac, dataDir });
+  try {
+    const before = (await s.get('/api/vault')).json;
+    assert.deepEqual([before.state, before.backedUp, before.backedUpAt], ['locked', null, null], 'a header that names the proven wallet was taken as the proof');
+    assert.equal((await s.get('/api/state')).json.vault.backedUp, null);
+    assert.equal((await s.post('/api/vault/forget', { confirm: 'FORGET' })).json.code, 'not_backed_up', 'a wallet nothing has opened was forgotten on its header\'s word');
+    assert.equal((await s.post('/api/vault/unlock', {})).json.ok, true);
+    const after = (await s.get('/api/vault')).json;
+    assert.deepEqual([after.backedUp, after.backedUpAt], [false, null], 'the open derived another wallet and the proof stayed with it');
+    assert.equal((await s.get('/api/state')).json.vault.backedUp, false);
+  } finally {
+    await s.close();
+  }
+
+  fs.writeFileSync(live, real, { mode: 0o600 });
+  const r = await boot({ mode: 'live', mac, dataDir });
+  try {
+    assert.equal((await r.get('/api/vault')).json.backedUp, null, 'the real file is not known before an open either');
+    assert.equal((await r.post('/api/vault/unlock', {})).json.ok, true);
+    assert.equal((await r.get('/api/vault')).json.backedUp, true);
+    r.keystore.lock();
+    assert.equal((await r.get('/api/vault')).json.backedUp, true, 'a lock forgot the wallet this process opened');
+  } finally {
+    await r.close();
   }
 });
 

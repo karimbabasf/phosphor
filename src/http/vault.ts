@@ -93,15 +93,24 @@ export async function handleVaultAnswer(ctx: Ctx, req: http.IncomingMessage, res
    wallet on this Mac has an offline copy that was typed back, three words of its recovery phrase
    or, for a wallet with no phrase, its whole private key, or it was restored from one.
    The bind flow reads it from the vault slice of /api/state before it binds a wallet to this Mac's
-   chip. A proof names the wallet it was made for, so a key file swapped in from outside the app
-   does not inherit another wallet's; a proof written before proofs named a wallet stands. */
-export function backupProven(ctx: Ctx, prefs = ctx.vaultPrefs.get()): { backedUp: boolean; backedUpAt: string | null } {
+   chip. A proof names the wallet it was made for, and the wallet in place is the address this
+   process derived from the keys it decrypted, never the one the file's header claims: the header
+   is plaintext any process running as the owner can edit, and an address is public, so a key file
+   swapped in from outside the app could copy the proven one there and inherit the proof (audit1b,
+   AU1B-01). Until this process has opened the wallet there is no derived address, so the answer
+   is null: not known yet. No gate reads null as proven, and no screen or agent reads it as a
+   missing backup; one open answers it, and the address an open derived is kept after a lock. A
+   proof written before proofs named a wallet stands. */
+export function backupProven(ctx: Ctx, prefs = ctx.vaultPrefs.get()): { backedUp: boolean | null; backedUpAt: string | null } {
   const no = { backedUp: false, backedUpAt: null };
   if (!prefs.backedUp) return no;
   const proven = prefs.backedUpFor ?? null;
   if (proven === null) return { backedUp: true, backedUpAt: prefs.backedUpAt };
-  const wallet = ctx.keystore.addressReport().addresses.evm;
-  return wallet !== null && wallet.toLowerCase() === proven ? { backedUp: true, backedUpAt: prefs.backedUpAt } : no;
+  const report = ctx.keystore.addressReport();
+  const wallet = report.addresses.evm;
+  if (wallet === null) return no;
+  if (report.verified !== true) return { backedUp: null, backedUpAt: null };
+  return wallet.toLowerCase() === proven ? { backedUp: true, backedUpAt: prefs.backedUpAt } : no;
 }
 
 export function vaultStatus(ctx: Ctx): JsonBody {
@@ -546,7 +555,7 @@ export async function handleVaultMigrate(ctx: Ctx, req: http.IncomingMessage, re
 export async function handleVaultBind(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/bind', req, res);
   if (body === null) return;
-  sendJson(res, 200, await bindWallet(ctx, () => backupProven(ctx).backedUp));
+  sendJson(res, 200, await bindWallet(ctx, () => backupProven(ctx).backedUp === true));
 }
 
 /* Forget: typed confirmation, proven backup, a Touch ID, then the file is shredded, and a staged

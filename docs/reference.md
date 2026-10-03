@@ -645,7 +645,9 @@ as one plain name on every screen, in the Touch ID sentence ("Make your wallet P
 Mac") and in the audit log: Phosphor-only (the Keys row's Phosphor-only access card, its button
 Make it Phosphor-only). The wallet must
 be open (its payload is resealed from memory under a fresh data key, so nothing in it changes),
-its backup proven (`backedUp` in the vault slice), no move waiting on a Touch ID, and the build
+its backup proven (`backedUp` in the vault slice; a proof names the address of the wallet it was
+made for, checked against the address an open derived and never the file's header, so it is null,
+not known yet, until this process has opened the wallet), no move waiting on a Touch ID, and the build
 must have a keychain home. It is window only, behind the token, and never an MCP op. Refusals each
 have a sentence (`wallet_locked`, `not_backed_up`, `touch_waiting`, `bind_busy`, `not_enclave`,
 `no_keychain_home`, `keychain_unavailable`); a bound wallet answers `{ ok: true, binding: 'app' }`
