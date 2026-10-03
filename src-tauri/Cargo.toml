@@ -65,10 +65,12 @@ objc2-app-kit = { version = "0.3.2", default-features = false, features = ["std"
 security-framework = "3.7"
 core-foundation = "0.10"
 
-# The plugin's own minisign verifier, for the update tests to prove a bundle they build passes
-# the check the plugin runs. Already in the tree under tauri-plugin-updater.
+# The minisign verifier, for the update tests to prove that a bundle they build, the release
+# signer's output and a published release pass the check the updater runs. tauri-plugin-updater
+# 2.13.1 still runs 0.2.5 (it asks for ^0.2); 0.3.0 only copies bytes with safe code where 0.2.5
+# used unsafe pointer copies, so the two verify alike.
 [dev-dependencies]
-minisign-verify = "0.2"
+minisign-verify = "0.3"
 
 [profile.release]
 codegen-units = 1

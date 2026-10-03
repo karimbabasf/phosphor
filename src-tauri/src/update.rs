@@ -1048,38 +1048,63 @@ mod tests {
         assert!(!path.exists());
     }
 
-    /// A published updater bundle, the one sample of a correct Developer ID signature, which the
-    /// repo cannot hold. Fetch one and point PHOSPHOR_UPDATE_SAMPLE at it, its .sig beside it:
+    /// Published updater bundles, the one sample of a correct Developer ID signature, which the
+    /// repo cannot hold. Fetch one or more and point PHOSPHOR_UPDATE_SAMPLE at them, separated by
+    /// colons, each with its .sig beside it:
     ///
     ///   gh release download v0.10.12 --repo karimbabasf/phosphor --pattern 'Phosphor_0.10.12_aarch64.app.tar.gz*'
-    ///   PHOSPHOR_UPDATE_SAMPLE=$PWD/Phosphor_0.10.12_aarch64.app.tar.gz cargo test sample -- --ignored --nocapture
-    fn sample() -> (Vec<u8>, String) {
-        let path = std::env::var("PHOSPHOR_UPDATE_SAMPLE").expect("PHOSPHOR_UPDATE_SAMPLE names a published .app.tar.gz");
-        let bytes = std::fs::read(&path).expect("the sample is readable");
-        let signature = std::fs::read(format!("{path}.sig")).expect("the sample's .sig sits beside it");
-        (bytes, unbase64(&signature))
+    ///   gh release download v0.10.13 --repo karimbabasf/phosphor --pattern 'Phosphor_0.10.13_aarch64.app.tar.gz*'
+    ///   PHOSPHOR_UPDATE_SAMPLE=$PWD/Phosphor_0.10.12_aarch64.app.tar.gz:$PWD/Phosphor_0.10.13_aarch64.app.tar.gz \
+    ///     cargo test sample -- --ignored --nocapture
+    fn samples() -> Vec<(String, Vec<u8>, String)> {
+        let paths = std::env::var("PHOSPHOR_UPDATE_SAMPLE").expect("PHOSPHOR_UPDATE_SAMPLE names published .app.tar.gz files");
+        paths
+            .split(':')
+            .filter(|path| !path.is_empty())
+            .map(|path| {
+                let bytes = std::fs::read(path).expect("the sample is readable");
+                let signature = std::fs::read(format!("{path}.sig")).expect("the sample's .sig sits beside it");
+                (path.to_string(), bytes, unbase64(&signature))
+            })
+            .collect()
     }
 
     #[test]
-    #[ignore = "needs PHOSPHOR_UPDATE_SAMPLE, a published release (see `sample`)"]
+    #[ignore = "needs PHOSPHOR_UPDATE_SAMPLE, a published release (see `samples`)"]
     fn sample_a_published_release_passes_minisign_with_the_shipped_key_and_its_code_signature() {
-        let (bytes, signature) = sample();
         let conf: serde_json::Value = serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
         let shipped = unbase64(conf["plugins"]["updater"]["pubkey"].as_str().unwrap().as_bytes());
         let public = minisign_verify::PublicKey::decode(&shipped).unwrap();
-        public.verify(&bytes, &minisign_verify::Signature::decode(&signature).unwrap(), true).expect("signed by the release key");
-        let inside = bundled_version(&bytes).unwrap();
-        let started = std::time::Instant::now();
-        vet(&bytes, &inside, "0.0.1", TEAMS).expect("Phosphor's own release passes");
-        eprintln!("vet: {inside}, {} MB, {} ms", bytes.len() / 1_000_000, started.elapsed().as_millis());
+        let samples = samples();
+        for (path, bytes, signature) in &samples {
+            let signature = minisign_verify::Signature::decode(signature).unwrap();
+            public.verify(bytes, &signature, true).expect("signed by the release key");
+            let mut changed = bytes.clone();
+            changed[bytes.len() / 2] ^= 1;
+            assert!(public.verify(&changed, &signature, true).is_err(), "{path}: one changed byte fails");
+            let inside = bundled_version(bytes).unwrap();
+            let started = std::time::Instant::now();
+            vet(bytes, &inside, "0.0.1", TEAMS).expect("Phosphor's own release passes");
+            eprintln!("{path}: minisign ok, vet: {inside}, {} MB, {} ms", bytes.len() / 1_000_000, started.elapsed().as_millis());
+        }
+        // A release's signature is its own: it never passes another release's bytes.
+        for (signed, (_, _, signature)) in samples.iter().enumerate() {
+            let signature = minisign_verify::Signature::decode(signature).unwrap();
+            for (other, (path, bytes, _)) in samples.iter().enumerate() {
+                if other != signed {
+                    assert!(public.verify(bytes, &signature, true).is_err(), "{path} passed another release's signature");
+                }
+            }
+        }
     }
 
     #[test]
-    #[ignore = "needs PHOSPHOR_UPDATE_SAMPLE, a published release (see `sample`)"]
+    #[ignore = "needs PHOSPHOR_UPDATE_SAMPLE, a published release (see `samples`)"]
     fn sample_the_same_release_is_refused_when_its_team_is_not_in_the_set() {
-        let (bytes, _) = sample();
-        let inside = bundled_version(&bytes).unwrap();
-        let why = refusal(vet(&bytes, &inside, "0.0.1", &["ABCDE12345"]));
-        assert!(why.contains("not signed as Phosphor"), "{why}");
+        for (_, bytes, _) in samples() {
+            let inside = bundled_version(&bytes).unwrap();
+            let why = refusal(vet(&bytes, &inside, "0.0.1", &["ABCDE12345"]));
+            assert!(why.contains("not signed as Phosphor"), "{why}");
+        }
     }
 }
