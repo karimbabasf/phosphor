@@ -211,6 +211,12 @@ const REFUSALS: Record<string, string> = {
   // copies, so a disk that stops it may have done the first half: not "nothing changed" either.
   migrate_failed: 'Phosphor could not finish encrypting your keys on this Mac. Check that the Mac has free space, then try again.',
   export_failed: 'Phosphor could not save the encrypted copy there, and your wallet is unchanged. Check that you can save to that folder and that the disk has free space, then try again.',
+  // The password routes after their file is written (afterSave): the step happened, so each says
+  // what was saved, never that nothing changed (verify-ra1b VRA1B-02).
+  create_unfinished: 'Your new wallet is saved, but Phosphor could not show its recovery phrase. Check that the Mac has free space, then reopen Phosphor and back it up from the Vault tab.',
+  import_unfinished: 'Your wallet is saved, but Phosphor could not finish. Check that the Mac has free space, then reopen Phosphor and unlock it.',
+  migrate_unfinished: 'Your keys are encrypted, but Phosphor could not finish. Check that the Mac has free space, then reopen Phosphor and unlock it with your new password.',
+  export_unfinished: 'The encrypted copy is saved there and your wallet is unchanged, but Phosphor could not finish. Check that the Mac has free space.',
 };
 
 /* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
@@ -230,8 +236,33 @@ export function refusalCodes(): string[] {
 export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed' | 'migrate_failed' | 'export_failed'): JsonBody | null {
   const os = osError(err);
   if (os === null) return null;
-  ctx.audit.append('app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
+  auditSafely(ctx, 'app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
   return refusal(code);
+}
+
+/* An audit line on a path that answers all the same. The audit file sits on the disk that may just
+   have refused the key file, and then the line is what is lost, never the sentence; the system's
+   text goes to stderr only, as in the router's catch (verify-ra1b VRA1B-02). */
+function auditSafely(ctx: Pick<Ctx, 'audit'>, type: 'app_start' | 'error', msg: string, data?: Record<string, unknown>): void {
+  try {
+    ctx.audit.append(type, msg, data);
+  } catch (logErr) {
+    process.stderr.write(`phosphor: could not log that ${msg}: ${errText(logErr)}\n`);
+  }
+}
+
+/* AFTER THE KEY FILE IS WRITTEN the step has happened: the wallet is made or imported, the keys are
+   encrypted, the copy is saved. A failure from there on (most likely its audit line, on the same
+   disk) is said in the table's words for what was saved, never "nothing changed" (verify-ra1b
+   VRA1B-02). */
+function afterSave(ctx: Ctx, res: http.ServerResponse, step: string, code: 'create_unfinished' | 'import_unfinished' | 'migrate_unfinished' | 'export_unfinished', finish: () => void): void {
+  try {
+    finish();
+  } catch (err) {
+    const os = osError(err);
+    auditSafely(ctx, 'error', `${step}, then the step did not finish (${os === null ? errText(err) : `${os.code} on ${os.syscall}`})`, os ?? undefined);
+    if (!res.headersSent) sendJson(res, 200, refusal(code));
+  }
 }
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
@@ -361,8 +392,15 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
   if (body === null) return;
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let made: Awaited<ReturnType<Ctx['keystore']['create']>>;
   try {
-    const made = await ctx.keystore.create(password);
+    made = await ctx.keystore.create(password);
+  } catch (err) {
+    const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
+  }
+  afterSave(ctx, res, 'a new wallet was made', 'create_unfinished', () => {
     // The words are audited by their absence: the line says a wallet exists and names the
     // address, which is the fact a log is for. The phrase is returned once, here, and never
     // written anywhere this process controls.
@@ -373,11 +411,7 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
     ctx.session.touch();
     announce(ctx);
     sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
-  } catch (err) {
-    const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
-    if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
-  }
+  });
 }
 
 export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -394,19 +428,22 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
   const raw = body.keys !== null && typeof body.keys === 'object' ? (body.keys as Partial<RailKeys>) : undefined;
   if (mnemonic === undefined && raw === undefined) return fail(res, 400, 'bring twelve words or an EVM private key');
 
+  let out: Awaited<ReturnType<Ctx['keystore']['importWallet']>>;
   try {
-    const out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
+    out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
+  } catch (err) {
+    const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
+  }
+  afterSave(ctx, res, 'a wallet was imported', 'import_unfinished', () => {
     ctx.audit.append('app_start', `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
       evm: out.addresses.evm,
     });
     ctx.session.touch();
     announce(ctx);
     sendJson(res, 200, { ok: true, addresses: out.addresses });
-  } catch (err) {
-    const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
-    if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
-  }
+  });
 }
 
 /* Whether this Mac keeps a Phosphor-only wallet, any data folder's, asked of the vault service now
@@ -446,8 +483,15 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
   }
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let out: Awaited<ReturnType<Ctx['keystore']['migrate']>>;
   try {
-    const out = await ctx.keystore.migrate(password);
+    out = await ctx.keystore.migrate(password);
+  } catch (err) {
+    const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
+  }
+  afterSave(ctx, res, 'the readable key file was encrypted', 'migrate_unfinished', () => {
     ctx.audit.append('app_start', `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
       destroyed: out.destroyed.map((p) => path.basename(p)),
       evm: out.addresses.evm,
@@ -462,11 +506,7 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
       // system that keeps snapshots, and the only complete answer is a fresh wallet.
       note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
     });
-  } catch (err) {
-    const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
-    if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
-  }
+  });
 }
 
 export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -492,13 +532,15 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
   }
   try {
     await ctx.keystore.exportTo(target, password);
-    ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
-    sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
     const disk = diskRefusal(ctx, 'the encrypted copy was not saved', err, 'export_failed');
     if (disk !== null) return sendJson(res, 200, disk);
-    fail(res, 400, errText(err));
+    return fail(res, 400, errText(err));
   }
+  afterSave(ctx, res, 'an encrypted copy was saved', 'export_unfinished', () => {
+    ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
+    sendJson(res, 200, { ok: true, path: target });
+  });
 }
 
 // ---------- reveal ----------

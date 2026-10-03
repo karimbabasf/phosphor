@@ -685,8 +685,13 @@ create or a restore, by Touch ID or by password, could not write it, `forget_fai
 could not finish removing it, `migrate_failed` when encrypting a readable key file could not finish,
 and `export_failed` when an encrypted copy could not be saved where the person asked. The system's
 own text names the file's path, so it never reaches a window; the audit line keeps only the
-system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`). A sentence the app
-writes on purpose may still name what a person needs, such as the file a step left alone.
+system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`), and an audit file
+the disk refuses as well loses that line, never the sentence. A sentence the app writes on purpose
+may still name what a person needs, such as the file a step left alone. Once the password create,
+import, migration or encrypted copy has written its file, the step has happened, so a failure after
+it (most likely its audit line) says what was saved, never that nothing changed:
+`create_unfinished` (the recovery phrase was not shown, so back it up from the Vault tab),
+`import_unfinished`, `migrate_unfinished` and `export_unfinished`.
 
 A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
 it said) and every custody step after it settle it by the service's answer about it, never by the

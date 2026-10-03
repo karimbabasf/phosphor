@@ -58,6 +58,7 @@ type Booted = {
   token: string;
   keystore: ReturnType<typeof createKeystore>;
   keysPath: string;
+  audit: ReturnType<typeof createAudit>;
   post: (route: string, body: unknown, opts?: { origin?: string; contentType?: string }) => Promise<{ status: number; json: any }>;
   get: (route: string, opts?: { origin?: string }) => Promise<{ status: number; json: any }>;
   getRaw: (route: string, headers: Record<string, string>) => Promise<{ status: number; json: any }>;
@@ -81,6 +82,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, mode, kdf: fast });
+  const audit = createAudit(dataDir);
   const cfg: AppConfig = {
     mode,
     port: 0,
@@ -91,7 +93,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   };
   const server = createServer({
     cfg,
-    audit: createAudit(dataDir),
+    audit,
     store: createStore(dataDir),
     keystore,
     riskRows: [],
@@ -191,7 +193,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     });
   }
 
-  return { url, token, keystore, keysPath, post, get, getRaw, releases: () => releases, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { url, token, keystore, keysPath, audit, post, get, getRaw, releases: () => releases, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // ---------- the guard ----------
@@ -496,6 +498,97 @@ test('a disk that refuses a key file is said in calm words in the migration and 
     assert.ok(lines[0]!.includes('(EACCES on open)') && !lines[0]!.includes(folder), lines[0]);
   } finally {
     fs.chmodSync(folder, 0o700);
+    await e.close();
+  }
+});
+
+/* verify-ra1b VRA1B-02: once the key file is written the step has happened, so a failure after it is
+   never answered "nothing changed". Here the audit line that records the step is refused the way a
+   disk that is full, or out of file handles, refuses it; each route says what was saved, in the
+   table's words, and the line that records the failure keeps the code and the call, not the path. */
+function refuseLine(b: Booted, line: string): void {
+  const append = b.audit.append.bind(b.audit);
+  const auditFile = path.join(path.dirname(path.dirname(b.keysPath)), 'audit.jsonl');
+  b.audit.append = (type, msg, data) => {
+    if (msg.startsWith(line)) throw Object.assign(new Error(`EMFILE: too many open files, open '${auditFile}'`), { errno: -24, code: 'EMFILE', syscall: 'open' });
+    return append(type, msg, data);
+  };
+}
+
+async function unfinishedLine(b: Booted, step: string): Promise<string> {
+  const lines = ((await b.get('/api/log?limit=50')).json as unknown[]).map((e) => JSON.stringify(e)).filter((l) => l.includes(`${step}, then the step did not finish`));
+  assert.equal(lines.length, 1, JSON.stringify(lines));
+  assert.ok(lines[0]!.includes('(EMFILE on open)') && !lines[0]!.includes(path.dirname(path.dirname(b.keysPath))), lines[0]);
+  return lines[0]!;
+}
+
+test('a failure after the wallet file is written says the wallet is saved, never that nothing changed, in the password create and import', async () => {
+  const c = await boot('live');
+  try {
+    refuseLine(c, 'a new wallet was created in the window');
+    const made = await c.post('/api/wallet/create', { token: c.token, password: PASSWORD });
+    assert.equal(made.status, 200);
+    assert.deepEqual(made.json, refusal('create_unfinished'), JSON.stringify(made.json));
+    assert.match(String(made.json.error), /^Your new wallet is saved, but Phosphor could not show its recovery phrase\. Check that the Mac has free space, then reopen Phosphor and back it up from the Vault tab\.$/);
+    assert.ok(!RAW.test(String(made.json.error)), String(made.json.error));
+    assert.ok(!JSON.stringify(made.json).includes(path.dirname(c.keysPath)), JSON.stringify(made.json));
+    assert.equal(c.keystore.state(), 'unlocked', 'the wallet was made');
+    assert.ok(fs.existsSync(path.join(path.dirname(c.keysPath), 'keys.enc.json')));
+    await unfinishedLine(c, 'a new wallet was made');
+  } finally {
+    await c.close();
+  }
+
+  const i = await boot('live');
+  try {
+    refuseLine(i, 'a wallet was imported in the window');
+    const out = await i.post('/api/wallet/import', { token: i.token, password: PASSWORD, mnemonic: VECTOR });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, refusal('import_unfinished'), JSON.stringify(out.json));
+    assert.match(String(out.json.error), /^Your wallet is saved, but Phosphor could not finish\. Check that the Mac has free space, then reopen Phosphor and unlock it\.$/);
+    assert.ok(!RAW.test(String(out.json.error)), String(out.json.error));
+    assert.equal(i.keystore.addresses().evm, VECTOR_EVM, 'the wallet was imported');
+    await unfinishedLine(i, 'a wallet was imported');
+  } finally {
+    await i.close();
+  }
+});
+
+test('a failure after the key file is written says what was saved, never that nothing changed, in the migration and the encrypted copy', async () => {
+  const m = await boot('live');
+  try {
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    const wallet = walletFromMnemonic(VECTOR);
+    fs.mkdirSync(path.dirname(m.keysPath), { recursive: true });
+    fs.writeFileSync(m.keysPath, JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }), { mode: 0o600 });
+    refuseLine(m, 'the plaintext key file was encrypted and destroyed');
+    const out = await m.post('/api/wallet/migrate', { token: m.token, password: PASSWORD });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, refusal('migrate_unfinished'), JSON.stringify(out.json));
+    assert.match(String(out.json.error), /^Your keys are encrypted, but Phosphor could not finish\. Check that the Mac has free space, then reopen Phosphor and unlock it with your new password\.$/);
+    assert.ok(!RAW.test(String(out.json.error)), String(out.json.error));
+    assert.equal(fs.existsSync(m.keysPath), false, 'the readable copy is gone');
+    assert.equal(m.keystore.custody(), 'software', 'the keys are encrypted');
+    assert.equal(m.keystore.addresses().evm, VECTOR_EVM);
+    await unfinishedLine(m, 'the readable key file was encrypted');
+  } finally {
+    await m.close();
+  }
+
+  const e = await boot('live');
+  const folder = tempDir('phosphor-export-');
+  try {
+    assert.equal((await e.post('/api/wallet/create', { token: e.token, password: PASSWORD })).json.ok, true);
+    refuseLine(e, 'an encrypted backup of the wallet was written');
+    const target = path.join(folder, 'backup.json');
+    const out = await e.post('/api/wallet/export', { token: e.token, password: PASSWORD, path: target });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, refusal('export_unfinished'), JSON.stringify(out.json));
+    assert.match(String(out.json.error), /^The encrypted copy is saved there and your wallet is unchanged, but Phosphor could not finish\. Check that the Mac has free space\.$/);
+    assert.ok(!RAW.test(String(out.json.error)), String(out.json.error));
+    assert.ok(fs.existsSync(target), 'the copy is saved');
+    await unfinishedLine(e, 'an encrypted copy was saved');
+  } finally {
     await e.close();
   }
 });
