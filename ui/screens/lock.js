@@ -485,13 +485,15 @@
      password, and the Touch ID card's answer to a wallet file this Mac will
      not open (refusedHere): a person told their backup brings the wallet back
      is given the way to use it, not a button that is refused again.
-     `hide` are the card's own parts the step takes the place of. */
+     `hide` are the card's own parts the step takes the place of; `opts.into`
+     is where the way sits, when that is not the card's foot (the Touch ID
+     card puts it straight under the line that names it). */
   function restoreWay(card, hide, opts) {
     var keyOnly = keyWallet();
     var way = dom.el('button', 'lock-forgot');
     way.type = 'button';
     way.appendChild(dom.el('span', '', opts.label));
-    card.appendChild(way);
+    (opts.into || card).appendChild(way);
 
     var step = dom.el('div', 'lock-restore');
     step.hidden = true;
@@ -647,6 +649,7 @@
         ? 'Type your private key, 64 characters. Phosphor opens your wallet from it here, behind Touch ID.'
         : 'Type your recovery phrase, 12 or 24 words. Phosphor opens your wallet from it here, behind Touch ID.',
       back: 'Back',
+      into: actions,
       focus: function () { unlock.focus(); }
     });
     way.hidden = true;

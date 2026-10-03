@@ -347,6 +347,15 @@ body[data-firstrun="true"] #page {
   .lock-forgot:hover { color: var(--text); }
 }
 
+/* Under a refusal on the Touch ID card, the way back sits with the line that
+   names it, its words on the line's own left edge (the glyph and its gap). */
+.lock-form > .lock-forgot {
+  align-self: flex-start;
+  margin-top: calc(var(--s-2) * -1);
+  margin-left: 20px;
+  text-align: left;
+}
+
 .lock-forgot:active {
   color: var(--text);
   background-color: var(--press);

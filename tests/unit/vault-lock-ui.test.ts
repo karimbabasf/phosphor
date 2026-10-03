@@ -870,6 +870,7 @@ test('a key that brings back another wallet than the file names says so, and lea
   buttonNamed(screen, 'Restore').click();
   await flush();
   assert.ok(textOf(screen).includes('This is a different wallet'));
+  assert.ok(textOf(screen).includes(`This is the wallet ${other.slice(0, 6)}...${other.slice(-4)}.`), 'the line asks to check what the app already found wrong');
   assert.ok(textOf(screen).includes(`The wallet file from your other Mac is ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}. If that one is yours, a character is off in what you typed.`));
   const buttons = find(find(screen, '.screen-actions')[0], 'button');
   assert.deepEqual(buttons.map((b: Any) => b.textContent), ['Keep this wallet', 'Try again']);

@@ -801,7 +801,8 @@
     var key = r.from === 'key';
     var differs = !!(r.expected && r.evm && r.expected.toLowerCase() !== r.evm.toLowerCase());
     card.appendChild(dom.el('h1', 'title', differs ? 'This is a different wallet' : 'Your wallet is back'));
-    card.appendChild(dom.el('p', 'body dim', 'This is the wallet ' + shortAddress(r.evm) + '. ' + (key ? 'Check it matches the address on your copy.' : 'Check it is the one you expect.')));
+    // Where the app already knows it is not the expected one, the line under the well says so instead.
+    card.appendChild(dom.el('p', 'body dim', 'This is the wallet ' + shortAddress(r.evm) + '.' + (differs ? '' : key ? ' Check it matches the address on your copy.' : ' Check it is the one you expect.')));
     var well = dom.el('p', 'firstrun-address mono', r.evm);
     well.setAttribute('aria-label', 'Wallet address');
     card.appendChild(well);
