@@ -8,7 +8,9 @@
 // record whether it lasts a second or one paint. Each card is photographed when it first appears
 // and again once its row lands, at 1280 x 800 and at 960 x 700.
 //
-// Run: node scripts/first-frame-proof.ts --out <dir> [--label after] [--port 4206] [--hold 2500]
+// Run: node scripts/first-frame-proof.ts [--out <dir>] [--label after] [--port 4206] [--hold 2500]
+// --out defaults to scripts/scratch/first-frame-proof/, which git ignores (docs/screenshots/first-frame/
+// with --docs).
 // Demo mode on a throwaway data dir and a scratch HOME, never port 4177; it quits everything it
 // started. playwright-core is not a dependency of this repo: point PLAYWRIGHT_CORE at a copy (the
 // npx cache has one) and it uses the headless shell that copy knows; PROOF_BROWSER names another
@@ -22,6 +24,7 @@ import os from 'node:os';
 import path from 'node:path';
 import type { Readable, Writable } from 'node:stream';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 type Json = any;
 
@@ -33,7 +36,7 @@ const flag = (name: string, fallback: string): string => {
 };
 const PORT = Number(flag('--port', process.env.PHOSPHOR_PORT ?? '4206'));
 if (PORT === 4177) throw new Error('4177 is the installed app\'s port; pick another');
-const OUT = path.resolve(flag('--out', fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-first-frame-'))));
+const OUT = path.resolve(flag('--out', proofOut('first-frame-proof', 'first-frame')));
 const LABEL = flag('--label', 'run');
 const HOLD_MS = Number(flag('--hold', '2500'));
 const PLAYWRIGHT_CORE = process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/705bc6b22212b352/node_modules/playwright-core');
