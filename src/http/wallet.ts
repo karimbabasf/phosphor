@@ -53,7 +53,8 @@ const MIN_PASSWORD = 8;
 const REVEAL_TTL_MS = 30_000;
 
 // The material rides in the slot as bytes, read under the password at the POST, so the GET needs
-// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for.
+// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for of a
+// phrase (a key is proven by its whole copy, src/http/vault.ts key-proven).
 type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null; prove: number[] };
 const pending = new Map<string, Pending>();
 

@@ -362,8 +362,8 @@
     head.appendChild(away);
     host.appendChild(head);
     host.appendChild(dom.el('p', 'body dim', keyOnly()
-      ? 'Your private key is the only way back to this wallet. Reveal it once, write it down, and type three groups back to prove it.'
-      : 'Your recovery phrase is the only way back to this wallet. Reveal it once, write it down, and type three words back to prove it.'));
+      ? 'Your private key is the only way back to this wallet. Show it once, write it down, and type it back whole to prove your copy.'
+      : 'Your recovery phrase is the only way back to this wallet. Show it once, write it down, and type three words back to prove it.'));
     var actions = dom.el('div', 'screen-actions');
     var go = dom.el('button', 'btn');
     go.type = 'button';

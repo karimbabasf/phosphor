@@ -91,7 +91,7 @@ export async function handleVaultAnswer(ctx: Ctx, req: http.IncomingMessage, res
 
 /* BACKUP PROVEN, the one flag for both kinds of wallet (CONTRACTS.md, "Backup proven"): the
    wallet on this Mac has an offline copy that was typed back, three words of its recovery phrase
-   or, for a wallet with no phrase, three groups of its private key, or it was restored from one.
+   or, for a wallet with no phrase, its whole private key, or it was restored from one.
    The bind flow reads it from the vault slice of /api/state before it binds a wallet to this Mac's
    chip. A proof names the wallet it was made for, so a key file swapped in from outside the app
    does not inherit another wallet's; a proof written before proofs named a wallet stands. */

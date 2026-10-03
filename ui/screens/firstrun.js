@@ -681,11 +681,15 @@
     card.appendChild(error);
     retryLine(error);
 
+    /* Back from "That is not my wallet" a wallet exists already, the one with the slip, so the
+       way to a new one is not offered: the person is fixing a character. */
+    var opts = { back: false, pending: 'Waiting for Touch ID' };
+    if (!draft.retry) opts.aside = { label: 'Create a new wallet', path: 'create' };
     actions('Restore', function (button) {
       var sent = restoreFrom(f.input.value, error);
       if (sent === null) return;
       restoring(button, f, error, sent, null);
-    }, { back: false, pending: 'Waiting for Touch ID', aside: { label: 'Create a new wallet', path: 'create' } });
+    }, opts);
   }
 
   /* A phrase or a key, told apart by what was typed: a private key has digits,

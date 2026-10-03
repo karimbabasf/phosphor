@@ -1,8 +1,8 @@
 // What the vault remembers about itself that is not a key.
 //
 // Two facts, in state/vault.json rather than in the key file: whether the wallet's backup has
-// been PROVEN (three words of its recovery phrase typed back, or three groups of its private key
-// when it has no phrase, not merely shown), and how long the window may sit idle before the
+// been PROVEN (three words of its recovery phrase typed back, or its whole private key when it
+// has no phrase, not merely shown), and how long the window may sit idle before the
 // wallet locks. They are outside the key file on purpose. The key file's header is the AAD of both
 // envelopes, so a flag that flips there would break the tag, and a wallet that will not open
 // because somebody backed it up is not a wallet.

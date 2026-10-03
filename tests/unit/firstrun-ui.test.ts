@@ -728,6 +728,7 @@ test('"That is not my wallet" goes back to the field with the line that says wha
   assert.ok(visibleText(screen).includes('Restore your wallet'));
   assert.ok(visibleText(screen).includes('Then a character is off. Check your copy group by group and try again.'));
   assert.equal(find(screen, 'textarea')[0].value, '', 'the key stayed in the field');
+  assert.equal(buttonNamed(screen, 'Create a new wallet'), undefined, 'a new wallet was offered over the one just restored');
   find(screen, 'textarea')[0].value = KEY_GROUPS;
   buttonNamed(screen, 'Restore').click();
   await flush();

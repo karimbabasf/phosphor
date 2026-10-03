@@ -706,7 +706,7 @@
   }
 
   /* The key's twin of the reveal above, for a wallet with no phrase: its own
-     Touch ID, the key once in sixteen groups, and the three Prove it asks. */
+     Touch ID and the key once, in sixteen groups. */
   function revealKeyWithTouch() {
     phrase = null;
     shownKey = null;
