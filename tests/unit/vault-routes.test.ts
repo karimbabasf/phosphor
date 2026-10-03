@@ -1079,3 +1079,35 @@ test('a proven backup belongs to its wallet: a different wallet in its place rea
     await b.close();
   }
 });
+
+/* Prove it checks three groups of sixteen; Check my copy checks the rest. It must never be a
+   restore in disguise: no Touch ID, nothing written, and the answer is yes or no. */
+test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID and nothing written', async () => {
+  const b = await boot({ mode: 'live' });
+  try {
+    const w = await keyWallet(b, false);
+    const before = fs.readFileSync(b.keystore.path(), 'utf8');
+    const touches = b.seen.length;
+    const groups = w.key.slice(2).match(/.{4}/g) as string[];
+    for (const copy of [w.key, groups.join(' '), `0X${groups.join(' ').toUpperCase()}`, `${groups.slice(0, 8).join('-')}\n${groups.slice(8).join('-')}`]) {
+      const said = await b.post('/api/vault/key-check', { key: copy });
+      assert.deepEqual(said.json, { ok: true, matches: true }, JSON.stringify(copy.slice(0, 6)));
+    }
+    // One character off is another wallet, and the answer does not say where.
+    const slip = `${w.key.slice(0, 40)}${w.key[40] === 'a' ? 'b' : 'a'}${w.key.slice(41)}`;
+    const wrong = await b.post('/api/vault/key-check', { key: slip });
+    assert.deepEqual(wrong.json, { ok: true, matches: false });
+    const bad = await b.post('/api/vault/key-check', { key: w.key.slice(0, 50) });
+    assert.equal(bad.json.code, 'bad_key');
+    assert.equal(b.seen.length, touches, 'a check asked for a Touch ID');
+    assert.equal(fs.readFileSync(b.keystore.path(), 'utf8'), before, 'a check wrote the key file');
+    assert.equal((await b.get('/api/vault')).json.backedUp, false, 'a check is not a proof');
+    const log = JSON.stringify(b.audit.tail(100));
+    assert.ok(log.includes('a copy of the private key was checked in the window: it matches this wallet'));
+    assert.ok(log.includes('it does not match this wallet'));
+    assert.ok(!log.includes(w.key.slice(2)) && !log.includes(slip.slice(2)), 'the audit log holds a key');
+    assert.equal((await b.post('/api/vault/key-check', { key: w.key }, false)).status, 403, 'a check without the window token');
+  } finally {
+    await b.close();
+  }
+});

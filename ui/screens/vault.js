@@ -544,6 +544,14 @@
     refs.backupGo = button('Back it up', 'btn-sm', 'Waiting for Touch ID');
     r.act.appendChild(refs.backupGo);
     dom.on(refs.backupGo, 'click', startReveal);
+    /* A proven key's copy, checked whole: Prove it asks three groups of
+       sixteen, and a key has no checksum to catch a slip in the rest. */
+    refs.checkCopy = button('Check my copy', 'btn-quiet btn-sm');
+    refs.checkCopy.hidden = true;
+    var checks = dom.el('div', 'vault-actions');
+    checks.appendChild(refs.checkCopy);
+    r.main.appendChild(checks);
+    dom.on(refs.checkCopy, 'click', startCheck);
     refs.phraseFlow = dom.el('div', 'vault-flow');
     refs.phraseFlow.hidden = true;
     r.body.appendChild(refs.phraseFlow);
@@ -574,6 +582,7 @@
     dom.setHidden(refs.backupGo, !has || !closed);
     // Said beside the button that raises the Touch ID, and gone with it.
     dom.setHidden(refs.backupWhy, !(noWords && enclave && !backed && closed));
+    dom.setHidden(refs.checkCopy, !(noWords && backed && closed));
   }
 
   function wipePhrase() {
@@ -1129,6 +1138,89 @@
         .finally(function () { window.PhosphorShell.setPending(prove, false); });
     });
     if (inputs[0] && inputs[0].focus) inputs[0].focus();
+  }
+
+  /* Check my copy: the whole key, typed from the copy, against this wallet.
+     No Touch ID and nothing written, and never through Restore, which would
+     replace this wallet with whatever a slip makes. */
+  function startCheck() {
+    grow(refs.backupRow, drawCheck, refs.phraseFlow);
+  }
+
+  function drawCheck() {
+    var flow = refs.phraseFlow;
+    dom.clear(flow);
+    flow.hidden = false;
+    flow.dataset.step = 'check';
+    render();
+
+    flow.appendChild(dom.el('p', 'vault-flow-title', 'Check your copy'));
+    flow.appendChild(text('vault-sub', 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+
+    var field = dom.el('div', 'field');
+    field.appendChild(dom.el('label', 'label', 'Private key'));
+    var input = dom.el('textarea', 'input phrase-input vault-key-input');
+    input.name = 'key';
+    input.rows = 2;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    field.appendChild(input);
+    flow.appendChild(field);
+
+    var error = problem();
+    flow.appendChild(error);
+    var right = dom.el('p', 'vault-text vault-backup-line vault-check-line');
+    right.setAttribute('role', 'status');
+    dom.setAttr(right, 'data-backed', 'true');
+    append(right, icon('shield', 'vault-backup-mark'));
+    right.appendChild(dom.el('span', 'vault-backup-words', 'Your copy is right, to the last character.'));
+    right.hidden = true;
+    flow.appendChild(right);
+
+    var tools = dom.el('div', 'vault-actions');
+    var check = button('Check', 'btn-sm', 'Checking');
+    var done = button('Done', 'btn-quiet btn-sm');
+    tools.appendChild(check);
+    tools.appendChild(done);
+    flow.appendChild(tools);
+
+    dom.on(done, 'click', wipePhrase);
+    dom.on(input, 'input', function () {
+      say(error, '');
+      right.hidden = true;
+    });
+    dom.on(check, 'click', function () {
+      var hex = keyOf(input.value);
+      right.hidden = true;
+      if (!/^[0-9a-f]*$/.test(hex)) {
+        say(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
+        return;
+      }
+      if (hex.length !== 64) {
+        say(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+        return;
+      }
+      say(error, '');
+      window.PhosphorShell.setPending(check, true);
+      api.vaultKeyCheck('0x' + hex)
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : (answer.error || 'That did not work.'));
+            return;
+          }
+          if (answer && answer.matches === true) {
+            input.value = '';
+            right.hidden = false;
+            return;
+          }
+          say(error, 'That copy opens a different wallet. Show your key and check it group by group.');
+        })
+        .catch(function (err) { say(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(check, false); });
+    });
+    if (input.focus) input.focus();
   }
 
   /* ---------- safety: your limits ---------- */

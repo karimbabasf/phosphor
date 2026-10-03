@@ -198,6 +198,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     revealKey: { ok: true, groups: GROUPS.slice(), address: EVM, prove: KEY_PROVE.slice() } as Any,
     keyProven: (groups: Any[]) => (groups.every((g) => GROUPS[g.index] === g.group) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' }),
     restoreKey: { ok: true, addresses: { evm: EVM } } as Any,
+    keyCheck: { ok: true, matches: true } as Any,
     forget: { ok: true },
     restore: { ok: true, addresses: {} },
     migrate: { ok: true },
@@ -269,6 +270,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultRevealKey: () => { calls.push({ route: '/api/vault/reveal-key' }); return Promise.resolve(answer.revealKey); },
     vaultKeyProven: (groups: Any[]) => { calls.push({ route: '/api/vault/key-proven', groups }); return Promise.resolve(answer.keyProven(groups)); },
     vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restoreKey); },
+    vaultKeyCheck: (key: string) => { calls.push({ route: '/api/vault/key-check', key }); return Promise.resolve(answer.keyCheck); },
     vaultForget: () => { calls.push({ route: '/api/vault/forget' }); return Promise.resolve(answer.forget); },
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
     vaultMigrate: (password: string) => { calls.push({ route: '/api/vault/migrate', password }); return Promise.resolve(answer.migrate); },
@@ -928,6 +930,49 @@ test('Done, a lock, or leaving the tab wipes the key, and a cancelled touch show
   buttonNamed(row(short, 'backup'), 'Back it up').click();
   await flush();
   assert.ok(textOf(flow(short)).includes('No key came back.'), 'a key cut short was shown as a key');
+});
+
+/* Prove it checks three groups of sixteen. A key has no checksum, so the rest is checked whole,
+   here, with no Touch ID and nothing written: never by trying a restore, which would replace the
+   wallet with whatever a slip in the copy makes. */
+test('a proven key offers Check my copy: the whole key typed, checked with nothing written, and a slip named as another wallet', async () => {
+  const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.equal(buttonNamed(build({ vault: { hasMnemonic: false } }).view, 'Check my copy').hidden, true, 'a check offered before there is a proven copy');
+  assert.equal(buttonNamed(build({ vault: { backedUp: true } }).view, 'Check my copy').hidden, true, 'a key check offered to a wallet with a phrase');
+  buttonNamed(row(world, 'backup'), 'Check my copy').click();
+  const panel = flow(world);
+  assert.equal(panel.dataset.step, 'check');
+  assert.ok(textOf(panel).includes('Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+  assert.equal(buttonNamed(row(world, 'backup'), 'Show my key').hidden, true, 'Show my key stayed beside the check');
+  const input = find(panel, 'textarea')[0];
+  input.value = GROUPS.slice(0, 15).join(' ');
+  buttonNamed(panel, 'Check').click();
+  assert.ok(textOf(panel).includes('That is 60 characters. A private key is 64.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-check'), false);
+
+  input.value = GROUPS.join(' ').toUpperCase();
+  buttonNamed(panel, 'Check').click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/key-check');
+  assert.ok(post, 'the copy was never checked');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  const right = find(panel, '.vault-check-line')[0];
+  assert.equal(right.hidden, false);
+  assert.ok(textOf(right).includes('Your copy is right, to the last character.'));
+  assert.equal(input.value, '', 'a checked key stayed in the field');
+
+  world.answer.keyCheck = { ok: true, matches: false };
+  input.value = GROUPS.join('');
+  input.dispatch('input');
+  buttonNamed(panel, 'Check').click();
+  await flush();
+  assert.equal(right.hidden, true);
+  assert.ok(textOf(panel).includes('That copy opens a different wallet. Show your key and check it group by group.'));
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal-key' || c.route === '/api/vault/restore' || c.route === 'refresh'), false, 'a check reached past itself');
+
+  buttonNamed(panel, 'Done').click();
+  assert.equal(flow(world).hidden, true);
+  assert.equal(find(flow(world), 'textarea').length, 0, 'the typed key survived Done');
 });
 
 test('a password wallet with no phrase shows its key behind the password typed in the row', async () => {

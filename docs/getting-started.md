@@ -127,6 +127,12 @@ them. Write the groups down or Print them, click I wrote it down, then Prove it 
 the groups back by their number. Only that turns the row to Backed up, the line at the foot of the
 window says Private key not backed up until then, and Forget waits for it the same way.
 
+Three groups prove you made a copy, not that every character in it is right, and a key has no
+checksum: a copy with one slip is simply another wallet. So once the row says Backed up, press
+Check my copy and type the whole key from your copy. The app checks it against this wallet with no
+Touch ID and changes nothing. Never check a copy by restoring it over the wallet you have: a
+restore replaces the wallet on this Mac before its Touch ID, with whatever wallet the copy makes.
+
 To bring the wallet back, on this Mac or another one, use Restore from a key in the Restore row
 (or the Made on another Mac screen). Type the key as you wrote it: with or without 0x, with or
 without the spaces between the groups. The note that says Restored names the wallet it brought,

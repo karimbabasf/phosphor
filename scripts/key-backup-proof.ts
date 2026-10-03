@@ -13,6 +13,7 @@
 //   key-*        the same wallet moved behind the enclave: the row, the key, Prove it, a group
 //                that cannot be right, a wrong answer, two of them, the notice, Forget waiting
 //   proven-*     the row once three groups are typed back, and the note that says so
+//   check-*      Check my copy: open, the whole key right, and the same key with one slip
 //   restore-*    Restore from a key: open, a key cut short, the second press, the wallet already
 //                here, and the note naming the wallet a restore brought
 //   foreign-*    the same file on another Mac: the first run asks for the key
@@ -399,6 +400,21 @@ async function main(): Promise<void> {
       const p = await page(a, size);
       await toVault(p, ROW('backup'));
       await shoot(p, size, 'proven-row', ROW('backup'));
+      // Check my copy: the whole key against the wallet, right and then with one slip.
+      await p.click(button(ROW('backup'), 'Check my copy'));
+      await p.waitForSelector(`${ROW('backup')} .vault-flow[data-step="check"] textarea`, { timeout: 10_000 });
+      await shoot(p, size, 'check-open', ROW('backup'));
+      await p.fill(`${ROW('backup')} textarea`, groups.join(' '));
+      await p.click(button(ROW('backup'), 'Check'));
+      await p.waitForSelector(`${ROW('backup')} .vault-check-line:not([hidden])`, { timeout: 10_000 });
+      await shoot(p, size, 'check-right', ROW('backup'));
+      const slipped = [...groups];
+      slipped[9] = slipped[9] === 'ffff' ? '0000' : 'ffff';
+      await p.fill(`${ROW('backup')} textarea`, slipped.join(' '));
+      await p.click(button(ROW('backup'), 'Check'));
+      await p.waitForSelector(`${ROW('backup')} .vault-error:not([hidden])`, { timeout: 10_000 });
+      await shoot(p, size, 'check-wrong', ROW('backup'));
+      await p.click(button(ROW('backup'), 'Done'));
       await toVault(p, ROW('recovery'));
       await p.click(button(ROW('recovery'), 'Restore from a key'));
       await p.waitForSelector(`${ROW('recovery')} textarea`, { timeout: 10_000 });

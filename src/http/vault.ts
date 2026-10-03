@@ -365,6 +365,25 @@ export async function handleVaultKeyProven(ctx: Ctx, req: http.IncomingMessage, 
   sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
 }
 
+/* A whole copy of the key, checked against the wallet here, with no Touch ID and nothing written.
+   Prove it shows that a copy was made; three groups of sixteen cannot show that the other thirteen
+   are right, and a key has no checksum, so a slip in it is simply another wallet, found out the
+   day it is restored. This is the check to the last character. It is not Restore: a restore shreds
+   the file here before its Touch ID, so a copy with a slip in it must never be tried that way. The
+   answer is yes or no, never which characters, and the key is derived to an address and dropped. */
+export async function handleVaultKeyCheck(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/vault/key-check', req, res);
+  if (body === null) return;
+  const raw = typeof body.key === 'string' ? body.key : '';
+  const problem = keyProblem(raw);
+  if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_key' });
+  const wallet = ctx.keystore.addressReport().addresses.evm;
+  if (wallet === null) return sendJson(res, 200, refusal('no_wallet'));
+  const matches = (addressesFromKeys({ evm: keyFrom(raw) }).evm ?? '').toLowerCase() === wallet.toLowerCase();
+  ctx.audit.append('app_start', `a copy of the private key was checked in the window: it ${matches ? 'matches' : 'does not match'} this wallet`, {});
+  sendJson(res, 200, { ok: true, matches });
+}
+
 /* Restore from a phrase, or from the private key a wallet with no phrase backs up (`key` in place
    of `mnemonic`, as the Vault's backup shows it: with or without 0x and the spaces between its
    groups), behind the enclave. Refused only when all three are true: the wallet here is not proven

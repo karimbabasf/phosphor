@@ -196,6 +196,11 @@
       return net.postJson('/api/vault/key-proven', { groups: groups }, { busy: 'reveal', label: 'Checking your key' });
     },
 
+    // A whole copy of the key against this wallet: no Touch ID, nothing written.
+    vaultKeyCheck: function (key) {
+      return net.postJson('/api/vault/key-check', { key: key }, { busy: 'reveal', label: 'Checking your copy' });
+    },
+
     vaultRestore: function (mnemonic) {
       return net.postJson('/api/vault/restore', { mnemonic: mnemonic }, { busy: 'wallet', label: 'Restoring your wallet', touch: true });
     },
