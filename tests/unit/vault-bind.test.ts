@@ -709,6 +709,80 @@ test('a substitute wallet file is refused before any Touch ID, in words a person
   }
 });
 
+/* REAUDIT1B, RA1B-01 (LOW). The pin covers a substitute key file of version 2. A same-user process
+   can instead move the bound file aside and put a readable keys.json of its own wallet where a wallet
+   from before encryption lives: the next start serves that wallet's addresses as verified, with no
+   pin, no service question and no Touch ID, and its lock card asks the person to encrypt it. RED until
+   a Mac that holds a marker stops vouching for a plaintext key file. */
+test('RA1B-01: on a Mac that holds a marker, a plaintext key file put where the bound wallet was is not served as a verified wallet', { skip }, async () => {
+  const b = await boot();
+  const { double, dataDir } = b;
+  const theirKey = `0x${'22'.repeat(32)}` as const;
+  const theirs = privateKeyToAccount(theirKey).address;
+  try {
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    assert.equal(statusOf(b, liveRequest(b)).pinMatches, true, 'the real wallet is committed, so this Mac holds a marker');
+    assert.notEqual(made.json.addresses.evm.toLowerCase(), theirs.toLowerCase());
+    b.keystore.lock();
+    fs.renameSync(b.live, path.join(path.dirname(b.live), '.moved-aside'));
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address: theirs, privateKey: theirKey } }) + '\n');
+  } finally {
+    await b.close();
+  }
+
+  const c = await boot({ double, dataDir });
+  try {
+    assert.equal(c.double.state().markers.length, 1, 'the marker of the real wallet is still on this Mac');
+    const touches = c.double.touches().length;
+    const lock = (await c.get('/api/state')).json.lock;
+    assert.equal(lock.state, 'needs_migration');
+    assert.equal(String(lock.addresses.evm).toLowerCase(), theirs.toLowerCase(), 'the window and every reader now see the other wallet');
+    assert.equal(c.double.touches().length, touches, 'no Touch ID and no service check stood in the way');
+    assert.notEqual(lock.verified, true, 'RA1B-01: a plaintext key file on a Mac that holds a marker is served as a verified wallet');
+  } finally {
+    await c.close();
+  }
+});
+
+/* REAUDIT1B, RA1B-02 (MEDIUM). proveAndInstall commits only when the start-up probe said keychainHome,
+   and that answer is false whenever the probe's one read of the markers failed, while the service
+   still makes every new key in the keychain group. So a create, restore or move from a password after
+   such a probe installs a keychain wallet with no marker, which the window calls Phosphor-only. Ten
+   minutes after any wallet on the Mac is committed it answers not_committed, and the next sweep deletes
+   its key: without a backup the wallet is gone. RED until a keychain key is committed whatever the
+   probe said. */
+test('RA1B-02: a wallet made after a start-up probe that could not read the markers is committed all the same, and keeps opening', { skip }, async () => {
+  const double = new VaultDouble();
+  double.fail = 'markers=-25308';
+  const b = await boot({ double });
+  try {
+    assert.equal(b.vault.capability()?.keychainHome, false, 'the start-up probe could not read the markers');
+    double.fail = undefined;
+    const made = await b.post('/api/vault/create');
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    const live = liveRequest(b);
+    assert.ok(live.keyBlob.startsWith('keychain:'), 'the service made the key in the keychain group');
+    assert.equal((await b.get('/api/vault')).json.enclave.binding, 'app', 'the window says Phosphor-only');
+    assert.equal(statusOf(b, live).pinMatches, true, 'RA1B-02: the new Phosphor-only wallet was never committed: no marker holds its pin');
+
+    // Another wallet made Phosphor-only on this Mac, then ten minutes: the first still opens and keeps its key.
+    const other = await boot({ double });
+    try {
+      assert.equal((await other.post('/api/vault/create')).json.ok, true);
+    } finally {
+      await other.close();
+    }
+    double.now = T0 + 601;
+    b.keystore.lock();
+    assert.equal((await b.post('/api/vault/unlock')).json.ok, true, 'the first wallet still opens');
+    double.run({ op: 'sweep' });
+    assert.ok(double.state().keys.some((k) => `keychain:${k.tag}` === live.keyBlob), 'a sweep keeps its key');
+  } finally {
+    await b.close();
+  }
+});
+
 test('the restore guard counts a file this Mac refuses as one it cannot open', { skip }, async () => {
   const b = await boot();
   try {
