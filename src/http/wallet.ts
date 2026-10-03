@@ -32,13 +32,13 @@ import { atomicWriteJson } from '../fsatomic.ts';
 import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
-import { mnemonicProblem } from '../keystore/derive.ts';
+import { keyGroups, keyProblem, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
-import { rememberPhrase } from '../vault/phrase-proof.ts';
+import { rememberKey, rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
@@ -137,6 +137,9 @@ const REFUSALS: Record<string, string> = {
   not_backed_up: 'Back up your recovery phrase first.',
   no_wallet: 'There is no wallet on this computer yet.',
   no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
+  has_mnemonic: 'This wallet has a recovery phrase. Back up the phrase instead.',
+  no_key: 'This wallet holds no private key to show.',
+  same_wallet: 'This Mac already holds that wallet, and it opens with Touch ID.',
   damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
   locked_out: 'Too many tries. Wait a moment and try again.',
   busy: 'A move is being signed, so the wallet locks the moment its signature is made.',
@@ -401,19 +404,25 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   // be a full unlock, announced and releasing the queue, on a password typed to see the words: the
   // wallet then stayed open for signing until the idle lock, and every plan waiting on an unlock
   // re-armed.
-  const read = await ctx.keystore.readWithPassword(password, (payload) => (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null);
+  const read = await ctx.keystore.readWithPassword(password, (payload) => ({
+    secret: (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null,
+    phrase: typeof payload.mnemonic === 'string' && payload.mnemonic !== '',
+  }));
   if (!read.ok) {
     if (read.error === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
     ctx.audit.append('approve_attempt_rejected', `reveal refused: ${read.error}`, { error: read.error, what });
     return sendJson(res, 200, refusal(read.error, read.retryInSec));
   }
-  if (what === 'mnemonic' && (typeof read.value !== 'string' || read.value === '')) {
+  const secret = typeof read.value.secret === 'string' && read.value.secret !== '' ? read.value.secret : null;
+  if (what === 'mnemonic' && secret === null) {
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
+  // A wallet with no phrase backs up its key, so its key reveal leaves a proof the way a phrase does.
   let prove: number[] = [];
-  if (what === 'mnemonic' && typeof read.value === 'string') {
-    const wallet = ctx.keystore.addresses().evm;
-    if (wallet !== null) prove = rememberPhrase(read.value.split(' '), wallet, ctx.keystore.kdfParams());
+  const wallet = ctx.keystore.addresses().evm;
+  if (wallet !== null && secret !== null) {
+    if (what === 'mnemonic') prove = rememberPhrase(secret.split(' '), wallet, ctx.keystore.kdfParams());
+    else if (!read.value.phrase && keyProblem(secret) === null) prove = rememberKey(keyGroups(secret), wallet, ctx.keystore.kdfParams());
   }
 
   // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
@@ -427,7 +436,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
 
   wipeOnLock(ctx.keystore);
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null, prove });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: secret === null ? null : Buffer.from(secret, 'utf8'), prove });
   setTimeout(() => {
     const held = pending.get(nonce);
     if (held === undefined) return;
@@ -487,6 +496,10 @@ export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMe
     keys: {
       evm: secret,
     },
+    // The same key in the sixteen groups of four the Vault shows, and the three Prove it asks
+    // for when the wallet has no phrase (src/vault/phrase-proof.ts).
+    groups: secret === null ? [] : keyGroups(secret),
+    prove: held.prove,
   });
 }
 

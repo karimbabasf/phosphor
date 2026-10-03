@@ -20,15 +20,17 @@ import type { Ctx } from './context.ts';
 import { announce, depositRoute, guarded, refusal } from './wallet.ts';
 import type { IntentsReceiveToken } from './wallet.ts';
 import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
-import { mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
+import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { EnclaveRef } from '../keystore/store.ts';
 import type { VaultResult } from '../vault/relay.ts';
-import { checkPhrase, forgetPhrase, rememberPhrase } from '../vault/phrase-proof.ts';
+import { checkKey, checkPhrase, forgetPhrase, rememberKey, rememberPhrase } from '../vault/phrase-proof.ts';
 import {
   ADDRESS_REASON,
   CREATE_REASON,
   FORGET_REASON,
+  KEY_REASON,
   MIGRATE_REASON,
+  RESTORE_KEY_REASON,
   RESTORE_REASON,
   REVEAL_REASON,
   UNLOCK_REASON,
@@ -79,8 +81,25 @@ export async function handleVaultAnswer(ctx: Ctx, req: http.IncomingMessage, res
 
 // ---------- what the window reads ----------
 
+/* BACKUP PROVEN, the one flag for both kinds of wallet (CONTRACTS.md, "Backup proven"): the
+   wallet on this Mac has an offline copy that was typed back, three words of its recovery phrase
+   or, for a wallet with no phrase, three groups of its private key, or it was restored from one.
+   The bind flow reads it from the vault slice of /api/state before it binds a wallet to this Mac's
+   chip. A proof names the wallet it was made for, so a key file swapped in from outside the app
+   does not inherit another wallet's; a proof written before proofs named a wallet stands. */
+export function backupProven(ctx: Ctx): { backedUp: boolean; backedUpAt: string | null } {
+  const prefs = ctx.vaultPrefs.get();
+  const no = { backedUp: false, backedUpAt: null };
+  if (!prefs.backedUp) return no;
+  const proven = prefs.backedUpFor ?? null;
+  if (proven === null) return { backedUp: true, backedUpAt: prefs.backedUpAt };
+  const wallet = ctx.keystore.addressReport().addresses.evm;
+  return wallet !== null && wallet.toLowerCase() === proven ? { backedUp: true, backedUpAt: prefs.backedUpAt } : no;
+}
+
 export function vaultStatus(ctx: Ctx): JsonBody {
   const prefs = ctx.vaultPrefs.get();
+  const backup = backupProven(ctx);
   const enclave = ctx.keystore.enclave();
   return {
     custody: ctx.keystore.custody(),
@@ -97,9 +116,10 @@ export function vaultStatus(ctx: Ctx): JsonBody {
     },
     foreign,
     waiting: ctx.vault.waiting(),
-    backedUp: prefs.backedUp,
-    backedUpAt: prefs.backedUpAt,
+    backedUp: backup.backedUp,
+    backedUpAt: backup.backedUpAt,
     idleMinutes: prefs.idleMinutes,
+    // Which backup the flag above is about: the phrase when true, the private key when false.
     hasMnemonic: ctx.keystore.header()?.hasMnemonic ?? false,
   };
 }
@@ -252,6 +272,47 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
   });
 }
 
+/* The private key of a wallet that has no recovery phrase, the phrase reveal's twin for a wallet
+   brought in as a key: its own Touch ID every time, open wallet or not, read through
+   readWithDataKey so a locked wallet stays locked, and returned once, in this response, in the
+   sixteen groups of four the window shows and Prove it asks three of. The EVM key alone: it is all
+   this app signs with and the one key behind every address the app shows (the account, and every
+   deposit address the bridge gives that account). An older file can also seal a NEAR and a Solana
+   key, which on a wallet with no phrase were drawn at random rather than from this key; they sign
+   nothing here and no screen shows their addresses, so they are not shown, as the password reveal
+   does not show them either. A wallet with a phrase backs up its phrase, and is refused before any
+   dialog. */
+export async function handleVaultRevealKey(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/vault/reveal-key', req, res);
+  if (body === null) return;
+  if (ctx.keystore.custody() !== 'secure-enclave') return sendJson(res, 200, refusal('wrong_password'));
+  if (ctx.keystore.header()?.hasMnemonic === true) return sendJson(res, 200, refusal('has_mnemonic'));
+  const got = await unwrapThroughEnclave(ctx, KEY_REASON);
+  if ('refused' in got) return sendJson(res, 200, got.refused);
+  const read = ctx.keystore.readWithDataKey(got.dek, (payload) => {
+    const key = payload.evm?.privateKey;
+    return {
+      phrase: typeof payload.mnemonic === 'string' && payload.mnemonic !== '',
+      key: typeof key === 'string' && keyProblem(key) === null ? key : null,
+    };
+  });
+  if (!read.ok) return sendJson(res, 200, refusal(read.error, read.retryInSec));
+  if (read.value.phrase) return sendJson(res, 200, refusal('has_mnemonic'));
+  if (read.value.key === null) return sendJson(res, 200, refusal('no_key'));
+  const groups = keyGroups(read.value.key);
+  const wallet = ctx.keystore.addresses().evm;
+  const prove = wallet === null ? [] : rememberKey(groups, wallet, ctx.keystore.kdfParams());
+  ctx.audit.append('app_start', 'the private key was revealed in the window after a Touch ID; the wallet stays as it was', {});
+  ctx.session.touch();
+  sendJson(res, 200, {
+    ok: true,
+    groups,
+    // The wallet this key opens, so a copy can be checked against it after a restore.
+    address: wallet,
+    prove,
+  });
+}
+
 /* Backed up means proven: three words, by position, typed back, checked against what the last
    reveal of this wallet left behind (src/vault/phrase-proof.ts), never echoed. It used to read the
    phrase off the open wallet, which is why a reveal had to leave the wallet open. Wrong words
@@ -273,29 +334,74 @@ export async function handleVaultBackupProven(ctx: Ctx, req: http.IncomingMessag
     return sendJson(res, 200, { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' });
   }
   forgetPhrase();
-  const prefs = ctx.vaultPrefs.markBackedUp();
+  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, ctx.keystore.addresses().evm);
   ctx.audit.append('app_start', 'the recovery phrase was proven backed up: three words typed back', {});
   announce(ctx);
   sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
 }
 
-/* Restore from a phrase, behind the enclave. Refused only when all three are true: the wallet
-   here is not proven backed up, the phrase derives different addresses, and this Mac can still
-   open the file. Any one of them false means nothing is lost by replacing the file. */
+/* The same proof for a wallet with no phrase: three groups of its private key, by position, typed
+   back and checked against what the last key reveal left behind, never echoed. A wrong answer
+   clears nothing and says nothing about which group was wrong. */
+export async function handleVaultKeyProven(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/vault/key-proven', req, res);
+  if (body === null) return;
+  const raw = Array.isArray(body.groups) ? (body.groups as unknown[]) : [];
+  const answers = raw.flatMap((a): Array<{ index: number; word: string }> => {
+    if (typeof a !== 'object' || a === null) return [];
+    const { index, group } = a as { index?: unknown; group?: unknown };
+    return typeof index === 'number' && typeof group === 'string' ? [{ index, word: group }] : [];
+  });
+  const checked = raw.length < 3 || answers.length !== raw.length ? 'mismatch' : await checkKey(answers, ctx.keystore.addresses().evm);
+  if (checked === 'none') {
+    return sendJson(res, 200, { ok: false, error: 'Show your key once more with Back it up, then type three groups of it back.', code: 'reveal_again' });
+  }
+  if (checked === 'mismatch') {
+    return sendJson(res, 200, { ok: false, error: 'Those groups do not match. Look again.', code: 'wrong_groups' });
+  }
+  forgetPhrase();
+  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, ctx.keystore.addresses().evm);
+  ctx.audit.append('app_start', 'the private key was proven backed up: three groups typed back', {});
+  announce(ctx);
+  sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
+}
+
+/* Restore from a phrase, or from the private key a wallet with no phrase backs up (`key` in place
+   of `mnemonic`, as the Vault's backup shows it: with or without 0x and the spaces between its
+   groups), behind the enclave. Refused only when all three are true: the wallet here is not proven
+   backed up, the phrase or key makes a different wallet, and this Mac can still open the file. Any
+   one of them false means nothing is lost by replacing the file.
+   A key that makes the wallet this Mac already holds and can open is refused as well: nothing
+   would change but the file, and a file brought in as a key can seal what no backup carries (an
+   older file's NEAR and Solana keys, a trading key), which a rewrite from the key alone would drop.
+   A phrase rebuilds what it made, so it keeps the rule above. */
 export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/restore', req, res);
   if (body === null) return;
-  const raw = typeof body.mnemonic === 'string' ? body.mnemonic : '';
-  const problem = mnemonicProblem(raw);
-  if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_phrase' });
-  const phrase = normaliseMnemonic(raw);
+  const fromKey = typeof body.key === 'string';
+  let from: { mnemonic: string } | { keys: { evm: `0x${string}` } };
+  let incoming: string;
+  if (fromKey) {
+    const problem = keyProblem(body.key as string);
+    if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_key' });
+    const key = keyFrom(body.key as string);
+    from = { keys: { evm: key } };
+    incoming = addressesFromKeys({ evm: key }).evm ?? '';
+  } else {
+    const raw = typeof body.mnemonic === 'string' ? body.mnemonic : '';
+    const problem = mnemonicProblem(raw);
+    if (problem !== null) return sendJson(res, 200, { ok: false, error: problem, code: 'bad_phrase' });
+    const phrase = normaliseMnemonic(raw);
+    from = { mnemonic: phrase };
+    incoming = walletFromMnemonic(phrase).addresses.evm;
+  }
 
   if (ctx.keystore.state() !== 'no_wallet') {
-    const incoming = walletFromMnemonic(phrase).addresses;
     const current = ctx.keystore.addressReport().addresses;
-    const same = current.evm !== null && current.evm.toLowerCase() === incoming.evm.toLowerCase();
+    const same = current.evm !== null && current.evm.toLowerCase() === incoming.toLowerCase();
     const openable = ctx.keystore.custody() === 'secure-enclave' && !foreign;
-    if (!ctx.vaultPrefs.get().backedUp && !same && openable) return sendJson(res, 200, refusal('not_backed_up'));
+    if (!backupProven(ctx).backedUp && !same && openable) return sendJson(res, 200, refusal('not_backed_up'));
+    if (fromKey && same && openable) return sendJson(res, 200, refusal('same_wallet'));
   }
 
   const fresh = await newEnclaveKey(ctx);
@@ -303,21 +409,22 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
   if (ctx.keystore.state() !== 'no_wallet') ctx.keystore.forget();
   let restored: { addresses: unknown };
   try {
-    restored = ctx.keystore.importWithEnclave(fresh.key, { mnemonic: phrase });
+    restored = ctx.keystore.importWithEnclave(fresh.key, from);
   } catch (err) {
     return fail(res, 409, errText(err));
   }
   ctx.keystore.lock();
-  const proven = await openThroughEnclave(ctx, RESTORE_REASON);
+  const proven = await openThroughEnclave(ctx, fromKey ? RESTORE_KEY_REASON : RESTORE_REASON);
   if (proven.ok !== true) {
     ctx.keystore.forget();
     announce(ctx);
     return sendJson(res, 200, proven);
   }
   foreign = false;
-  // A phrase the person just typed from their own record is, by that act, backed up.
-  ctx.vaultPrefs.markBackedUp();
-  ctx.audit.append('app_start', 'a wallet was restored from its recovery phrase behind the Secure Enclave', { evm: (restored.addresses as { evm?: string }).evm });
+  const evm = (restored.addresses as { evm?: string }).evm ?? null;
+  // A phrase or a key the person just typed from their own record is, by that act, backed up.
+  ctx.vaultPrefs.markBackedUp(Date.now, evm);
+  ctx.audit.append('app_start', `a wallet was restored from its ${fromKey ? 'private key' : 'recovery phrase'} behind the Secure Enclave`, { evm });
   ctx.session.touch();
   announce(ctx);
   sendJson(res, 200, { ok: true, addresses: restored.addresses, custody: 'secure-enclave' });
@@ -360,7 +467,7 @@ export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res
   if (body === null) return;
   if (body.confirm !== 'FORGET') return fail(res, 400, 'type FORGET to confirm');
   if (ctx.keystore.state() === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
-  if (!ctx.vaultPrefs.get().backedUp && !foreign) return sendJson(res, 200, refusal('not_backed_up'));
+  if (!backupProven(ctx).backedUp && !foreign) return sendJson(res, 200, refusal('not_backed_up'));
   if (ctx.vault.enclaveReady()) {
     const present = await ctx.vault.ask({ op: 'presence', reason: FORGET_REASON });
     if (!present.ok) return sendJson(res, 200, enclaveRefusal(present));
@@ -387,7 +494,7 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
     return fail(res, 400, errText(err));
   }
   ctx.sse.broadcastState();
-  sendJson(res, 200, { ok: true, ...ctx.vaultPrefs.get() });
+  sendJson(res, 200, { ok: true, idleMinutes: ctx.vaultPrefs.get().idleMinutes, ...backupProven(ctx) });
 }
 
 // ---------- the deposit card ----------

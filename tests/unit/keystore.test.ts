@@ -17,7 +17,7 @@ import path from 'node:path';
 import { base58Decode, base58Encode } from '../../src/chain/near.ts';
 import { canonical, seal, open as openSealed } from '../../src/keystore/envelope.ts';
 import { checkParams, defaultParams } from '../../src/keystore/kdf.ts';
-import { addressesFromKeys, mnemonicProblem, newWallet, walletFromMnemonic } from '../../src/keystore/derive.ts';
+import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, newWallet, walletFromMnemonic } from '../../src/keystore/derive.ts';
 import { backupCopies, createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
 import { tempDir } from './helpers/tmp.ts';
 
@@ -90,6 +90,50 @@ test('a fresh wallet is twelve words and one EVM key', () => {
   assert.deepEqual(Object.keys(made.wallet.keys), ['evm']);
   // And it is reproducible from the words alone, which is the whole claim of a backup.
   assert.deepEqual(walletFromMnemonic(made.mnemonic).addresses, made.wallet.addresses);
+});
+
+/* A wallet with no phrase backs up its key in sixteen groups of four (src/http/vault.ts). The
+   restore has to take it back the way a person copies it, and every refusal has to be a sentence
+   that names none of what was typed. */
+test('a key comes back from its backup however it was copied, and a bad one is refused without a character of it', () => {
+  const hex = crypto.randomBytes(32).toString('hex');
+  const groups = keyGroups(`0x${hex}`);
+  assert.equal(groups.length, 16);
+  assert.ok(groups.every((g) => /^[0-9a-f]{4}$/.test(g)));
+  assert.equal(groups.join(''), hex);
+  const copies = [
+    hex,
+    `0x${hex}`,
+    `0X${hex.toUpperCase()}`,
+    groups.join(' '),
+    `0x ${groups.join(' ')}`,
+    groups.join('-'),
+    `${groups.slice(0, 8).join(' ')}\n${groups.slice(8).join(' ')}\n`,
+    // Full-width characters, which a phone's keyboard can produce, fold to the plain ones.
+    [...hex].map((c) => String.fromCodePoint(c.codePointAt(0)! + 0xfee0)).join(''),
+  ];
+  for (const copy of copies) {
+    assert.equal(keyProblem(copy), null, JSON.stringify(copy));
+    assert.equal(keyFrom(copy), `0x${hex}`);
+  }
+  const bad: Array<[string, RegExp]> = [
+    [hex.slice(0, 62), /64 characters; this one has 62/],
+    [`${hex}ab`, /this one has 66/],
+    [`zz${hex.slice(2)}`, /only the digits 0 to 9 and the letters a to f/],
+    ['0'.repeat(64), /not a valid private key/],
+    // The curve's order itself: 64 hex characters and no key at all (in two halves, for the sweep).
+    ['fffffffffffffffffffffffffffffffe' + 'baaedce6af48a03bbfd25e8cd0364141', /not a valid private key/],
+    ['', /this one has 0/],
+  ];
+  for (const [copy, said] of bad) {
+    const problem = keyProblem(copy) ?? '';
+    assert.match(problem, said);
+    for (let at = 0; at + 4 <= copy.length; at += 4) assert.ok(!problem.includes(copy.slice(at, at + 4)), `the refusal quoted the input: ${problem}`);
+    assert.throws(() => keyFrom(copy), said);
+  }
+  // The key and the phrase make the same wallet when they are the same key.
+  const fromWords = walletFromMnemonic(VECTOR);
+  assert.equal(addressesFromKeys({ evm: keyFrom(keyGroups(fromWords.keys.evm).join(' ')) }).evm, VECTOR_EVM);
 });
 
 // ---------- the envelope ----------

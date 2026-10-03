@@ -104,8 +104,9 @@ each end (a NEAR name whole), the chain. No agent-written text reaches that dial
 
 A Touch ID or a password opens only what it was asked for. "Show your deposit address" verifies
 the address, and "Reveal your recovery phrase", or the password typed to see the words, shows the
-words; none of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and
-nothing waiting for an unlock runs. The Vault tab drops the words when their row closes or the
+words; on a wallet that has no phrase, "Reveal your private key" shows its key the same way. None
+of them opens the wallet, so a locked wallet stays locked, no trading plan re-arms and nothing
+waiting for an unlock runs. The Vault tab drops the words or the key when their row closes or the
 wallet locks, and the window's read cache never keeps them. The Touch ID that approves a move on a
 locked wallet opens it for that move alone: nothing else can start while it signs, and the key
 goes as soon as it has.

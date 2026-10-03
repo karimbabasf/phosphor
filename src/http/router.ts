@@ -46,11 +46,13 @@ import {
   handleVaultBackupProven,
   handleVaultCreate,
   handleVaultForget,
+  handleVaultKeyProven,
   handleVaultMigrate,
   handleVaultPending,
   handleVaultPrefs,
   handleVaultRestore,
   handleVaultReveal,
+  handleVaultRevealKey,
   handleVaultStatus,
   handleVaultUnlock,
 } from './vault.ts';
@@ -176,6 +178,9 @@ const POST: Record<string, Route> = {
   '/api/vault/unlock': (ctx, req, res) => handleVaultUnlock(ctx, req, res),
   '/api/vault/reveal': (ctx, req, res) => handleVaultReveal(ctx, req, res),
   '/api/vault/backup-proven': (ctx, req, res) => handleVaultBackupProven(ctx, req, res),
+  // The same pair for a wallet with no phrase: its private key, and three groups of it typed back.
+  '/api/vault/reveal-key': (ctx, req, res) => handleVaultRevealKey(ctx, req, res),
+  '/api/vault/key-proven': (ctx, req, res) => handleVaultKeyProven(ctx, req, res),
   '/api/vault/restore': (ctx, req, res) => handleVaultRestore(ctx, req, res),
   '/api/vault/migrate': (ctx, req, res) => handleVaultMigrate(ctx, req, res),
   '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),

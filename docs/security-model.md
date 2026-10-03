@@ -136,12 +136,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   the same step. Proof: attacks `10-screen-lock-shell`, `10-screen-lock-backend` (the wallet
   shuts); `lock-when-signed.test.ts` (a move already signing); `firstrun-e2e.test.ts` and
   `scripts/firstrun-lock-proof.ts` (the first run).
-- **One Touch ID opens more than it should.** A Touch ID that shows your deposit address or your
-  recovery phrase leaves a locked wallet locked. A Touch ID that approves a move on a locked
-  wallet opens it for that move alone: no trading plan arms on it, even while the app starts, and
-  your rules run again after the touch, before anything signs. Proof: `vault-routes.test.ts` (the
-  address and the phrase), `approve-touch-lease.test.ts`, `touch-recheck.test.ts`,
-  `runner-host.test.ts` (the plans).
+- **One Touch ID opens more than it should.** A Touch ID that shows your deposit address, your
+  recovery phrase or, on a wallet with no phrase, your private key leaves a locked wallet locked. A
+  Touch ID that approves a move on a locked wallet opens it for that move alone: no trading plan
+  arms on it, even while the app starts, and your rules run again after the touch, before anything
+  signs. Proof: `vault-routes.test.ts` (the address, the phrase and the key),
+  `approve-touch-lease.test.ts`, `touch-recheck.test.ts`, `runner-host.test.ts` (the plans).
 - **Freeze is pressed while a move is on its way.** Every rail reads Freeze again as its last step
   before the key signs, and a plan reads it before it fires, arms or changes, so a move that passed
   its checks before you pressed Freeze signs nothing, whether you clicked it, touched it or your
@@ -178,7 +178,7 @@ your money.
   can sign. A program able to read that process's memory has it; the hardened runtime is there to
   refuse that. A lock by any door drops the key and every key or phrase you asked to see and the
   window has not read yet, and an unread one also goes when it expires, but copies left by a
-  signature, an unlock, a new wallet or words shown to you can stay in memory until it is reused,
+  signature, an unlock, a new wallet or words or a key shown to you can stay in memory until it is reused,
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
   closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
   never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
