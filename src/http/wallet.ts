@@ -128,44 +128,85 @@ export function announce(ctx: Ctx): void {
    errors (the window renders them into its own screen, and a 4xx would send it down the network
    failure path), so the shape is what has to be unambiguous: `ok` is the answer, `error` is the
    sentence, `code` is for anything that wants to branch. */
+/* EVERY CODE THE VAULT SERVICE, THE SHELL'S RELAY OR THIS PROCESS'S RELAY CAN ANSWER has its
+   sentence here, the one place they are said: src-tauri/se-helper/main.swift, src-tauri/src/enclave.rs
+   and src/vault/relay.ts. Their own messages ("no user present", "keychain key -25300") are for
+   logs and never reach a person; tests/unit/refusal-words.test.ts reads the three sources and holds
+   every code to a sentence. The words name the thing a person knows (Touch ID, this Mac, the wallet
+   file, Phosphor-only), never the parts underneath. */
+const NOTHING_CHANGED = 'That did not finish, so nothing changed. Try again.';
+const NO_ANSWER = 'Phosphor could not reach Touch ID just now, so nothing changed. Try again.';
+const NOT_SAVED_HERE = 'This wallet file is not the one Phosphor saved on this Mac, so it stayed closed and nothing moved. Your backup brings your wallet back.';
+const OTHER_MAC = 'This wallet file was made on another Mac, so this Mac cannot open it. Restore it here from your backup.';
+
 const REFUSALS: Record<string, string> = {
   wrong_password: 'That password is wrong.',
   enclave_required: 'This wallet opens with Touch ID, not a password.',
-  enclave_unavailable: 'The Secure Enclave is not reachable from this build, so this needs a password.',
-  user_cancel: 'You cancelled the Touch ID prompt.',
-  foreign: 'This wallet file was made on another Mac. Restore it here from your recovery phrase.',
+  enclave_unavailable: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  user_cancel: 'Touch ID was cancelled. Nothing changed.',
+  foreign: OTHER_MAC,
   not_backed_up: 'Back up your wallet first: its recovery phrase, or its private key when it has no phrase.',
-  no_wallet: 'There is no wallet on this computer yet.',
-  no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
+  no_wallet: 'There is no wallet on this Mac yet.',
+  no_mnemonic: 'This wallet has no recovery phrase. Its private key is its backup.',
   has_mnemonic: 'This wallet has a recovery phrase. Back up the phrase instead.',
   // The key reveal of a wallet whose payload holds no EVM key. Not `no_key`, which is the vault
   // service's answer to a commit for a key the keychain does not have (below).
   no_private_key: 'This wallet holds no private key to show.',
   same_wallet: 'This Mac already holds that wallet, and it opens with Touch ID.',
-  damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
+  damaged: 'The wallet file on this Mac cannot be read, and nothing moved. Your backup brings the wallet back.',
+  // A reveal whose touch went through on a wallet that is open and working: the wallet is fine.
+  reveal_failed: 'Phosphor could not show your backup just now, and nothing changed. Try again.',
   locked_out: 'Too many tries. Wait a moment and try again.',
   busy: 'A move is being signed, so the wallet locks the moment its signature is made.',
-  // The keychain home of a Developer ID build (src-tauri/se-helper/main.swift). The service's own
-  // message never reaches the window, so every code it can answer has its sentence here.
-  keychain_unavailable: 'Phosphor could not reach its keychain on this Mac, so nothing changed. Try again in a moment.',
-  blob_refused: 'This wallet file is an older copy. This Mac opens only the copy Phosphor keeps, so nothing was opened.',
-  pin_mismatch: 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.',
-  not_committed: 'This wallet file is not the one Phosphor saved on this Mac, so it was not opened and nothing moved. Your recovery words or key backup bring your wallet back.',
-  no_key: 'That did not finish, so nothing changed. Try again.',
-  stale_key: 'That did not finish, so nothing changed. Try again.',
-  marker_exists: 'That did not finish, so nothing changed. Try again.',
-  nothing_bound: 'That did not finish, so nothing changed. Try again.',
-  // The bind (src/http/custody.ts).
+  // The vault service (src-tauri/se-helper/main.swift).
+  interaction_required: 'Touch ID could not ask you just now, so nothing changed. Unlock your Mac and try again.',
+  auth_failed: 'Touch ID did not match, so nothing changed. Try again.',
+  crypto_failed: 'Phosphor could not use its key on this Mac just now, so nothing changed. Try again.',
+  se_unavailable: 'This Mac cannot keep a key behind Touch ID, so nothing changed.',
+  foreign_key: OTHER_MAC,
+  bad_input: NOTHING_CHANGED,
+  keychain_unavailable: 'Phosphor could not reach its saved keys on this Mac just now, so nothing changed. Try again in a moment.',
+  blob_refused: 'This wallet file is an older copy, so Phosphor did not open it and nothing moved. Your backup brings your wallet back.',
+  pin_mismatch: NOT_SAVED_HERE,
+  not_committed: NOT_SAVED_HERE,
+  no_key: NOTHING_CHANGED,
+  stale_key: NOTHING_CHANGED,
+  marker_exists: NOTHING_CHANGED,
+  nothing_bound: NOTHING_CHANGED,
+  // The shell's relay (src-tauri/src/enclave.rs) and this process's (src/vault/relay.ts).
+  helper_missing: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  helper_spawn: NO_ANSWER,
+  helper_io: NO_ANSWER,
+  helper_garbled: NOTHING_CHANGED,
+  helper_unverified: NO_ANSWER,
+  helper_timeout: 'Touch ID did not answer in time, so nothing changed. Try again.',
+  helper_unreachable: NO_ANSWER,
+  no_relay: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  stopped: NO_ANSWER,
+  timeout: 'Touch ID did not answer in time, so nothing changed. Try again.',
+  relay: NO_ANSWER,
+  transport: NOTHING_CHANGED,
+  garbled: NOTHING_CHANGED,
+  // Making the wallet Phosphor-only (src/http/custody.ts).
   wallet_locked: 'Open your wallet first.',
-  not_enclave: 'Only a wallet that opens with Touch ID can be bound to this Mac.',
-  no_keychain_home: 'This copy of Phosphor cannot keep keys in its own keychain, so your wallet stays as it is.',
-  bind_busy: 'Phosphor is already binding this wallet.',
+  not_enclave: 'Only a wallet that opens with Touch ID can be made Phosphor-only.',
+  no_keychain_home: 'This copy of Phosphor cannot do this, so your wallet stays as it is.',
+  bind_busy: 'Phosphor is already doing this. It finishes in a moment.',
   touch_waiting: 'A move is waiting for your Touch ID. Finish it, then try again.',
-  install_pending: 'Phosphor saved your wallet but could not put the file in place yet. It finishes the next time your wallet opens, and nothing moved.',
-  // Every new key file (src/http/custody.ts): the enclave opened nothing it just made, or the disk refused it.
+  install_pending: 'Your wallet is saved, and nothing moved. Phosphor finishes setting it up the next time you open it.',
+  // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
   proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
-  write_failed: 'Phosphor could not write the wallet file on this Mac, so nothing changed.',
+  write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',
 };
+
+/* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
+export function knownRefusal(code: string): boolean {
+  return Object.hasOwn(REFUSALS, code);
+}
+
+export function refusalCodes(): string[] {
+  return Object.keys(REFUSALS);
+}
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
   const wait =
@@ -174,7 +215,7 @@ export function refusal(code: string, retryInSec?: number): JsonBody {
       : undefined;
   return {
     ok: false,
-    error: wait ?? REFUSALS[code] ?? 'That did not work.',
+    error: wait ?? (knownRefusal(code) ? REFUSALS[code] : NOTHING_CHANGED),
     code,
     ...(retryInSec !== undefined ? { retryInSec } : {}),
   };

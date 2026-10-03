@@ -648,6 +648,15 @@ have a sentence (`wallet_locked`, `not_backed_up`, `touch_waiting`, `bind_busy`,
 `no_keychain_home`, `keychain_unavailable`); a bound wallet answers `{ ok: true, binding: 'app' }`
 again with no dialog.
 
+Every code the service, the shell's relay and the backend's relay can answer has one sentence, in
+one table (`src/http/wallet.ts`, `REFUSALS`), in the words a person knows: Touch ID, this Mac, the
+wallet file. The service's own message (`no user present`, `keychain key -25300`) is for logs and is
+never the sentence; a code with no sentence yet is said as "That did not finish, so nothing changed.
+Try again." `tests/unit/refusal-words.test.ts` reads the codes off the three sources, so a new one
+without a sentence fails, and `vault-routes.test.ts` sends each one back on a create, an unlock and
+a reveal. A reveal whose Touch ID went through on an open wallet and still could not read it answers
+`reveal_failed` (the wallet is fine), never `damaged`.
+
 A crash leaves at most a staged file, and the next start (once the shell's probe answers) and every
 custody step after it settle it by the service's answer about it, with no dialog: staged and not
 committed, it is shredded and the live file opens as before; committed and not renamed, it is put

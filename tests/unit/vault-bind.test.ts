@@ -232,7 +232,7 @@ test('a device-bound wallet binds with one Touch ID: staged, proven, committed, 
     assert.match(b.keystore.evmPrivateKey(), /^0x[0-9a-f]{64}$/);
     const vault = (await b.get('/api/vault')).json;
     assert.equal(vault.enclave.binding, 'app');
-    assert.ok(b.audit.tail(40).some((e) => e.msg.includes("bound to Phosphor on this Mac")));
+    assert.ok(b.audit.tail(40).some((e) => e.msg.includes("made Phosphor-only on this Mac")));
 
     // The old device-bound file no longer opens here, and is refused before any touch.
     b.keystore.lock();
@@ -430,7 +430,7 @@ test('a commit that does not answer is settled by asking the service what is tru
     const unwrap = seenSince(c, from).find((r) => r.op === 'unwrap')!;
     assert.match(String(unwrap.keyBlob), /^keychain:/, 'the open met the committed file, put in place first');
     assert.equal(fs.existsSync(c.staged), false);
-    assert.ok(c.audit.tail(40).some((e) => e.msg.includes('committed before Phosphor stopped')));
+    assert.ok(c.audit.tail(40).some((e) => e.msg.includes('ready before Phosphor stopped')));
   } finally {
     await c.close();
   }
@@ -460,7 +460,7 @@ test('what a crash leaves is settled at the next open by the service, one rule p
     assert.ok(!String(got.unwrap?.keyBlob).startsWith('keychain:'), 'the device-bound file opened');
     assert.equal(fs.existsSync(b.staged), false);
     assert.equal(fs.readFileSync(b.live, 'utf8'), blob);
-    assert.ok(b.audit.tail(40).some((e) => e.msg.includes('never committed')));
+    assert.ok(b.audit.tail(40).some((e) => e.msg.includes('never finished')));
 
     // Renamed (the staged file is the live one): removed, and nothing else changes.
     fs.copyFileSync(b.live, b.staged);

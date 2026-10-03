@@ -43,6 +43,13 @@ import {
    never work. Cleared by anything that writes a new file. */
 let foreign = false;
 
+/* Set when the file in place answered damaged: Touch ID went through and the file still did not
+   open (its wrap or its sealed payload was edited or broken on this Mac). Nothing this Mac can do
+   opens it, so a restore over it loses nothing and is not held to the backup guard; without this,
+   a person on the lock card with their own key was refused as replacing a wallet that opens.
+   Cleared by an open that works and by anything that writes a new file. */
+let damaged = false;
+
 // ---------- the relay's two routes ----------
 
 /* The relay's own gate: same origin, and the relay secret rather than the window token. The
@@ -146,7 +153,7 @@ function reply(res: http.ServerResponse, r: Reply): void {
    (src/http/custody.ts), so the touch is asked about the file really in place. What the key is
    used for is the caller's: an unlock opens the wallet with it, and every other verb reads with it
    and leaves the lock where it was (Keystore.readWithDataKey). */
-async function unwrapThroughEnclave<T extends { ok: boolean }>(ctx: Ctx, reason: string, use: (dek: Buffer) => T): Promise<{ value: T } | { refused: JsonBody }> {
+async function unwrapThroughEnclave<T extends { ok: boolean }>(ctx: Ctx, reason: string, use: (dek: Buffer) => T, opts: { reveal?: boolean } = {}): Promise<{ value: T } | { refused: JsonBody }> {
   return custodyLock(ctx.keystore).run(async () => {
     await settleFor(ctx);
     const request = ctx.keystore.enclaveRequest();
@@ -157,16 +164,27 @@ async function unwrapThroughEnclave<T extends { ok: boolean }>(ctx: Ctx, reason:
         foreign = true;
         return { refused: refusal('foreign') };
       }
-      // The enclave loaded its key and the wrap still did not open: the file's header or wrap was
-      // edited or damaged on this Mac. Restore from the phrase is the way back, and the sentence
-      // says so; it is a different sentence from the other Mac's file.
-      if (answer.error === 'crypto_failed') return { refused: refusal('damaged') };
+      /* The enclave loaded its key and the wrap still did not open: the file's header or wrap was
+         edited or damaged on this Mac. Restore from the backup is the way back, and the sentence
+         says so; it is a different sentence from the other Mac's file. A reveal is asked of a
+         wallet that is open and working, so the same answer there says only that the backup could
+         not be shown, never that the wallet is lost while the person is writing down its only copy. */
+      if (answer.error === 'crypto_failed') {
+        if (opts.reveal === true) return { refused: refusal('reveal_failed') };
+        damaged = true;
+        return { refused: refusal('damaged') };
+      }
       return { refused: enclaveRefusal(answer) };
     }
-    if (answer.op !== 'unwrap') return { refused: { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' } };
+    if (answer.op !== 'unwrap') return { refused: refusal('garbled') };
     foreign = false;
     const value = use(answer.dek);
-    if (value.ok) afterBoundOpen(ctx, request.keyBlob);
+    if (value.ok) {
+      damaged = false;
+      afterBoundOpen(ctx, request.keyBlob);
+    } else if ((value as { error?: unknown }).error === 'damaged') {
+      damaged = true;
+    }
     return { value };
   });
 }
@@ -208,13 +226,14 @@ export async function handleVaultCreate(ctx: Ctx, req: http.IncomingMessage, res
         const pending = made.refused.code === 'install_pending';
         ctx.audit.append(
           'app_start',
-          pending ? 'a new enclave wallet was made and committed; its file is put in place at the next start' : 'a new enclave wallet was discarded: the first Touch ID did not open it',
+          pending ? 'a new wallet was made; its file is put in place at the next start' : 'a new wallet was discarded: the first Touch ID did not open it',
           { code: made.refused.code },
         );
         announce(ctx);
         return { json: made.refused };
       }
       ctx.vaultPrefs.clearBackedUp();
+      damaged = false;
       ctx.audit.append('app_start', 'a new wallet was created behind the Secure Enclave', { evm: staged.addresses.evm });
       ctx.session.touch();
       announce(ctx);
@@ -265,7 +284,7 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
   const body = await guarded(ctx, '/api/vault/reveal', req, res);
   if (body === null) return;
   if (ctx.keystore.custody() !== 'secure-enclave') return sendJson(res, 200, refusal('wrong_password'));
-  const got = await unwrapThroughEnclave(ctx, REVEAL_REASON, (dek) => ctx.keystore.readWithDataKey(dek, (payload) => (typeof payload.mnemonic === 'string' ? payload.mnemonic : null)));
+  const got = await unwrapThroughEnclave(ctx, REVEAL_REASON, (dek) => ctx.keystore.readWithDataKey(dek, (payload) => (typeof payload.mnemonic === 'string' ? payload.mnemonic : null)), { reveal: true });
   if ('refused' in got) return sendJson(res, 200, got.refused);
   const read = got.value;
   if (!read.ok) return sendJson(res, 200, refusal(read.error, read.retryInSec));
@@ -300,14 +319,18 @@ export async function handleVaultRevealKey(ctx: Ctx, req: http.IncomingMessage, 
   if (body === null) return;
   if (ctx.keystore.custody() !== 'secure-enclave') return sendJson(res, 200, refusal('wrong_password'));
   if (ctx.keystore.header()?.hasMnemonic === true) return sendJson(res, 200, refusal('has_mnemonic'));
-  const got = await unwrapThroughEnclave(ctx, KEY_REASON, (dek) =>
-    ctx.keystore.readWithDataKey(dek, (payload) => {
-      const key = payload.evm?.privateKey;
-      return {
-        phrase: typeof payload.mnemonic === 'string' && payload.mnemonic !== '',
-        key: typeof key === 'string' && keyProblem(key) === null ? key : null,
-      };
-    }),
+  const got = await unwrapThroughEnclave(
+    ctx,
+    KEY_REASON,
+    (dek) =>
+      ctx.keystore.readWithDataKey(dek, (payload) => {
+        const key = payload.evm?.privateKey;
+        return {
+          phrase: typeof payload.mnemonic === 'string' && payload.mnemonic !== '',
+          key: typeof key === 'string' && keyProblem(key) === null ? key : null,
+        };
+      }),
+    { reveal: true },
   );
   if ('refused' in got) return sendJson(res, 200, got.refused);
   const read = got.value;
@@ -450,7 +473,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
       if (ctx.keystore.state() !== 'no_wallet') {
         const current = ctx.keystore.addressReport().addresses;
         const same = current.evm !== null && current.evm.toLowerCase() === incoming.toLowerCase();
-        const openable = ctx.keystore.custody() === 'secure-enclave' && !foreign && (await openableHere(ctx));
+        const openable = ctx.keystore.custody() === 'secure-enclave' && !foreign && !damaged && (await openableHere(ctx));
         if (!backupProven(ctx).backedUp && !same && openable) return { json: refusal('not_backed_up') };
         if (fromKey && same && openable) return { json: refusal('same_wallet') };
       }
@@ -469,6 +492,7 @@ export async function handleVaultRestore(ctx: Ctx, req: http.IncomingMessage, re
         return { json: restored.refused };
       }
       foreign = false;
+      damaged = false;
       const evm = staged.addresses.evm;
       // A phrase or a key the person just typed from their own record is, by that act, backed up.
       ctx.vaultPrefs.markBackedUp(Date.now, evm);
@@ -506,7 +530,7 @@ export async function handleVaultMigrate(ctx: Ctx, req: http.IncomingMessage, re
       if (!staged.ok) return { json: refusal(staged.error, staged.retryInSec) };
       const moved = await proveAndInstall(ctx, staged.staged, MIGRATE_REASON, 'open');
       if ('refused' in moved) {
-        ctx.audit.append('app_start', 'the wallet did not move behind the enclave: the proving Touch ID did not complete, and the password file is unchanged', { code: moved.refused.code });
+        ctx.audit.append('app_start', 'the wallet did not move behind Touch ID: the Touch ID that proves it did not finish, and the password file is unchanged', { code: moved.refused.code });
         announce(ctx);
         return { json: moved.refused };
       }
@@ -551,6 +575,7 @@ export async function handleVaultForget(ctx: Ctx, req: http.IncomingMessage, res
       }
       ctx.keystore.dropStaged();
       foreign = false;
+      damaged = false;
       ctx.vaultPrefs.clearBackedUp();
       ctx.audit.append('app_start', 'the wallet on this Mac was forgotten: the key file was shredded', { file: gone.destroyed });
       announce(ctx);

@@ -44,7 +44,7 @@ const PLAYWRIGHT_CORE = process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '
 const BROWSER = process.env.PROOF_BROWSER;
 const SHOTS = proofOut('bind-proof', 'bind');
 const PASSWORD = 'proof-password-1';
-const BIND_REASON = 'Bind your wallet to Phosphor on this Mac';
+const BIND_REASON = 'Make your wallet Phosphor-only on this Mac';
 
 type Json = any;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));

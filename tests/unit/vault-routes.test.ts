@@ -43,6 +43,8 @@ import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { base58Encode } from '../../src/chain/near.ts';
 import { tempDir } from './helpers/tmp.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+import { refusal } from '../../src/http/wallet.ts';
 
 
 function snapshot(): LedgerSnapshot {
@@ -202,7 +204,9 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
   /* The fake shell. `mac` is the enclave it answers with; a request wrapped to a different
      enclave fails as the real one would, with crypto_failed. */
   const mac = enclave();
-  const dialog: { mode: Mode } = { mode: 'answer' };
+  /* `refuse` answers every request but the probe with that code and message, as the service or a
+     relay refuses: the message is the kind of text the service writes for its logs. */
+  const dialog: { mode: Mode; refuse: { error: string; message: string } | null } = { mode: 'answer', refuse: null };
   let running = true;
   const seen: string[] = [];
   const shell = (async () => {
@@ -212,6 +216,10 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
       const request = pending.json?.request;
       if (!request) continue;
       seen.push(`${request.op}:${request.reason ?? ''}`);
+      if (dialog.refuse !== null && request.op !== 'probe') {
+        await relayPost('/api/vault/answer', { id: request.id, ok: false, ...dialog.refuse });
+        continue;
+      }
       if (dialog.mode === 'cancel') {
         await relayPost('/api/vault/answer', { id: request.id, ok: false, error: 'user_cancel', message: 'cancelled' });
         continue;
@@ -264,6 +272,9 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
     releases: () => releases,
     setMode: (m: Mode) => {
       dialog.mode = m;
+    },
+    refuseWith: (error: string | null, message = '') => {
+      dialog.refuse = error === null ? null : { error, message };
     },
     swapMac: () => {
       const other = enclave();
@@ -1134,3 +1145,36 @@ test('Check my copy says whether a whole key is this wallet\'s, with no Touch ID
     await c.close();
   }
 });
+
+/* Every code the service or a relay can answer, sent back on a create, an unlock and a reveal: the
+   answer is the app's sentence for it, and nothing the service wrote for its logs reaches `error`.
+   The review saw "no user present" and "keychain key -25300" on screen this way. */
+for (const code of VAULT_REFUSAL_CODES) {
+  test(`${code}: a create, an unlock and a reveal answer in the app's words, never the service's own`, async () => {
+    const b = await boot();
+    try {
+      const said = (json: any, want: string, where: string): void => {
+        assert.equal(json.ok, false, `${where}: ${JSON.stringify(json)}`);
+        assert.equal(json.code, want, where);
+        assert.equal(json.error, refusal(want).error, `${where}: the sentence is the one the app has for ${want}`);
+        assert.ok(!RAW.test(String(json.error)), `${where}: ${json.error}`);
+        for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!String(json.error).includes(part), `${where}: the service's message reached the window: ${json.error}`);
+      };
+      const general = code === 'no_relay' || code === 'helper_missing' ? 'enclave_unavailable' : code;
+
+      b.refuseWith(code, SERVICE_MESSAGE);
+      said((await b.post('/api/vault/create', {})).json, general, 'create');
+      assert.equal(b.keystore.state(), 'no_wallet');
+
+      b.refuseWith(null);
+      assert.equal((await b.post('/api/vault/create', {})).json.ok, true);
+      b.keystore.lock();
+
+      b.refuseWith(code, SERVICE_MESSAGE);
+      said((await b.post('/api/vault/unlock', {})).json, code === 'foreign_key' ? 'foreign' : code === 'crypto_failed' ? 'damaged' : general, 'unlock');
+      said((await b.post('/api/vault/reveal', {})).json, code === 'foreign_key' ? 'foreign' : code === 'crypto_failed' ? 'reveal_failed' : general, 'reveal');
+    } finally {
+      await b.close();
+    }
+  });
+}

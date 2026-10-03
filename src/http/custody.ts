@@ -27,7 +27,7 @@ import path from 'node:path';
 
 import type { JsonBody } from './respond.ts';
 import type { Ctx } from './context.ts';
-import { announce, refusal } from './wallet.ts';
+import { announce, knownRefusal, refusal } from './wallet.ts';
 import type { Audit } from '../audit.ts';
 import type { EnclaveRef, Keystore, StagedFile } from '../keystore/store.ts';
 import { shredFile } from '../keystore/store.ts';
@@ -35,10 +35,11 @@ import type { VaultRelay, VaultResult } from '../vault/relay.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { BIND_REASON } from '../vault/reason.ts';
 
+/* A refusal from the service or a relay, in the app's words. Its `message` is for logs: it is never
+   the sentence, whatever the code (a code nobody named is said as nothing having changed). */
 export function enclaveRefusal(result: Extract<VaultResult, { ok: false }>): JsonBody {
-  const code = result.error === 'user_cancel' ? 'user_cancel' : result.error === 'no_relay' || result.error === 'helper_missing' ? 'enclave_unavailable' : result.error;
-  const known = refusal(code);
-  return known.code === code && known.error !== 'That did not work.' ? known : { ok: false, error: result.message, code };
+  const code = result.error === 'no_relay' || result.error === 'helper_missing' ? 'enclave_unavailable' : result.error;
+  return refusal(code);
 }
 
 /* A fresh enclave key. No dialog: making a key needs no presence. */
@@ -46,7 +47,7 @@ export async function newEnclaveKey(ctx: Pick<Ctx, 'vault'>): Promise<{ key: Enc
   if (!ctx.vault.enclaveReady()) return { refused: refusal('enclave_unavailable') };
   const made = await ctx.vault.ask({ op: 'create' });
   if (!made.ok) return { refused: enclaveRefusal(made) };
-  if (made.op !== 'create') return { refused: { ok: false, error: 'the enclave answered the wrong thing', code: 'garbled' } };
+  if (made.op !== 'create') return { refused: refusal('garbled') };
   return { key: made.enclave };
 }
 
@@ -76,12 +77,12 @@ export async function settleStaged(deps: SettleDeps): Promise<Settled> {
   if (asked.status.pinMatches === true) {
     const put = deps.keystore.installStaged(found.staged, null, 'keep');
     if (!put.ok) return 'undecided';
-    deps.audit.append('app_start', 'a wallet file that was committed before Phosphor stopped is now in place', { finished: 'committed' });
+    deps.audit.append('app_start', 'a new wallet file that was ready before Phosphor stopped is now in place', { finished: 'committed' });
     deps.announce?.();
     return 'installed';
   }
   deps.keystore.dropStaged();
-  deps.audit.append('app_start', 'a new wallet file that was never committed was removed; the wallet file in place is untouched', { finished: 'staged' });
+  deps.audit.append('app_start', 'a new wallet file that was never finished was removed; the wallet file in place is untouched', { finished: 'staged' });
   deps.announce?.();
   return 'dropped';
 }
@@ -108,7 +109,7 @@ async function commitStaged(ctx: Pick<Ctx, 'vault'>, staged: StagedFile): Promis
   if (answer.ok && answer.op === 'commit') return { landed: 'yes', refused: {} };
   // A code with a sentence of its own says it; anything else (a relay that timed out) is said as
   // the keychain not answering, never as the relay's own message.
-  const refused = !answer.ok && refusal(answer.error).error !== 'That did not work.' ? refusal(answer.error) : refusal('keychain_unavailable');
+  const refused = !answer.ok && knownRefusal(answer.error) ? refusal(answer.error) : refusal('keychain_unavailable');
   const asked = await ctx.vault.ask({ op: 'status', ...staged.request });
   if (!asked.ok || asked.op !== 'status' || !asked.status.keychainHome) return { landed: 'unknown', refused: refusal('keychain_unavailable') };
   return { landed: asked.status.pinMatches === true ? 'yes' : 'no', refused };
@@ -157,7 +158,7 @@ export function sweepSoon(ctx: Pick<Ctx, 'vault' | 'audit'>): void {
   void ctx.vault.ask({ op: 'sweep' }).then(
     (swept) => {
       if (swept.ok && swept.op === 'sweep' && swept.deleted > 0) {
-        ctx.audit.append('app_start', `${swept.deleted} vault ${swept.deleted === 1 ? 'key' : 'keys'} no wallet uses ${swept.deleted === 1 ? 'was' : 'were'} deleted from Phosphor's keychain`, { deleted: swept.deleted });
+        ctx.audit.append('app_start', `${swept.deleted} Touch ID ${swept.deleted === 1 ? 'key' : 'keys'} no wallet uses ${swept.deleted === 1 ? 'was' : 'were'} deleted from this Mac`, { deleted: swept.deleted });
       }
     },
     () => undefined,
@@ -213,7 +214,7 @@ export function afterBoundOpen(ctx: Pick<Ctx, 'keystore' | 'vault' | 'audit'>, k
   tidied.add(ctx.keystore);
   const removed = removeAppCopies(path.dirname(ctx.keystore.path()));
   if (removed.length > 0) {
-    ctx.audit.append('app_start', `${removed.length} leftover ${removed.length === 1 ? 'copy' : 'copies'} of the wallet file that Phosphor wrote ${removed.length === 1 ? 'was' : 'were'} shredded after the bound file opened`, { removed: removed.length });
+    ctx.audit.append('app_start', `${removed.length} leftover ${removed.length === 1 ? 'copy' : 'copies'} of the wallet file that Phosphor wrote ${removed.length === 1 ? 'was' : 'were'} shredded after the Phosphor-only wallet opened`, { removed: removed.length });
   }
   sweepSoon(ctx);
 }
@@ -268,11 +269,11 @@ async function bindNow(ctx: Ctx, backedUp: () => boolean): Promise<JsonBody> {
   }
   const done = await proveAndInstall(ctx, staged, BIND_REASON, 'keep');
   if ('refused' in done) {
-    ctx.audit.append('app_start', `the wallet was not bound to Phosphor: ${String(done.refused.code ?? 'refused')}; the wallet file in place is unchanged`, { code: done.refused.code });
+    ctx.audit.append('app_start', `the wallet was not made Phosphor-only: ${String(done.refused.code ?? 'refused')}; the wallet file in place is unchanged`, { code: done.refused.code });
     announce(ctx);
     return done.refused;
   }
-  ctx.audit.append('app_start', "the wallet was bound to Phosphor on this Mac: its key now lives in Phosphor's keychain, and older copies of the wallet file no longer open in Phosphor here", {});
+  ctx.audit.append('app_start', 'the wallet was made Phosphor-only on this Mac: no other app here can open it, and older copies of the wallet file no longer open in Phosphor', {});
   ctx.session.touch();
   announce(ctx);
   sweepSoon(ctx);
