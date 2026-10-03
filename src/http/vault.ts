@@ -87,8 +87,7 @@ export async function handleVaultAnswer(ctx: Ctx, req: http.IncomingMessage, res
    The bind flow reads it from the vault slice of /api/state before it binds a wallet to this Mac's
    chip. A proof names the wallet it was made for, so a key file swapped in from outside the app
    does not inherit another wallet's; a proof written before proofs named a wallet stands. */
-export function backupProven(ctx: Ctx): { backedUp: boolean; backedUpAt: string | null } {
-  const prefs = ctx.vaultPrefs.get();
+export function backupProven(ctx: Ctx, prefs = ctx.vaultPrefs.get()): { backedUp: boolean; backedUpAt: string | null } {
   const no = { backedUp: false, backedUpAt: null };
   if (!prefs.backedUp) return no;
   const proven = prefs.backedUpFor ?? null;
@@ -99,7 +98,7 @@ export function backupProven(ctx: Ctx): { backedUp: boolean; backedUpAt: string 
 
 export function vaultStatus(ctx: Ctx): JsonBody {
   const prefs = ctx.vaultPrefs.get();
-  const backup = backupProven(ctx);
+  const backup = backupProven(ctx, prefs);
   const enclave = ctx.keystore.enclave();
   return {
     custody: ctx.keystore.custody(),
@@ -494,7 +493,8 @@ export async function handleVaultPrefs(ctx: Ctx, req: http.IncomingMessage, res:
     return fail(res, 400, errText(err));
   }
   ctx.sse.broadcastState();
-  sendJson(res, 200, { ok: true, idleMinutes: ctx.vaultPrefs.get().idleMinutes, ...backupProven(ctx) });
+  const prefs = ctx.vaultPrefs.get();
+  sendJson(res, 200, { ok: true, idleMinutes: prefs.idleMinutes, ...backupProven(ctx, prefs) });
 }
 
 // ---------- the deposit card ----------
