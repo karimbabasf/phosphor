@@ -7,9 +7,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 
 import { createChartSlots } from '../../src/charts.ts';
 import { plainLabel, REMOVED } from '../../src/chart-label.ts';
@@ -17,6 +14,7 @@ import { createMarkingsFile } from '../../src/markings.ts';
 import { markWebRead, WEB_READ_REASON, webReadBy } from '../../src/web-read.ts';
 import { bootChartServer } from '../fixtures/chart-server.ts';
 import { landed, makeCtx, railThat } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const T0 = 1_760_000_000;
 // What the audit's page asked the reading chat to leave for the next one. Plain words: no filter
@@ -33,7 +31,7 @@ test('a label written after a web read keeps its stamp through the file and a re
   chart.setLevel({ price: 60000, label: 'range low' }, 'agent', 'chat-no-page');
   chart.setLevel({ price: 59000, label: 'mine' }, 'human');
 
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-web-label-'));
+  const dir = tempDir('phosphor-web-label-');
   createMarkingsFile(dir).save({ charts: slots.snapshot(), focus: null });
   const back = createChartSlots('BTC-USD');
   const kept = createMarkingsFile(dir).load();

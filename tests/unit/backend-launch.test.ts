@@ -16,12 +16,12 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { WINDOW_TOKEN_VAR } from '../../src/http/auth.ts';
 import { identityProof } from '../../src/http/respond.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const BACKEND_RS = fs.readFileSync(path.join(ROOT, 'src-tauri', 'src', 'backend.rs'), 'utf8');
@@ -212,7 +212,7 @@ test('without --disable-sigusr1, SIGUSR1 opens an inspector (the control)', asyn
 });
 
 test('the real backend boots under exactly the shell\'s launch, and SIGUSR1 opens nothing', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-launch-'));
+  const dir = tempDir('phosphor-launch-');
   t.diagnostic(`backend data path: ${dir}`);
   const port = await freePort();
   let decoy = await freePort();

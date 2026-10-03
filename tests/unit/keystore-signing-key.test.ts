@@ -15,8 +15,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
@@ -29,13 +27,14 @@ import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { apiWalletOf } from '../../src/keystore/store.ts';
 import type { EnclaveRef, Keystore } from '../../src/keystore/store.ts';
 import { readApiWallet, readApiWalletKey } from '../../src/runner/keys.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function fast(): ReturnType<typeof defaultParams> {
   return { ...defaultParams(), N: 2 ** 14 };
 }
 
 function tmpKeys(): string {
-  return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-signing-key-')), 'keys.json');
+  return path.join(tempDir('phosphor-signing-key-'), 'keys.json');
 }
 
 function password(): string {

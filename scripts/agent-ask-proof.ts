@@ -19,7 +19,8 @@
 // waits for a click and is never approved. Run:
 //   node scripts/agent-ask-proof.ts
 // PROOF_VIEWPORT is the window, 1280x800 by default (the app's floor is 960x700). PROOF_OUT names
-// the folder for the pictures (default docs/screenshots/agent-ask/). playwright-core is not a
+// the folder for the pictures (default scripts/scratch/agent-ask-proof/, docs/screenshots/agent-ask/
+// with --docs). playwright-core is not a
 // dependency of this repo; point PLAYWRIGHT_CORE at a copy, and without playwright's own
 // Chromium installed, PROOF_BROWSER at a Chromium binary.
 
@@ -31,12 +32,13 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'agent-ask');
+const SHOTS = proofOut('agent-ask-proof', 'agent-ask');
 const STRICT = process.env.PROOF_STRICT !== '0';
 const VIEWPORT = (() => {
   const m = /^(\d{3,4})x(\d{3,4})$/.exec(process.env.PROOF_VIEWPORT ?? '1280x800');

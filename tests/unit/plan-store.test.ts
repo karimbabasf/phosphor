@@ -4,14 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function dir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-plans-'));
+  return tempDir('phosphor-plans-');
 }
 
 function row(over: Partial<PlanRow> = {}): PlanRow {

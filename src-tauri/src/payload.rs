@@ -199,8 +199,8 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn the_early_check_answers_the_first_start_of_its_own_path_and_nothing_after() {
-        let root = std::env::temp_dir().join(format!("phosphor-early-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
+        let scratch = crate::TestDir::new("phosphor-early");
+        let root = scratch.0.clone();
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::write(root.join("src").join("main.ts"), "console.log(1);\n").unwrap();
         std::fs::write(root.join("package.json"), "{}\n").unwrap();
@@ -216,14 +216,14 @@ mod tests {
         std::fs::write(root.join("src").join("main.ts"), "console.log(2);\n").unwrap();
         let again = check(&root, &built).err().expect("a respawn hashes the tree as it is now");
         assert!(again.contains(&built), "{again}");
-        let _ = std::fs::remove_dir_all(&root);
     }
 
     /// The system's SHA-256 against shasum's, on bytes of every value and on nothing at all.
     #[cfg(target_os = "macos")]
     #[test]
     fn sha256_agrees_with_shasum() {
-        let dir = std::env::temp_dir().join(format!("phosphor-sha-{}", std::process::id()));
+        let scratch = crate::TestDir::new("phosphor-sha");
+        let dir = scratch.0.clone();
         std::fs::create_dir_all(&dir).unwrap();
         let every: Vec<u8> = (0..=255u8).cycle().take(70_000).collect();
         for (name, body) in [("empty", Vec::new()), ("every", every)] {
@@ -233,6 +233,5 @@ mod tests {
             let theirs = String::from_utf8_lossy(&out.stdout).split_whitespace().next().unwrap_or("").to_string();
             assert_eq!(hex(&sha256(&body).unwrap()), theirs, "{name}");
         }
-        let _ = std::fs::remove_dir_all(&dir);
     }
 }

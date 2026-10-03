@@ -8,15 +8,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
 import { createStore, CorruptStateError } from '../../src/store.ts';
 import type { Proposal } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-tolerant-'));
+  return tempDir('phosphor-tolerant-');
 }
 
 function sample(id: string): Proposal {

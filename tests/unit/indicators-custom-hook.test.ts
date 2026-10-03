@@ -6,18 +6,18 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createChartStore, LIMITS } from '../../src/chart.ts';
 import { indicatorCatalog, indicatorSpec, normaliseParams, warmupBars } from '../../src/indicators.ts';
 import type { IndicatorSpec } from '../../src/indicators.ts';
 import { createCustomIndicators } from '../../src/indicators-custom/loader.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const FIXTURES = path.join(import.meta.dirname, '..', 'fixtures', 'indicators');
 
 function loaderWith(...names: string[]) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-hook-'));
+  const dir = tempDir('phosphor-hook-');
   for (const name of names) fs.copyFileSync(path.join(FIXTURES, name), path.join(dir, name));
   return createCustomIndicators(dir);
 }

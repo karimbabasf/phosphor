@@ -4,7 +4,8 @@
 // one, never a real key) seeded with one executed HyperCore deposit that carries two preflights:
 // the 2026-09-15 surge (held) and the attempt that cleared. Creates a demo wallet, opens the
 // window in the automation browser over CDP, opens the row's receipt from Activity, unfolds
-// the checks and photographs the card at 1280 px into PROOF_OUT_DIR. Same shape as
+// the checks and photographs the card at 1280 px into scripts/scratch/checks-proof/ (docs/screenshots/
+// with --docs, or PROOF_OUT_DIR). Same shape as
 // activity-proof.ts. Run:
 //   node scripts/checks-proof.ts
 // CDP_URL (default http://127.0.0.1:9333) and PLAYWRIGHT_CORE (a copy of the package; not a
@@ -17,6 +18,7 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const require = createRequire(import.meta.url);
@@ -24,7 +26,7 @@ const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/9833c18b2d85bc59/node_modules/playwright-core');
 const CDP_URL = process.env.CDP_URL ?? 'http://127.0.0.1:9333';
 // A working picture, not a deliverable: it goes to the temp dir, never into the repo.
-const SHOTS = process.env.PROOF_OUT_DIR ?? fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-checks-shot-'));
+const SHOTS = proofOut('checks-proof', '');
 
 type Json = any;
 

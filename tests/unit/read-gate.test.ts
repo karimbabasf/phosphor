@@ -8,7 +8,6 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -16,6 +15,7 @@ import { bootChartServer } from '../fixtures/chart-server.ts';
 import { readKeyFor } from '../../src/http/auth.ts';
 import { readKeyPath } from '../../src/http/read-gate.ts';
 import { READ_ROUTES } from '../../src/http/router.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -207,7 +207,7 @@ async function bootReal(dataDir: string, token: string): Promise<{ base: string;
 }
 
 test('a boot writes the read key for programs the person runs: owner-only, this boot only', async () => {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-read-key-'));
+  const dataDir = tempDir('phosphor-read-key-');
   try {
     const first = 'e'.repeat(64);
     const app = await bootReal(dataDir, first);

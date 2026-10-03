@@ -8,11 +8,12 @@
 // its OK), a move being asked for with the working line under it, a swap running with a reply
 // streaming in, a swap the venue failed with nothing moved, a swap nobody would price, a move
 // that runs late, a waiting card scrolled out of view, and Latest. Every scene is shot at
-// 1280 x 800 and 1440 x 900 into PROOF_OUT (default docs/screenshots/chat/).
+// 1280 x 800 and 1440 x 900 into scripts/scratch/chat-proof/ (git ignores it), docs/screenshots/chat/
+// with --docs, or PROOF_OUT.
 //
 // Fixture data only: the demo wallet on a temp directory, never the live one, and no model turn
 // is spent. Run:
-//   PROOF_OUT=<dir> node scripts/chat-proof.ts [--scenes thread,failed]
+//   node scripts/chat-proof.ts [--scenes thread,failed] [--docs]
 // playwright-core is not a dependency of this repo; point PLAYWRIGHT_CORE at a copy. Without
 // playwright's own Chromium installed, point PROOF_BROWSER at a Chromium binary.
 
@@ -23,13 +24,14 @@ import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { proofOut } from './proof-out.ts';
 import { proposalView } from '../src/proposals/view.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const PLAYWRIGHT_CORE =
   process.env.PLAYWRIGHT_CORE ?? path.join(os.homedir(), '.npm/_npx/47c97c996798144b/node_modules/playwright-core');
 const BROWSER = process.env.PROOF_BROWSER;
-const SHOTS = process.env.PROOF_OUT ?? path.join(ROOT, 'docs', 'screenshots', 'chat');
+const SHOTS = proofOut('chat-proof', 'chat');
 const SIZES: Array<[number, number]> = [[1280, 800], [1440, 900]];
 const ONLY = (() => {
   const at = process.argv.indexOf('--scenes');

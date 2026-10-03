@@ -12,15 +12,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import type { ChildProcess } from 'node:child_process';
 
 import { createRunnerHost, type RunnerEvent } from '../../src/runner/host.ts';
 import type { FromChild, ToChild } from '../../src/runner/protocol.ts';
 import { createPlanStore } from '../../src/trade/plans.ts';
 import type { PlanRow } from '../../src/trade/plans.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // A child that can be told to die. `connected` follows the same rule the real one does: false
 // once the process is gone, and `send` then throws exactly as node:child_process does.
@@ -91,7 +89,7 @@ function host(): { runner: ReturnType<typeof createRunnerHost>; child: FakeChild
     killSwitch: () => false,
     walletOpen: () => true,
     onEvent: (e) => events.push(e),
-    store: createPlanStore(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-dead-child-'))),
+    store: createPlanStore(tempDir('phosphor-dead-child-')),
     meta: () => ({ assetId: 1, szDecimals: 4, maxLeverage: 25 }),
     mark: () => 100,
     free: () => 1000,

@@ -10,9 +10,10 @@ import { createStore } from '../../src/store.ts';
 import { loadPolicy, savePolicy, defaultPolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import type { Proposal } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'acc-'));
+  return tempDir('acc-');
 }
 
 // ---------- audit.ts ----------

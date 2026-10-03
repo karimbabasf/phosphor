@@ -15,9 +15,9 @@ import { execFileSync, spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -138,7 +138,7 @@ async function freePort(): Promise<number> {
 }
 
 test('the hook sees a package load, so a quiet log below means the backend loaded nothing else', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-packages-'));
+  const dir = tempDir('phosphor-packages-');
   const out = path.join(dir, 'loaded.txt');
   // hono ships in node_modules for the MCP proxy and is outside the reviewed set.
   execFileSync(process.execPath, ['--import', pathToFileURL(packageLogger(dir)).href, '--input-type=module', '-e', "await import('hono');"], {
@@ -152,7 +152,7 @@ test('the hook sees a package load, so a quiet log below means the backend loade
 });
 
 test('what does load while the real backend boots, opens a wallet, locks and unlocks is inside the reviewed set', async (t) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-packages-'));
+  const dir = tempDir('phosphor-packages-');
   t.diagnostic(`backend data path: ${dir}`);
   const out = path.join(dir, 'loaded.txt');
   const port = await freePort();

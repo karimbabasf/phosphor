@@ -10,7 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { IntentsPayDraft, IntentsSendDraft } from '../../src/types.ts';
@@ -19,6 +18,7 @@ import { reasonFor } from '../../src/vault/reason.ts';
 import { readRecipients, recipientFor, recipientKey, recordRecipient } from '../../src/recipients.ts';
 import { makeCtx, railThat, landed, SELF_EVM } from './helpers/proposals.ts';
 import { makeHttp } from './helpers/http.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const FRIEND = '0xb583f41992Cd21b2F2345e194a36D33684BB5DB0';
 const SOL_FRIEND = 'DRpbCBMxVnDK7maPM5tGv6MvB3v1sRMC86PZ8okm21hy';
@@ -175,7 +175,7 @@ test('the book keys EVM and NEAR ids case-insensitively and a base58 key exactly
 });
 
 test('the book counts and dates every approval, bounds the label and survives a corrupt file', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-recipients-'));
+  const dir = tempDir('phosphor-recipients-');
   const a = recordRecipient(dir, 'base', FRIEND, '2026-09-10T00:00:00.000Z', 'x'.repeat(200) + '\ntail');
   assert.equal(a.count, 1);
   assert.equal(a.label?.length, 64);
@@ -345,7 +345,7 @@ test('two identical sends five seconds apart from one session, the first still p
    that cries wolf is a warning he clicks past. The read looks under the old name; nothing on disk
    is rewritten and nothing new is written under it. */
 test('a receiver approved under the old network name is still known under its chain id', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-recipients-legacy-'));
+  const dir = tempDir('phosphor-recipients-legacy-');
   recordRecipient(dir, 'ethereum', FRIEND, '2026-09-10T00:00:00.000Z', 'Alice');
   const found = recipientFor(dir, 'eth', FRIEND);
   assert.equal(found?.count, 1);

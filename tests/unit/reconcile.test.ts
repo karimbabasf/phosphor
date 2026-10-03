@@ -6,8 +6,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createAudit } from '../../src/audit.ts';
@@ -18,11 +16,12 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import type { AppConfig, Proposal, ProposalService, RiskRow } from '../../src/types.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const HASH_A = '0x' + 'a'.repeat(64);
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-reconcile-'));
+  return tempDir('phosphor-reconcile-');
 }
 
 const RISK_ROWS: RiskRow[] = [{ symbol: 'USDC', issuer: 'Circle', freezable: true, tier: 'A' } as unknown as RiskRow];

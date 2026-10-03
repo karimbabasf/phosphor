@@ -11,12 +11,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
 import { checkApp, entitlementProblem, expectedEntitlements, payloadProblems, shellCarries } from '../../scripts/release-check.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const COMMITTED = path.join(ROOT, 'src-tauri', 'entitlements.plist');
@@ -24,7 +24,7 @@ const APP_ENTITLEMENTS = { 'com.apple.security.cs.allow-jit': true, 'com.apple.s
 
 // A checkout holding every payload entry, small.
 function fakeCheckout(): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-checkout-'));
+  const dir = tempDir('release-check-checkout-');
   for (const entry of PAYLOAD) {
     const full = path.join(dir, ...entry.split('/'));
     if (path.extname(entry) === '') {
@@ -52,7 +52,7 @@ function stage(checkout: string, payloadRoot: string): void {
 
 test('first-party payload files must be the checkout, byte for byte, with nothing added or missing', () => {
   const checkout = fakeCheckout();
-  const payload = fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-payload-'));
+  const payload = tempDir('release-check-payload-');
   try {
     stage(checkout, payload);
     assert.deepEqual(payloadProblems(checkout, payload), []);
@@ -81,7 +81,7 @@ test('first-party payload files must be the checkout, byte for byte, with nothin
    shell loads it, so the check reads it too (re-audit R-L10). Only a regular file by that name is left out. */
 test('a folder named .DS_Store is read like any other, so a file planted in one is named', () => {
   const checkout = fakeCheckout();
-  const payload = fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-payload-'));
+  const payload = tempDir('release-check-payload-');
   try {
     stage(checkout, payload);
     fs.writeFileSync(path.join(payload, 'src', '.DS_Store'), 'finder');
@@ -140,7 +140,7 @@ function sign(file: string, entitlements?: string): void {
 }
 
 function fakeApp(checkout: string, opts: { digest?: string } = {}): string {
-  const app = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-app-')), 'Phosphor.app');
+  const app = path.join(tempDir('release-check-app-'), 'Phosphor.app');
   const payload = path.join(app, 'Contents', 'Resources', 'phosphor');
   fs.mkdirSync(payload, { recursive: true });
   stage(checkout, payload);
@@ -180,7 +180,7 @@ test('a build that planted an entitlement, changed a first-party file or ships a
   const planted = fakeApp(checkout);
   const edited = fakeApp(checkout);
   const mismatched = fakeApp(checkout, { digest: 'ef'.repeat(32) });
-  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'release-check-ent-'));
+  const scratch = tempDir('release-check-ent-');
   try {
     // A debugger entitlement on the Secure Enclave service: notarize-mac.sh would keep it.
     const debuggable = path.join(scratch, 'debuggable.plist');

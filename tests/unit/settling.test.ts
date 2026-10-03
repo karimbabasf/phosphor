@@ -11,7 +11,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,6 +27,7 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -120,7 +120,7 @@ function spyRail(result: RailResult | (() => RailResult)): { registry: RailRegis
 }
 
 function setup(result: RailResult | ((ledger: ReturnType<typeof fakeLedger>) => RailResult) = settlingResult(), seed: Proposal[] = []) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-settling-'));
+  const dataDir = tempDir('phosphor-settling-');
   const cfg: AppConfig = {
     mode: 'live',
     port: 4177,

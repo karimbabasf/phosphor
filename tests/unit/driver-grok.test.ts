@@ -5,13 +5,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { createDriver } from '../../src/driver.ts';
 import type { Driver, DriverEvent } from '../../src/driver.ts';
 import { grok, sessionDir } from '../../src/providers/grok.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -21,7 +21,7 @@ type World = { dir: string; home: string; events: DriverEvent[]; driver: Driver;
 // server registered the way the Vault's `grok mcp add` does, and a TMPDIR the stand-in records its
 // argv under. All three are restored by done().
 function world(opts: { login?: boolean; registered?: boolean } = {}): World {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-driver-grok-'));
+  const dir = tempDir('phosphor-driver-grok-');
   const bin = path.join(dir, 'bin');
   fs.mkdirSync(bin);
   fs.symlinkSync(path.join(ROOT, 'tests', 'fixtures', 'fake-grok-turn.sh'), path.join(bin, 'grok'));

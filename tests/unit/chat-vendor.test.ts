@@ -14,6 +14,7 @@ import { createChatRegistry } from '../../src/http/chats.ts';
 import { writePick, readPick } from '../../src/agents-catalog.ts';
 import type { Run } from '../../src/agents-catalog.ts';
 import { connectionSpecFor, refreshRegistration, translocated } from '../../src/http/mutation.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -53,7 +54,7 @@ async function withGrok(dir: string, body: () => Promise<void> | void): Promise<
 }
 
 test('a pick the chat cannot run fails its start with where it runs instead, and starts nothing else', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   try {
     writePick(dir, 'codex');
     const { chats } = registry(dir);
@@ -72,7 +73,7 @@ test('a pick the chat cannot run fails its start with where it runs instead, and
 });
 
 test('Grok picked is Grok started, and the window is told which vendor it is', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   try {
     await withGrok(dir, () => {
       writePick(dir, 'grok');
@@ -91,7 +92,7 @@ test('Grok picked is Grok started, and the window is told which vendor it is', a
 });
 
 test('a chat that is not running follows a new pick', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   try {
     await withGrok(dir, () => {
       writePick(dir, 'codex');
@@ -111,7 +112,7 @@ test('a chat that is not running follows a new pick', async () => {
 });
 
 test('a delta reaches the window and never the transcript', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   try {
     const { chats, frames } = registry(dir);
     const chat = chats.primary();
@@ -126,7 +127,7 @@ test('a delta reaches the window and never the transcript', () => {
 });
 
 test('a developer line goes to the audit log and never to the window or the transcript', () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   try {
     const { chats, frames, lines } = registry(dir);
     const chat = chats.primary();
@@ -157,7 +158,7 @@ test('a copy of the app running from a translocation path is recognised as one',
    `grok mcp add phosphor --scope user` at boot and pointed the real ~/.grok/config.toml at itself.
    A boot that is not the app on its own folder writes nothing into any agent's settings. */
 test('a boot on a folder that is not the app\'s own registers nothing, whatever is picked', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-throwaway-'));
+  const dir = tempDir('phosphor-chat-vendor-throwaway-');
   const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
   try {
     const bin = path.join(dir, 'bin');
@@ -197,7 +198,7 @@ test('a boot on a folder that is not the app\'s own registers nothing, whatever 
 });
 
 test('at boot the pick is registered again when it names another connection, once, and never from a translocated copy', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-chat-vendor-'));
+  const dir = tempDir('phosphor-chat-vendor-');
   const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
   try {
     // A grok this test owns, found on PATH, and a run that records instead of running.

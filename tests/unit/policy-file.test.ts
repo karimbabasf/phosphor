@@ -4,14 +4,14 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { defaultPolicy, loadPolicy, savePolicy, savePolicyChecked } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function tmpDir(): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-policy-file-'));
+  return tempDir('phosphor-policy-file-');
 }
 
 test('a fresh default carries an auto-approved ceiling of five times the click threshold', () => {

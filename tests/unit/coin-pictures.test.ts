@@ -16,7 +16,6 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -37,6 +36,7 @@ import {
   pictureType,
   type CoinPictures,
 } from '../../src/ledger/pictures.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 type Row = Record<string, any>;
 
@@ -107,10 +107,6 @@ const WEBP = vp8(250, 250);
 const SVG = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("/api/state")</script></svg>');
 const GIF = Buffer.concat([Buffer.from('GIF89a'), Buffer.alloc(200, 2)]);
 const HUGE_PNG = Buffer.concat([PNG, Buffer.alloc(PICTURE_MAX_BYTES, 9)]);
-
-function tempDir(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
-}
 
 type Served = { status?: number; body?: Buffer | ReadableStream<Uint8Array> | null; headers?: Record<string, string> };
 

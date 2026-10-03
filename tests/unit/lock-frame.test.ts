@@ -13,9 +13,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -31,6 +29,7 @@ import { createSession } from '../../src/keystore/session.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const PASSWORD = 'a long enough password';
 // The window token this server is booted with. The event stream is a read, so it carries it.
@@ -41,7 +40,7 @@ function snapshot(): LedgerSnapshot {
 }
 
 async function boot() {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lockframe-'));
+  const dataDir = tempDir('phosphor-lockframe-');
   process.env.PHOSPHOR_WINDOW_TOKEN = crypto.randomBytes(32).toString('hex');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, mode: 'demo', kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });

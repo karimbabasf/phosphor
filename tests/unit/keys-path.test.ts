@@ -11,12 +11,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { assertOutsideRepo, loadConfig } from '../../src/config.ts';
 import { createKeystore, destroyPlaintext } from '../../src/keystore/store.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // The address a legacy key file would leak if the scoping were wrong. It is a plain address
 // with no private key beside it, which is enough: addresses() falls back to it, so seeing it
@@ -24,7 +24,7 @@ import { defaultParams } from '../../src/keystore/kdf.ts';
 const LEGACY_EVM = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
 
 function scratch(prefix: string): string {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  return tempDir(prefix);
 }
 
 // loadConfig reads process.env and os.homedir() directly, so every case runs with a known

@@ -11,8 +11,6 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -28,6 +26,7 @@ import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipt
 import type { Receipt } from '../../src/http/receipts.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const SELF = '0x1111111111111111111111111111111111111111';
 // The window token this server is booted with. Every read carries it (src/http/read-gate.ts).
@@ -65,7 +64,7 @@ function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {
 }
 
 async function boot(proposals: Proposal[], opts: { coinWord?: (ref: string) => string | null } = {}): Promise<{ url: string; close: () => Promise<void> }> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-receipts-'));
+  const dataDir = tempDir('phosphor-receipts-');
   const store = createStore(dataDir);
   for (const p of proposals) store.put(p);
 

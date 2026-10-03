@@ -9,8 +9,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createKeystore, evmPrivateKey, isLocked, keyHeld, useKeystore } from '../../src/keystore/index.ts';
@@ -20,6 +18,7 @@ import { createVaultRelay } from '../../src/vault/relay.ts';
 import type { VaultRelay } from '../../src/vault/relay.ts';
 import type { LockState } from '../../src/keystore/index.ts';
 import { makeCtx, slowRail } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function fakeEnclave() {
   const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -51,7 +50,7 @@ async function until(what: () => boolean, ms = 3000): Promise<boolean> {
 test.afterEach(() => useKeystore(null));
 
 test('the touch that approves one move opens the wallet for that move alone, and the key goes with its signature', async () => {
-  const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lease-'));
+  const keyDir = tempDir('phosphor-lease-');
   const keystore = createKeystore({ keysPath: path.join(keyDir, 'keys', 'keys.json'), kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });
   useKeystore(keystore);
   const transport = crypto.randomBytes(32);
@@ -93,7 +92,7 @@ test('the touch that approves one move opens the wallet for that move alone, and
 });
 
 test('on an open wallet the touch approves the move and changes nothing else', async () => {
-  const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-lease-'));
+  const keyDir = tempDir('phosphor-lease-');
   const keystore = createKeystore({ keysPath: path.join(keyDir, 'keys', 'keys.json'), kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });
   useKeystore(keystore);
   const transport = crypto.randomBytes(32);

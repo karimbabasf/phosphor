@@ -23,11 +23,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { assertMemory, childEnv, resolveClaudeBin } from '../src/driver.ts';
+import { tempDir } from './unit/helpers/tmp.ts';
 
 const REPO = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
@@ -209,7 +209,7 @@ test('the operator launcher names its built-ins in full: Read, and nothing a den
     t.skip('the claude CLI is not installed on this machine');
     return;
   }
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-operator-nodeny-'));
+  const dir = tempDir('phosphor-operator-nodeny-');
   try {
     const profile = JSON.parse(fs.readFileSync(path.join(REPO, 'operator', 'settings.json'), 'utf8')) as { permissions: { deny: string[] } };
     profile.permissions.deny = [];

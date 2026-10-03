@@ -9,8 +9,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import http from 'node:http';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 
@@ -26,6 +24,7 @@ import { stubView } from '../fixtures/view.ts';
 import type { OneClickToken } from '../../src/intents.ts';
 import type { Rail, SwapDraft } from '../../src/types.ts';
 import { SELF_EVM, makeCtx, railThat } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts); a test about the door's other
 // walls (Origin, Host, the body type) leaves it out on purpose, because those walls come first.
@@ -69,7 +68,7 @@ function builtSwap(): Proposal {
 let lastSwapParams: Record<string, unknown> | null = null;
 
 async function boot(over: Partial<Parameters<typeof createServer>[0]['proposals']> = {}): Promise<{ url: string; token: string; close: () => Promise<void> }> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-sec-'));
+  const dataDir = tempDir('phosphor-sec-');
   // Play the shell: the window token arrives in the environment, never over a route.
   const token = crypto.randomBytes(32).toString('hex');
   process.env.PHOSPHOR_WINDOW_TOKEN = token;

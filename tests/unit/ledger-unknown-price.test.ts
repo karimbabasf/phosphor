@@ -8,17 +8,16 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { AppConfig } from '../../src/types.ts';
 import { createLedger } from '../../src/ledger/index.ts';
 import { loadDemoLedger } from '../../src/ledger/demo.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 // No keys file: no wallet, so the ledger reads prices and nothing else.
 function config(): AppConfig {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-price-'));
+  const dir = tempDir('phosphor-price-');
   return { mode: 'live', keysPath: path.join(dir, 'keys.json'), port: 4177, addresses: {}, candleProducts: [], dataDir: dir };
 }
 

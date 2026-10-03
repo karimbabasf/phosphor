@@ -14,7 +14,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -31,6 +30,7 @@ import { defaultPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { createProposalService } from '../../src/proposals.ts';
 import { venueAllowlist } from '../../src/rails/index.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.dirname(path.dirname(__dirname));
@@ -110,7 +110,7 @@ function spyRail(providerStage: string): { registry: RailRegistry; executed: Wri
 // The provider word the rail left on the row: the relay's SETTLED, 1Click's SUCCESS, or a
 // failure word (1Click's FAILED or REFUNDED, the relay's NOT_FOUND_OR_NOT_VALID).
 function setup(rail: 'relay' | 'oneclick', providerStage: string = rail === 'relay' ? 'SETTLED' : 'SUCCESS') {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-relay-settling-'));
+  const dataDir = tempDir('phosphor-relay-settling-');
   const cfg: AppConfig = { mode: 'live', port: 4177, addresses: { evm: SELF_EVM }, candleProducts: [], dataDir, keysPath: path.join(dataDir, 'keys.json'), swap: { rail } };
   savePolicy(dataDir, seededPolicy());
   const audit = createAudit(dataDir);

@@ -11,7 +11,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
@@ -22,6 +21,7 @@ import type { VaultRelay } from '../../src/vault/relay.ts';
 import { loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import { landed, makeCtx, railThat } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 function fakeEnclave() {
   const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
@@ -47,7 +47,7 @@ async function touch(relay: VaultRelay, priv: crypto.KeyObject, transport: Buffe
 }
 
 function enclaveWorld(executed: number[]) {
-  const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-recheck-'));
+  const keyDir = tempDir('phosphor-recheck-');
   const keystore = createKeystore({ keysPath: path.join(keyDir, 'keys', 'keys.json'), kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });
   useKeystore(keystore);
   const transport = crypto.randomBytes(32);

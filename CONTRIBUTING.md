@@ -23,7 +23,9 @@ window or `npm run app` for the backend alone. The README has the rest.
 
 Both must pass. A change to behaviour comes with a test that fails without it. Tests live under
 `tests/unit/`, one file per module, and use `node:test`; match the file that covers the module
-you touched.
+you touched. A test makes its temp folders with `tempDir()` from `tests/unit/helpers/tmp.ts`,
+which removes them when the file's run ends: `npm test` runs the suite in a temp folder of its
+own and fails when anything is left in it.
 
 ## Docs
 

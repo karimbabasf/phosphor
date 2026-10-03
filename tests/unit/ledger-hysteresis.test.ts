@@ -16,8 +16,6 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import type { AppConfig } from '../../src/types.ts';
@@ -26,6 +24,7 @@ import { INTENTS_UNREAD_AFTER_MS, intentsUnreadWhy } from '../../src/ledger/inte
 import { buildWallet } from '../../src/wallet.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const VECTOR = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
 const PASSWORD = 'a long enough password';
@@ -107,7 +106,7 @@ test.afterEach(() => {
 });
 
 test('one missed verifier read keeps the holdings and their stamp and counts the miss; two in a row are unread; a good read clears it', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-ledger-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-ledger-'), 'keys.json');
   await walletAt(keysPath);
   const world = fakeWorld();
   const logged: string[] = [];
@@ -154,7 +153,7 @@ test('one missed verifier read keeps the holdings and their stamp and counts the
 });
 
 test('a slow read that answers after a newer one has written is dropped, whatever it says', async () => {
-  const keysPath = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-ledger-')), 'keys.json');
+  const keysPath = path.join(tempDir('phosphor-ledger-'), 'keys.json');
   await walletAt(keysPath);
   const world = fakeWorld();
   const ledger = createLedger(liveConfig(keysPath), { fetchImpl: world.fetchImpl, log: () => undefined });

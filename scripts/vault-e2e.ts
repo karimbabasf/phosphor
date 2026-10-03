@@ -204,6 +204,7 @@ async function main(): Promise<number> {
     await new Promise((r) => setTimeout(r, 1500));
     if (child.exitCode === null) child.kill('SIGKILL');
     await relay.catch(() => undefined);
+    fs.rmSync(dataDir, { recursive: true, force: true });
   }
 
   const failed = checks.filter((c) => !c.ok).length;

@@ -13,11 +13,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
@@ -81,7 +81,7 @@ async function connect(env: Record<string, string>): Promise<Client> {
 
 test('with only PHOSPHOR_PORT set, the proxy dials that port and reads its seat from PHOSPHOR_DATA_DIR', async () => {
   const app = await stubApp();
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-proxy-port-'));
+  const dataDir = tempDir('phosphor-proxy-port-');
   fs.writeFileSync(path.join(dataDir, 'agent.secret'), 'seat-from-the-phosphor-name\n', { mode: 0o600 });
   const client = await connect(registrationEnv({
     PHOSPHOR_PORT: String(app.port),

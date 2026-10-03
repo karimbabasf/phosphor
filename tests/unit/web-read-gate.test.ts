@@ -10,7 +10,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -20,6 +19,7 @@ import type { DriverEvent } from '../../src/driver.ts';
 import { WEB_READ_REASON, webReadBy } from '../../src/web-read.ts';
 import { lockdownCopy } from '../fixtures/lockdown-copy.ts';
 import { landed, makeCtx } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const SETTINGS = lockdownCopy();
@@ -32,7 +32,7 @@ async function until(check: () => boolean, ms = 20_000): Promise<void> {
 // A chat on the Claude stand-in, seated as `seat`, and a proposal service whose swap rail counts
 // what it ran. `slowReads` holds every swap's simulation (read before the queue) until released.
 function world(seat: string, opts: { slowReads?: boolean } = {}) {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-web-read-'));
+  const dir = tempDir('phosphor-web-read-');
   const previous = process.env.TMPDIR;
   process.env.TMPDIR = dir;
   const events: DriverEvent[] = [];

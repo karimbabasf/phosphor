@@ -13,7 +13,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
@@ -25,6 +24,7 @@ import { loadPolicy, savePolicy } from '../../src/policy/file.ts';
 import { renderSentences } from '../../src/policy/render.ts';
 import type { MovedAssets, Rail, RailResult, WriteDraft } from '../../src/types.ts';
 import { landed, makeCtx } from './helpers/proposals.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const SMALL_SWAP = { chain: 'eth', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '20', minAmountOut: 19.5, by: 'seat' };
 const BIG_SWAP = { chain: 'eth', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '500', minAmountOut: 490, by: 'seat' };
@@ -177,7 +177,7 @@ async function touch(relay: VaultRelay, priv: crypto.KeyObject, transport: Buffe
 }
 
 function enclaveWorld(rail: Rail) {
-  const keyDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-freeze-touch-'));
+  const keyDir = tempDir('phosphor-freeze-touch-');
   const keystore = createKeystore({ keysPath: path.join(keyDir, 'keys', 'keys.json'), kdf: () => ({ ...defaultParams(), N: 2 ** 14 }) });
   useKeystore(keystore);
   const transport = crypto.randomBytes(32);

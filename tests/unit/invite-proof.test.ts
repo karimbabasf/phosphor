@@ -5,7 +5,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 
 import { containsInviteCode } from '../../src/invite/code.ts';
@@ -16,6 +15,7 @@ import type { ProofFile, ProofNet } from '../../scripts/invite-proof.ts';
 import { balanceOf, freshChain, netOn, oneclickOn, setBalance } from './helpers/invite-chain.ts';
 import type { Chain } from './helpers/invite-chain.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const REPO = path.resolve(import.meta.dirname, '..', '..');
 const SINK = '0x9858effd232b4033e47d90003d41ec34ecaeda94';
@@ -26,7 +26,7 @@ type Run = { code: number; out: string[]; err: string[] };
 type Bench = { dir: string; file: string; chain: Chain; net: ProofNet; run(argv: string[], env?: NodeJS.ProcessEnv, net?: ProofNet): Promise<Run>; proof(): ProofFile };
 
 function bench(): Bench {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-invite-proof-'));
+  const dir = tempDir('phosphor-invite-proof-');
   const file = path.join(dir, 'proof', 'invite-proof.json');
   const chain = freshChain();
   const net: ProofNet = { ...netOn(chain), oneclick: oneclickOn(chain), quoteKey: TEST_QUOTE_KEY };

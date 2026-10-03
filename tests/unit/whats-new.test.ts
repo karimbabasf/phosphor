@@ -1,16 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { whatsNew } from '../../src/whats-new.ts';
 import { PAYLOAD } from '../../scripts/payload-digest.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 function rootWith(changelog: string): string {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'whats-new-'));
+  const dir = tempDir('whats-new-');
   fs.mkdirSync(path.join(dir, 'docs'));
   fs.writeFileSync(path.join(dir, 'docs', 'changelog.md'), changelog);
   return dir;
@@ -32,7 +32,7 @@ test('since gives every entry after the version they had, by number not by text'
 });
 
 test('a copy with no changelog says so instead of failing', () => {
-  assert.match(whatsNew(fs.mkdtempSync(path.join(os.tmpdir(), 'whats-new-')), ''), /carries no changelog/);
+  assert.match(whatsNew(tempDir('whats-new-'), ''), /carries no changelog/);
 });
 
 test('the real changelog opens on the version in package.json, and the bundle ships it', () => {

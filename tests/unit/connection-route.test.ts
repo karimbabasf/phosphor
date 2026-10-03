@@ -12,7 +12,6 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import http from 'node:http';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AddressInfo } from 'node:net';
@@ -22,6 +21,7 @@ import { agentById } from '../../src/agents-catalog.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { readPick, writePick } from '../../src/agents-catalog.ts';
 import { createAgents } from '../../src/agents.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 const TOKEN = 'a'.repeat(64);
@@ -31,7 +31,7 @@ type Line = { type: string; msg: string; data?: Record<string, unknown> };
 type App = { url: string; dataDir: string; lines: Line[]; running: { value: boolean }; close: () => Promise<void> };
 
 async function boot(): Promise<App> {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-connection-'));
+  const dataDir = tempDir('phosphor-connection-');
   const lines: Line[] = [];
   const running = { value: false };
   const ctx = {
@@ -188,7 +188,7 @@ test('a pick is written to agent.json with an audit line, and its check answers 
 async function withNoAgents<T>(fn: () => Promise<T>): Promise<T> {
   const saved = { PATH: process.env.PATH, HOME: process.env.HOME };
   process.env.PATH = '/nonexistent';
-  process.env.HOME = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-no-agents-'));
+  process.env.HOME = tempDir('phosphor-no-agents-');
   try {
     return await fn();
   } finally {
@@ -203,7 +203,7 @@ async function withNoAgents<T>(fn: () => Promise<T>): Promise<T> {
 test('a pick on a copy that is not the app on its own folder leaves the agent\'s settings alone', async () => {
   const app = await boot();
   const saved = { PATH: process.env.PATH, HOME: process.env.HOME, PHOSPHOR_APP_DATA: process.env.PHOSPHOR_APP_DATA, PHOSPHOR_DATA_DIR: process.env.PHOSPHOR_DATA_DIR };
-  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-one-agent-'));
+  const home = tempDir('phosphor-one-agent-');
   const bin = path.join(home, 'bin');
   const log = path.join(home, 'codex-calls.txt');
   fs.mkdirSync(bin);
