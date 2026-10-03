@@ -64,7 +64,7 @@ function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {
   };
 }
 
-async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => Promise<void> }> {
+async function boot(proposals: Proposal[], opts: { coinWord?: (ref: string) => string | null } = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'phosphor-receipts-'));
   const store = createStore(dataDir);
   for (const p of proposals) store.put(p);
@@ -115,6 +115,7 @@ async function boot(proposals: Proposal[]): Promise<{ url: string; close: () => 
       dailyLimit: (capUsd: number) => ({ capUsd, spentUsd: 0, resetsAt: null }),
       reconcile: () => Promise.reject(new Error('not wired in this test')),
       acknowledge: () => Promise.reject(new Error('not wired in this test')),
+      ...(opts.coinWord === undefined ? {} : { coinWord: opts.coinWord }),
     },
     getPolicy: () => defaultPolicy(),
     setKill: () => {},
@@ -270,6 +271,27 @@ test('the hashes carry a chain and a link, not a bare string', async () => {
     // The name on the card's button follows the link, never the row: no link, no name.
     assert.equal(receipt.txids[0].url, 'https://arbiscan.io/tx/0x' + 'a'.repeat(64));
     assert.equal(receipt.txids[0].explorer, 'Arbiscan');
+  } finally {
+    await h.close();
+  }
+});
+
+/* A swap whose draft names a coin by id, which it keeps where one ticker is two coins on one
+   network, is received in the words the app reads off its own tables (src/proposals/coin-words.ts):
+   Activity and the receipt card print those, never the id (2026-10-02). */
+test('a swap whose draft names its coins by id is received in their words, never the ids', async () => {
+  const twin = '1cs_v1:hypercore:hip1:0x6d1e7cde53ba9467b783cb7c530ce054';
+  const swap = settled('s', 'executed', {
+    kind: 'swap',
+    draft: { kind: 'swap', venue: 'intents-native', chain: 'hypercore', toChain: 'sol', fromSymbol: twin, toSymbol: 'sol', amountIn: 5, amountUsd: 5, minAmountOut: 0.02, from: SELF, to: SELF, counterparty: 'intents.near', quote: null } as unknown as Proposal['draft'],
+    result: { ok: true, detail: 'swapped', txids: [], evidence: { settledAmountOut: '0.0312' } } as unknown as Proposal['result'],
+  });
+  const h = await boot([swap], { coinWord: (ref) => (ref === twin ? 'USDC' : ref.toUpperCase()) });
+  try {
+    const [r] = await receipts(h.url);
+    assert.equal(r.symbol, 'USDC');
+    assert.deepEqual(r.received, { symbol: 'SOL', amount: 0.0312 });
+    assert.doesNotMatch(JSON.stringify([r.symbol, r.received, r.headline]), /1cs_v1:|nep141:/);
   } finally {
     await h.close();
   }

@@ -5,6 +5,24 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.14
+
+Built 2026-10-02. Tagged v0.10.14 on 2026-10-02.
+
+- A move card names its coins from the moment it appears. A swap your assistant asked for by a
+  coin's id used to show that id for a split second ("Swap 1.7147 nep141:17208628...a1 to SOL",
+  over two gray letters) before it read "Swap 1.7147 USDC to SOL". Now it says USDC and shows the
+  USDC logo from the start. The id still decides which coin is signed for.
+- A payment to another chain says where it lands ("on Base") from the start, and a coin your
+  assistant typed in lower case reads the same as it will once the move is filed.
+- Activity and receipts name every coin by its ticker, and a payment's Details name the coin it
+  swaps on the way by where it came from ("the USDC from Ethereum"), never by an id.
+- A move the app turned away before filing it, such as an amount below zero or a repeat of a swap
+  that is still running, now says it did not go through and that nothing moved. Its card used to
+  say Swapping for good. A check on a move the app does not hold draws no card and says so in one
+  line.
+- Your wallet, your keys and your settings stay as they were.
+
 ## 0.10.13
 
 Built 2026-10-01 and 2026-10-02, the invite codes and safety pass. Tagged v0.10.13 on

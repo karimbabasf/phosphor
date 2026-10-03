@@ -189,6 +189,15 @@
     return String(name || '').replace(/^mcp__phosphor__/, '');
   }
 
+  /* The kind of move a propose call drafts. One tool, propose_send, drafts either send: a real
+     chain in `where` is a payout, and its first frame names that chain like the row will. */
+  function proposeKind(name, input) {
+    var id = bareName(name);
+    if (!Object.prototype.hasOwnProperty.call(PROPOSE_KINDS, id)) return '';
+    var where = input && typeof input.where === 'string' ? input.where.trim().toLowerCase() : '';
+    return id === 'propose_send' && where && where !== 'intents' ? 'intents_pay' : PROPOSE_KINDS[id];
+  }
+
   /* typeof, not truthiness: the tool id arrives from a language model, and a
      lookup on a plain object hands back Object.prototype's own members for ids
      like `constructor`. */
@@ -1613,6 +1622,7 @@
     return {
       name: block.name,
       input: block.input,
+      words: block.words,
       at: block.at,
       open: block.open !== false,
       onToggle: function (open) { block.open = open; },
@@ -1887,11 +1897,13 @@
       if (turn) turn.state = 'calling';
       /* SOMETHING ON SCREEN THE MOMENT A MOVE IS ASKED FOR. The propose call already names
          the pair and the amount, so the card is drawn from it now, working, and becomes the
-         row's own card when the row lands. */
-      var kind = PROPOSE_KINDS[bareName(event.name)];
+         row's own card when the row lands. The coins are drawn by the words the app sent
+         beside the call (src/http/chats.ts), never by the agent's own string, which may be an
+         asset id: "Swap 1.7147 nep141:17208628...a1 to SOL" (Karim, 2026-10-02). */
+      var kind = proposeKind(event.name, event.input);
       if (kind) {
         openSteps = null;
-        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, data: { placeholder: true, kind: kind }, at: at, open: true, replayed: replay, waiting: replay ? false : undefined });
+        pushBlock({ type: 'card', kind: 'move', name: event.name, input: event.input, words: event.words, data: { placeholder: true, kind: kind }, at: at, open: true, replayed: replay, waiting: replay ? false : undefined });
         return;
       }
       if (!replay) renderAll();
@@ -1918,6 +1930,30 @@
       openSteps = null;
       var cardKind = cards.kindFor(event.name, event.data);
       if (cardKind === 'move') {
+        /* A PROPOSE ANSWERED WITH AN ERROR AND NO ROW OF ITS OWN FILED NOTHING: a field the app
+           refused at the door, or a repeat of a move still in flight. The proxy hands that answer
+           back as the call's result, not as a failed call, and the card took it for its row and
+           said "Swapping" for good (2026-10-02). It ends the way a call that never reached the
+           wallet ends. */
+        var body = event.data;
+        var noRow = body !== null && typeof body === 'object' && typeof body.error === 'string' && typeof body.id !== 'string';
+        if (noRow && bareName(event.name).indexOf('propose_') === 0) {
+          var refused = openPlaceholder(event.name);
+          if (refused) {
+            refused.data = { placeholder: true, failed: true, kind: refused.data.kind };
+            refused.rev = (refused.rev || 0) + 1;
+          }
+          if (!replay) renderAll();
+          return;
+        }
+        /* A READ THAT ANSWERED WITH AN ERROR HOLDS NO MOVE either (proposal_status for an id the
+           app does not hold): no move card, which would work for good with no row behind it. The
+           chat says the app's own line instead. */
+        if (noRow) {
+          var line = String(body.error).replace(/\s+/g, ' ').trim();
+          if (line) pushBlock({ type: 'error', text: line.length > 280 ? line.slice(0, 277).replace(/\s+\S*$/, '') + '...' : line });
+          return;
+        }
         /* A move already on the thread is updated where it stands: its placeholder, or the
            card an earlier read or the state frame drew. One card per move, for life. */
         var shown = moveBlockFor(event.data) || openPlaceholder(event.name);

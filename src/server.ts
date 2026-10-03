@@ -220,6 +220,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     onEvent: (chat, event) => ended?.event(chat, event),
     // Read when a chat's agent searches the web, which is always after ctx below exists.
     prints: () => printsOf(ctx),
+    coinWord: (ref) => deps.proposals.coinWord?.(ref) ?? null,
   });
   ended = createEndedNotices({
     store,

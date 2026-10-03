@@ -435,6 +435,9 @@ test('a payout of USDC held as the Ethereum flavor onto Base is quoted as that c
   assert.equal(calls.quotes[0]?.slippageToleranceBps, undefined, 'a real cross-chain route keeps the default tolerance');
   assert.equal(sim.send?.destinationAsset, USDC_BASE_ASSET);
   assert.equal(sim.send?.explorer, `https://basescan.org/address/${FRIEND}`);
+  // The card's Details read this line: the flavor spent is named by its chain, never by its id.
+  assert.match(sim.summary, /\(swapped on the way from the USDC from Ethereum\)/);
+  assert.doesNotMatch(sim.summary, /nep141:|omft\.near/);
 });
 
 test('a quote whose echo names another receiver, or an intents credit, or no echo at all, is refused', async () => {

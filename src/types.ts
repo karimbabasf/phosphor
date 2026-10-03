@@ -975,4 +975,7 @@ export type ProposalService = {
   swapAssets?(params: SwapAssetsParams): Promise<SwapAssetsReply>;
   swapQuote?(params: SwapQuoteParams): Promise<SwapQuoteReply>;
   swapCheck?(id: string): Promise<SwapCheckReply>;
+  /* What a person calls a coin a move names by ticker or by id, or null for an id no table knows
+     (src/proposals/coin-words.ts). Optional so a stand-in service need not carry it. */
+  coinWord?(ref: string): string | null;
 };

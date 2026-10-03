@@ -63,7 +63,7 @@ commit it prints (0.10.2 and later; use the tag of the version you downloaded):
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.13
+  --source-ref refs/tags/v0.10.14
 ```
 
 The app and the disk image are signed with an Apple Developer ID and notarised by Apple, so

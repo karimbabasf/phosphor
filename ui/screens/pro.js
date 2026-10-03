@@ -1171,8 +1171,8 @@
     var asked = money.amountIn !== undefined && money.amountIn !== null ? money.amountIn : (p.kind === 'swap' ? draft.amountIn : draft.amount);
     return {
       amount: figureOf(asked),
-      symbol: String(money.symbol || draft.fromSymbol || draft.symbol || ''),
-      toSymbol: String(money.toSymbol || draft.toSymbol || ''),
+      symbol: nameOf(money.symbol) || nameOf(draft.fromSymbol) || nameOf(draft.symbol),
+      toSymbol: nameOf(money.toSymbol) || nameOf(draft.toSymbol),
       got: figureOf(money.amountOut),
       to: typeof draft.to === 'string' ? draft.to : ''
     };
@@ -1184,11 +1184,19 @@
     var draft = p && p.draft ? p.draft : {};
     return {
       amount: figureOf(r.amount),
-      symbol: String(r.symbol || draft.fromSymbol || draft.symbol || ''),
-      toSymbol: String(r.received && r.received.symbol ? r.received.symbol : (draft.toSymbol || '')),
+      symbol: nameOf(r.symbol) || nameOf(draft.fromSymbol) || nameOf(draft.symbol),
+      toSymbol: nameOf(r.received && r.received.symbol) || nameOf(draft.toSymbol),
       got: r.received ? figureOf(r.received.amount) : '',
       to: typeof draft.to === 'string' ? draft.to : ''
     };
+  }
+
+  /* A coin's name, or nothing for an asset id: a draft can name its coin by 1Click's id, and the
+     row then reads by its sentence instead (the rule is ui/screens/cards.js nameOf). */
+  function nameOf(symbol) {
+    var s = String(symbol === null || symbol === undefined ? '' : symbol).trim();
+    if (!s || s.indexOf(':') !== -1 || /^[0-9a-f]{64}$/i.test(s) || /^unlisted-[0-9a-f]{8}$/i.test(s)) return '';
+    return s;
   }
 
   function figureOf(value) {

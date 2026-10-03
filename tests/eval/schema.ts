@@ -72,6 +72,9 @@ export type Step = {
   inject?: { error?: string; result?: unknown };
   // Sleep before the step. What lets a click land before the status read that follows it.
   waitMs?: number;
+  // Sleep between announcing the call and making it, the seconds a live quote holds a propose,
+  // so a proof can see what the window draws before the answer exists (scripts/first-frame-proof.ts).
+  holdMs?: number;
 };
 
 export type ArgCheck = {

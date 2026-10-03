@@ -43,6 +43,7 @@ import { proposePolicyChange } from './proposals/draft.ts';
 import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
 import { proposeTrade, proposeTradeChange } from './proposals/trade.ts';
 import { swapAssets, swapCheck, swapQuote } from './proposals/swap-reads.ts';
+import { coinWordOf } from './proposals/coin-words.ts';
 import { outsideBy, webReadBy } from './web-read.ts';
 import { appTurnBy } from './app-turn.ts';
 
@@ -95,6 +96,7 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
         return null;
       }
     },
+    coin: (ref) => coinWordOf(ctx, ref),
   };
 
   /* The web-read stamp, taken the moment a move is asked for and before anything is awaited or
@@ -171,5 +173,6 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
     swapAssets: (params) => swapAssets(ctx, params),
     swapQuote: (params) => swapQuote(ctx, params),
     swapCheck: (id: string) => swapCheck(ctx, id),
+    coinWord: (ref: string) => coinWordOf(ctx, ref),
   };
 }

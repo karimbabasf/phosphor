@@ -720,17 +720,42 @@
     return s;
   }
 
+  /* A coin's name as the card may print it, or nothing. An agent can name a coin by 1Click's
+     asset id and a draft keeps the id where one ticker is two coins (src/proposals/coin-words.ts),
+     and on 0.10.13 the first frame printed it: "Swap 1.7147 nep141:17208628...a1 to SOL" over a
+     monogram of each half (Karim, 2026-10-02). An id carries a colon and a ticker never does
+     (src/intents.ts); a bare 64-hex account and the agent's own handle for a token nobody lists
+     (unlisted-xxxxxxxx, src/http/read/wallet.ts) are no names either. */
+  function nameOf(symbol) {
+    var s = String(symbol === null || symbol === undefined ? '' : symbol).trim();
+    if (!s || s.indexOf(':') !== -1 || /^[0-9a-f]{64}$/i.test(s) || /^unlisted-[0-9a-f]{8}$/i.test(s)) return '';
+    return s;
+  }
+
+  // The first of the candidates that is a name, best source first.
+  function firstName() {
+    for (var i = 0; i < arguments.length; i += 1) {
+      var s = nameOf(arguments[i]);
+      if (s) return s;
+    }
+    return '';
+  }
+
   /* Everything the card needs, from any of the shapes a move arrives in: the answer to a
      propose (an id, a status, a verdict and a simulation, with the tool's own input beside
      it), a proposal read back with its draft, a state frame row, or a placeholder drawn from
-     the propose call itself before any row exists. */
-  function moveOf(name, input, data) {
+     the propose call itself before any row exists. A coin is named by the view's word, then
+     the draft's, then the word the app sent with the call (`words`, src/http/chats.ts), and
+     the agent's own string last, never by one that is not a name (nameOf). */
+  function moveOf(name, input, data, words) {
     var args = isObject(input) ? input : {};
+    var said = isObject(words) ? words : {};
     var draft = isObject(data.draft) ? data.draft : null;
     /* A send's reply names its rail kind on the `send` facts (src/http/propose.ts), because
        one tool, propose_send, drafts either of two kinds and the tool name cannot say which. */
     var sendFacts = isObject(data.send) ? data.send : null;
     var view = viewOf(data);
+    var money = view && isObject(view.money) ? view.money : {};
     var kind = String((draft && draft.kind) || (view && view.kind) || data.kind || (sendFacts && sendFacts.kind) || bare(name).replace(/^propose_/, '') || 'move');
     var move = {
       kind: kind,
@@ -778,8 +803,8 @@
     var d = draft || {};
     if (kind === 'swap') {
       var q = isObject(d.quote) ? d.quote : null;
-      move.from = { symbol: d.fromSymbol || args.fromSymbol, place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
-      move.to = { symbol: d.toSymbol || args.toSymbol, place: 'intents', amount: q ? num(q.amountOut) : null, about: true };
+      move.from = { symbol: firstName(money.symbol, d.fromSymbol, said.fromSymbol, args.fromSymbol), place: 'intents', amount: num(d.amountIn !== undefined ? d.amountIn : args.amountIn) };
+      move.to = { symbol: firstName(money.toSymbol, d.toSymbol, said.toSymbol, args.toSymbol), place: 'intents', amount: q ? num(q.amountOut) : null, about: true };
       if (q) move.feeUsd = num(q.feeUsd);
       /* The floor the fill is held to: the protection on a swap, whether the rail quoted it
          or the draft named it. */
@@ -787,7 +812,7 @@
       if (floor === null && num(args.minAmountOut) !== null) floor = num(args.minAmountOut);
       if (floor === null && d.minAmountOut !== undefined && num(d.minAmountOut) !== null) floor = num(d.minAmountOut);
       move.floor = floor;
-      if (floor !== null) move.quote = 'at least ' + floorText(floor) + ' ' + String(move.to.symbol || '');
+      if (floor !== null) move.quote = 'at least ' + floorText(floor) + ' ' + nameOf(move.to.symbol);
       if (move.to.amount === null && sim && isObject(sim.swap) && num(sim.swap.receives) !== null) move.to.amount = num(sim.swap.receives);
       if (move.feeUsd === null && sim && isObject(sim.swap) && num(sim.swap.feeUsd) !== null) move.feeUsd = num(sim.swap.feeUsd);
     } else if (kind === 'intents_deposit') {
@@ -806,14 +831,15 @@
       var where = kind === 'intents_send' ? 'intents' : String(d.network || send.where || args.where || '');
       /* Which chain's coin leaves, named only when the person holds the symbol from more than one
          (draft.fromChain): "send 1 USDC" took a Base row with no sign of it here (2026-10-01). */
+      var sent = firstName(money.symbol, d.symbol, send.symbol, said.symbol, args.symbol);
       move.from = {
-        symbol: d.symbol || send.symbol || args.symbol,
+        symbol: sent,
         place: 'intents',
         amount: num(d.amount !== undefined ? d.amount : (send.amount !== undefined ? send.amount : args.amount)),
         chain: String(d.fromChain || send.fromChain || '')
       };
       move.to = {
-        symbol: d.symbol || send.symbol || args.symbol,
+        symbol: sent,
         place: where,
         amount: sendSim && num(sendSim.arrivesAtLeast) !== null ? num(sendSim.arrivesAtLeast) : num(d.minReceived),
         floor: true,
@@ -834,7 +860,7 @@
       var hlArrives = hlSim && num(hlSim.arrives) !== null ? num(hlSim.arrives) : null;
       var inPocket = kind === 'hl_deposit' ? 'intents' : 'hyperliquid';
       var outPocket = kind === 'hl_deposit' ? 'hyperliquid' : 'intents';
-      move.from = { symbol: d.symbol || args.symbol || 'USDC', place: inPocket, amount: num(d.amount !== undefined ? d.amount : args.amount) };
+      move.from = { symbol: firstName(money.symbol, d.symbol, said.symbol, args.symbol) || 'USDC', place: inPocket, amount: num(d.amount !== undefined ? d.amount : args.amount) };
       move.to = hlArrives !== null
         ? { symbol: 'USDC', place: outPocket, amount: hlArrives, about: true }
         : { symbol: 'USDC', place: outPocket, amount: hlFloor, floor: true };
@@ -1068,8 +1094,8 @@
      the draft wherever it has the figure. */
   function viewLegs(view, fallback) {
     var money = isObject(view.money) ? view.money : {};
-    var symbol = String(money.symbol || (fallback.from && fallback.from.symbol) || '');
-    var toSymbol = String(money.toSymbol || (fallback.to && fallback.to.symbol) || symbol);
+    var symbol = firstName(money.symbol, fallback.from && fallback.from.symbol);
+    var toSymbol = firstName(money.toSymbol, fallback.to && fallback.to.symbol) || symbol;
     var from = money.amountIn === null || money.amountIn === undefined ? fallback.from : {
       symbol: symbol,
       place: pocketId(money.fromPocket) || (fallback.from && fallback.from.place) || '',
@@ -1341,9 +1367,9 @@
      the numbers roll (dom.setNumber) when a later frame moves them. */
   /* What a person calls a coin. wNEAR is the name the verifier stores for NEAR held inside
      NEAR Intents, the same coin (src/proposals/view.ts plainSymbol); the mark still looks up
-     the stored name. */
+     the stored name. An id is nobody's word for a coin (nameOf): it says nothing here. */
   function coinWord(symbol) {
-    var s = String(symbol || '');
+    var s = nameOf(symbol);
     return s.toUpperCase() === 'WNEAR' ? 'NEAR' : s;
   }
 
@@ -1351,12 +1377,13 @@
     var from = legs.from || move.from;
     var out = [];
     var kind = move.kind;
-    var toSymbol = coinWord((legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '');
+    var toSymbol = coinWord(firstName(legs.to && legs.to.symbol, move.to && move.to.symbol));
+    var fromSymbol = coinWord(firstName(legs.from && legs.from.symbol, move.from && move.from.symbol));
     var inFact = null;
-    if (from && from.amount !== null && from.amount !== undefined) {
-      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), coinWord(from.symbol), fromPlace(from)];
+    if (from && from.amount !== null && from.amount !== undefined && (from.usd || fromSymbol)) {
+      inFact = from.usd ? [dom.usd(from.amount), ''] : [amountText(from.amount), fromSymbol, fromPlace(from)];
     }
-    var floorFact = move.floor !== null && move.floor !== undefined ? [floorText(move.floor), toSymbol] : null;
+    var floorFact = move.floor !== null && move.floor !== undefined && toSymbol ? [floorText(move.floor), toSymbol] : null;
     var words;
     if (kind === 'swap') words = ['You pay', 'You get at least'];
     else if (kind === 'intents_send' || kind === 'intents_pay') words = ['You send', 'They get at least'];
@@ -1397,28 +1424,33 @@
 
   /* The coin marks at the head: the two a swap moves between, overlapped, or the one coin a
      send or a trade is about, or the kind's own glyph in a disc when no coin says it. */
+  /* A coin with no name (nameOf) draws no mark of its own: a monogram of an id's first letter is
+     the "N" and the "1" of 2026-10-02, a mark for no coin at all. The kind's glyph stands in. The
+     names ride beside the key, never inside it: an id's own colons once split it into thirds. */
   function paintMarks(host, move, legs, memo) {
-    var from = (legs.from && legs.from.symbol) || (move.from && move.from.symbol) || '';
-    var to = (legs.to && legs.to.symbol) || (move.to && move.to.symbol) || '';
-    var key;
-    if (move.kind === 'swap' && from && to) key = 'pair:' + from + ':' + to;
-    else if (move.coin) key = 'coin:' + move.coin;
-    else if (from && move.kind !== 'policy_change' && move.kind !== 'trade_change') key = 'coin:' + from;
-    else key = 'glyph:' + move.kind;
+    var from = firstName(legs.from && legs.from.symbol, move.from && move.from.symbol);
+    var to = firstName(legs.to && legs.to.symbol, move.to && move.to.symbol);
+    var coin = nameOf(move.coin);
+    var shape;
+    if (move.kind === 'swap' && from && to) shape = 'pair';
+    else if (move.coin) shape = coin ? 'coin' : 'glyph';
+    else if (from && move.kind !== 'policy_change' && move.kind !== 'trade_change') shape = 'coin';
+    else shape = 'glyph';
+    var first = shape === 'pair' ? from : (shape === 'coin' ? (coin || from) : '');
+    var key = JSON.stringify([shape, move.kind, first, shape === 'pair' ? to : '']);
     if (memo.marks === key) return;
     memo.marks = key;
     dom.clear(host);
-    var parts = key.split(':');
     /* The size is the head's (chatcard.css .mcard-marks .logo), so none is passed here. */
-    if (parts[0] === 'pair') {
-      host.appendChild(logo(parts[1]));
-      host.appendChild(logo(parts[2]));
+    if (shape === 'pair') {
+      host.appendChild(logo(from));
+      host.appendChild(logo(to));
       dom.setAttr(host, 'data-pair', 'true');
       return;
     }
     dom.setAttr(host, 'data-pair', null);
-    if (parts[0] === 'coin') {
-      host.appendChild(logo(parts[1]));
+    if (shape === 'coin') {
+      host.appendChild(logo(first));
       return;
     }
     var disc = dom.el('span', 'mcard-glyph');
@@ -1482,23 +1514,27 @@
     var twoLegs = move.kind === 'swap' || move.kind === 'intents_send' || move.kind === 'intents_pay'
       || move.kind === 'intents_withdraw' || move.kind === 'intents_deposit' || move.kind === 'hl_deposit' || move.kind === 'hl_withdraw';
     var words = false;
-    if (move.kind === 'swap' && plain.state !== 'done' && from && from.symbol) {
+    /* A coin with no name (nameOf) is left off the line with its figure: an amount of no coin
+       says nothing a person can check. */
+    var fromName = from ? coinWord(from.symbol) : '';
+    var toName = to ? coinWord(to.symbol) : '';
+    if (move.kind === 'swap' && plain.state !== 'done' && (fromName || toName)) {
       /* Until it lands, a swap's line is words: what it is, from what, to what. What comes
          back is a figure, and figures stand in the facts under it, never guessed at here. */
       words = true;
       parts.push({ kind: 'title', value: 'Swap' });
-      parts.push({ kind: 'amount', value: from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '', symbol: coinWord(from.symbol) });
-      if (to && to.symbol) parts.push({ kind: 'word', value: 'to ' + coinWord(to.symbol) });
-    } else if (twoLegs && from && from.symbol) {
+      if (fromName) parts.push({ kind: 'amount', value: from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '', symbol: fromName });
+      if (toName) parts.push({ kind: 'word', value: 'to ' + toName });
+    } else if (twoLegs && fromName) {
       var fromAmount = from.amount !== null && from.amount !== undefined ? amountText(from.amount) : '';
-      parts.push({ kind: 'amount', value: fromAmount, symbol: coinWord(from.symbol), place: fromPlace(from) });
-      parts.push({ kind: 'arrow' });
+      parts.push({ kind: 'amount', value: fromAmount, symbol: fromName, place: fromPlace(from) });
       var word = destinationWord(move, legs);
       if (move.kind === 'swap') {
         var toAmount = to && to.amount !== null && to.amount !== undefined ? amountText(to.amount) : '';
-        parts.push({ kind: 'amount', value: toAmount, symbol: coinWord(to && to.symbol) });
-      } else if (word) {
-        parts.push({ kind: 'word', value: word });
+        if (toName) parts.push({ kind: 'arrow' }, { kind: 'amount', value: toAmount, symbol: toName });
+      } else {
+        parts.push({ kind: 'arrow' });
+        if (word) parts.push({ kind: 'word', value: word });
       }
     } else {
       parts.push({ kind: 'title', value: headline || move.title });
@@ -1682,7 +1718,7 @@
     function liveTick() {
       if (!card.isConnected || card.getAttribute('data-state') !== 'working') return false;
       var row = isObject(last.row) ? last.row : {};
-      var move = moveOf(last.meta.name, last.meta.input, row);
+      var move = moveOf(last.meta.name, last.meta.input, row, last.meta.words);
       var view = viewOf(row);
       var plain = plainOf(row, view, move);
       if (plain.state !== 'working') return false;
@@ -1702,7 +1738,7 @@
         memo.metaOpen = m.detailsOpen;
         if (details.isOpen() !== m.detailsOpen) details.setOpen(m.detailsOpen);
       }
-      var move = moveOf(m.name, m.input, row);
+      var move = moveOf(m.name, m.input, row, m.words);
       var view = viewOf(row);
       var legs = view ? viewLegs(view, move) : move;
       var plain = plainOf(row, view, move);

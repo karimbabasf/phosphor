@@ -185,6 +185,10 @@ export function heldSymbol(symbol: string): string {
    the two apart, never to parse one. */
 const LOOKS_LIKE_ASSET_ID = /:/;
 
+export function looksLikeAssetId(text: string): boolean {
+  return LOOKS_LIKE_ASSET_ID.test(text);
+}
+
 export type AssetCandidate = {
   assetId: string;
   decimals: number;
@@ -781,6 +785,8 @@ export type OneClickClient = {
   tokens(): Promise<OneClickToken[]>;
   // When the list tokens() answers with was fetched, in epoch ms; null before the first fetch.
   listedAt?(): number | null;
+  // The list as last read, however old, without a read: for names only, never for a price.
+  cached?(): OneClickToken[] | null;
   quote(params: OneClickQuoteParams): Promise<OneClickQuoteResponse>;
   submitDeposit(depositAddress: string, txHash: string): Promise<{ ok: boolean; detail: string }>;
   status(depositAddress: string, depositMemo?: string): Promise<OneClickStatus>;
@@ -915,5 +921,5 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     return parseStatus(await res.json().catch(() => null));
   }
 
-  return { tokens, listedAt: () => tokenListCache?.at ?? null, quote, submitDeposit, status };
+  return { tokens, listedAt: () => tokenListCache?.at ?? null, cached: () => tokenListCache?.list ?? null, quote, submitDeposit, status };
 }

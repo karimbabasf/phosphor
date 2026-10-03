@@ -79,6 +79,8 @@ export type RailRegistry = {
 
 export type SwapLookup = {
   tokens(): Promise<OneClickToken[]>;
+  // The list tokens() last answered with, without a read: what a coin is called (src/proposals/coin-words.ts).
+  listed?(): OneClickToken[] | null;
   balance(accountId: string, assetId: string): Promise<bigint | null>;
   activity(accountId: string, limit: number): Promise<IntentsActivity>;
 };
@@ -208,6 +210,7 @@ export function createRails(deps: RailDeps): RailRegistry {
     },
     swap: {
       tokens: () => client.tokens(),
+      listed: () => client.cached?.() ?? null,
       balance: (accountId, assetId) => verifier.balance(accountId, assetId).catch(() => null),
       activity: (accountId, limit) => intentsActivity(accountId, limit, { keys: deps.cfg.chainscan }),
     },
