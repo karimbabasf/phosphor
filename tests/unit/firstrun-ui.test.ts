@@ -17,6 +17,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -765,3 +768,29 @@ test('without Touch ID, I already have a wallet takes a private key as well as a
   assert.equal(sent.mnemonic, undefined);
 });
 
+
+/* Every code the backend can say, and every code the service and the relays can answer, as the
+   backend says it and again carrying the service's own log text: the first run's line is a
+   sentence, and a cancel is the quiet one. */
+test('every refusal a first-run restore can be handed reads as a sentence, and no service text reaches it', async () => {
+  const codes = [...new Set([...refusalCodes(), ...VAULT_REFUSAL_CODES])];
+  for (const code of codes) {
+    for (const answer of [refusal(code), { ok: false, code, error: SERVICE_MESSAGE }]) {
+      const world = build();
+      world.sandbox.PhosphorFirstRun.open();
+      const screen = world.screen;
+      buttonNamed(screen, 'Get started').click();
+      buttonNamed(screen, 'I already have a wallet').click();
+      world.answers['/api/vault/restore'] = answer;
+      find(screen, 'textarea')[0].value = KEY_GROUPS;
+      buttonNamed(screen, 'Restore').click();
+      await flush();
+      const line = find(screen, '.firstrun-error')[0];
+      const said = visibleText(line).join(' ');
+      assert.ok(said.length > 0, `${code}: nothing was said`);
+      assert.ok(!RAW.test(said), `${code}: ${said}`);
+      for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}: ${said}`);
+      assert.equal(line.getAttribute('data-tone'), code === 'user_cancel' ? 'quiet' : null, code);
+    }
+  }
+});

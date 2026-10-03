@@ -121,12 +121,13 @@ its provisioning profile, or by a copy you build yourself, has its enclave key b
 rather than to Phosphor. On a signed release the vault service answers only the signed Phosphor
 app; on a copy you build yourself, which is signed ad hoc, it checks the app's identifier alone,
 which another app can claim. Either way another app running as you could ask to use such a key
-with a Touch ID prompt of its own, and the Keys row in the Vault tab says so. A signed release
-with the profile keeps the key of a wallet it makes in a keychain group only its vault service can
-reach, and refuses a wallet file it did not bind before asking for your finger.
+with a Touch ID prompt of its own, and the Keys row in the Vault tab offers the step that changes
+it. A signed release with the profile keeps the key of a wallet it makes in a keychain group only
+its vault service can reach, and refuses a wallet file it did not make Phosphor-only before asking
+for your finger.
 
-On such a release, Bind in the Vault tab moves a wallet made earlier into that keychain with one
-Touch ID, once its backup is proven. It cannot reach copies of the old wallet file made before
+On such a release, Make it Phosphor-only in the Vault tab moves a wallet made earlier into that
+keychain with one Touch ID, once its backup is proven. It cannot reach copies of the old wallet file made before
 (a Time Machine backup, a sync folder, a copy you made): Phosphor refuses them, but another program
 running as you can still load the old key from one and ask for your Touch ID, until the wallet
 moves to new keys. Delete the copies you know of.

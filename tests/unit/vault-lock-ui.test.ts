@@ -12,6 +12,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -112,7 +115,21 @@ function matches(node: Any, selector: string): boolean {
   return true;
 }
 
+/* A selector with a descendant step ("a b") matches its last part on a node with an ancestor
+   for each step before it, as the shell's reveal asks for its section. */
+function under(node: Any, steps: string[]): boolean {
+  if (!steps.length) return true;
+  for (let at = node.parentNode; at; at = at.parentNode) {
+    if (matches(at, steps[steps.length - 1]!) && under(at, steps.slice(0, -1))) return true;
+  }
+  return false;
+}
+
 function find(root: Any, selector: string): Any[] {
+  const chain = selector.trim().split(/\s+(?![^\[]*\])/);
+  if (chain.length > 1 && !selector.includes(',')) {
+    return find(root, chain[chain.length - 1]!).filter((n: Any) => under(n, chain.slice(0, -1)));
+  }
   const out: Any[] = [];
   const wanted = selector.split(',').map((s) => s.trim());
   const walk = (n: Any): void => {
@@ -368,6 +385,25 @@ for (const code of ['pin_mismatch', 'not_committed', 'blob_refused', 'damaged'])
     assert.equal(shown(find(back.nodes['screen-lock'], 'button')).some((b: Any) => b.textContent === 'Unlock with Touch ID'), true);
   });
 }
+
+/* Every code the backend can say, and every code the service and the relays can answer, as the
+   backend says it and again carrying the service's own log text: the card shows a sentence. */
+test('every refusal an unlock can be handed reads as a sentence on the lock card, and no service text reaches it', async () => {
+  const codes = [...new Set([...refusalCodes(), ...VAULT_REFUSAL_CODES])].filter((c) => c !== 'user_cancel');
+  for (const code of codes) {
+    for (const answer of [refusal(code), { ok: false, code, error: SERVICE_MESSAGE }]) {
+      const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+      world.sandbox.PhosphorLock.boot();
+      world.answer.unlock = answer;
+      buttonNamed(world.nodes['screen-lock'], 'Unlock with Touch ID').click();
+      await flush();
+      const said = textOf(find(world.nodes['screen-lock'], '.lock-error')[0]).join(' ');
+      assert.ok(said.length > 0, `${code}: nothing was said`);
+      assert.ok(!RAW.test(said), `${code}: ${said}`);
+      for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}: ${said}`);
+    }
+  }
+});
 
 /* What the service writes for its logs never reaches the card, whatever answer carries it. */
 test('a refusal that is not a sentence is never put on the card: the card says Touch ID did not finish', async () => {
@@ -887,6 +923,22 @@ test('the shell routes deposit frames to the store and the card, and says "not b
     deposit: null,
   };
   const world = build(state, [SHELL]);
+  /* The world with the Vault in it: the backup row the notice glides to, and its Back it up. */
+  const views = world.sandbox.document.createElement('div');
+  const vaultView = world.sandbox.document.createElement('section');
+  vaultView.className = 'view';
+  const backupRow = world.sandbox.document.createElement('div');
+  backupRow.setAttribute('data-reveal', 'backup');
+  const backItUp = world.sandbox.document.createElement('button');
+  backItUp.setAttribute('data-reveal-focus', '');
+  let focusedWith: Any | null = null;
+  backItUp.focus = (opts: Any) => { backItUp.focused = true; focusedWith = opts; };
+  backupRow.appendChild(backItUp);
+  vaultView.appendChild(backupRow);
+  views.appendChild(vaultView);
+  views.scrollTo = () => {};
+  world.nodes.views = views;
+  world.nodes['view-vault'] = vaultView;
   world.sandbox.PhosphorShell.boot();
   await flush();
   assert.ok(world.events.deposit && world.events.deposit.length === 1, 'the shell does not listen for deposit frames');
@@ -923,10 +975,16 @@ test('the shell routes deposit frames to the store and the card, and says "not b
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: true, hasMnemonic: false }) });
   assert.equal(notice.hidden, true, 'the line stayed after the key was proven');
 
-  // The line is a way in.
+  // The line is a way in: the Vault, glided to the backup row once it is up, the cursor on Back it
+  // up. Scrolled to while the Vault still faded in, the row stayed under the window's foot.
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: false }) });
   act.click();
-  assert.ok(world.calls.some((c) => c.route === 'focusRecovery'));
+  await flush();
+  assert.equal(world.sandbox.document.body.getAttribute('data-view'), 'vault');
+  assert.equal(vaultView.getAttribute('data-active'), 'true');
+  assert.equal(backItUp.focused, true, 'the cursor stayed on the notice');
+  assert.equal((focusedWith as Any | null)?.preventScroll, true, 'the focus scrolled on its own, against the glide');
+  assert.equal(world.calls.some((c) => c.route === 'focusRecovery'), false, 'the row was scrolled to while the Vault faded in');
 });
 
 test('the notice says the one thing that matters most: the app not answering, then a freeze, then the backup', async () => {

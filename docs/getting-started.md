@@ -154,7 +154,9 @@ was.
 To bring the wallet back, on this Mac or another one, use Restore from a key in the Restore row
 (or the Made on another Mac screen). Type the key as you wrote it: with or without 0x, with or
 without the spaces between the groups. The note that says Restored names the wallet it brought,
-so check it against the one your copy opens.
+so check it against the one your copy opens. While the wallet on this Mac is not backed up, the
+Restore row says Back up first instead, before anything is typed: a restore of another wallet would
+replace the only copy of this one.
 
 ## Touch ID and the Secure Enclave
 
@@ -174,14 +176,14 @@ A password wallet says Password in the Keys row: "Locked with your password on t
 Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
 behind the enclave. Nothing moves and the addresses stay the same.
 
-A wallet made before the signed app kept keys in its own keychain says "Bound to this Mac rather
-than to Phosphor" in the Keys row. On a signed release the row then shows Bind to Phosphor: once
-your backup is proven (Back it up first takes you there), Bind with Touch ID moves the key into
-Phosphor's own keychain, where no other app on this Mac can ask to use it. One Touch ID checks that
-Phosphor opens the wallet from there before anything changes; a cancel changes nothing. The same
-wallet, the same addresses. Copies of the old wallet file made before (a Time Machine backup, a
-sync folder) still hold the key for other apps until your keys change, so delete the ones you know
-of. [Known limits](known-limits.md) says more.
+A wallet made before the signed app could keep its key where only Phosphor reaches it: any app on
+this Mac can ask to open it, with its own Touch ID prompt. On a signed release the Keys row then
+shows Phosphor-only access: once your backup is proven (Back it up first takes you there), Make it
+Phosphor-only does what it says, with one Touch ID that checks Phosphor opens your wallet the new
+way before anything changes; a cancel changes nothing. The same wallet, the same addresses. The row
+then says Phosphor-only since that day. Copies of your wallet file saved before then (a Time Machine
+backup, a sync folder) still open the old way, so approve a Touch ID prompt only when you started
+it. [Known limits](known-limits.md) says more.
 
 ## The five minute lock
 

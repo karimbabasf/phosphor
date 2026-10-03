@@ -238,8 +238,34 @@
 
   function say(node, words) {
     var slot = node.querySelector('.vault-error-text') || node;
+    dom.setAttr(node, 'data-tone', null);
     dom.setText(slot, words || '');
     dom.setHidden(node, !words);
+  }
+
+  /* The same line for what is not a problem: a Touch ID the person chose to
+     cancel. The meta line's tone and no warning glyph; amber stays for a
+     refusal that needs reading (DESIGN.md, Caution Amber). */
+  function note(node, words) {
+    say(node, words);
+    dom.setAttr(node, 'data-tone', 'quiet');
+  }
+
+  var CANCELLED = 'Touch ID was cancelled. Nothing changed.';
+  var UNFINISHED = 'That did not finish, so nothing changed. Try again.';
+
+  /* A refusal's sentence is the backend's, said once per code
+     (src/http/wallet.ts); anything that is not a sentence never reaches the
+     page (ui/core/custody.js). */
+  function refusalWords(answer, fallback) {
+    var custody = window.PhosphorCustody;
+    return custody ? custody.sentence(answer, fallback || UNFINISHED) : (fallback || UNFINISHED);
+  }
+
+  /* A cancel in the quiet line, anything else in the row's warning line. */
+  function sayRefusal(node, answer, words) {
+    if (answer && answer.code === 'user_cancel') note(node, CANCELLED);
+    else say(node, words);
   }
 
   function build(host) {
@@ -534,6 +560,8 @@
   function buildBackup(host) {
     var r = row('Recovery phrase', 'backup');
     refs.backupRow = r.node;
+    // The foot notice's Back it up glides here (ui/screens/shell.js reveal) and lands on the button.
+    r.node.setAttribute('data-reveal', 'backup');
     refs.backupTitle = r.title;
     refs.backupState = dom.el('p', 'vault-text vault-backup-line');
     refs.backupMark = append(refs.backupState, icon('shield', 'vault-backup-mark'));
@@ -544,6 +572,7 @@
     refs.backupWhy.hidden = true;
     r.main.appendChild(refs.backupWhy);
     refs.backupGo = button('Back it up', 'btn-sm', 'Waiting for Touch ID');
+    refs.backupGo.setAttribute('data-reveal-focus', '');
     r.act.appendChild(refs.backupGo);
     dom.on(refs.backupGo, 'click', startReveal);
     /* A proven key's copy, checked whole again, for a copy kept or made
@@ -635,12 +664,15 @@
      has no words. */
   function startReveal() {
     if (!mounted) return;
-    if (window.PhosphorShell.view && window.PhosphorShell.view() !== 'vault') window.PhosphorShell.setView('vault', { fromClick: true });
+    /* From another view the row is brought in by the shell once the Vault is
+       up (a scroll asked for while it still fades in lands nowhere). */
+    var away = window.PhosphorShell.view && window.PhosphorShell.view() !== 'vault';
+    if (away) window.PhosphorShell.setView('vault', { fromClick: true, reveal: 'backup' });
     var state = store.get() || {};
     var vault = state.vault || {};
     if (!vault.custody) return;
     var noWords = vault.hasMnemonic === false;
-    bringIntoView(refs.backupRow);
+    if (!away) bringIntoView(refs.backupRow);
     if (vault.custody === 'secure-enclave') {
       if (noWords) revealKeyWithTouch();
       else revealWithTouch();
@@ -655,7 +687,7 @@
     api.vaultReveal()
       .then(function (answer) {
         if (answer && answer.ok === false) {
-          if (answer.code !== 'user_cancel') flowProblem(answer.error || 'That did not work.');
+          if (answer.code !== 'user_cancel') flowProblem(answer.code === 'reveal_failed' ? 'Phosphor could not show your recovery phrase just now, and nothing changed. Try again.' : refusalWords(answer));
           return;
         }
         if (!answer || !Array.isArray(answer.words) || !answer.words.length) {
@@ -683,7 +715,7 @@
     api.vaultRevealKey()
       .then(function (answer) {
         if (answer && answer.ok === false) {
-          if (answer.code !== 'user_cancel') flowProblem(answer.error || 'That did not work.');
+          if (answer.code !== 'user_cancel') flowProblem(answer.code === 'reveal_failed' ? 'Phosphor could not show your key just now, and nothing changed. Try again.' : refusalWords(answer));
           return;
         }
         if (!keyCameBack(answer)) {
@@ -760,7 +792,7 @@
         window.PhosphorShell.setPending(go, true);
         api.revealStart(password, forKey ? 'keys' : 'mnemonic')
           .then(function (answer) {
-            if (answer && answer.ok === false) throw Object.assign(new Error(answer.error || 'That did not work.'), { code: answer.code });
+            if (answer && answer.ok === false) throw Object.assign(new Error(refusalWords(answer)), { code: answer.code });
             return api.revealFetch(answer.nonce);
           })
           .then(function (material) {
@@ -867,16 +899,24 @@
     if (!words || !words.length) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet somewhere that is not near your computer.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', '');
     for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
     sheet.appendChild(list);
+    sheetFoot(sheet, 'the words');
     document.body.appendChild(sheet);
     try {
       window.print();
     } finally {
       if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
     }
+  }
+
+  /* What whoever finds the paper later needs: how to use it, and when it was
+     printed (a newer sheet wins). */
+  function sheetFoot(sheet, what) {
+    sheet.appendChild(dom.el('p', '', 'To restore this wallet on any Mac: install Phosphor from phosphor.money, choose I already have a wallet, and type ' + what + ' in order.'));
+    sheet.appendChild(dom.el('p', '', 'Printed on ' + dateWords(new Date().toISOString()) + '.'));
   }
 
   /* Prove. The three positions the app picked when it showed the words, the
@@ -976,7 +1016,7 @@
               say(error, 'Those words do not match. Look at your copy again.');
               return;
             }
-            say(error, answer.error || 'That did not work.');
+            say(error, refusalWords(answer));
             return;
           }
           return proven();
@@ -1058,11 +1098,12 @@
     if (!groups || groups.length !== KEY_GROUPS) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor private key'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has the money. Keep this sheet somewhere that is not near your computer.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has the money. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', 'print-key');
     for (var i = 0; i < groups.length; i += 1) list.appendChild(dom.el('li', '', groups[i]));
     sheet.appendChild(list);
     if (wallet) sheet.appendChild(dom.el('p', '', 'It opens the wallet ' + wallet + '.'));
+    sheetFoot(sheet, 'the sixteen groups');
     document.body.appendChild(sheet);
     try {
       window.print();
@@ -1131,16 +1172,13 @@
       right.hidden = true;
     });
     dom.on(check, 'click', function () {
-      var hex = keyOf(input.value);
+      var read = window.PhosphorCustody.readKey(input.value);
+      var hex = read.hex;
       right.hidden = true;
       /* Said here so a slip of the keyboard is caught before anything is
-         sent, and named by its group where the app can tell which. */
-      if (!/^[0-9a-f]*$/.test(hex)) {
-        say(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
-        return;
-      }
-      if (hex.length !== 64) {
-        say(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+         sent, and named by its group (ui/core/custody.js). */
+      if (read.problem) {
+        say(error, read.problem);
         return;
       }
       say(error, '');
@@ -1148,7 +1186,7 @@
       (proving ? api.vaultKeyProven('0x' + hex) : api.vaultKeyCheck('0x' + hex))
         .then(function (answer) {
           if (answer && answer.ok === false && answer.code !== 'wrong_copy') {
-            say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : (answer.error || 'That did not work.'));
+            say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : refusalWords(answer));
             return;
           }
           if (answer && (answer.ok === true && (proving || answer.matches === true))) {
@@ -1488,14 +1526,16 @@
     host.appendChild(r.node);
   }
 
-  /* ---------- your wallet: binding an older key to Phosphor ----------
+  /* ---------- your wallet: making an older wallet Phosphor-only ----------
 
-     A wallet made before the vault profile shipped keeps a key bound to this
-     Mac. On a build with a keychain home, Bind moves it into Phosphor's own
-     keychain with one Touch ID (src/http/custody.ts). The card asks for the
-     backup first, because from then on the key lives in one keychain item on
-     this Mac, and it says what binding does not reach: older copies of the
-     wallet file, which still hold the key for other apps until the keys change. */
+     A wallet made before the vault profile shipped keeps a key any app on this
+     Mac can ask to use, behind its own Touch ID prompt. On a build with a
+     keychain home, Make it Phosphor-only moves it to a key only Phosphor can
+     reach, with one Touch ID (src/http/custody.ts, the bind). The card asks
+     for the backup first, because from then on the key lives in one place on
+     this Mac, and it says what the step does not reach: copies of the wallet
+     file saved before today. One plain name, Phosphor-only, on every line a
+     person reads (never bind, keychain or marker). */
   var bound = false;
   var bindDrawn = false;
 
@@ -1503,23 +1543,25 @@
     var flow = dom.el('div', 'vault-flow vault-bind');
     flow.hidden = true;
     refs.bindFlow = flow;
-    refs.bindTitle = dom.el('p', 'vault-flow-title', 'Bind to Phosphor');
+    refs.bindTitle = dom.el('p', 'vault-flow-title', 'Phosphor-only access');
     flow.appendChild(refs.bindTitle);
     refs.bindDone = dom.el('p', 'vault-text vault-backup-line');
     refs.bindDone.setAttribute('data-backed', 'true');
-    append(refs.bindDone, icon('check', 'vault-backup-mark'));
-    refs.bindDone.appendChild(dom.el('span', 'vault-backup-words', 'Bound to Phosphor. Only Phosphor can ask to use this key on this Mac.'));
+    // The Private key row's own done mark, the shield with its check.
+    append(refs.bindDone, icon('shield', 'vault-backup-mark'));
+    refs.bindDone.appendChild(dom.el('span', 'vault-backup-words', 'Phosphor-only. No other app on this Mac can open your wallet.'));
     flow.appendChild(refs.bindDone);
     refs.bindGives = text('vault-text');
     flow.appendChild(refs.bindGives);
-    refs.bindWhy = text('vault-sub', 'One Touch ID checks that Phosphor opens your wallet from there before anything changes.');
+    refs.bindWhy = text('vault-sub', 'One Touch ID checks that Phosphor opens your wallet the new way before anything changes.');
     flow.appendChild(refs.bindWhy);
     refs.bindCopies = text('vault-sub');
     flow.appendChild(refs.bindCopies);
     refs.bindError = problem();
     flow.appendChild(refs.bindError);
     var actions = dom.el('div', 'vault-actions');
-    refs.bindGo = button('Bind with Touch ID', 'btn-sm', 'Waiting for Touch ID');
+    refs.bindActions = actions;
+    refs.bindGo = button('Make it Phosphor-only', 'btn-sm', 'Waiting for Touch ID');
     refs.bindFirst = button('Back it up first', 'btn-ghost btn-sm');
     actions.appendChild(refs.bindGo);
     actions.appendChild(refs.bindFirst);
@@ -1530,8 +1572,8 @@
   }
 
   /* 'first' while the backup is not proven, 'offer' once it is, 'done' after
-     a bind in this window; null when there is nothing to bind here: a key
-     already bound, a password wallet, or a build with no keychain home. */
+     it lands in this window; null when there is nothing to do here: a wallet
+     already Phosphor-only, a password wallet, or a build with no keychain home. */
   function bindStep(vault) {
     var enclave = vault.enclave || {};
     var cap = enclave.capability || {};
@@ -1552,16 +1594,17 @@
       dom.setHidden(refs.bindTitle, step === 'done');
       dom.setHidden(refs.bindDone, step !== 'done');
       dom.setText(refs.bindGives, step === 'first'
-        ? 'Back up your ' + backup + ' first. Once bound, your key lives only in Phosphor\'s keychain on this Mac, so your copy is the way back if anything happens to it.'
-        : 'Binding moves this key into Phosphor\'s own keychain, where no other app on this Mac can ask to use it.');
+        ? 'Back up your ' + backup + ' first. After this step only Phosphor can open your wallet on this Mac, so your copy is the way back if anything happens to this Mac.'
+        : 'Today any app on this Mac can ask to open your wallet, with its own Touch ID prompt. After this, only Phosphor can.');
       dom.setHidden(refs.bindGives, step === 'done');
       dom.setHidden(refs.bindWhy, step !== 'offer');
       dom.setText(refs.bindCopies, step === 'done'
-        ? 'Older copies of your wallet file, such as one in a Time Machine backup, still hold this key for other apps until your keys change. Delete the copies you know of.'
-        : 'Phosphor stops opening older copies of your wallet file, but another app could still use one, with a Touch ID prompt of its own, until your keys change.');
+        ? 'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way. Approve a Touch ID prompt only when you started it.'
+        : 'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way.');
       dom.setHidden(refs.bindCopies, step === 'first');
       dom.setHidden(refs.bindGo, step !== 'offer');
       dom.setHidden(refs.bindFirst, step !== 'first');
+      dom.setHidden(refs.bindActions, step === 'done');
     };
     // Drawn as it is on the first render; a change after that slides, as the row's other steps do.
     if (was === step || !bindDrawn) {
@@ -1569,8 +1612,22 @@
       return apply();
     }
     say(refs.bindError, '');
-    if (step === null) shrink(refs.custodyRow, refs.bindFlow, apply);
-    else grow(refs.custodyRow, apply, refs.bindFlow);
+    if (step === null) {
+      shrink(refs.custodyRow, refs.bindFlow, apply);
+      return;
+    }
+    /* THE FINISH. The offer goes out first, evenly, over 200 ms (motion.js
+       swap), then the card takes its new height on the same slide as the
+       backup's flow while the done line comes in, and its tick pops on the
+       spring: nothing under the cursor jumps. */
+    if (step === 'done' && was === 'offer') {
+      shrink(refs.custodyRow, [refs.bindTitle, refs.bindGives, refs.bindWhy, refs.bindCopies, refs.bindActions], function () {
+        apply();
+        pop(refs.bindDone);
+      }, [refs.bindDone, refs.bindCopies]);
+      return;
+    }
+    grow(refs.custodyRow, apply, refs.bindFlow);
   }
 
   function bindWithTouch() {
@@ -1580,7 +1637,7 @@
     api.vaultBind()
       .then(function (answer) {
         if (!answer || answer.ok !== true) {
-          say(refs.bindError, answer && answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing changed.' : (answer && answer.error) || 'That did not work.');
+          sayRefusal(refs.bindError, answer, refusalWords(answer));
           return null;
         }
         bound = true;
@@ -1599,20 +1656,20 @@
     var custody = vault.custody;
 
     if (custody === 'secure-enclave') {
+      /* Which of the two keys is live, in words, off the binding and never the
+         signature. A Phosphor-only key is made new by that step, so its date is
+         the day it became Phosphor-only, never the wallet's age. */
+      var app = enclave.binding === 'app';
       var made = dateWords(enclave.keyMadeAt);
       dom.setText(refs.custodyValue, 'Touch ID');
-      dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? ' Made on ' + made + '.' : ''));
-      /* Which of the two bindings is live, in words, off the binding and never
-         the signature: a key made before the vault profile shipped, or by an ad
-         hoc build, is bound to this Mac, where any process running as you can
-         present it. */
-      var device = enclave.binding === 'device';
-      var app = enclave.binding === 'app';
-      dom.setText(refs.custodyMore, device
-        ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'
-        : app ? 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.' : '');
-      // Right after a bind the card below says it, with what binding does not reach.
-      dom.setHidden(refs.custodyMore, !(device || (app && !bound)));
+      dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? (app ? ' Phosphor-only since ' : ' Made on ') + made + '.' : ''));
+      /* A key any app here could ask to use is said by the card below, with
+         the step that changes it; where the card cannot show (a build with no
+         keychain home), a worry with nothing to do is not said at all. A
+         Phosphor-only wallet keeps one quiet line for good, with what the
+         step did not reach; right after it lands the card says it. */
+      dom.setText(refs.custodyMore, app ? 'Only Phosphor can open your wallet on this Mac. Older copies of the file still open the old way.' : '');
+      dom.setHidden(refs.custodyMore, !(app && !bound));
       var reach = enclave.attached === false
         ? 'Touch ID only works inside the Phosphor app. Open the app to use this wallet.'
         : (enclave.ready === false ? 'This Mac cannot check your Touch ID right now, so the wallet cannot be opened here.' : '');
@@ -1664,14 +1721,20 @@
        under the same password. */
     refs.exportPassword = button('Save an encrypted copy', 'btn-quiet btn-sm');
     var actions = dom.el('div', 'vault-actions');
+    refs.restoreActions = actions;
     actions.appendChild(refs.restore);
     actions.appendChild(refs.restoreKey);
     actions.appendChild(refs.exportPassword);
     r.main.appendChild(actions);
+    /* Not backed up, this button is Back up first: a password wallet shows its
+       backup straight here, a Touch ID wallet goes to its backup row, whose
+       line says why before its own Touch ID. */
     dom.on(refs.restore, 'click', function () {
       var vault = (store.get() || {}).vault || {};
-      if (vault.custody === 'software' && vault.backedUp !== true) startReveal();
-      else startRestore();
+      if (vault.custody && vault.backedUp !== true) {
+        if (vault.custody === 'software') startReveal();
+        else focusRecovery();
+      } else startRestore();
     });
     dom.on(refs.restoreKey, 'click', startRestoreKey);
     dom.on(refs.exportPassword, 'click', startExport);
@@ -1686,18 +1749,28 @@
     var enclave = vault.custody === 'secure-enclave';
     var ready = !!(vault.enclave && vault.enclave.ready === true);
     /* Restoring makes the wallet behind the Secure Enclave, so a Mac without
-       one cannot do it here. A password wallet that is not proven backed up
-       would be lost if the phrase made a different one, so its way in is the
-       backup first. */
+       one cannot do it here. A wallet that is not proven backed up would be
+       lost if the backup typed made a different one, so its way in is the
+       backup first, before anything is typed. */
     var canRestore = enclave || ready;
-    var guarded = vault.custody === 'software' && vault.backedUp !== true;
-    var backup = has && vault.hasMnemonic === false ? 'Your private key' : 'Your recovery phrase';
+    var guarded = has && vault.backedUp !== true;
+    var keyOnly = has && vault.hasMnemonic === false;
+    var backup = keyOnly ? 'Your private key' : 'Your recovery phrase';
     dom.setText(refs.recoveryLine, !has
       ? 'Your recovery phrase brings a wallet back on any Mac.'
-      : canRestore
-        ? backup + ' brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.'
-        : backup + ' brings this wallet back on any Mac with Touch ID.');
+      : !canRestore
+        ? backup + ' brings this wallet back on any Mac with Touch ID.'
+        : guarded
+          ? 'Back up this wallet first, so restoring another one here never loses it.'
+          : backup + ' brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.');
     dom.setText(refs.restore.querySelector('.btn-label'), guarded ? 'Back up first' : 'Restore from a phrase');
+    /* The backup this wallet has leads: a wallet with no phrase restores from
+       a key, so its key button is the filled one, first. */
+    var keyFirst = keyOnly && !guarded;
+    refs.restore.className = keyFirst ? 'btn btn-quiet btn-sm' : 'btn btn-ghost btn-sm';
+    refs.restoreKey.className = keyFirst ? 'btn btn-ghost btn-sm' : 'btn btn-quiet btn-sm';
+    var first = keyFirst ? refs.restoreKey : refs.restore;
+    if (refs.restoreActions.firstChild !== first) refs.restoreActions.insertBefore(first, refs.restoreActions.firstChild);
     dom.setHidden(refs.restore, !canRestore || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.restoreKey, !canRestore || guarded || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.exportPassword, !has || enclave || !refs.recoveryFlow.hidden);
@@ -1781,7 +1854,7 @@
       api.vaultRestore(words.join(' '))
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            say(error, restoreProblem(answer.code, answer.error));
+            sayRefusal(error, answer, restoreProblem(answer));
             // A refusal is the end of this press: the next one asks again.
             asked = false;
             sure.hidden = true;
@@ -1853,13 +1926,10 @@
       closeRecovery();
     });
     dom.on(go, 'click', function () {
-      var hex = keyOf(input.value);
-      if (!/^[0-9a-f]*$/.test(hex)) {
-        say(error, 'A private key has only the digits 0 to 9 and the letters a to f.');
-        return;
-      }
-      if (hex.length !== 64) {
-        say(error, 'That is ' + hex.length + (hex.length === 1 ? ' character' : ' characters') + '. A private key is 64.');
+      var read = window.PhosphorCustody.readKey(input.value);
+      var hex = read.hex;
+      if (read.problem) {
+        say(error, read.problem);
         return;
       }
       say(error, '');
@@ -1873,7 +1943,7 @@
       api.vaultRestoreKey('0x' + hex)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            say(error, restoreProblem(answer.code, answer.error));
+            sayRefusal(error, answer, restoreProblem(answer));
             // A refusal is the end of this press: the next one asks again.
             asked = false;
             sure.hidden = true;
@@ -1900,28 +1970,18 @@
     return clean ? clean.split(/\s+/) : [];
   }
 
-  /* A key as a person copies it, read the way the app reads it
-     (src/keystore/derive.ts): spaces, line breaks and dashes between the
-     groups dropped, 0x or not, either case. */
-  function keyOf(value) {
-    var raw = String(value || '');
-    var flat = (typeof raw.normalize === 'function' ? raw.normalize('NFKC') : raw).replace(/[\s\p{Pd}]+/gu, '').toLowerCase();
-    return flat.indexOf('0x') === 0 ? flat.slice(2) : flat;
-  }
-
   function shortWallet(address) {
     return address.length > 12 ? address.slice(0, 6) + '...' + address.slice(-4) : address;
   }
 
-  function restoreProblem(code, error) {
+  function restoreProblem(answer) {
+    var code = answer && answer.code;
     var noWords = (((store.get() || {}).vault) || {}).hasMnemonic === false;
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
     if (code === 'bad_key') return 'That key is not right. Check every character against your copy.';
     if (code === 'same_wallet') return 'This Mac already holds that wallet, and it opens. Nothing to restore.';
-    if (code === 'not_backed_up') return 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its ' + (noWords ? 'key' : 'phrase') + ' first.';
-    if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing changed.';
-    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
-    return error || 'That did not work.';
+    if (code === 'not_backed_up') return 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its ' + (noWords ? 'private key' : 'recovery phrase') + ' first.';
+    return refusalWords(answer);
   }
 
   /* The encrypted copy of a password wallet, written by the app under the
@@ -1999,7 +2059,7 @@
         .then(function (answer) {
           if (answer && answer.ok === false) {
             input.value = '';
-            say(error, answer.code === 'wrong_password' ? 'That password is wrong.' : (answer.error || 'That did not work.'));
+            say(error, answer.code === 'wrong_password' ? 'That password is wrong.' : refusalWords(answer));
             return;
           }
           input.value = '';
@@ -2457,9 +2517,9 @@
     api.vaultForget()
       .then(function (answer) {
         if (answer && answer.ok === false) {
-          say(refs.forgetError, answer.code === 'not_backed_up'
-            ? 'Refused: the ' + ((((store.get() || {}).vault) || {}).hasMnemonic === false ? 'key' : 'phrase') + ' is not proven backed up. Back it up in Safety first.'
-            : (answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing changed.' : (answer.error || 'That did not work.')));
+          sayRefusal(refs.forgetError, answer, answer.code === 'not_backed_up'
+            ? 'Refused: the ' + ((((store.get() || {}).vault) || {}).hasMnemonic === false ? 'private key' : 'recovery phrase') + ' is not proven backed up. Back it up in Safety first.'
+            : refusalWords(answer));
           return;
         }
         closeForget(true);
@@ -2571,7 +2631,7 @@
       api.vaultMigrate(input.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            dom.setText(error, migrateProblem(answer.code, answer.error));
+            dom.setText(error, migrateProblem(answer));
             error.hidden = false;
             if (answer.code === 'wrong_password') {
               input.value = '';
@@ -2592,11 +2652,11 @@
     input.focus();
   }
 
-  function migrateProblem(code, error) {
+  function migrateProblem(answer) {
+    var code = answer && answer.code;
     if (code === 'wrong_password') return 'That password is wrong.';
-    if (code === 'user_cancel') return 'Touch ID was cancelled. Your keys are where they were.';
-    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
-    return error || 'That did not work.';
+    if (code === 'user_cancel') return CANCELLED;
+    return refusalWords(answer);
   }
 
   /* The same pair lock.js uses: the page behind the card is frosted by the

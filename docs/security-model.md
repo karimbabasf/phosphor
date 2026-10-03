@@ -205,7 +205,8 @@ your money.
   dialog only for something you started in Phosphor, and read its sentence. A signed release with
   the profile keeps the key of a wallet it makes in a keychain group only its vault service can
   reach, with a pin per bound wallet file and never a device key. What closes it for older
-  wallets: Bind in the Vault tab, one Touch ID, once the backup is proven.
+  wallets: Make it Phosphor-only in the Vault tab (the bind), one Touch ID, once the backup is
+  proven.
 - **Old copies of a wallet file still open on this Mac until the keys change.** A bind moves the
   key into Phosphor's keychain, and Phosphor stops opening any device-bound file on this Mac, but
   it cannot reach a copy of the old file made before: a Time Machine backup, a sync folder, a copy

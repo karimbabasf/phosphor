@@ -258,6 +258,7 @@
     if (!target || typeof target.getBoundingClientRect !== 'function') return;
     var still = window.PhosphorMotion.reduced();
     glideTo(world, target, still);
+    focusIn(target);
     if (still) return;
     window.setTimeout(function () {
       if (!restsAt(world, target)) glideTo(world, target, false);
@@ -269,6 +270,20 @@
     var top = Math.max(0, target.getBoundingClientRect().top - world.getBoundingClientRect().top + world.scrollTop - REVEAL_GAP);
     if (still || typeof world.scrollTo !== 'function') world.scrollTop = top;
     else world.scrollTo({ top: top, behavior: 'smooth' });
+  }
+
+  /* A section with a control to land on (data-reveal-focus) takes the cursor
+     as the glide starts, without a scroll of its own: the backup row's Back
+     it up, for the notice that asked for it, so Enter does what the notice
+     said. */
+  function focusIn(target) {
+    var control = typeof target.querySelector === 'function' ? target.querySelector('[data-reveal-focus]') : null;
+    if (!control || control.hidden || control.disabled || typeof control.focus !== 'function') return;
+    try {
+      control.focus({ preventScroll: true });
+    } catch (err) {
+      control.focus();
+    }
   }
 
   /* Just under the top, or as near it as the end of the page lets it be. */
@@ -567,13 +582,12 @@
     noticeRun = say.run || null;
   }
 
-  /* The way through from "not backed up": the Vault tab, where Reveal and
-     Prove are. */
+  /* The way through from "not backed up": the Vault tab, glided to the
+     backup row once the Vault is up and its tracks have landed (reveal), with
+     the cursor on Back it up. Scrolled to while the Vault still faded in, the
+     row stayed 335 px under the window's foot at 960. */
   function openBackup() {
-    setView('vault', { fromClick: true });
-    if (window.PhosphorVault && typeof window.PhosphorVault.focusRecovery === 'function') {
-      window.PhosphorVault.focusRecovery();
-    }
+    setView('vault', { fromClick: true, reveal: 'backup' });
   }
 
   /* ---------- the brake ----------

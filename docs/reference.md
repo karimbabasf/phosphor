@@ -612,8 +612,8 @@ build carries the vault profile, so the service holds `keychain-access-groups`, 
 lives in the keychain under that group, bound to the app: the service is the only process that can
 reach it. A key made before the profile shipped, or by an ad hoc build (which can carry no profile:
 AMFI kills an ad hoc binary that claims a keychain group), is a CryptoKit device key, bound to this
-Mac rather than to Phosphor's signature, and the Vault tab's Keys row says so in one line ("Bound
-to this Mac rather than to Phosphor").
+Mac rather than to Phosphor's signature, and the Vault tab's Keys row offers the step that moves
+it (Phosphor-only access, below).
 
 The service is ready for that build. It reads its own Team ID from its code signature: with one,
 every keychain call names the group `<team>.com.karimbabasf.phosphor.vault`, `create` makes the key
@@ -640,7 +640,10 @@ wallet therefore never exists unbound on such a build, and a failed step changes
 cancelled touch or a refused commit shreds the staged file and leaves the wallet that was there.
 A commit whose answer was lost is settled by `status` before anything is dropped.
 
-The bind takes a wallet whose key is a device-bound blob into the keychain home: the wallet must
+The bind takes a wallet whose key is a device-bound blob into the keychain home. A person reads it
+as one plain name on every screen, in the Touch ID sentence ("Make your wallet Phosphor-only on this
+Mac") and in the audit log: Phosphor-only (the Keys row's Phosphor-only access card, its button
+Make it Phosphor-only). The wallet must
 be open (its payload is resealed from memory under a fresh data key, so nothing in it changes),
 its backup proven (`backedUp` in the vault slice), no move waiting on a Touch ID, and the build
 must have a keychain home. It is window only, behind the token, and never an MCP op. Refusals each

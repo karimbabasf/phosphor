@@ -305,6 +305,17 @@
   color: var(--warn);
 }
 
+/* A Touch ID the person cancelled is their choice, not a warning: the meta
+   line's tone, no glyph. */
+.vault-error[data-tone="quiet"] {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.vault-error[data-tone="quiet"] > .vault-error-icon {
+  display: none;
+}
+
 /* ---------- the freeze ---------- */
 
 .vault-freeze-open .icon,

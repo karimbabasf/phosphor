@@ -17,6 +17,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-refusal-codes.ts';
+
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
@@ -704,6 +707,11 @@ test('Print prints a sheet that holds only the numbered words, and takes it away
   assert.ok(printed && printed.sheet, 'print ran without a sheet in the document');
   assert.deepEqual(find(printed.sheet, 'li').map((li: Any) => li.textContent), WORDS);
   assert.equal(world.sandbox.document.body.childNodes.includes(printed.sheet), false, 'the sheet stayed in the document after printing');
+  // Whoever finds the paper later is told how to use it, and when it was printed.
+  const words = textOf(printed.sheet);
+  assert.ok(words.includes('Anyone who has these words has the money. Keep this sheet away from your Mac.'));
+  assert.ok(words.includes('To restore this wallet on any Mac: install Phosphor from phosphor.money, choose I already have a wallet, and type the words in order.'));
+  assert.ok(words.some((t) => /^Printed on [A-Z][a-z]{2}\u00a0\d{1,2},\u00a0\d{4}\.$/.test(t)), String(words));
 });
 
 test('the Prove step posts three positions, and only a right answer clears "not backed up"; two misses show the words again', async () => {
@@ -809,6 +817,35 @@ test('words that came without the three positions to ask are shown again, never 
   assert.equal(flow(world).hidden, true, 'the words are wiped and the row is closed');
   assert.equal(world.calls.filter((c) => c.route === '/api/vault/backup-proven').length, 0);
   assert.deepEqual(world.toasts, ['Show your words once more with Back it up, then type three of them back.']);
+});
+
+/* A reveal whose Touch ID went through on a working wallet and still could not read it is not a
+   broken wallet: the person is making their only copy, so the line says only that it could not show. */
+test('a reveal that could not show the backup says so in the row, never that the wallet is lost', async () => {
+  const words = build();
+  words.answer.reveal = { ok: false, error: 'Phosphor could not show your backup just now, and nothing changed. Try again.', code: 'reveal_failed' };
+  buttonNamed(row(words, 'backup'), 'Back it up').click();
+  await flush();
+  assert.ok(textOf(flow(words)).includes('Phosphor could not show your recovery phrase just now, and nothing changed. Try again.'), String(textOf(flow(words))));
+  const key = build({ vault: { hasMnemonic: false } });
+  key.answer.revealKey = { ok: false, error: 'Phosphor could not show your backup just now, and nothing changed. Try again.', code: 'reveal_failed' };
+  buttonNamed(row(key, 'backup'), 'Back it up').click();
+  await flush();
+  assert.ok(textOf(flow(key)).includes('Phosphor could not show your key just now, and nothing changed. Try again.'), String(textOf(flow(key))));
+  assert.ok(!textOf(flow(key)).some((t) => /recovery words|bring the wallet back/.test(t)));
+  // The service's own words never reach the row.
+  const raw = build({ vault: { hasMnemonic: false } });
+  raw.answer.revealKey = { ok: false, error: 'no user present', code: 'interaction_required' };
+  buttonNamed(row(raw, 'backup'), 'Back it up').click();
+  await flush();
+  assert.ok(textOf(flow(raw)).includes('That did not finish, so nothing changed. Try again.'), String(textOf(flow(raw))));
+});
+
+test('the foot notice\'s Back it up lands on this row: the shell glides to it and puts the cursor on its button', () => {
+  const world = build();
+  const backup = row(world, 'backup');
+  assert.equal(backup.getAttribute('data-reveal'), 'backup');
+  assert.equal(buttonNamed(backup, 'Back it up').getAttribute('data-reveal-focus'), '');
 });
 
 test('a cancelled Touch ID on the reveal shows nothing and says nothing', async () => {
@@ -923,6 +960,10 @@ test('Print prints the numbered groups and the wallet they open, and takes the s
   assert.deepEqual(find(printed.sheet, 'li').map((li: Any) => li.textContent), GROUPS);
   assert.ok(textOf(printed.sheet).includes(`It opens the wallet ${EVM}.`));
   assert.ok(textOf(printed.sheet).includes('Phosphor private key'));
+  assert.ok(textOf(printed.sheet).includes('Anyone who has this key has the money. Keep this sheet away from your Mac.'));
+  assert.ok(textOf(printed.sheet).includes('To restore this wallet on any Mac: install Phosphor from phosphor.money, choose I already have a wallet, and type the sixteen groups in order.'));
+  assert.ok(textOf(printed.sheet).some((t) => t.startsWith('Printed on ')));
+  assert.ok(!textOf(printed.sheet).some((t) => /computer/.test(t)), 'the sheet says computer');
   assert.equal(world.sandbox.document.body.childNodes.includes(printed.sheet), false);
 });
 
@@ -1017,7 +1058,7 @@ test('a password wallet with no phrase shows its key behind the password typed i
 /* ---------- restore ---------- */
 
 test('Restore takes 12 or 24 words, asks once more in place, and posts /api/vault/restore', async () => {
-  const world = build();
+  const world = build({ vault: { backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   buttonNamed(recovery(world), 'Restore from a phrase').click();
   const panel = restoreFlow(world);
   assert.equal(panel.dataset.step, 'restore');
@@ -1042,7 +1083,7 @@ test('Restore takes 12 or 24 words, asks once more in place, and posts /api/vaul
 });
 
 test('a restore the backend refuses says why, in the tab', async () => {
-  const world = build();
+  const world = build({ vault: { backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   world.answer.restore = { ok: false, error: 'not backed up', code: 'not_backed_up' };
   buttonNamed(recovery(world), 'Restore from a phrase').click();
   const panel = restoreFlow(world);
@@ -1072,9 +1113,35 @@ test('a password wallet can restore where this Mac has Touch ID, and only once i
   assert.equal(buttonNamed(recovery(guarded), 'Restore from a key').hidden, true, 'a key restore offered over a password wallet that is not backed up');
 });
 
+/* A Touch ID wallet that is not backed up is guarded the same way, before anything is typed: a
+   person used to type a whole key, press Restore twice, and only then read that it was refused. */
+test('a Touch ID wallet that is not backed up offers Back up first, which goes to its backup row, before any key is typed', () => {
+  for (const hasMnemonic of [true, false]) {
+    const world = build({ vault: { hasMnemonic, backedUp: false } });
+    const line = textOf(recovery(world));
+    assert.ok(line.includes('Back up this wallet first, so restoring another one here never loses it.'), String(line));
+    const back = buttonNamed(recovery(world), 'Back up first');
+    assert.ok(back && !back.hidden, 'a restore that could lose this wallet was offered');
+    assert.match(back.className, /btn-ghost/);
+    assert.equal(buttonNamed(recovery(world), 'Restore from a key').hidden, true);
+    const went: string[] = [];
+    row(world, 'backup').scrollIntoView = () => went.push('scrolled');
+    buttonNamed(row(world, 'backup'), 'Back it up').focus = () => went.push('focused');
+    back.click();
+    assert.deepEqual(went, ['scrolled', 'focused'], 'Back up first did not bring the backup row and its button');
+    assert.equal(restoreFlow(world).hidden, true, 'a restore opened over an unbacked wallet');
+    assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal' || c.route === '/api/vault/reveal-key'), false, 'a Touch ID was asked before the row said why');
+  }
+});
+
 test('Restore from a key takes the key the way the backup shows it, asks once more, and names the wallet it brought', async () => {
   const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   assert.ok(textOf(recovery(world)).includes('Your private key brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.'));
+  // The backup this wallet has leads: its key button first and filled, the phrase quiet after it.
+  const buttons = find(recovery(world), 'button').filter((b: Any) => !b.hidden).map((b: Any) => [b.textContent, /btn-ghost/.test(b.className) ? 'ghost' : 'quiet']);
+  assert.deepEqual(buttons.slice(0, 2), [['Restore from a key', 'ghost'], ['Restore from a phrase', 'quiet']]);
+  const phrased = build({ vault: { backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  assert.deepEqual(find(recovery(phrased), 'button').filter((b: Any) => !b.hidden).slice(0, 2).map((b: Any) => b.textContent), ['Restore from a phrase', 'Restore from a key']);
   buttonNamed(recovery(world), 'Restore from a key').click();
   const panel = restoreFlow(world);
   assert.equal(panel.dataset.step, 'restore-key');
@@ -1086,7 +1153,10 @@ test('Restore from a key takes the key the way the backup shows it, asks once mo
   assert.ok(textOf(panel).includes('That is 63 characters. A private key is 64.'), String(textOf(panel)));
   input.value = `zz${GROUPS.join('').slice(2)}`;
   buttonNamed(panel, 'Restore').click();
-  assert.ok(textOf(panel).includes('A private key has only the digits 0 to 9 and the letters a to f.'));
+  assert.ok(textOf(panel).includes('Group 1 has a character a private key never uses. A key has only 0 to 9 and a to f.'));
+  input.value = GROUPS.map((g, i) => (i === 5 ? 'e2ao' : g)).join(' ');
+  buttonNamed(panel, 'Restore').click();
+  assert.ok(textOf(panel).includes('Group 6 has a character a private key never uses. A key has only 0 to 9 and a to f.'));
   assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'a key that cannot be right was posted');
 
   // As written from the backup: 0x, upper case, the groups on two lines.
@@ -1111,11 +1181,13 @@ test('a key restore the backend refuses says why in the tab, in words for a key'
   const cases: Array<[Any, string]> = [
     [{ ok: false, error: 'a private key is 64 characters', code: 'bad_key' }, 'That key is not right. Check every character against your copy.'],
     [{ ok: false, error: 'already', code: 'same_wallet' }, 'This Mac already holds that wallet, and it opens. Nothing to restore.'],
-    [{ ok: false, error: 'not backed up', code: 'not_backed_up' }, 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its key first.'],
+    [{ ok: false, error: 'not backed up', code: 'not_backed_up' }, 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its private key first.'],
     [{ ok: false, error: 'cancelled', code: 'user_cancel' }, 'Touch ID was cancelled. Nothing changed.'],
+    // What a service wrote for its logs is never the line.
+    [{ ok: false, error: 'no user present', code: 'interaction_required' }, 'That did not finish, so nothing changed. Try again.'],
   ];
   for (const [answer, said] of cases) {
-    const world = build({ vault: { hasMnemonic: false } });
+    const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
     world.answer.restoreKey = answer;
     buttonNamed(recovery(world), 'Restore from a key').click();
     const panel = restoreFlow(world);
@@ -1125,6 +1197,9 @@ test('a key restore the backend refuses says why in the tab, in words for a key'
     await flush();
     await flush();
     assert.ok(textOf(panel).includes(said), `${answer.code}: ${String(textOf(panel))}`);
+    // A cancel is the person's own choice: the quiet line, never the warning one.
+    const line = find(panel, '.vault-error')[0];
+    assert.equal(line.getAttribute('data-tone'), answer.code === 'user_cancel' ? 'quiet' : null, answer.code);
     // The refusal ends that press: the line that said to press again goes, and the next press asks first.
     const sure = find(panel, '.vault-confirm-text')[0];
     assert.equal(sure.hidden, true, `${answer.code}: "press Restore again" stayed under a refusal`);
@@ -1168,16 +1243,21 @@ test('the Keys row says which binding is live in plain words, and the software c
   const text = textOf(custody);
   assert.ok(text.includes('Touch ID'), 'the row does not say what opens the keys');
   assert.ok(text.includes(`Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Made on ${day('Sep 14, 2026')}.`), JSON.stringify(text));
-  assert.ok(text.includes('Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.'), JSON.stringify(text));
+  // A key any app could ask to use is said by the card, with the step that changes it; where no
+  // card can show (this build has no keychain home), a worry with nothing to do is not said.
+  assert.equal(find(custody, '.vault-sub')[0].hidden, true, 'the row repeats the card as a threat');
+  assert.doesNotMatch(JSON.stringify(text), /Bound to this Mac/);
   // Every release so far is signed and still binds the key to the Mac: the row follows the
   // binding, and a signature is never offered as the protection (the 0.10.13 audit).
   assert.doesNotMatch(JSON.stringify(text), /signed/i, 'the row ties the binding to a signature');
   assert.equal(buttonNamed(custody, 'Protect with Touch ID').hidden, true);
 
-  // A key in Phosphor's keychain says that instead, in the same line.
-  enclave.put({ vault: vaultState({ enclave: { attached: true, ready: true, capability: null, keyMadeAt: null, binding: 'app' } }) });
+  // A Phosphor-only wallet keeps one quiet line for good, and its date is the day it became
+  // Phosphor-only: that step makes a new key, and "Made on" would read as a new wallet.
+  enclave.put({ vault: vaultState({ enclave: { attached: true, ready: true, capability: null, keyMadeAt: '2026-10-03T08:25:47.861Z', binding: 'app' } }) });
   assert.equal(find(custody, '.vault-sub')[0].hidden, false);
-  assert.equal(find(custody, '.vault-sub')[0].textContent, 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.');
+  assert.equal(find(custody, '.vault-sub')[0].textContent, 'Only Phosphor can open your wallet on this Mac. Older copies of the file still open the old way.');
+  assert.ok(textOf(custody).includes(`Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it. Phosphor-only since ${day('Oct 3, 2026')}.`), JSON.stringify(textOf(custody)));
 
   const software = build({ vault: { custody: 'software' } });
   const soft = row(software, 'custody');
@@ -1361,7 +1441,7 @@ test('Forget opens in place, is an outline until FORGET is typed, posts, shows a
   await flush();
   assert.equal(world.confirms.length, 0, 'a dialog over the window');
   assert.ok(world.calls.some((c) => c.route === '/api/vault/forget'));
-  assert.ok(textOf(danger).some((t) => t.startsWith('Refused: the phrase is not proven backed up')));
+  assert.ok(textOf(danger).some((t) => t.startsWith('Refused: the recovery phrase is not proven backed up')));
 
   world.answer.forget = { ok: true };
   forget.click();
@@ -1417,16 +1497,19 @@ const keysRow = (world: World): Any => row(world, 'custody');
 const bindCard = (world: World): Any => find(keysRow(world), '.vault-bind')[0];
 const bindWords = (world: World): string[] => shown(find(bindCard(world), '.vault-text, .vault-sub, .vault-flow-title')).map((n: Any) => n.textContent);
 
-test('Bind asks for the backup first: one sentence on why, and the way to it', () => {
+/* One plain name for the step, Phosphor-only, on every line: never bind, keychain or marker. */
+const jargon = /\b(bind|binding|bound|keychain|marker|enclave|blob|pin)\b/i;
+
+test('Phosphor-only asks for the backup first: one sentence on why, and the way to it', () => {
   const world = build({ vault: { hasMnemonic: false, enclave: { ...HOME, binding: 'device' } } });
   const card = bindCard(world);
   assert.equal(card.hidden, false);
   assert.equal(card.getAttribute('data-step'), 'first');
   assert.deepEqual(bindWords(world), [
-    'Bind to Phosphor',
-    "Back up your private key first. Once bound, your key lives only in Phosphor's keychain on this Mac, so your copy is the way back if anything happens to it.",
+    'Phosphor-only access',
+    'Back up your private key first. After this step only Phosphor can open your wallet on this Mac, so your copy is the way back if anything happens to this Mac.',
   ]);
-  assert.equal(buttonNamed(card, 'Bind with Touch ID').hidden, true, 'no bind before the backup is proven');
+  assert.equal(buttonNamed(card, 'Make it Phosphor-only').hidden, true, 'offered before the backup is proven');
   const first = buttonNamed(card, 'Back it up first');
   assert.equal(first.hidden, false);
   const backupRow = row(world, 'backup');
@@ -1437,19 +1520,20 @@ test('Bind asks for the backup first: one sentence on why, and the way to it', (
   first.click();
   assert.deepEqual(went, ['scrolled', 'focused'], 'the backup row is brought into view with its button under the cursor');
   assert.equal(world.calls.some((c) => c.route === '/api/vault/bind'), false);
+  assert.ok(!bindWords(world).some((t) => jargon.test(t)), String(bindWords(world)));
 });
 
-test('backed up, Bind says what binding gives, why the one touch, and what it does not reach', async () => {
+test('backed up, the card says what Phosphor-only gives, why the one touch, and what it does not reach; done, the tick pops', async () => {
   const world = build({ vault: { hasMnemonic: true, backedUp: true, backedUpAt: '2026-10-02T10:00:00.000Z', enclave: { ...HOME, binding: 'device' } } });
   const card = bindCard(world);
   assert.equal(card.getAttribute('data-step'), 'offer');
   assert.deepEqual(bindWords(world), [
-    'Bind to Phosphor',
-    "Binding moves this key into Phosphor's own keychain, where no other app on this Mac can ask to use it.",
-    'One Touch ID checks that Phosphor opens your wallet from there before anything changes.',
-    'Phosphor stops opening older copies of your wallet file, but another app could still use one, with a Touch ID prompt of its own, until your keys change.',
+    'Phosphor-only access',
+    'Today any app on this Mac can ask to open your wallet, with its own Touch ID prompt. After this, only Phosphor can.',
+    'One Touch ID checks that Phosphor opens your wallet the new way before anything changes.',
+    'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way.',
   ]);
-  const go = buttonNamed(card, 'Bind with Touch ID');
+  const go = buttonNamed(card, 'Make it Phosphor-only');
   assert.equal(go.hidden, false);
   assert.equal(go.getAttribute('data-pending-label'), 'Waiting for Touch ID');
   assert.doesNotMatch(go.className, /btn-primary/, 'the one green button belongs to Approve');
@@ -1457,34 +1541,47 @@ test('backed up, Bind says what binding gives, why the one touch, and what it do
   await flush();
   assert.deepEqual(world.calls.filter((c) => c.route === '/api/vault/bind' || c.route === 'refresh').map((c) => c.route), ['/api/vault/bind', 'refresh']);
   world.put({ vault: vaultState({ hasMnemonic: true, backedUp: true, enclave: { ...HOME, binding: 'app' } }) });
+  // The tick pops as the done line comes in (the attribute goes again after the spring).
+  assert.equal(find(bindCard(world), '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the tick did not pop');
   await flush();
   assert.equal(bindCard(world).getAttribute('data-step'), 'done');
   assert.deepEqual(bindWords(world), [
-    'Bound to Phosphor. Only Phosphor can ask to use this key on this Mac.',
-    'Older copies of your wallet file, such as one in a Time Machine backup, still hold this key for other apps until your keys change. Delete the copies you know of.',
+    'Phosphor-only. No other app on this Mac can open your wallet.',
+    'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way. Approve a Touch ID prompt only when you started it.',
   ]);
   const done = find(bindCard(world), '.vault-backup-line')[0];
   assert.equal(done.getAttribute('data-backed'), 'true', 'the done line wears the tick');
-  assert.equal((find(keysRow(world), '.vault-sub').find((p: Any) => p.textContent.startsWith('Bound to Phosphor, so')) as Any).hidden, true, 'said once, in the card');
+  assert.equal(find(bindCard(world), '.vault-actions')[0].hidden, true, 'an empty button row stayed under the done line');
+  assert.equal((find(keysRow(world), '.vault-sub').find((p: Any) => p.textContent.startsWith('Only Phosphor can open')) as Any).hidden, true, 'said once, in the card');
+  for (const words of bindWords(world)) assert.ok(!jargon.test(words), words);
 });
 
-test('a cancelled or refused bind says so in the card, and Bind stays', async () => {
+test('a cancelled or refused Phosphor-only step says so in the card, the cancel quietly, and the button stays', async () => {
   const world = build({ vault: { backedUp: true, enclave: { ...HOME, binding: 'device' } } });
-  world.answer.bind = { ok: false, code: 'user_cancel', error: 'You cancelled the Touch ID prompt.' };
-  buttonNamed(bindCard(world), 'Bind with Touch ID').click();
+  world.answer.bind = { ok: false, code: 'user_cancel', error: 'Touch ID was cancelled. Nothing changed.' };
+  buttonNamed(bindCard(world), 'Make it Phosphor-only').click();
   await flush();
   const error = find(bindCard(world), '.vault-error')[0];
   assert.equal(error.hidden, false);
   assert.equal(textOf(error).join(''), 'Touch ID was cancelled. Nothing changed.');
-  assert.equal(buttonNamed(bindCard(world), 'Bind with Touch ID').hidden, false);
+  assert.equal(error.getAttribute('data-tone'), 'quiet', 'a cancel was shown as a warning');
+  assert.equal(buttonNamed(bindCard(world), 'Make it Phosphor-only').hidden, false);
   world.answer.bind = { ok: false, code: 'touch_waiting', error: 'A move is waiting for your Touch ID. Finish it, then try again.' };
-  buttonNamed(bindCard(world), 'Bind with Touch ID').click();
+  buttonNamed(bindCard(world), 'Make it Phosphor-only').click();
   await flush();
   assert.equal(textOf(find(bindCard(world), '.vault-error')[0]).join(''), 'A move is waiting for your Touch ID. Finish it, then try again.');
+  assert.equal(find(bindCard(world), '.vault-error')[0].getAttribute('data-tone'), null, 'a refusal lost its warning');
+  // What a service wrote for its logs never reaches the card.
+  for (const raw of ['no user present', 'keychain key -25300', 'keyBlob names no vault key']) {
+    world.answer.bind = { ok: false, code: 'a_code', error: raw };
+    buttonNamed(bindCard(world), 'Make it Phosphor-only').click();
+    await flush();
+    assert.equal(textOf(find(bindCard(world), '.vault-error')[0]).join(''), 'That did not finish, so nothing changed. Try again.', raw);
+  }
   assert.equal(world.calls.filter((c) => c.route === 'refresh').length, 0, 'nothing to refresh after a refusal');
 });
 
-test('Bind is not offered where there is nothing to bind, and a bound key says so in its row', () => {
+test('the card is not offered where there is nothing to do, and a Phosphor-only wallet says so in its row', () => {
   for (const vault of [
     { enclave: { ...HOME, capability: { ...HOME.capability, keychainHome: false }, binding: 'device' }, backedUp: true },
     { custody: 'software', enclave: { ...HOME, binding: null }, backedUp: true },
@@ -1494,9 +1591,46 @@ test('Bind is not offered where there is nothing to bind, and a bound key says s
     const world = build({ vault });
     assert.equal(bindCard(world).hidden, true, JSON.stringify(vault));
   }
-  const bound = build({ vault: { enclave: { ...HOME, binding: 'app' } } });
-  const sub = find(keysRow(bound), '.vault-sub').find((p: Any) => p.textContent.startsWith('Bound to Phosphor, so')) as Any;
-  assert.equal(sub.textContent, 'Bound to Phosphor, so only Phosphor can ask to use this key on this Mac.');
+  const done = build({ vault: { enclave: { ...HOME, binding: 'app' } } });
+  const sub = find(keysRow(done), '.vault-sub').find((p: Any) => p.textContent.startsWith('Only Phosphor can open')) as Any;
+  assert.equal(sub.textContent, 'Only Phosphor can open your wallet on this Mac. Older copies of the file still open the old way.');
   assert.equal(sub.hidden, false);
 });
 
+/* ---------- every refusal, through the Vault's own lines ---------- */
+
+/* Each code the backend can say (and every code the service and the relays can answer), as the
+   backend says it, and again carrying the service's own log text: what reaches the page is a calm
+   sentence, never a code, a status number or an OS phrase. */
+test('every refusal the Vault can be handed reads as a sentence on the page, and no service text reaches it', async () => {
+  const codes = [...new Set([...refusalCodes(), ...VAULT_REFUSAL_CODES])];
+  const lineOf = (node: Any): string => textOf(node).join(' ');
+  for (const code of codes) {
+    for (const answer of [refusal(code), { ok: false, code, error: SERVICE_MESSAGE }]) {
+      const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z', enclave: { ...HOME, binding: 'device' } } });
+      world.answer.bind = answer;
+      buttonNamed(bindCard(world), 'Make it Phosphor-only').click();
+      await flush();
+      const bindLine = lineOf(find(bindCard(world), '.vault-error')[0]);
+      world.answer.restoreKey = answer;
+      buttonNamed(recovery(world), 'Restore from a key').click();
+      const panel = restoreFlow(world);
+      find(panel, 'textarea')[0].value = GROUPS.join(' ');
+      buttonNamed(panel, 'Restore').click();
+      buttonNamed(panel, 'Restore').click();
+      await flush();
+      await flush();
+      const restoreLine = lineOf(find(panel, '.vault-error')[0]);
+      world.answer.revealKey = answer;
+      buttonNamed(row(world, 'backup'), 'Show my key').click();
+      await flush();
+      const revealLine = textOf(flow(world)).join(' ');
+      for (const [where, said] of [['the card', bindLine], ['the restore', restoreLine], ['the reveal', revealLine]] as Array<[string, string]>) {
+        if (code === 'user_cancel' && where === 'the reveal') continue;
+        assert.ok(said.length > 0, `${code}, ${where}: nothing was said`);
+        assert.ok(!RAW.test(said), `${code}, ${where}: ${said}`);
+        for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}, ${where}: ${said}`);
+      }
+    }
+  }
+});

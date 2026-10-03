@@ -87,10 +87,11 @@ yourself it checks the app's identifier alone; a key bound to this Mac does not 
 
 What it means: another app running as you could ask to use the key, and macOS would show that
 app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for something you started
-in Phosphor, and read the sentence in it. The Keys row in the Vault tab says the same in one line.
+in Phosphor, and read the sentence in it. The Vault tab's Keys row offers the step that changes it.
 
-What closes it: Bind, in the Vault tab of a signed release, moves an older wallet's key into the
-vault's keychain group with one Touch ID, once its backup is proven. The service of such a release
+What closes it: Make it Phosphor-only (the Phosphor-only access card in the Vault tab's Keys row of
+a signed release; in the code, the bind) moves an older wallet's key into the vault's keychain group
+with one Touch ID, once its backup is proven. The service of such a release
 makes new keys only in that group, never a device key, and a wallet bound there carries a pin only
 the service can write, so a wallet file someone else wrapped to the same key, or an edited one, is
 refused before any Touch ID. Once a wallet on the Mac is bound, device-bound key files stop opening
@@ -100,22 +101,23 @@ ID, before it replaces anything.
 
 ## Old copies of a wallet file still open on this Mac until the keys change
 
-Binding moves the wallet's key into Phosphor's own keychain and writes a new wallet file for it.
-From then on Phosphor on this Mac refuses every device-bound wallet file, old copies included, before
-any Touch ID. What binding cannot do is reach those copies. A copy of the old `keys.enc.json` made
+Making a wallet Phosphor-only moves its key into Phosphor's own keychain and writes a new wallet
+file for it. From then on Phosphor on this Mac refuses every device-bound wallet file, old copies
+included, before any Touch ID. What the step cannot do is reach those copies. A copy of the old `keys.enc.json` made
 before the bind (a Time Machine backup or local snapshot, a sync folder, a copy you made, the file on
 another disk) still holds the old key, wrapped to a key this Mac's Secure Enclave keeps. Any program
 running as you can load that key from the copy and ask for your Touch ID with its own dialog, and a
-Phosphor build from before binding existed opens it too. The keys inside are the same keys, so such
+Phosphor build from before Phosphor-only existed opens it too. The keys inside are the same keys, so such
 a copy can spend the same money.
 
 What Phosphor deletes: only the copies it wrote itself, the temp file a write cut short leaves
-beside the key file, and only after the bound file has opened once. It never touches a Time Machine
-snapshot, a sync folder or a file you made. A backup you exported with a password is a password
-file: binding does not change it, and anyone with the file and the password opens it anywhere.
+beside the key file, and only after the Phosphor-only file has opened once. It never touches a Time
+Machine snapshot, a sync folder or a file you made. A backup you exported with a password is a
+password file: this step does not change it, and anyone with the file and the password opens it
+anywhere.
 
-What it means: after a bind, delete the old copies you know of, and approve a Touch ID dialog only
-for something you started in Phosphor. What closes it: moving to new keys that never existed outside
+What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
+Touch ID dialog only for something you started in Phosphor. What closes it: moving to new keys that never existed outside
 the keychain, so the old key holds nothing. The chip vault plans that; it is not built.
 
 ## The venues are not ours

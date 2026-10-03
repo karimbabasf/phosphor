@@ -2,7 +2,9 @@
 // can answer (read off their sources, tests/fixtures/vault-refusal-codes.ts) has one sentence, in
 // one place (src/http/wallet.ts REFUSALS), in the words a person knows; the service's own message
 // never becomes that sentence, whatever the code. The windows that show a refusal are held to the
-// same thing on their side in tests/unit/refusal-window.test.ts.
+// same thing on their side, every code run through their own lines: the lock card
+// (vault-lock-ui.test.ts), the Vault's card, restore and reveal (vault-tab-ui.test.ts) and the
+// first run's restore (firstrun-ui.test.ts).
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
