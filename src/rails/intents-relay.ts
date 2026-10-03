@@ -96,9 +96,11 @@ export const RELAY_POLL_TIMEOUT_MS = 180_000;
 
 /* The propose-time quote has an answer line to keep (2.2: propose_swap answers inside 3 s), and
    the relay answers about 600 ms after the wait it is given, so simulate asks for a 1.5 s wait
-   and gives the whole call 2.5 s. A relay that has not answered by then is "nobody offered a
-   price", one sentence, nothing signed. Execute keeps the relay's default wait and the read
-   budget: a click has time, and the price it re-quotes at is worth waiting the full 3 s for. */
+   and gives the whole call 2.5 s. A relay that has not answered by then, or that answered with an
+   error, is "nobody offered a price", one sentence, nothing signed, and the swap may be priced on
+   1Click instead (src/proposals/swap-route.ts). Execute keeps the relay's default wait and the read
+   budget: a click has time, and the price it re-quotes at is worth waiting the full 3 s for; an
+   error there is the error it is, on the route the card showed. */
 export const RELAY_SIMULATE_WAIT_MS = 1_500;
 export const RELAY_SIMULATE_TIMEOUT_MS = 2_500;
 export const NO_PRICE_SENTENCE = 'Nobody offered a price for this pair right now. Try again in a minute.';
@@ -179,6 +181,12 @@ export type IntentsRelayRail = Rail<SwapDraft>;
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// What a relay that answered a propose-time ask with an error said, for the lines under the
+// sentence; nothing for one that did not answer. The client marks its words as the relay's own.
+function relaySaid(err: unknown): string[] {
+  return noReply(err) ? [] : [errText(err)];
 }
 
 // A hook is the executor's business; whatever it does with the evidence, it must not turn a
@@ -337,15 +345,15 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION. The propose-time ask (a short solver wait, this
      call's own deadline), read as the bought coin's units and truncated to its decimals. Null
-     when nobody answered: the caller refuses, it never guesses. Nothing is signed here. */
+     when nobody answered, or the relay answered with an error: the caller refuses or asks 1Click
+     (src/proposals/swap-route.ts), it never guesses. Nothing is signed here. */
   async function quote(draft: SwapDraft): Promise<number | null> {
     const p = await plan(draft, true);
     let pick: Picked;
     try {
       pick = await bestQuote(p, draft.from, true);
-    } catch (err) {
-      if (noReply(err)) return null;
-      throw err;
+    } catch {
+      return null;
     }
     if (pick.chosen === null) return null;
     const lost = lossOf(pick, BigInt(pick.chosen.amountOut));
@@ -438,16 +446,16 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   }
 
   /* One dry quote as fields, for a read that files nothing: the exact amount priced, the best
-     answer, the floor the app would set under it, the fee. No price throws `no_price`, and a price
-     past the bound throws as the propose would refuse it. */
+     answer, the floor the app would set under it, the fee. No price throws `no_price`, a relay that
+     answered with an error included, and a price past the bound throws as the propose would refuse
+     it. */
   async function facts(draft: SwapDraft): Promise<SwapQuoteFacts> {
     const p = await plan(draft, true);
     let pick: Picked;
     try {
       pick = await bestQuote(p, draft.from, true);
     } catch (err) {
-      if (noReply(err)) throw new ReasonError('no_price', NO_PRICE_SENTENCE);
-      throw err;
+      throw new ReasonError('no_price', [NO_PRICE_SENTENCE, ...relaySaid(err)].join(' '));
     }
     if (pick.chosen === null) throw new ReasonError('no_price', [NO_PRICE_SENTENCE, ...pick.passed].join(' '));
     const outBase = BigInt(pick.chosen.amountOut);
@@ -526,15 +534,15 @@ export function intentsRelayRail(deps: IntentsRelayRailDeps): IntentsRelayRail {
   async function simulate(draft: SwapDraft): Promise<SimulationResult> {
     try {
       const p = await plan(draft);
-      /* The relay not answering inside the bound is the same fact as the relay answering with
-         nobody: one sentence for the person, and the reason the answers were passed over (when
-         there were any) on the lines under it for whoever reads the row. */
+      /* The relay not answering inside the bound, or answering with an error, is the same fact as
+         the relay answering with nobody: one sentence for the person, and the relay's own words or
+         the reason the answers were passed over (when there were any) on the lines under it for
+         whoever reads the row. */
       let pick: Picked;
       try {
         pick = await bestQuote(p, draft.from, true, true);
       } catch (err) {
-        if (!noReply(err)) throw err;
-        return { ok: false, summary: '', developer: `REFUSED: ${NO_PRICE_SENTENCE}`, error: NO_PRICE_SENTENCE, reason: 'no_price' };
+        return { ok: false, summary: '', developer: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...relaySaid(err)].join('\n'), error: NO_PRICE_SENTENCE, reason: 'no_price' };
       }
       if (pick.chosen === null) {
         return { ok: false, summary: '', developer: [`REFUSED: ${NO_PRICE_SENTENCE}`, ...pick.passed].join('\n'), error: NO_PRICE_SENTENCE, reason: 'no_price' };
