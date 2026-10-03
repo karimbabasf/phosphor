@@ -1525,6 +1525,69 @@ test('the crash matrix: a bind and a restore killed before the commit, between c
   }
 });
 
+/* VERIFY-RA1B, VRA1B-01 (LOW). A vault service with no keychain home (the development helper that
+   `npm run tauri dev` runs, or a copy built without the Developer ID) cannot read the markers, and its
+   status answers bound: false whatever the Mac holds. The relay keeps that as "this Mac keeps no
+   Phosphor-only wallet", so on a Mac that does, a readable key file put where the bound wallet was is
+   vouched for and encrypted again: the RA1B-01 path, on a build that cannot see the marker. Followed
+   through (evidence run, not kept), the signed app then opens that wallet with the person's new
+   password, verified, and moves it behind Touch ID as the Mac's second Phosphor-only wallet. */
+test('VRA1B-01: a vault service that cannot read the keychain home does not tell the backend this Mac keeps no Phosphor-only wallet', { skip }, async () => {
+  const b = await boot();
+  const { double, dataDir } = b;
+  const theirKey = `0x${'22'.repeat(32)}` as const;
+  try {
+    assert.equal((await b.post('/api/vault/create')).json.ok, true);
+    b.keystore.lock();
+    fs.renameSync(b.live, path.join(path.dirname(b.live), '.moved-aside'));
+    fs.writeFileSync(b.keysPath, JSON.stringify({ evm: { address: privateKeyToAccount(theirKey).address, privateKey: theirKey } }) + '\n');
+  } finally {
+    await b.close();
+  }
+  assert.equal(double.state().markers.length, 1, 'this Mac keeps a Phosphor-only wallet');
+
+  // The same Mac and data folder, run by a build whose service has no Team ID.
+  double.team = '';
+  const c = await boot({ double, dataDir });
+  try {
+    assert.equal(c.vault.capability()?.keychainHome, false);
+    await settleAtStart({ keystore: c.keystore, vault: c.vault, audit: c.audit });
+    const state = (await c.get('/api/state')).json;
+    assert.equal(state.lock.state, 'needs_migration');
+    assert.notEqual(state.lock.verified, true, 'VRA1B-01: a readable key file is vouched for on a Mac that keeps a Phosphor-only wallet');
+    assert.notEqual(state.vault.enclave.phosphorOnlyHere, false, 'VRA1B-01: a service that cannot read the markers said this Mac keeps none');
+    const before = fs.readFileSync(c.keysPath, 'utf8');
+    const migrated = await c.post('/api/wallet/migrate', { password: 'a long enough password' });
+    assert.notEqual(migrated.json.ok, true, `VRA1B-01: the readable key file was encrypted: ${JSON.stringify(migrated.json)}`);
+    assert.equal(fs.readFileSync(c.keysPath, 'utf8'), before, 'the readable file is untouched');
+  } finally {
+    await c.close();
+  }
+});
+
+/* VERIFY-RA1B, VRA1B-02 (INFO). The calm refusal for a disk error first writes its audit line, on the
+   same disk, unguarded. Where that write fails too (a data folder the owner can no longer write to, or
+   a full disk, the case the sentence itself names), the append throws out of the route and the
+   router's catch-all sends the system's text, here with the audit file's full path, to the window. */
+test('VRA1B-02: a disk refusal is said in the table\'s words even when its audit line cannot be written', { skip }, async () => {
+  const b = await boot();
+  const auditFile = path.join(b.dataDir, 'audit.jsonl');
+  try {
+    fs.mkdirSync(b.staged, { recursive: true });
+    fs.chmodSync(auditFile, 0o400);
+    const made = await b.post('/api/vault/create');
+    fs.chmodSync(auditFile, 0o600);
+    assert.equal(made.status, 200, `VRA1B-02: ${made.status} ${JSON.stringify(made.json)}`);
+    assert.deepEqual(made.json, refusal('write_failed'));
+    assert.ok(!RAW.test(String(made.json.error)) && !JSON.stringify(made.json).includes(b.dataDir), JSON.stringify(made.json));
+    assert.equal(fs.existsSync(b.live), false, 'no wallet was made');
+  } finally {
+    fs.chmodSync(auditFile, 0o600);
+    fs.rmSync(b.staged, { recursive: true, force: true });
+    await b.close();
+  }
+});
+
 /* The request the backend sends for the file at `live`, built by the app's own keystore. */
 function liveRequestOf(live: string): EnclaveUnwrapRequest {
   const keystore: Keystore = createKeystore({ keysPath: path.join(path.dirname(live), 'keys.json'), kdf: fast });
