@@ -65,7 +65,10 @@ Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026
   Restore again to go ahead under the refusal.
 - When the disk will not take a key file during a create, a restore, Forget, encrypting a readable
   key file or saving an encrypted copy, Phosphor says so in plain words and suggests checking free
-  space; the system's message and the file's path no longer reach the window.
+  space, even when the disk refuses Phosphor's log as well; the system's message and the file's
+  path no longer reach the window. A password create, import, encryption or encrypted copy that
+  saved its file always finishes as usual, even when Phosphor cannot write its log line, so a new
+  wallet's recovery phrase is always shown.
 - The Touch ID vault now runs on macOS 13.5 and later, as the app always said; before this release
   it needed macOS 15. On macOS 13.5 to 14 the Secure Enclave helper could not start, so the app
   made a password wallet and the Keys row said Touch ID is not available on this Mac right now.
@@ -75,7 +78,10 @@ Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026
   and 26, and refuses any program in the app built for a newer macOS than 13.5.
 - For people who build Phosphor: a signed build carries Apple's profile for the Secure Enclave
   helper and gives each program only the permissions it needs, and a check stops a build signed
-  wrong before Apple sees it. A copy you build yourself cannot make a Phosphor-only wallet.
+  wrong before Apple sees it. A copy you build yourself, like the development shell, cannot make a
+  Phosphor-only wallet or check whether this Mac keeps one, so it no longer trusts or encrypts a
+  readable key file: the lock card says the file stayed closed, points to the Phosphor app you
+  downloaded, and offers Restore from your backup.
 - Your wallet, your keys and your settings stay as they were until you make the wallet
   Phosphor-only.
 
