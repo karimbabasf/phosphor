@@ -19,7 +19,7 @@ So approval is not a message. It is a click in a window the agent's process cann
   execute, and a test holds the live tool list to that. See [Tools](tools.md).
 - Every write is a proposal judged by the policy engine, see [Policy](policy.md). A send, a
   withdrawal and a rule change always wait for your click, whatever their size.
-- The one field that names a receiver, on a send, is behind your click and, on an enclave wallet,
+- The one field that names a receiver, on a send, is behind your click and, on a Touch ID wallet,
   a Touch ID dialog that names the receiver itself. The agent is told to read the address back to
   you first, but the app cannot check where an address came from: read it on the card.
 - A pending card cannot be dismissed from the chat. If the agent disconnects, the card is still
@@ -97,7 +97,7 @@ version.
 ## The Secure Enclave and Touch ID
 
 On a Mac with a Secure Enclave, the wallet file is sealed with a data key, and that data key is
-wrapped to a key the enclave made and cannot export. The wallet opens with Touch ID or your Mac
+wrapped to a key the Secure Enclave made and cannot export. The wallet opens with Touch ID or your Mac
 login password, and each click on a proposal ends in a Touch ID dialog whose sentence the app
 composes from the proposal's numbers: the amount, the receiver shortened to eight characters at
 each end (a NEAR name whole), the chain. No agent-written text reaches that dialog. Read it before you confirm.
@@ -116,26 +116,27 @@ wallet is open, never on a touch for one move.
 Two limits belong here. While the vault is open, the unwrapped wallet key sits in the backend's
 memory as bytes, so the app can sign the moves you approved and the small ones the policy allows.
 The lock overwrites those bytes, but copies of the key that a signature or an unlock left as text
-stay in the app's memory until it is reused. And a wallet made before the vault service carried
-its provisioning profile, or by a copy you build yourself, has its enclave key bound to this Mac
-rather than to Phosphor. On a signed release the vault service answers only the signed Phosphor
-app; on a copy you build yourself, which is signed ad hoc, it checks the app's identifier alone,
-which another app can claim. Either way another app running as you could ask to use such a key
-with a Touch ID prompt of its own, and the Keys row in the Vault tab offers the step that changes
-it. A signed release with the profile keeps the key of a wallet it makes in a keychain group only
-its vault service can reach, and refuses a wallet file it did not make Phosphor-only before asking
-for your finger.
+stay in the app's memory until it is reused. And a Touch ID wallet made before Phosphor-only
+existed, or by a copy of Phosphor you build yourself, keeps its key where any app running as you
+on this Mac can ask to use it, with a Touch ID prompt of its own. On a signed release, Phosphor's
+Secure Enclave service answers only the signed Phosphor app; on a copy you build yourself it
+checks only the app's name, which another app can claim. A signed release keeps the key of every
+wallet it makes where only Phosphor reaches it, and before it asks for your finger it refuses a
+wallet file that is not the one it saved.
 
-On such a release, Make it Phosphor-only in the Vault tab moves a wallet made earlier into that
-keychain with one Touch ID, once its backup is proven. It cannot reach copies of the old wallet file made before
-(a Time Machine backup, a sync folder, a copy you made): Phosphor refuses them, but another program
-running as you can still load the old key from one and ask for your Touch ID, until the wallet
-moves to new keys. Delete the copies you know of.
+On a signed release, Make it Phosphor-only in the Vault tab's Keys row gives an older wallet the
+same protection with one Touch ID, once its backup is proven. From then on the wallet's key is in
+one place on this Mac, so your backup is the way back if anything happens to this Mac. The step
+cannot reach copies of the old wallet file saved before that day (a Time Machine backup, a sync
+folder, a copy you made): Phosphor refuses them, but another program running as you can still open
+one and ask for your Touch ID, until the wallet moves to new keys. Delete the copies you know of.
+Phosphor-only is also one rule for the whole Mac: [Known limits](known-limits.md) says what that
+means before you make a second wallet.
 
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
 click alone, with no biometric: Approve runs the move with no Touch ID after it. That is the
-custody you chose, not a bypass of it. When your Mac has an enclave, Protect with Touch ID in the
+custody you chose, not a bypass of it. When your Mac has a Secure Enclave, Protect with Touch ID in the
 Keys row moves the same wallet behind it; use it when you can.
 
 ## The process that holds the key

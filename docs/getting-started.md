@@ -90,7 +90,7 @@ a wallet too, an empty one. If it is not yours, press That is not my wallet and 
 
 ### With a password
 
-Without an enclave, the app asks you to create a new wallet or restore one from its recovery
+Without a Secure Enclave, the app asks you to create a new wallet or restore one from its recovery
 phrase, or from its private key if it has no phrase. Set a password of at least eight characters. Nobody can reset it, not the app and not your
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on. Take as long as writing them down takes. If Phosphor locks
@@ -106,7 +106,7 @@ Vault tab, see [Policy](policy.md#changing-a-rule).
 ### A wallet from another Mac
 
 A wallet file made on a different Mac cannot be opened here, because its key lives in that Mac's
-enclave. This is what moving to a new Mac with Migration Assistant looks like, so the window skips
+Secure Enclave. This is what moving to a new Mac with Migration Assistant looks like, so the window skips
 the welcome and says Made on another Mac: your wallet file came with you and your money has not
 moved. Type your recovery phrase, twelve or twenty-four words, or the private key of a wallet that
 has no phrase (see [A wallet with no phrase](#a-wallet-with-no-phrase)), to open it here. The next
@@ -118,7 +118,7 @@ open Phosphor on the Mac that made the wallet, then Vault, Back it up, and come 
 The recovery phrase is the only way back to the wallet. Anyone who has it has your money, and
 nobody from this app will ever ask you for it.
 
-On an enclave wallet the phrase is not shown at first run. Open the Vault tab: under Safety, the
+On a Touch ID wallet the phrase is not shown at first run. Open the Vault tab: under Safety, the
 Recovery phrase row has Back it up. Touch ID shows the words in that row only. Write them down
 somewhere that is not this Mac, click I wrote them down, then Prove it and type three of the
 words back by their number. Only that turns the row's line from Not backed up yet to Backed up.
@@ -160,39 +160,40 @@ replace the only copy of this one.
 
 ## Touch ID and the Secure Enclave
 
-The Keys row in the Vault tab, under Your wallet, says which kind of wallet you have. On an
-enclave wallet it reads Touch ID: the key is behind the Secure Enclave on this Mac, and Touch ID
+The Keys row in the Vault tab, under Your wallet, says which kind of wallet you have. A Touch
+ID wallet's row reads Touch ID: the key is behind the Secure Enclave on this Mac, and Touch ID
 or your Mac login password opens it. The key file, `keys.enc.json`, sits under `~/.phosphor`,
 outside the app and outside any code checkout. Its contents are sealed with a data key, and that
-data key is wrapped to a key the enclave made and cannot export. Nothing on disk opens the file
-without the enclave.
+data key is wrapped to a key the Secure Enclave made and cannot export. Nothing on disk opens the
+file without the Secure Enclave.
 
-On an enclave wallet, every click you make on a proposal ends in a Touch ID dialog. The dialog
+On a Touch ID wallet, every click you make on a proposal ends in a Touch ID dialog. The dialog
 is drawn by macOS, and its sentence is composed by the app from the proposal's own numbers: the
 amount, the receiver shortened to eight characters at each end (a NEAR name whole), and the chain. Read it before you
 confirm. [Security](security.md) says what this does and does not protect against.
 
 A password wallet says Password in the Keys row: "Locked with your password on this Mac." On a
-Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
-behind the enclave. Nothing moves and the addresses stay the same.
+Mac that has a Secure Enclave, the row also shows Protect with Touch ID, which moves the same
+wallet behind the Secure Enclave. Nothing moves and the addresses stay the same.
 
 A wallet made before the signed app could keep its key where only Phosphor reaches it: any app on
 this Mac can ask to open it, with its own Touch ID prompt. On a signed release the Keys row then
 shows Phosphor-only access: once your backup is proven (Back it up first takes you there), Make it
 Phosphor-only does what it says, with one Touch ID that checks Phosphor opens your wallet the new
 way before anything changes; a cancel changes nothing. The same wallet, the same addresses. The row
-then says Phosphor-only since that day. Copies of your wallet file saved before then (a Time Machine
-backup, a sync folder) still open the old way, so approve a Touch ID prompt only when you started
-it. Your backup is the EVM key alone: an older wallet whose file also holds a NEAR key, a Solana key
-or a trading key keeps those only in the Phosphor-only file, behind the one keychain key on this
-Mac, and your backup cannot bring them back if that key is lost (the app never shows or spends from
-those NEAR and Solana addresses, and a trading key is approved again). [Known limits](known-limits.md)
-says more.
+then says Phosphor-only since that day. From then on the wallet's key is in one place on this Mac
+that only Phosphor reaches, so your backup is the way back if anything happens to this Mac; that is
+why the step asks for it first. Copies of your wallet file saved before then (a Time Machine backup,
+a sync folder) still open the old way, so approve a Touch ID prompt only when you started it. A
+private key backup is the EVM key alone: an older wallet whose file also holds a NEAR key, a Solana
+key or a trading key keeps those only in the Phosphor-only file, and the backup cannot bring them
+back if that one key is lost (the app never shows or spends from those NEAR and Solana addresses,
+and a trading key is approved again). [Known limits](known-limits.md) says more.
 
 Phosphor-only is one rule for the whole Mac, not for one wallet. The first time a signed release
-makes a wallet Phosphor-only, or makes a new wallet, in any folder and from any copy of Phosphor,
-every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in Phosphor, even
-one in another folder. Its lock card then offers Restore, and its backup brings it back. So before
+makes a Touch ID wallet Phosphor-only, or makes or restores one, from any copy of Phosphor and in
+any folder, every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in
+Phosphor, even one in another folder. Its lock card then offers Restore, and its backup brings it back. So before
 you make or restore a second wallet on this Mac, make the one you have Phosphor-only, or at least
 prove its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
 alone.

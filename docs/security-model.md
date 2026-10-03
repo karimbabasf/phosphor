@@ -219,6 +219,22 @@ your money.
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
   yourself. What closes it: moving to new keys that never existed outside the keychain, so the
   old key holds nothing. The chip vault plans that; it is not built.
+- **A bound wallet's key is one keychain item.** After the bind, and for every wallet a signed
+  release makes, the key lives in one item in the vault's keychain group and in no file, so no copy
+  of the wallet file opens without it. If the item is gone (the Mac erased or replaced, its
+  keychain reset), the backup is the only way back, which is why the bind asks for a proven one. A
+  key backup holds the EVM key alone: an older wallet's NEAR, Solana and trading keys live only in
+  the bound file and go with the item. The app never shows or spends from those NEAR and Solana
+  addresses, and a trading key is approved again. What closes it: nothing in this build; the
+  backup kept off this Mac is the way back.
+- **One marker refuses every device-bound file on the Mac.** Markers are one pool for the whole
+  Mac, and while any exists the service refuses every device-bound key file. So the first wallet a
+  signed release binds, makes or restores, from any copy and in any data folder, stops every
+  device-bound wallet on the Mac from opening in Phosphor, a live one in another folder included,
+  until it is restored from its backup as a bound wallet. The lock card says why and offers that
+  restore. A demo writes nothing to the group, so a demo never does it. What closes it: binding
+  every wallet on the Mac. The rule stays, because it is what keeps a device-bound file swapped in
+  for a bound wallet from opening.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed

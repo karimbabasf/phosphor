@@ -34,7 +34,7 @@ everything in the top bar, see [Getting started](getting-started.md#freeze-every
 ## The click threshold
 
 The click threshold splits every write into two kinds. At or below it, the policy engine decides
-alone and the move may execute at once, with no click and, on an enclave wallet, no Touch ID,
+alone and the move may execute at once, with no click and, on a Touch ID wallet, no Touch ID,
 as long as the vault is open. Above it, nothing happens until you click. The Vault tab's Policies
 row says it as Asks you above $100: "Anything above this waits for your click."
 
@@ -55,8 +55,8 @@ a quote 1Click signed (see
 every move an agent proposes after it read text from outside Phosphor (see below).
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
-arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On an
-enclave wallet Approve then asks for Touch ID, and the card says Confirm on your Mac until you
+arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On a
+Touch ID wallet Approve then asks for Touch ID, and the card says Confirm on your Mac until you
 answer.
 
 If a hostile process running as you is in your threat model, lower the threshold in the Vault

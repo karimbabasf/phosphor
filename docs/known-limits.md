@@ -73,45 +73,67 @@ serves and no program can fetch.
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.
 
-## An older wallet's Secure Enclave key is bound to this Mac, not to Phosphor
+## An older wallet's key answers any app on this Mac
 
-A wallet made before the vault service carried its provisioning profile, and any wallet a copy
-you build yourself makes, keeps its Secure Enclave key bound to this Mac rather than to Phosphor:
-a CryptoKit key any program running as you can load. A signed release embeds a Developer ID
-provisioning profile in the vault service (`src-tauri/signing/vault.provisionprofile`), which
-grants it one keychain group, `35Z6P26CBD.com.karimbabasf.phosphor.vault`, and the key of a wallet
-it makes lives there, where only that service can ask for it. A copy you build yourself is signed
-ad hoc and can carry no profile: macOS kills an ad hoc program that claims a keychain group. On a
-signed release the vault service answers only the signed Phosphor app, and on a copy you build
-yourself it checks the app's identifier alone; a key bound to this Mac does not care who asks.
+A Touch ID wallet made before Phosphor-only existed, and any Touch ID wallet that a copy of
+Phosphor you build yourself makes, keeps its key where any program running as you on this Mac can
+ask to use it. Only a signed release can keep a key that Phosphor alone reaches: that takes a
+permission Apple signs for Phosphor's developer, and a copy you build yourself cannot carry it.
 
 What it means: another app running as you could ask to use the key, and macOS would show that
 app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for something you started
-in Phosphor, and read the sentence in it. The Vault tab's Keys row offers the step that changes it.
+in Phosphor, and read the sentence in it.
 
-What closes it: Make it Phosphor-only (the Phosphor-only access card in the Vault tab's Keys row of
-a signed release; in the code, the bind) moves an older wallet's key into the vault's keychain group
-with one Touch ID, once its backup is proven. The service of such a release
-makes new keys only in that group, never a device key, and a wallet bound there carries a pin only
-the service can write, so a wallet file someone else wrapped to the same key, or an edited one, is
-refused before any Touch ID. Once a wallet on the Mac is bound, device-bound key files stop opening
-in Phosphor there, copies included, and so does every other wallet on that Mac that is not
-Phosphor-only yet, in any folder: the first wallet a signed release makes Phosphor-only, or makes
-new, is enough. Make your own wallet Phosphor-only, or prove its backup, before you make another;
-Restore from the backup brings such a wallet back. A demo run makes no key, so it never does this.
-A signed update still verifies either way: the updater checks the bundle's own update signature,
-and then its Developer ID code signature against Phosphor's Team ID, before it replaces anything.
+What closes it: on a signed release, the Vault tab's Keys row shows Phosphor-only access, and once
+the wallet's backup is proven, Make it Phosphor-only moves its key to where only Phosphor reaches
+it, with one Touch ID. The same wallet, the same addresses. Every Touch ID wallet a signed release
+makes is Phosphor-only from the start. Before it asks for Touch ID, Phosphor checks that a
+Phosphor-only wallet's file is the one it saved, so a file someone else made for the same key, or
+an edited one, is refused. A signed update verifies either way: the updater checks the bundle's own
+update signature, and then its Developer ID code signature against Phosphor's Team ID, before it
+replaces anything. Three limits stay, below.
+
+## Phosphor-only is one rule for the whole Mac
+
+The first time a signed release makes a Touch ID wallet Phosphor-only, or makes or restores one,
+every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in Phosphor. That
+holds for every copy of Phosphor and every data folder on the Mac, not only the one that made the
+change, and for copies of the older wallet's file too.
+
+What it means: a second wallet made in another folder, even one for a test, shuts your first
+wallet out of Phosphor while that one is still older. Its money is not touched: its lock card says
+why and offers Restore, and its backup brings it back here as a Phosphor-only wallet. So before you
+make or restore a second wallet on this Mac, make the one you have Phosphor-only, or at least prove
+its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
+alone.
+
+What closes it: making every wallet on the Mac Phosphor-only. The rule itself stays, because it is
+what keeps a file swapped in for your wallet from opening the older way.
+
+## A Phosphor-only wallet's key is in one place on this Mac
+
+A Phosphor-only wallet's key is kept in one place on this Mac that only Phosphor reaches, not in
+the wallet file, so no copy of the file opens the wallet without it, and it never leaves this Mac.
+
+What it means: if this Mac is erased, lost or replaced, or the passwords and keys macOS keeps for
+you are reset, the wallet file cannot open again, here or on any other Mac, and your backup (the
+recovery phrase, or the private key of a wallet that has no phrase) is the only way back. That is
+why Make it Phosphor-only asks for a proven backup first. A private key backup holds the EVM key
+alone: an older wallet whose file also holds a NEAR key, a Solana key or a trading key keeps those
+only in the Phosphor-only file, and the backup cannot bring them back. The app never shows or
+spends from those NEAR and Solana addresses, and a trading key is approved again.
+
+What closes it: nothing in this build. Keep your backup somewhere that is not this Mac.
 
 ## Old copies of a wallet file still open on this Mac until the keys change
 
-Making a wallet Phosphor-only moves its key into Phosphor's own keychain and writes a new wallet
-file for it. From then on Phosphor on this Mac refuses every device-bound wallet file, old copies
-included, before any Touch ID. What the step cannot do is reach those copies. A copy of the old `keys.enc.json` made
-before the bind (a Time Machine backup or local snapshot, a sync folder, a copy you made, the file on
-another disk) still holds the old key, wrapped to a key this Mac's Secure Enclave keeps. Any program
-running as you can load that key from the copy and ask for your Touch ID with its own dialog, and a
-Phosphor build from before Phosphor-only existed opens it too. The keys inside are the same keys, so such
-a copy can spend the same money.
+Making a wallet Phosphor-only writes a new wallet file for it, and from then on Phosphor on this Mac
+refuses the older file, before any Touch ID. What the step cannot reach is a copy of the old
+`keys.enc.json` saved before that day: a Time Machine backup or local snapshot, a sync folder, a
+copy you made, the file on another disk. Such a copy still opens the old way on this Mac: any
+program running as you can ask for your Touch ID with it, in its own dialog, and a Phosphor from
+before Phosphor-only opens it too. The keys inside are your wallet's keys, so such a copy can spend
+the same money.
 
 What Phosphor deletes: only the copies it wrote itself, the temp file a write cut short leaves
 beside the key file, and only after the Phosphor-only file has opened once. It never touches a Time
@@ -120,8 +142,9 @@ password file: this step does not change it, and anyone with the file and the pa
 anywhere.
 
 What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
-Touch ID dialog only for something you started in Phosphor. What closes it: moving to new keys that never existed outside
-the keychain, so the old key holds nothing. The chip vault plans that; it is not built.
+Touch ID dialog only for something you started in Phosphor. What closes it: moving the wallet to
+new keys that never existed outside Phosphor's reach, so an old copy holds nothing. The chip vault
+plans that; it is not built.
 
 ## The venues are not ours
 

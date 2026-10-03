@@ -372,7 +372,7 @@ Base and on Arbitrum, say), the send takes the largest, and the card names it af
 
 ### The Touch ID sentence
 
-On an enclave wallet the click puts up a Touch ID dialog whose sentence the app composes from the
+On a Touch ID wallet the click puts up a Touch ID dialog whose sentence the app composes from the
 proposal's own fields, for example "Approve: Pay 0.01 ETH to 0xb583f419...84BB5DB0 on Ethereum
 ($24.40)". The receiver is shortened to eight characters at each end, counted after the prefix
 every address of its kind shares (`0x`, `bc1q`, `bitcoincash:q`, `addr1q`, `UQ`, `r`, `G`, `T`),
