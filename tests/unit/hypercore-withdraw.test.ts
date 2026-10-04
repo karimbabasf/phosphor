@@ -558,8 +558,10 @@ test('a send with no reply is retried once with the same nonce, and a reply the 
   assert.equal(out.ok, true, out.detail);
   assert.equal(posts.length, 2);
   assert.deepEqual(posts.map((p) => p.nonce), [NOW, NOW]);
-  assert.equal(signed.length, 2, 'the same typed data signed again, which is the same bytes');
-  assert.equal((signed[0].message as Record<string, unknown>).time, (signed[1].message as Record<string, unknown>).time);
+  // One send, one signature: the retry posts the first attempt's own bytes, so on a vault on the
+  // chip it never asks for a second Touch ID.
+  assert.equal(signed.length, 1, 'signed once; the retry posts that signature again');
+  assert.deepEqual(posts[1], posts[0], 'the retry is the same action and the same signature, byte for byte');
   assert.match(out.detail, /nonce 1786600000000/);
   assert.deepEqual(out.txids, ['0xledgerhash', '0xdest']);
 });

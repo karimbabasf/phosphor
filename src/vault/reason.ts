@@ -16,6 +16,7 @@
 import type { Proposal, WriteDraft } from '../types.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
 import { payAddress } from '../rails/pay-rules.ts';
+import { APPROVE_AGENT_TYPES, HL_DOMAIN, HL_USDC_TOKEN, SEND_ASSET_TYPES, USD_CLASS_TRANSFER_TYPES } from '../rails/hl-user-signed.ts';
 
 const MAX_REASON = 120;
 
@@ -171,6 +172,96 @@ export function reasonFor(proposal: Pick<Proposal, 'draft'>): string {
   const to = receiver(proposal.draft);
   const at = to === null ? -1 : said.indexOf(` to ${to}`);
   return said.slice(0, Math.max(MAX_REASON, at === -1 || to === null ? 0 : at + 4 + to.length));
+}
+
+/* ONE TOUCH, ONE HYPERLIQUID OWNER ACTION, AND THE DIALOG SAYS WHICH. Once a vault has moved to the
+   chip, the owner key opens for a single Hyperliquid signature behind a Touch ID of its own
+   (src/rails/hl-user-signed.ts, OwnerTouch). Its sentence is read off the typed data that very
+   signature covers, never off a draft or anybody's words, the way the vault service writes the
+   chip's sentence from the payload it signs. Only the three shapes this app builds are read, field
+   for field, on mainnet, in USDC; anything else, or a sentence over the cap, is null, and then
+   nothing is asked and nothing is signed. */
+export function ownerReason(typed: unknown): string | null {
+  if (!exactly(typed, ['domain', 'types', 'primaryType', 'message'])) return null;
+  const { domain, types, primaryType, message } = typed;
+  if (!exactly(domain, ['name', 'version', 'chainId', 'verifyingContract'])) return null;
+  for (const key of ['name', 'version', 'chainId', 'verifyingContract'] as const) {
+    if (domain[key] !== HL_DOMAIN[key]) return null;
+  }
+  const fields = typeof primaryType === 'string' ? ownerFields(primaryType) : null;
+  if (fields === null || !exactly(types, [primaryType as string]) || !sameFields(types[primaryType as string], fields)) return null;
+  if (!exactly(message, fields.map((f) => f.name)) || message.hyperliquidChain !== 'Mainnet' || !isNonce(message.nonce)) return null;
+
+  let said: string;
+  switch (primaryType) {
+    case 'HyperliquidTransaction:SendAsset': {
+      const { destination, sourceDex, destinationDex, token, amount, fromSubAccount } = message;
+      if (typeof destination !== 'string' || !/^0x[0-9a-f]{40}$/.test(destination)) return null;
+      if (!isDex(sourceDex) || !isDex(destinationDex) || token !== HL_USDC_TOKEN || fromSubAccount !== '' || !isAmount(amount)) return null;
+      said = `Send ${usdcExact(amount)} USDC from your Hyperliquid account to ${ends(destination, 'evm')}`;
+      break;
+    }
+    case 'HyperliquidTransaction:UsdClassTransfer': {
+      const { amount, toPerp } = message;
+      if (!isAmount(amount) || typeof toPerp !== 'boolean') return null;
+      said = `Move ${usdcExact(amount)} USDC from ${toPerp ? 'spot to perp' : 'perp to spot'} in your Hyperliquid account`;
+      break;
+    }
+    default: {
+      const { agentAddress, agentName } = message;
+      if (typeof agentAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(agentAddress)) return null;
+      // Signed and never shown: a label on the venue's list of agents, so it is held to a label's shape.
+      if (typeof agentName !== 'string' || !/^[A-Za-z0-9-]{1,32}$/.test(agentName)) return null;
+      said = `Let ${ends(agentAddress.toLowerCase(), 'evm')} trade on your Hyperliquid account`;
+    }
+  }
+  return said.length <= MAX_REASON ? said : null;
+}
+
+// The field table for each owner action, from the module that signs it. Read when asked, never at load.
+function ownerFields(primaryType: string): ReadonlyArray<{ name: string; type: string }> | null {
+  switch (primaryType) {
+    case 'HyperliquidTransaction:SendAsset':
+      return SEND_ASSET_TYPES[primaryType];
+    case 'HyperliquidTransaction:UsdClassTransfer':
+      return USD_CLASS_TRANSFER_TYPES[primaryType];
+    case 'HyperliquidTransaction:ApproveAgent':
+      return APPROVE_AGENT_TYPES[primaryType];
+    default:
+      return null;
+  }
+}
+
+function exactly(value: unknown, keys: readonly string[]): value is Record<string, unknown> {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+  const own = Object.keys(value);
+  return own.length === keys.length && keys.every((k) => Object.prototype.hasOwnProperty.call(value, k));
+}
+
+function sameFields(given: unknown, want: ReadonlyArray<{ name: string; type: string }>): boolean {
+  return Array.isArray(given) && given.length === want.length && given.every((f, i) => exactly(f, ['name', 'type']) && f.name === want[i].name && f.type === want[i].type);
+}
+
+// A uint64, as the builders write it: a bigint.
+function isNonce(value: unknown): boolean {
+  return typeof value === 'bigint' && value > 0n && value < 2n ** 64n;
+}
+
+function isDex(value: unknown): boolean {
+  return value === '' || value === 'spot';
+}
+
+// The decimal string toAmountString writes: no sign, no exponent, at most six places, no zero at
+// either end that changes nothing, and never zero itself.
+function isAmount(value: unknown): value is string {
+  return typeof value === 'string' && /^(0|[1-9]\d{0,20})(\.\d{0,5}[1-9])?$/.test(value) && value !== '0';
+}
+
+// Exact, grouped, and never fewer than two places, as the chip's own sentences write money:
+// "8" is 8.00, "1234.5" is 1,234.50, "8.209399" stays 8.209399.
+function usdcExact(amount: string): string {
+  const [whole, frac = ''] = amount.split('.');
+  return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${frac.padEnd(2, '0')}`;
 }
 
 export const UNLOCK_REASON = 'Open your Phosphor vault';

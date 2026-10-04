@@ -56,6 +56,8 @@ import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { ownerKeyOut } from './vault/accounts.ts';
+import { ownerTouchVia } from './proposals/lifecycle.ts';
+import { useOwnerTouch } from './rails/hl-user-signed.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -259,6 +261,8 @@ const vaultPrefs = createVaultPrefs(cfg.dataDir);
 /* A vault that moved to the chip keeps its owner key out of the session: the key signs one
    Hyperliquid owner action per touch of its own, never from memory (src/vault/accounts.ts). */
 keystore.keepOwnerKeyOutWhen((vault) => ownerKeyOut(vaultPrefs.get(), vault));
+// The touch each of those owner actions asks for, read for the same vault by the same gate.
+useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: (v) => ownerKeyOut(vaultPrefs.get(), v) }));
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,

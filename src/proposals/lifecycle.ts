@@ -31,8 +31,10 @@ import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
-import { reasonFor } from '../vault/reason.ts';
+import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
+import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
+import type { OwnerTouch } from '../rails/hl-user-signed.ts';
 import { recordRecipient } from '../recipients.ts';
 import type { AddressActivity, ChainNetwork } from '../chainscan/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
@@ -46,6 +48,10 @@ const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 // A registry with no rails in it. Fail closed: a wiring layer that forgets to pass one
 // gets every rail proposal refused with a reason, not a rail picked by guesswork.
 export const NO_RAILS: RailRegistry = { for: () => null, kinds: () => [] };
+
+// The kinds whose every signature is a Hyperliquid owner action: the withdrawal's book move and
+// its send. A deposit spends from the intents balance first, so it is not one.
+const OWNER_ONLY_KINDS: ReadonlySet<WriteDraft['kind']> = new Set(['hl_withdraw']);
 
 export type ProposalDeps = {
   cfg: AppConfig;
@@ -487,6 +493,18 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
     return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
   }
 
+  /* A MOVE ONLY THE OWNER KEY SIGNS ASKS FOR ITS FINGER AT THE SIGNATURE. On a vault that moved to
+     the chip the owner key is out of the session, and each Hyperliquid owner action asks for a
+     Touch ID of its own that names the action, the amount and where it goes (ownerTouchVia,
+     below). A withdrawal is nothing but those actions, so a touch here would open a session it
+     never uses and put a second dialog in front of the one that matters. The click approves it,
+     the lock state does not matter, and the finger comes when the key signs. */
+  if (OWNER_ONLY_KINDS.has(p.draft.kind) && ownerTouchRequired()) {
+    const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+    ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; Touch ID asks at each owner signature`, { id, totalUsd: totalUsdOf(p.draft), ownerTouch: true });
+    return ctx.execute(approved);
+  }
+
   /* AN ENCLAVE WALLET ASKS FOR A FINGER, every time, open or shut. The click is recorded as
      awaiting_touch and the enclave is asked to unwrap the data key with a dialog that names this
      move; finishTouch (below) takes it from there when the shell answers. Not awaited: approve
@@ -618,6 +636,57 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   rememberRecipient(ctx, approved);
   return ctx.execute(approved);
+}
+
+/* THE OWNER KEY FOR ONE HYPERLIQUID SIGNATURE, BEHIND ONE TOUCH (P2.8). What a rail's signature asks
+   for on a vault that moved to the chip (src/rails/hl-user-signed.ts, OwnerTouch), and src/main.ts
+   installs it. The dialog's sentence is read off the typed data itself (src/vault/reason.ts,
+   ownerReason), so an action it cannot name is never asked about. The live file is unwrapped once
+   under the custody lock, as an approval's touch is, and opened for the owner key alone
+   (Keystore.withOwnerKey): the lock state is left as it was, the key signs inside, and it is
+   zeroed once the signature is made. The last check runs again after the touch, because a dialog
+   can stay up for a minute and Freeze binds at the signature. Nothing stays open: the next action
+   asks again. `ownerOut` is the keystore's gate as src/main.ts wires it, read for the vault in
+   the file. */
+export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; ownerOut: (vault: string) => boolean }): OwnerTouch {
+  const { vault, keystore } = deps;
+  return {
+    required() {
+      const evm = keystore.addresses().evm;
+      return evm !== null && deps.ownerOut(evm);
+    },
+    async sign(typed, lastCheck) {
+      const reason = ownerReason(typed);
+      if (reason === null) throw new OwnerTouchRefused('unnamed', 'Touch ID can only be asked for a Hyperliquid action the app can name in full, so nothing was signed');
+      return custodyLock(keystore).run(async () => {
+        const request = keystore.enclaveRequest();
+        if (request === null) throw new OwnerTouchRefused('no_enclave', 'This wallet has no Touch ID key to ask, so nothing was signed');
+        const answer = await vault.ask({ op: 'unwrap', reason, ...request });
+        if (!answer.ok) throw new OwnerTouchRefused(answer.error, touchSaid(answer.error));
+        if (answer.op !== 'unwrap') throw new OwnerTouchRefused('garbled', 'Touch ID answered something else, so nothing was signed');
+        const signed = keystore.withOwnerKey(answer.dek, (key) => {
+          lastCheck?.();
+          return signTypedWith(key, typed);
+        });
+        if (!signed.ok) throw new OwnerTouchRefused(signed.error, `The Touch ID did not open the wallet (${signed.error}), so nothing was signed`);
+        return await signed.value;
+      });
+    },
+  };
+}
+
+function touchSaid(code: string): string {
+  switch (code) {
+    case 'user_cancel':
+      return 'Touch ID was cancelled, so nothing was signed';
+    case 'timeout':
+      return 'Touch ID was not answered in time, so nothing was signed';
+    case 'no_relay':
+    case 'stopped':
+      return 'Touch ID could not be reached from this window, so nothing was signed';
+    default:
+      return `Touch ID did not answer (${code}), so nothing was signed`;
+  }
 }
 
 /* Everything queued while the wallet was locked, decided now.
