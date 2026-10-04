@@ -24,8 +24,10 @@
 //   verifying_contract  intents.near
 //   deadline            2026-10-04T18:33:36.641Z (0 to 9 fraction digits, UTC), later than now and
 //                       at most 120 seconds after it
-//   nonce               canonical base64 of 32 bytes: 5628f6c6 00, salt (4), the payload's deadline
-//                       in nanoseconds (i64 little-endian), random (15)
+//   nonce               canonical base64 of 32 bytes: 5628f6c6 00, salt (4), its own expiry in
+//                       nanoseconds (i64 little-endian), random (15); the expiry is exactly seven
+//                       days after the payload's deadline, the one life every nonce Phosphor builds
+//                       carries (NONCE_LIFE_AFTER_DEADLINE_MS, src/rails/intents-relay.ts)
 //   intents, intent     a list of 0 to 4 objects that each name their kind; 0 is the rekey's proof
 //   refused_kind        add_public_key, set_auth_by_predecessor_id and the rest of refusedKinds
 //   unknown_kind        any other kind but transfer and remove_public_key
@@ -261,6 +263,12 @@ enum IntentGrammar {
   static let maxIntents = 4
   static let maxSentence = 120
   static let windowNs: Int64 = 120_000_000_000
+  /* How long a nonce outlives its payload's deadline. The verifier lets a V1 nonce expire at or
+     after the deadline with no upper limit, and its garbage collector may clear one as soon as the
+     nonce's own expiry passes, after which is_nonce_used reads false for a nonce that ran. Seven
+     days is the life the relay rail and invite claims already give theirs, so the app asks the
+     chain about every nonce it built under one rule; anything else is refused. */
+  static let nonceLifeNs: Int64 = 7 * 86_400 * 1_000_000_000
   static let verifier = "intents.near"
   static let nonceHead: [UInt8] = [0x56, 0x28, 0xf6, 0xc6, 0x00]
   static let u128Max = Array("340282366920938463463374607431768211455".utf8)
@@ -471,8 +479,9 @@ enum IntentGrammar {
     }
     var ns: UInt64 = 0
     for byte in bytes[9..<17].reversed() { ns = (ns << 8) | UInt64(byte) }
-    guard Int64(bitPattern: ns) == deadline else {
-      throw GrammarRefusal(rule: "nonce", message: "the nonce's deadline must equal the payload's")
+    let (expiry, overflow) = deadline.addingReportingOverflow(nonceLifeNs)
+    guard !overflow, Int64(bitPattern: ns) == expiry else {
+      throw GrammarRefusal(rule: "nonce", message: "the nonce must expire exactly seven days after the payload's deadline")
     }
   }
 
