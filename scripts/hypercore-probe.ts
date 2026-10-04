@@ -50,7 +50,7 @@ const signer = { address: () => account as Address, signErc191: async () => { th
 const sign = { address: () => account as Address, signTypedData: async () => { throw new Error('the probe never signs'); } };
 const client = oneClickClient();
 
-const deposit = hypercoreDepositRail({ keysPath: cfg.keysPath, client, signer });
+const deposit = hypercoreDepositRail({ keysPath: cfg.keysPath, client, signer, hl: { keysPath: cfg.keysPath, sign } });
 const withdraw = hypercoreWithdrawRail({ keysPath: cfg.keysPath, client, hl: { keysPath: cfg.keysPath, sign } });
 
 console.log(`trading account : ${account}`);
