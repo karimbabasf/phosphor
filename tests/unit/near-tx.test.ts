@@ -230,7 +230,12 @@ const UNKNOWN_TRANSACTION = rpcError('UNKNOWN_TRANSACTION', "Transaction doesn't
 // INVALID_TRANSACTION carries its variant in data, as nearcore 2.13.4 serializes InvalidTxError.
 const invalidTx = (variant: unknown): Answer => rpcError('INVALID_TRANSACTION', { TxExecutionError: { InvalidTxError: variant } });
 const INVALID_SIGNATURE = invalidTx('InvalidSignature');
+const TOO_BIG = invalidTx({ TransactionSizeExceeded: { size: 2_000_000, limit: 1_572_864 } });
+const PARSE_ERROR: Answer = {
+  body: { jsonrpc: '2.0', id: 'phosphor', error: { name: 'REQUEST_VALIDATION_ERROR', cause: { name: 'PARSE_ERROR', info: { error_message: 'bad' } }, code: -32700, message: 'Parse error', data: 'bad' } },
+};
 const EXPIRED = invalidTx('Expired');
+const SIGNER_MISSING = invalidTx({ SignerDoesNotExist: { signer_id: 'gas' } });
 const KEY_NOT_FOUND = invalidTx({ InvalidAccessKeyError: { AccessKeyNotFound: { account_id: 'gas', public_key: 'ed25519:key' } } });
 const INVALID_NONCE = invalidTx({ InvalidNonce: { tx_nonce: AK_NONCE + 1, ak_nonce: AK_NONCE + 1 } });
 const SHARD_CONGESTED = invalidTx({ ShardCongested: { shard_id: 6, congestion_level: 1 } });
@@ -336,10 +341,12 @@ function fakeChain(o: ChainOptions = {}) {
   return { fetchImpl, calls };
 }
 
-// A clock that moves only when the code under test sleeps.
+// A clock that moves only when the code under test sleeps. It starts off a whole millisecond, as
+// performance.now() does, so every budget sum the code makes is fractional.
 function fakeClock() {
-  let at = 0;
-  return { now: () => at, sleep: async (ms: number) => void (at += ms), elapsed: () => at };
+  const start = 1000.25;
+  let at = start;
+  return { now: () => at, sleep: async (ms: number) => void (at += ms), elapsed: () => at - start };
 }
 
 const sends = (calls: Call[]) => calls.filter((c) => c.method === 'send_tx').map((c) => String(c.params.signed_tx_base64));
@@ -415,12 +422,12 @@ test('failed: the verifier refused the intents, so nothing ran, and its words ar
   assert.equal(sends(chain.calls).length, 1);
 });
 
-test('failed: bytes no block will ever take (a bad signature, an expired block hash, a key not on the account) are not sent again', async () => {
-  for (const [refusal, words] of [[INVALID_SIGNATURE, /InvalidSignature/], [EXPIRED, /Expired/], [KEY_NOT_FOUND, /AccessKeyNotFound/]] as const) {
+test('failed: bytes every node refuses on their own (a bad signature, an oversize transaction, unparsable bytes) are not sent again', async () => {
+  for (const [refusal, words] of [[INVALID_SIGNATURE, /INVALID_TRANSACTION .*InvalidSignature/], [TOO_BIG, /INVALID_TRANSACTION .*TransactionSizeExceeded/], [PARSE_ERROR, /PARSE_ERROR/]] as const) {
     const chain = fakeChain({ sends: [refusal] });
     const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
     assert.equal(outcome.status, 'failed');
-    assert.match(outcome.reason ?? '', /the chain refused the transaction: INVALID_TRANSACTION/);
+    assert.match(outcome.reason ?? '', /the chain refused the transaction: /);
     assert.match(outcome.reason ?? '', words);
     assert.equal(outcome.gasBurnt, null);
     assert.equal(sends(chain.calls).length, 1);
@@ -428,8 +435,10 @@ test('failed: bytes no block will ever take (a bad signature, an expired block h
   }
 });
 
-test('a refusal a later block can lift is never failed: nearcore says it about a copy it already forwarded, so the identical bytes go again', async () => {
-  for (const refusal of [SHARD_CONGESTED, NOT_ENOUGH_BALANCE, NOT_ENOUGH_ALLOWANCE, INVALID_NONCE]) {
+test('a refusal that depends on one node\'s view of the chain is never failed: the identical bytes go again', async () => {
+  // Congestion, balance and allowance, a nonce, and what a node behind the chain says: Expired for a
+  // block it has not seen, SignerDoesNotExist or AccessKeyNotFound for an account it has not seen.
+  for (const refusal of [SHARD_CONGESTED, NOT_ENOUGH_BALANCE, NOT_ENOUGH_ALLOWANCE, INVALID_NONCE, EXPIRED, SIGNER_MISSING, KEY_NOT_FOUND]) {
     const lifted = fakeChain({ sends: [refusal, EXECUTED] });
     const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(lifted));
     assert.equal(outcome.status, 'executed');
@@ -454,7 +463,27 @@ test('unknown: a timeout sends the identical bytes again until the budget runs o
   assert.ok(sent.length >= 3, `${sent.length} sends`);
   assert.equal(new Set(sent).size, 1, 'every send carried the identical bytes');
   assert.equal(outcome.txHash, hashOf({ signed_tx_base64: sent[0] }));
-  assert.equal(clock.elapsed(), SUBMIT_BUDGET_MS, 'the last pause stops at the budget');
+  assert.ok(Math.abs(clock.elapsed() - SUBMIT_BUDGET_MS) < 1e-6, `the last pause stops at the budget (${clock.elapsed()} ms)`);
+});
+
+test('on the real clock a send really leaves: every request deadline is a whole number of milliseconds', async () => {
+  // performance.now() is fractional, and AbortSignal.timeout refuses a fractional delay: a deadline
+  // computed from it unrounded threw before the request was made, on every send.
+  const chain = fakeChain();
+  const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, { fetchImpl: chain.fetchImpl, budgetMs: 3000 });
+  assert.equal(outcome.status, 'executed', outcome.reason ?? '');
+  assert.equal(sends(chain.calls).length, 1);
+});
+
+test('reads that take half the budget refuse before anything is signed', async () => {
+  const chain = fakeChain({ block: [RATE_LIMITED, RATE_LIMITED, { body: { jsonrpc: '2.0', id: 'phosphor', result: { header: HEADER } } }] });
+  const clock = fakeClock();
+  await assert.rejects(
+    submitExecuteIntents({ gasSeed: SEED, signed: ONE }, { ...deps(chain, clock), budgetMs: 4000 }),
+    (err: unknown) => err instanceof NearTxError && err.code === 'rpc_unavailable' && /nothing was signed/.test(err.message),
+  );
+  assert.equal(chain.calls.filter((c) => c.method === 'block').length, 3, 'the block read answered on its third try');
+  assert.equal(sends(chain.calls).length, 0);
 });
 
 test('a timeout, then the identical bytes again: send_tx answers the transaction it already took with its FINAL outcome', async () => {
@@ -492,7 +521,7 @@ test('a rate-limited poll is asked again as a poll', async () => {
 });
 
 test('bytes refused after an earlier copy may have landed are asked for by hash: the earlier copy ran', async () => {
-  const chain = fakeChain({ sends: [TIMEOUT_ERROR, EXPIRED], polls: [EXECUTED] });
+  const chain = fakeChain({ sends: [TIMEOUT_ERROR, INVALID_SIGNATURE], polls: [EXECUTED] });
   const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
   assert.equal(outcome.status, 'executed');
   assert.deepEqual(chain.calls.filter((c) => c.method === 'send_tx' || c.method === 'tx').map((c) => c.method), ['send_tx', 'send_tx', 'tx']);

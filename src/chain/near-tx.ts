@@ -575,7 +575,8 @@ function shortId(id: string): string {
 async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8Array, d: Deps): Promise<ExecuteOutcome> {
   /* Three reads, then the refusals, then the one signature. The key's nonce is read at optimistic:
      a transaction that ran a block ago is already counted there and not yet at final, and a nonce
-     the chain has seen is refused. */
+     the chain has seen is refused. The budget runs from here, so slow reads shorten the sending. */
+  const started = d.now();
   const [block, account, accessKey] = await Promise.all([
     readFinalBlock(d),
     viewAccount(gas.accountId, d),
@@ -595,6 +596,11 @@ async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8
         `${(EXECUTE_INTENTS_GAS + FEE_GAS) / TGAS} TGas bought upfront (NEP-642), and its own storage`,
     );
   }
+  // Reads that ate half the budget mean an RPC in trouble: stop while nothing is signed, so a send
+  // always keeps at least half.
+  if (d.now() - started >= d.budgetMs / 2) {
+    throw new NearTxError('rpc_unavailable', `NEAR took ${Math.round(d.now() - started)} ms to answer the reads before signing; nothing was signed`);
+  }
   const signed = signWith(
     {
       signerId: gas.accountId,
@@ -606,43 +612,31 @@ async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8
     },
     key,
   );
-  return deliver(signed, gas.accountId, d);
+  return deliver(signed, gas.accountId, d, started);
 }
 
-/* Refusals the bytes themselves decide: no block will ever take this transaction, wherever a copy
-   went. Every other refusal can lift, and nearcore says it even about a copy it already took: send_tx
-   forwards the transaction, then re-checks it against newer state while waiting and answers
+/* Refusals the bytes alone decide, with no chain state read: every node says the same about them,
+   so no block will ever take the transaction, wherever a copy went. Every other refusal can come
+   from one node's view and lift on the next. nearcore says them even about a copy it already took:
+   send_tx forwards the transaction, then re-checks it against newer state while waiting and answers
    INVALID_TRANSACTION for a congested shard or a gas price that rose, with the forwarded copy still
-   able to run (chain/jsonrpc/src/lib.rs, tx_status_fetch, nearcore 2.13.4). InvalidNonce is left out
-   too: nearcore's own check that the nonce went to this very transaction can miss a copy its view
-   has not indexed yet. */
-const NEVER_VALID = new Set([
-  'InvalidSignature',
-  'InvalidSignerId',
-  'InvalidReceiverId',
-  'SignerDoesNotExist',
-  'InvalidChain',
-  'Expired',
-  'InvalidAccessKeyError',
-  'TransactionSizeExceeded',
-  'ActionsValidation',
-  'InvalidTransactionVersion',
-]);
+   able to run (chain/jsonrpc/src/lib.rs, tx_status_fetch, nearcore 2.13.4). A node behind the block
+   the transaction names answers Expired, and one behind the account answers SignerDoesNotExist or
+   AccessKeyNotFound. nearcore's check that a used nonce went to this very transaction can miss a copy
+   its view has not indexed yet, so InvalidNonce stays out too. */
+const NEVER_VALID = new Set(['InvalidSignature', 'InvalidSignerId', 'InvalidReceiverId', 'TransactionSizeExceeded', 'ActionsValidation', 'InvalidTransactionVersion']);
 
 function neverValid(reply: { cause: string; data: unknown }): boolean {
   if (reply.cause === 'PARSE_ERROR' || reply.cause === 'REQUEST_VALIDATION_ERROR') return true;
   if (reply.cause !== 'INVALID_TRANSACTION') return false;
   // data is {"TxExecutionError":{"InvalidTxError":<variant>}}: a unit variant is a string, any other
-  // an object with one key. NotEnoughAllowance is a balance, so it stays out like NotEnoughBalance.
+  // an object with one key.
   const variant = record(record(reply.data).TxExecutionError).InvalidTxError;
   const name = typeof variant === 'string' ? variant : Object.keys(record(variant))[0];
-  if (name === undefined || !NEVER_VALID.has(name)) return false;
-  const inner = record(variant)[name];
-  return name !== 'InvalidAccessKeyError' || (typeof inner === 'string' ? inner : Object.keys(record(inner))[0]) !== 'NotEnoughAllowance';
+  return name !== undefined && NEVER_VALID.has(name);
 }
 
-async function deliver(signed: SignedNearTransaction, sender: string, d: Deps): Promise<ExecuteOutcome> {
-  const started = d.now();
+async function deliver(signed: SignedNearTransaction, sender: string, d: Deps, started: number): Promise<ExecuteOutcome> {
   const left = () => d.budgetMs - (d.now() - started);
   // Whether any copy sent so far may have been taken. Until one may, a refusal of the bytes is final.
   let mayHaveLanded = false;
@@ -650,7 +644,8 @@ async function deliver(signed: SignedNearTransaction, sender: string, d: Deps): 
   let last = '';
   for (let round = 0; ; round += 1) {
     if (round > 0 && left() <= 0) return settled('unknown', signed.hash, last);
-    const timeoutMs = Math.min(VENUE_WRITE_TIMEOUT_MS, left());
+    // A whole number of milliseconds, at least one: AbortSignal.timeout refuses anything else.
+    const timeoutMs = Math.max(1, Math.floor(Math.min(VENUE_WRITE_TIMEOUT_MS, left())));
     const sent: boolean = ask === 'send';
     const reply = sent
       ? await exchange('send_tx', { signed_tx_base64: signed.base64, wait_until: 'FINAL' }, d, timeoutMs)
