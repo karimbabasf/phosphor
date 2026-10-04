@@ -1114,3 +1114,47 @@ prefix. Every issued code has them (`src/invite/code.ts`). They miss a code some
 prefix and a slip, another separator or groups of one or two; a character short or one stuck to
 its end; its digits typed as O, I or L; or a code split over two messages. Each costs that one
 code.
+
+**Two keys derived from the owner key, never stored.** The chip vault (Phase 2) adds ALLOWANCE, a
+0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account
+that pays for the vault's `execute_intents` calls. Both come from the EVM key at every open and are
+written nowhere (`src/keystore/derived.ts`): HKDF-SHA256 (RFC 5869) over the key's 32 bytes, salt
+`phosphor`. ALLOWANCE takes info `phosphor-allowance-v1` and reads the 32 bytes as a secp256k1
+scalar, drawn again under `phosphor-allowance-v1/1`, `/2` and on while it is 0 or not below the
+group order. GAS takes info `phosphor-gas-v1` as an ed25519 seed, and its account is the hex of its
+public key. The keystore holds both as buffers beside the EVM key and the lock zeroes them with it.
+Derived rather than kept, so no new key enters the wallet file and the backup a person already has
+brings both back. The cost of that: whoever holds the EVM key, or its backup, also holds ALLOWANCE
+(at most its size plus 10 %, $110 at the default) and GAS (about 0.5 NEAR). Keep the key backup
+like cash. The published vectors, checked outside this code with Python's hmac, foundry's `cast`
+and the OpenSSL command line, and checked again by `tests/unit/keystore-derived.test.ts`:
+
+```
+owner      4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
+allowance  c96e3431c7fe5789854eb223ffab755b902c08bb34fdf40bfcb9839589d3faa1   0xF6BEEE2877DC58331cFa06c66Cc47B5F2535A379
+gas seed   f393907ec2ad1db656b6bd3d8e4804ad70d12ed136c76f46dac1549606a6c64d
+gas        e4d620800228e29d21a180cc305b9541c170631df3b5b513b795947a27520108
+
+owner      0123456789012345678901234567890123456789012345678901234567890123   0x14791697260E4c9A71f18484C9f997B308e59325
+allowance  7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a   0x619f9D371128BED76934C04434Bf9C43b904bE36
+gas seed   fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879
+gas        ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7
+```
+
+Both owner keys are public test keys (the canonical Ethereum documentation key and the
+hyperliquid-python-sdk signing fixture), so every value above holds nothing.
+
+**Once a vault has moved to the chip, the EVM key is out of the session.** `state/vault.json` names
+the chip key and the vault it moved (`src/vault/prefs.ts`), and the keystore reads it at every open
+(`keepOwnerKeyOutWhen`, wired in `src/main.ts`). That session holds the Hyperliquid API wallet,
+ALLOWANCE and GAS only: the payload, the EVM key and the data key are wiped at the open, and
+anything that asks for the EVM key or the payload gets `owner_touch_required`, never a lock error
+that would wait for an unlock that cannot help. The open still parses the payload once, so string
+copies of the EVM key can stay in memory until it is reused, as after any open; nothing in the
+session points at them. The EVM key then signs one Hyperliquid owner action
+per Touch ID of its own (`withOwnerKey`), and the buffer it lends is zeroed as soon as that
+signature is made (`tests/unit/keystore-chip-session.test.ts` reads it back). `state/vault.json` is
+not a control: a program running as you that removes the chip entry puts the EVM key back in the
+next session, where it reaches Hyperliquid's owner actions and not the vault, whose keys on chain
+no longer include it. The chip key signs only through the vault service, which checks its own
+marker first.

@@ -37,6 +37,8 @@ import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
 import type { RailKeys, Wallet } from './derive.ts';
+import { accountsOf, deriveKeys } from './derived.ts';
+import type { DerivedAccounts } from './derived.ts';
 import { seWrap } from './sewrap.ts';
 import type { SeWrapped } from './sewrap.ts';
 import { atomicWrite } from '../fsatomic.ts';
@@ -78,6 +80,25 @@ const DEMO_REFUSAL =
 function envIsDemo(): boolean {
   const mode = process.env.PHOSPHOR_MODE ?? process.env.ACC_MODE;
   return mode === 'demo';
+}
+
+const LOCKED = 'the wallet is locked: unlock it in the app window to sign anything';
+
+/* What a signer gets when it asks for the owner key of a vault that moved to the chip
+   (keepOwnerKeyOutWhen): that key signs one Hyperliquid owner action per Touch ID of its own
+   (withOwnerKey), never out of the session. The code is the contract; the message is for logs. */
+export const OWNER_TOUCH_REQUIRED = 'owner_touch_required';
+
+export class OwnerTouchRequired extends Error {
+  readonly code = OWNER_TOUCH_REQUIRED;
+  constructor() {
+    super(`${OWNER_TOUCH_REQUIRED}: this vault moved to its Touch ID key, so the owner key signs only behind a touch of its own, one signature at a time`);
+    this.name = 'OwnerTouchRequired';
+  }
+}
+
+export function isOwnerTouchRequired(err: unknown): boolean {
+  return err instanceof OwnerTouchRequired || (err as { code?: unknown } | null)?.code === OWNER_TOUCH_REQUIRED;
 }
 
 export type LockState = 'unlocked' | 'locked' | 'no_wallet' | 'needs_migration';
@@ -237,6 +258,29 @@ export type Keystore = {
   evmPrivateKey(): `0x${string}`;
   // The same for the runner: the API wallet alone, or null when the wallet has none. See `apiKey`.
   apiWallet(): ApiWallet | null;
+
+  // ---- Phase 2: the keys derived from the owner key (src/keystore/derived.ts) ----
+  /* The ALLOWANCE key and the GAS seed: the session's own buffers, derived at every open and
+     zeroed by the lock, never written anywhere. Read them for one signature in the same turn;
+     never keep or change them. Throw while locked, as keys() does, in both kinds of vault. */
+  allowanceKey(): Buffer;
+  gasSeed(): Buffer;
+  /* The accounts those keys sign for, public and kept after a lock the way the addresses are.
+     Null until this process has decrypted the wallet. */
+  derivedAccounts(): DerivedAccounts | null;
+  /* The vault moved to the chip: from the next open the session holds the API wallet, ALLOWANCE
+     and GAS only. The payload, the owner key and the data key are wiped at the open, and keys(),
+     evmPrivateKey() and everything built on them refuse with OwnerTouchRequired. `test` gets the
+     0x address of the wallet being opened. Until it is called, never (src/main.ts wires it). */
+  keepOwnerKeyOutWhen(test: (vault: string) => boolean): void;
+  // The same, now, for a session already open: what the move to the chip calls once it has
+  // written vault.json. False when no owner key was held.
+  dropOwnerKey(): boolean;
+  /* The owner key for one signature behind a touch of its own: the payload is opened with this
+     data key, the key handed to `fn` and zeroed when `fn` returns, or when the promise it returns
+     settles. The lock is left as it was, and the data key is wiped either way. */
+  withOwnerKey<T>(dek: Buffer, fn: (key: Buffer) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }>;
+
   path(): string;
   onChange(fn: (state: LockState) => void): () => void;
 
@@ -478,6 +522,17 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // The runner's key, kept the same way for the same reason: every runner it starts reads it.
   let apiKey: Buffer | null = null;
   let apiAddress: string | null = null;
+  // Phase 2's two keys, derived from the EVM key at every hold() and wiped with it.
+  let allowKey: Buffer | null = null;
+  let gasKey: Buffer | null = null;
+  /* Whether the open session holds the owner key, and the address of the one it opened with. A
+     vault that moved to the chip opens with ownerHeld false: `plain` is then an empty buffer, and
+     no payload, owner key or data key is in memory (keepOwnerKeyOutWhen). */
+  let ownerHeld = true;
+  let heldVault: string | null = null;
+  let ownerOutTest: (vault: string) => boolean = () => false;
+  // The accounts the derived keys sign for, and the vault (lower case) they were derived for.
+  let derivedIds: (DerivedAccounts & { vault: string }) | null = null;
   let failures = 0;
   let backoffUntil = 0;
   /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
@@ -564,26 +619,107 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function keys(): KeysPayload {
+    if (ownerOut()) throw new OwnerTouchRequired();
     if (plain !== null) return JSON.parse(plain.toString('utf8')) as KeysPayload;
-    if (hasKeystore()) throw new Error('the wallet is locked: unlock it in the app window to sign anything');
+    return shutPayload();
+  }
+
+  // A wallet with nothing open: locked, a plaintext file not migrated yet, or none at all.
+  function shutPayload(): KeysPayload {
+    if (hasKeystore()) throw new Error(LOCKED);
     if (fs.existsSync(keysPath)) return JSON.parse(fs.readFileSync(keysPath, 'utf8')) as KeysPayload;
     throw new Error(`no wallet yet. Create one in the app window, or point PHOSPHOR_KEYS at an existing ${path.basename(keysPath)}`);
   }
 
   function evmPrivateKey(): `0x${string}` {
+    if (ownerOut()) throw new OwnerTouchRequired();
     if (plain !== null) {
       if (evmKey === null) throw new Error('this wallet has no valid EVM private key');
       return `0x${evmKey.toString('hex')}`;
     }
-    // Locked, or not migrated yet: keys() throws for the first and reads keys.json for the second.
-    const key = keys().evm?.privateKey;
+    // Locked, or not migrated yet: the first throws and the second reads keys.json.
+    const key = shutPayload().evm?.privateKey;
     if (typeof key !== 'string' || !EVM_KEY.test(key)) throw new Error('this wallet has no valid EVM private key');
     return key as `0x${string}`;
   }
 
   function apiWallet(): ApiWallet | null {
     if (plain !== null) return apiKey === null ? null : { key: `0x${apiKey.toString('hex')}`, address: apiAddress };
-    return apiWalletOf(keys());
+    return apiWalletOf(shutPayload());
+  }
+
+  // ---------- the owner key, and the two keys derived from it ----------
+
+  // A test that throws keeps the key out: the gate fails shut.
+  function gateSays(vault: string): boolean {
+    try {
+      return ownerOutTest(vault);
+    } catch {
+      return true;
+    }
+  }
+
+  /* Whether the owner key is out of reach now: a session opened without it, or the gate closing on
+     this wallet. A session that still holds it when the gate closes (the move to the chip finished
+     while the wallet was open) lets go of it here, at the first ask. Shut, the gate decides which
+     refusal a signer gets, and nothing is released either way. */
+  function ownerOut(): boolean {
+    if (plain !== null) {
+      if (!ownerHeld) return true;
+      if (heldVault === null || !gateSays(heldVault)) return false;
+      dropOwner();
+      return true;
+    }
+    const vault = addresses().evm;
+    return vault !== null && gateSays(vault);
+  }
+
+  function dropOwner(): void {
+    if (plain !== null) wipe(plain);
+    wipe(evmKey, dataKey);
+    plain = Buffer.alloc(0);
+    evmKey = null;
+    dataKey = null;
+    ownerHeld = false;
+  }
+
+  /* The accounts the derived keys sign for, worked out once per wallet: from keys this function
+     derives and wipes, unless `keys` hands over a session's own. */
+  function noteDerived(vault: string, owner: Buffer, keys: { allowance: Buffer; gas: Buffer } | null = null): void {
+    const lower = vault.toLowerCase();
+    if (derivedIds?.vault === lower) return;
+    const made = keys ?? deriveKeys(owner);
+    try {
+      derivedIds = { vault: lower, ...accountsOf(made) };
+    } finally {
+      if (keys === null) wipe(made.allowance, made.gas);
+    }
+  }
+
+  // What a decrypted payload proves about the derived accounts, for an open that holds nothing.
+  function learnDerived(payload: KeysPayload, vault: string | null): void {
+    const key = payload.evm?.privateKey;
+    if (vault === null || typeof key !== 'string' || !EVM_KEY.test(key)) return;
+    const owner = Buffer.from(key.slice(2), 'hex');
+    try {
+      noteDerived(vault, owner);
+    } catch {
+      // Sixty-four hex characters that are no secp256k1 key: nothing signs for them, so no account.
+    } finally {
+      wipe(owner);
+    }
+  }
+
+  /* The open session's data key, which lets the payload be rewritten without a second touch. A
+     session without the owner key keeps none: it would open the payload again with no touch. */
+  function keepDataKey(dek: Buffer): void {
+    if (dataKey !== null && dataKey !== dek) wipe(dataKey);
+    if (ownerHeld) {
+      dataKey = dek;
+    } else {
+      wipe(dek);
+      dataKey = null;
+    }
   }
 
   // Every way the payload comes open lands here, so the keys beside it are never stale and never
@@ -591,13 +727,58 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   function hold(body: Buffer, payload: KeysPayload): void {
     stopClosing();
     if (plain !== null && plain !== body) wipe(plain);
-    wipe(evmKey, apiKey);
-    plain = body;
+    wipe(evmKey, apiKey, allowKey, gasKey);
+    evmKey = allowKey = gasKey = null;
     const key = payload.evm?.privateKey;
-    evmKey = typeof key === 'string' && EVM_KEY.test(key) ? Buffer.from(key.slice(2), 'hex') : null;
+    const owner = typeof key === 'string' && EVM_KEY.test(key) ? Buffer.from(key.slice(2), 'hex') : null;
+    // The address the gate is asked about comes from the same derivation as addresses(), so the
+    // two can never name different wallets.
+    heldVault = null;
+    if (owner !== null) {
+      try {
+        heldVault = addressesFromKeys({ evm: key as `0x${string}` }).evm ?? null;
+      } catch {
+        // Sixty-four hex characters the curve refuses: a key that signs nothing.
+      }
+    }
+    if (owner !== null && heldVault !== null) {
+      try {
+        const made = deriveKeys(owner);
+        allowKey = made.allowance;
+        gasKey = made.gas;
+        noteDerived(heldVault, owner, made);
+      } catch {
+        wipe(allowKey, gasKey);
+        allowKey = gasKey = null;
+      }
+    }
     const api = apiWalletOf(payload);
     apiKey = api === null ? null : Buffer.from(api.key.slice(2), 'hex');
     apiAddress = api?.address ?? null;
+    ownerHeld = heldVault === null || !gateSays(heldVault);
+    if (ownerHeld) {
+      plain = body;
+      evmKey = owner;
+    } else {
+      wipe(body, owner);
+      plain = Buffer.alloc(0);
+    }
+  }
+
+  function sessionKey(held: Buffer | null): Buffer {
+    if (plain !== null) {
+      if (held === null) throw new Error('this wallet has no valid EVM private key, so it derives no allowance or gas key');
+      return held;
+    }
+    if (hasKeystore()) throw new Error(LOCKED);
+    if (fs.existsSync(keysPath)) throw new Error('this wallet is still a plaintext file: move it into the keystore in the app window first');
+    throw new Error('no wallet yet. Create one in the app window.');
+  }
+
+  function derivedAccounts(): DerivedAccounts | null {
+    const vault = addresses().evm?.toLowerCase() ?? null;
+    if (derivedIds === null || vault === null || derivedIds.vault !== vault) return null;
+    return { allowance: derivedIds.allowance, gas: derivedIds.gas };
   }
 
   async function write(password: string, payload: KeysPayload, kdf: KdfParams): Promise<StoredAddresses> {
@@ -766,12 +947,16 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   function lock(): boolean {
     stopClosing();
     if (plain === null) return false;
-    wipe(plain, dataKey, evmKey, apiKey);
+    wipe(plain, dataKey, evmKey, apiKey, allowKey, gasKey);
     plain = null;
     dataKey = null;
     evmKey = null;
     apiKey = null;
     apiAddress = null;
+    allowKey = null;
+    gasKey = null;
+    ownerHeld = true;
+    heldVault = null;
     announce();
     return true;
   }
@@ -888,8 +1073,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
 
   function holdOpen(payload: KeysPayload, dek: Buffer, addrs: StoredAddresses): void {
     hold(Buffer.from(JSON.stringify(payload), 'utf8'), payload);
-    if (dataKey !== null && dataKey !== dek) wipe(dataKey);
-    dataKey = dek;
+    keepDataKey(dek);
     openAddresses = addrs;
     announce();
   }
@@ -928,6 +1112,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const derived = addressesOf(payload);
     tampered = !sameAddresses(derived, stored.header.addresses);
     openAddresses = derived;
+    learnDerived(payload, derived.evm);
     failures = 0;
     backoffUntil = 0;
     return { ok: true, body, payload };
@@ -937,8 +1122,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const opened = openWithDataKey(dek);
     if (!opened.ok) return opened;
     hold(opened.body, opened.payload);
-    if (dataKey !== null) wipe(dataKey);
-    dataKey = dek;
+    keepDataKey(dek);
     announce();
     return { ok: true };
   }
@@ -967,11 +1151,40 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     try {
       const payload = JSON.parse(opened.body.toString('utf8')) as KeysPayload;
       openAddresses = addressesOf(payload);
+      learnDerived(payload, openAddresses.evm);
       tampered = false;
       return { ok: true, value: read(payload) };
     } finally {
       wipe(opened.body);
     }
+  }
+
+  function withOwnerKey<T>(dek: Buffer, fn: (key: Buffer) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }> {
+    const opened = openWithDataKey(dek);
+    if (!opened.ok) return opened;
+    const raw = opened.payload.evm?.privateKey;
+    wipe(opened.body, dek);
+    if (typeof raw !== 'string' || !EVM_KEY.test(raw)) return { ok: false, error: 'damaged', detail: 'this wallet has no valid EVM private key' };
+    const key = Buffer.from(raw.slice(2), 'hex');
+    let value: T;
+    try {
+      value = fn(key);
+    } catch (err) {
+      wipe(key);
+      throw err;
+    }
+    // A signer that answers with a promise keeps the key until its signature is made. Adopted
+    // through Promise.resolve, so a thenable that throws is a rejection, and the key still goes.
+    const pending = value as unknown as PromiseLike<unknown> | null;
+    if (pending !== null && typeof pending === 'object' && typeof pending.then === 'function') {
+      Promise.resolve(pending).then(
+        () => wipe(key),
+        () => wipe(key),
+      );
+    } else {
+      wipe(key);
+    }
+    return { ok: true, value };
   }
 
   /* An approval's Touch ID opens the wallet for that one move. On a wallet already open it only
@@ -1177,19 +1390,18 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     }
     if (after === 'open') {
       hold(opened.body, opened.payload);
-      if (dataKey !== null && dataKey !== dek) wipe(dataKey);
-      dataKey = dek;
+      keepDataKey(dek!);
     } else {
       wipe(opened.body);
       // The wallet may have locked while the touch was open; a bind opens nothing it found shut.
       if (plain !== null && closers.size === 0) {
-        if (dataKey !== null) wipe(dataKey);
-        dataKey = dek;
+        keepDataKey(dek!);
       } else {
         wipe(dek);
       }
     }
     openAddresses = addressesOf(opened.payload);
+    learnDerived(opened.payload, openAddresses.evm);
     tampered = false;
     failures = 0;
     backoffUntil = 0;
@@ -1206,6 +1418,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   }
 
   function updatePayload(mutate: (payload: KeysPayload) => KeysPayload): StoredAddresses {
+    if (ownerOut()) throw new OwnerTouchRequired();
     if (plain === null || dataKey === null || closers.size > 0) throw new Error('the wallet is locked');
     const stored = readKeystoreFile(file);
     if (stored === null || !isEnclaveFile(stored)) throw new Error('only an enclave wallet can be rewritten in place');
@@ -1236,6 +1449,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       fs.unlinkSync(file);
     }
     openAddresses = null;
+    derivedIds = null;
     tampered = false;
     announce();
     return { destroyed: file };
@@ -1359,6 +1573,18 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     keys,
     evmPrivateKey,
     apiWallet,
+    allowanceKey: () => sessionKey(allowKey),
+    gasSeed: () => sessionKey(gasKey),
+    derivedAccounts,
+    keepOwnerKeyOutWhen: (test) => {
+      ownerOutTest = test;
+    },
+    dropOwnerKey: () => {
+      if (plain === null || !ownerHeld) return false;
+      dropOwner();
+      return true;
+    },
+    withOwnerKey,
     path: () => file,
     custody,
     enclave,
