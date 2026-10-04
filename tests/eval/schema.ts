@@ -1,6 +1,6 @@
 // What one eval scenario is, on disk and in the harness.
 //
-// One JSON file per scenario under tests/eval/, ids S1 to S29, matching EVAL_SPEC Part B. The
+// One JSON file per scenario under tests/eval/, ids S1 to S30, matching EVAL_SPEC Part B. The
 // file carries three things that cannot be derived: the state the app has to be in before the
 // turn (`pre`), the canned turn the scripted mode replays (`script`), and the assertions the
 // grader applies to both modes (`mustCall` and everything below it).
@@ -29,6 +29,8 @@ export type DemoState = {
   account?: string;
   intents?: DemoHolding[];
   hyperliquid?: { collateralUsdc: number; availableUsdc: number };
+  // A vault that moved to the chip: the allowance the moves spend, read apart from the vault.
+  allowance?: { account: string; intents: DemoHolding[] };
 };
 
 // A line seeded into audit.jsonl before boot. `prev` is computed by the harness so the chain

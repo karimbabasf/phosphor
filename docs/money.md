@@ -36,6 +36,11 @@ move it, nothing on this page changes: one account holds everything and every mo
 "All" of a coin means all the allowance holds. Until this process has opened your wallet once,
 the app cannot name the allowance, so nothing is proposed before your first unlock.
 
+Your assistant sees the two apart: its wallet read shows `spendable`, the allowance, and
+`savings`, the vault. A swap bigger than the allowance needs the shortfall moved from the vault
+first, a top-up you confirm with Touch ID, and the swap quote says how much before anything is
+proposed.
+
 ## Deposit
 
 Money comes in through the deposit card, never through a tool. Press Add money on the Basic or
