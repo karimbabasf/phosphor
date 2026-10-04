@@ -59,8 +59,9 @@ const INTENT_KEYS: Record<VaultIntent['intent'], string[]> = {
   transfer: ['intent', 'receiver_id', 'tokens'],
 };
 const U128_MAX = (1n << 128n) - 1n;
-// An asset inside the verifier: a NEP-141, NEP-171 or NEP-245 token id, no space or quote in it.
-const ASSET_ID = /^nep(?:141|171|245):[^\s"\\]+$/;
+// An asset inside the verifier: a NEP-141, NEP-171 or NEP-245 token id in printable ASCII with no
+// quote or backslash, so the payload needs no escape (the chip's grammar refuses any).
+const ASSET_ID = /^nep(?:141|171|245):[\x21\x23-\x5b\x5d-\x7e]+$/;
 
 function sameKeys(o: Record<string, unknown>, keys: readonly string[]): boolean {
   const own = Object.keys(o);

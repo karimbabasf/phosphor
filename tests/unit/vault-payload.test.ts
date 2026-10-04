@@ -100,6 +100,8 @@ test('the builder refuses anything a vault would not sign', () => {
     ['a decimal amount', { intents: [transfer({ tokens: { [USDC]: '1.5' } })] }, /in digits/],
     ['an amount over u128', { intents: [transfer({ tokens: { [USDC]: (1n << 128n).toString() } })] }, /at most u128/],
     ['an asset that is not a verifier token id', { intents: [transfer({ tokens: { USDC: '5' } })] }, /not a token id inside the verifier/],
+    ['an asset id outside printable ASCII', { intents: [transfer({ tokens: { 'nep141:usdc\u00e9.near': '5' } })] }, /not a token id inside the verifier/],
+    ['an asset id with a quote in it', { intents: [transfer({ tokens: { 'nep141:a"b.near': '5' } })] }, /not a token id inside the verifier/],
     ['a transfer to the signer', { intents: [transfer({ receiver_id: VAULT })] }, /moves nothing/],
     ['a receiver that is not an account', { intents: [transfer({ receiver_id: 'Not An Account' })] }, /transfer receiver is unusable/],
     ['a signer that is not an account', { signerId: '0x12', intents: [] }, /signer is unusable/],
