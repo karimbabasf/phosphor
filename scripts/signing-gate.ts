@@ -27,7 +27,8 @@
 //   node scripts/signing-gate.ts --app <Phosphor.app> --checkout <repo root>
 //   node scripts/signing-gate.ts --entitlements <profile>   the service's entitlements, as a plist
 //
-// Node's own modules and macOS's codesign, security and plutil only: the sign job installs nothing.
+// Node's own modules and macOS's codesign, security, plutil and PlistBuddy only: the sign job
+// installs nothing.
 
 import { execFileSync, spawnSync } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -108,31 +109,116 @@ export type Profile = {
   certificates: Buffer[];
 };
 
-/* A profile is a CMS envelope around a plist. `security cms -D` opens it; plutil reads the plist
-   one key at a time, because the plist holds data and dates that its JSON form cannot. */
-export function readProfile(file: string): Profile {
-  const xml = execFileSync('security', ['cms', '-D', '-i', file], { stdio: ['ignore', 'pipe', 'pipe'] });
-  const read = (key: string, format: 'raw' | 'json'): string =>
-    execFileSync('plutil', ['-extract', key, format, '-o', '-', '-'], { input: xml }).toString().trim();
-  const optional = (key: string, format: 'raw' | 'json'): string | null => {
-    try {
-      return read(key, format);
-    } catch {
-      return null;
+/* Runs one of macOS's tools and gives what it printed, or throws with every word it said, stderr
+   and stdout both: PlistBuddy splits its errors across the two. */
+function tool(command: string, args: string[]): Buffer {
+  const run = spawnSync(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  if (run.status === 0) return run.stdout;
+  const said = [run.stderr, run.stdout].map((out) => out?.toString().trim()).filter(Boolean).join(' / ');
+  throw new Error(`${path.basename(command)} ${run.error?.message ?? `exited ${run.status ?? run.signal}`}, saying: ${said || 'nothing'}`);
+}
+
+const ENTITIES: Record<string, string> = { lt: '<', gt: '>', amp: '&', quot: '"', apos: "'" };
+
+/* The XML plist PlistBuddy prints, read into values: a dict is an object, an array an array, a
+   date a Date, data a Buffer, and strings, numbers, true and false what they say. Anything else
+   fails, rather than reading as nothing. */
+export function parsePlist(xml: string): unknown {
+  const tokens = xml.replace(/<\?xml[^>]*\?>|<!DOCTYPE[^>]*>/g, '').match(/<[^>]*>|[^<]+/g) ?? [];
+  let at = 0;
+  const wrong = (why: string): never => {
+    throw new Error(`not an XML plist: ${why}`);
+  };
+  const tag = (): string => {
+    while (at < tokens.length && tokens[at].trim() === '') at++;
+    return tokens[at++] ?? wrong('it ends early');
+  };
+  const text = (name: string): string => {
+    let body = '';
+    while (at < tokens.length && !tokens[at].startsWith('<')) body += tokens[at++];
+    if (tokens[at++] !== `</${name}>`) wrong(`<${name}> is not closed`);
+    return body.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, entity: string) =>
+      entity.startsWith('#') ? String.fromCodePoint(Number(entity.replace('#', '0'))) : (ENTITIES[entity] ?? whole));
+  };
+  const value = (open: string): unknown => {
+    switch (open) {
+      case '<dict>': {
+        const dict: Record<string, unknown> = {};
+        for (let next = tag(); next !== '</dict>'; next = tag()) {
+          if (next !== '<key>') wrong(`${next} where a key belongs`);
+          // defineProperty, so a key named __proto__ is a key like any other.
+          Object.defineProperty(dict, text('key'), { value: value(tag()), enumerable: true, writable: true, configurable: true });
+        }
+        return dict;
+      }
+      case '<array>': {
+        const array: unknown[] = [];
+        for (let next = tag(); next !== '</array>'; next = tag()) array.push(value(next));
+        return array;
+      }
+      case '<dict/>': return {};
+      case '<array/>': return [];
+      case '<string>': return text('string');
+      case '<string/>': return '';
+      case '<integer>': return Number(text('integer'));
+      case '<real>': return Number(text('real'));
+      case '<true/>': return true;
+      case '<false/>': return false;
+      case '<date>': return new Date(text('date'));
+      case '<data>': return Buffer.from(text('data').replace(/\s/g, ''), 'base64');
+      case '<data/>': return Buffer.alloc(0);
+      default: return wrong(`${open} is not a value`);
     }
   };
-  const entitlements = JSON.parse(optional('Entitlements', 'json') ?? '{}') as Entitlements;
-  const count = Number(optional('DeveloperCertificates', 'raw') ?? '0');
+  if (!/^<plist( [^>]*)?>$/.test(tag())) wrong('no <plist>');
+  const root = value(tag());
+  if (tag() !== '</plist>') wrong('more than one value');
+  return root;
+}
+
+const isString = (value: unknown): value is string => typeof value === 'string';
+const isStrings = (value: unknown): value is string[] => Array.isArray(value) && value.every(isString);
+const isDate = (value: unknown): value is Date => value instanceof Date;
+const isBuffers = (value: unknown): value is Buffer[] => Array.isArray(value) && value.every((item) => Buffer.isBuffer(item));
+const isDict = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) && !isDate(value) && !Buffer.isBuffer(value);
+
+/* A profile is a CMS envelope around a plist. `security cms -D` opens it; PlistBuddy prints the
+   plist back as XML from a private copy, and parsePlist reads every key of it here. Not plutil's
+   JSON: `plutil -extract Entitlements json` gave no app id on GitHub's macOS 15 runner for the file
+   that reads whole on macOS 27, and the old reader took that for an empty set without a word. A
+   key that cannot be read throws, naming it and what the tool said, and the gate reports that as
+   its problem. Only ProvisionsAllDevices may be missing: a development profile lists devices. */
+export function readProfile(file: string): Profile {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'signing-gate-profile-'));
+  let doc: Record<string, unknown>;
+  try {
+    const copy = path.join(dir, 'profile.plist');
+    fs.writeFileSync(copy, tool('security', ['cms', '-D', '-i', file]), { mode: 0o600 });
+    const plist = parsePlist(tool('/usr/libexec/PlistBuddy', ['-x', '-c', 'Print', copy]).toString());
+    if (!isDict(plist)) throw new Error('its plist is not a dict');
+    doc = plist;
+  } catch (error) {
+    throw new Error(`${file} could not be read: ${(error as Error).message}`);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+  const need = <T>(key: string, kind: string, ok: (value: unknown) => value is T): T => {
+    const value = doc[key];
+    if (ok(value)) return value;
+    throw new Error(`${file} could not be read: its ${key} is ${value === undefined ? 'missing' : `not ${kind}`}`);
+  };
+  const entitlements = need('Entitlements', 'a dict', isDict);
   return {
-    name: optional('Name', 'raw') ?? '',
-    uuid: optional('UUID', 'raw') ?? '',
-    team: optional('TeamIdentifier.0', 'raw') ?? '',
+    name: need('Name', 'a string', isString),
+    uuid: need('UUID', 'a string', isString),
+    team: need('TeamIdentifier', 'a list of teams', isStrings)[0] ?? '',
     appId: String(entitlements['com.apple.application-identifier'] ?? ''),
     entitlements,
-    expires: new Date(optional('ExpirationDate', 'raw') ?? 0),
-    allDevices: optional('ProvisionsAllDevices', 'raw') === 'true',
-    platforms: JSON.parse(optional('Platform', 'json') ?? '[]') as string[],
-    certificates: Array.from({ length: count }, (_, i) => Buffer.from(read(`DeveloperCertificates.${i}`, 'raw'), 'base64')),
+    expires: need('ExpirationDate', 'a date', isDate),
+    allDevices: doc.ProvisionsAllDevices === true,
+    platforms: need('Platform', 'a list of platforms', isStrings),
+    certificates: need('DeveloperCertificates', 'a list of certificates', isBuffers),
   };
 }
 
@@ -276,7 +362,12 @@ export function signingGate(app: string, checkout: string, options: GateOptions 
   }
 
   // 1. The profile, as committed and as embedded.
-  const profile = readProfile(committed);
+  let profile: Profile;
+  try {
+    profile = readProfile(committed);
+  } catch (error) {
+    return { problems: [(error as Error).message], profile: null, smoke: null };
+  }
   problems.push(...profileProblems(profile, options.now));
   const embedded = path.join(service, 'Contents', 'embedded.provisionprofile');
   if (!fs.existsSync(embedded)) problems.push(`the vault service carries no Contents/embedded.provisionprofile`);
@@ -331,7 +422,13 @@ if (import.meta.main) {
   const app = arg('--app');
   if (profileFile !== undefined) {
     // Made only from a profile this service can use: a wrong one fails here, before anything is signed.
-    const profile = readProfile(profileFile);
+    let profile: Profile;
+    try {
+      profile = readProfile(profileFile);
+    } catch (error) {
+      console.error(`signing-gate: ${profileFile} FAILS:\n  ${(error as Error).message}`);
+      process.exit(1);
+    }
     const problems = profileProblems(profile);
     if (problems.length > 0) {
       console.error(`signing-gate: ${profileFile} FAILS:\n  ${problems.join('\n  ')}`);
