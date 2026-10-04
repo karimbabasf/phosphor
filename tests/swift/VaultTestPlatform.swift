@@ -10,12 +10,17 @@
 //   PHOSPHOR_TEST_FAIL   op=status pairs, comma separated: that keychain call answers that status
 //   PHOSPHOR_TEST_SE     "0" for a Mac with no Secure Enclave
 //   PHOSPHOR_TEST_TOUCH  "cancel" for an owner who cancels the dialog
+//   PHOSPHOR_TEST_SIGN   how the chip key's signature comes back: "high" or "low" (its S on that
+//                        side of n / 2), "garbage" (not DER) or "otherkey" (another key's)
 //
-// The enclave is a software P-256 key, kept in the file. What the keychain answers where this file
-// has to choose is what the custody spike measured on a real Mac: a process that names no group and
-// carries no entitlement gets errSecMissingEntitlement (-34018) for a permanent key, a lookup that
-// finds nothing gets errSecItemNotFound (-25300), and a second add of the same item gets
-// errSecDuplicateItem (-25299).
+// The enclave is a software P-256 key, kept in the file; a chip key is one more key in the same
+// list, under its own tag. Chip markers are kept apart from the vault's, as the keychain keeps them
+// under another service. A chip signature records the call and the sentence its dialog would have
+// shown (`dialogs`), so a test can hold the sentence byte for byte with no dialog at all. What the
+// keychain answers where this file has to choose is what the custody spike measured on a real Mac:
+// a process that names no group and carries no entitlement gets errSecMissingEntitlement (-34018)
+// for a permanent key, a lookup that finds nothing gets errSecItemNotFound (-25300), and a second
+// add of the same item gets errSecDuplicateItem (-25299).
 
 #if PHOSPHOR_TESTSEAM
 import Foundation
@@ -24,7 +29,15 @@ import CryptoKit
 final class TestPlatform: Platform {
   struct Key: Codable { var tag: String; var group: String; var created: Double; var priv: String }
   struct Mark: Codable { var tag: String; var group: String; var body: String; var created: Double }
-  struct Store: Codable { var keys: [Key] = []; var markers: [Mark] = []; var calls: [String] = []; var blobs: Int = 0 }
+  struct Store: Codable {
+    var keys: [Key] = []
+    var markers: [Mark] = []
+    var calls: [String] = []
+    var blobs: Int = 0
+    // Optional, so a store a test wrote by hand before these existed still reads.
+    var chipMarkers: [Mark]?
+    var dialogs: [String]?
+  }
 
   let env = ProcessInfo.processInfo.environment
 
@@ -138,6 +151,67 @@ final class TestPlatform: Platform {
     }
     let secret = try priv.sharedSecretFromKeyAgreement(with: P256.KeyAgreement.PublicKey(x963Representation: eph))
     return (secret.withUnsafeBytes { Data($0) }, priv.publicKey.x963Representation)
+  }
+
+  func signingKey(tag: String, group: String) -> P256.Signing.PrivateKey? {
+    guard let key = load().keys.first(where: { $0.tag == tag && $0.group == group }), let raw = Data(base64Encoded: key.priv) else { return nil }
+    return try? P256.Signing.PrivateKey(rawRepresentation: raw)
+  }
+
+  func publicKey(tag: String, group: String) -> Result<Data?, KeychainStatus> {
+    record("publicKey \(tag) \(group)")
+    if let status = failing("publicKey") { return .failure(KeychainStatus(status: status)) }
+    return .success(signingKey(tag: tag, group: group)?.publicKey.x963Representation)
+  }
+
+  func chipMarkers(group: String) -> Result<[String: ChipMark], KeychainStatus> {
+    record("chipMarkers \(group)")
+    if let status = failing("chipMarkers") { return .failure(KeychainStatus(status: status)) }
+    var out: [String: ChipMark] = [:]
+    for mark in load().chipMarkers ?? [] where mark.group == group {
+      out[mark.tag] = ChipMark(body: Data(base64Encoded: mark.body) ?? Data(), at: Date(timeIntervalSince1970: mark.created))
+    }
+    return .success(out)
+  }
+
+  func addChipMarker(tag: String, body: Data, group: String) -> OSStatus {
+    record("addChipMarker \(tag) \(group)")
+    if let status = failing("addChipMarker") { return status }
+    var store = load()
+    var marks = store.chipMarkers ?? []
+    if marks.contains(where: { $0.tag == tag && $0.group == group }) { return errSecDuplicateItem }
+    marks.append(Mark(tag: tag, group: group, body: body.base64EncodedString(), created: now().timeIntervalSince1970))
+    store.chipMarkers = marks
+    save(store)
+    return errSecSuccess
+  }
+
+  /* n / 2 for P-256, so a test can ask for a signature whose S sits on either side of it. */
+  static let halfOrder: [UInt8] = [
+    0x7f, 0xff, 0xff, 0xff, 0x80, 0x00, 0x00, 0x00, 0x7f, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+    0xde, 0x73, 0x7d, 0x56, 0xd3, 0x8b, 0xcf, 0x42, 0x79, 0xdc, 0xe5, 0x61, 0x7e, 0x31, 0x92, 0xa8,
+  ]
+
+  func sign(tag: String, group: String, data: Data, reason: String) throws -> Data {
+    record("sign \(tag) \(group)")
+    var store = load()
+    store.dialogs = (store.dialogs ?? []) + [reason]
+    save(store)
+    if env["PHOSPHOR_TEST_TOUCH"] == "cancel" { throw Fail(code: "user_cancel", message: "cancelled") }
+    guard let priv = signingKey(tag: tag, group: group) else { throw Fail(code: "no_key", message: "keychain key -25300") }
+    switch env["PHOSPHOR_TEST_SIGN"] {
+    case "garbage": return Data([0x30, 0x03, 0x02, 0x01, 0x00])
+    case "otherkey": return try P256.Signing.PrivateKey().signature(for: data).derRepresentation
+    case let side?:
+      // CryptoKit's signatures are randomized, so a few tries give one on the side asked for.
+      for _ in 0..<256 {
+        let signature = try priv.signature(for: data)
+        let high = Self.halfOrder.lexicographicallyPrecedes([UInt8](signature.rawRepresentation.suffix(32)))
+        if high == (side == "high") { return signature.derRepresentation }
+      }
+      throw Fail(code: "crypto_failed", message: "no signature with a \(side) S")
+    case nil: return try priv.signature(for: data).derRepresentation
+    }
   }
 }
 #endif

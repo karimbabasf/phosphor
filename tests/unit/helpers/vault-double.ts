@@ -1,8 +1,11 @@
 // The test-only service double for the custody flows: the vault service's own rules
-// (src-tauri/se-helper/main.swift) compiled with the stand-in keychain, enclave and clock
+// (src-tauri/se-helper/main.swift, and the chip key's ops in ChipOps.swift with the grammar they
+// sign by) compiled with the stand-in keychain, enclave and clock
 // (tests/swift/VaultTestPlatform.swift), and a shell loop that relays to it the way
 // src-tauri/src/enclave.rs does: it polls POST /api/vault/pending with the relay secret, adds the
-// transport key to an unwrap and nothing else, and posts the service's answer back.
+// transport key to an unwrap and nothing else, and posts the service's answer back. The stand-in's
+// chip key is a software P-256 key: signIntent signs with it where the enclave would ask for a
+// touch, and keeps the sentence the dialog would have shown.
 //
 // It cannot reach a shipped build. The stand-in compiles to nothing without PHOSPHOR_TESTSEAM,
 // which no build script passes; the binary is built here, into a test's temp folder, and the backend
@@ -22,6 +25,8 @@ import { tempDir } from './tmp.ts';
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 export const SERVICE = path.join(ROOT, 'src-tauri/se-helper/main.swift');
+// What PHOSPHOR_CHIP compiles in beside it, as scripts/build-se-helper.sh does.
+export const CHIP_SOURCES = ['ChipOps.swift', 'IntentGrammar.swift', 'TokenTable.swift'].map((f) => path.join(ROOT, 'src-tauri/se-helper', f));
 export const SEAM = path.join(ROOT, 'tests/swift/VaultTestPlatform.swift');
 export const TEAM = 'TEAM4TESTS';
 export const GROUP = `${TEAM}.com.karimbabasf.phosphor.vault`;
@@ -36,7 +41,7 @@ let built: string | null = null;
 export function doubleBinary(): string {
   if (built !== null) return built;
   const out = path.join(work, 'vault-double');
-  const args = ['-Onone', '-D', 'PHOSPHOR_STDIO', '-D', 'PHOSPHOR_TESTSEAM', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), '-o', out, SERVICE, SEAM];
+  const args = ['-Onone', '-D', 'PHOSPHOR_STDIO', '-D', 'PHOSPHOR_TESTSEAM', '-D', 'PHOSPHOR_CHIP', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), '-o', out, SERVICE, ...CHIP_SOURCES, SEAM];
   const run = spawnSync('swiftc', args, { encoding: 'utf8', env: { ...process.env, TMPDIR: work } });
   assert.equal(run.status, 0, `swiftc: ${run.stderr}`);
   built = out;
@@ -46,7 +51,15 @@ export function doubleBinary(): string {
 export type Answer = Record<string, unknown> & { ok: boolean; error?: string };
 export type Request = Record<string, unknown> & { id: string; op: string; reason?: string; keyBlob?: string };
 
-type Stored = { keys: { tag: string; group: string; created: number }[]; markers: { tag: string; group: string; body: string }[]; calls: string[]; blobs: number };
+type Mark = { tag: string; group: string; body: string; created: number };
+type Stored = {
+  keys: { tag: string; group: string; created: number }[];
+  markers: Mark[];
+  calls: string[];
+  blobs: number;
+  chipMarkers?: Mark[];
+  dialogs?: string[];
+};
 
 /* One Mac: its keychain is a JSON file that outlives any backend started against it. */
 export class VaultDouble {
@@ -55,6 +68,9 @@ export class VaultDouble {
   now = T0;
   fail: string | undefined;
   touch: 'cancel' | undefined;
+  // How the stand-in chip key's signature comes back (VaultTestPlatform.swift, PHOSPHOR_TEST_SIGN).
+  sign: 'high' | 'low' | 'garbage' | 'otherkey' | undefined;
+  enclave = true;
 
   constructor(store?: string) {
     this.store = store ?? path.join(tempDir('phosphor-vault-mac-'), 'keychain.json');
@@ -70,6 +86,8 @@ export class VaultDouble {
     };
     if (this.fail !== undefined) env.PHOSPHOR_TEST_FAIL = this.fail;
     if (this.touch !== undefined) env.PHOSPHOR_TEST_TOUCH = this.touch;
+    if (this.sign !== undefined) env.PHOSPHOR_TEST_SIGN = this.sign;
+    if (!this.enclave) env.PHOSPHOR_TEST_SE = '0';
     const run = spawnSync(doubleBinary(), [], { input: JSON.stringify(request) + '\n', env, encoding: 'utf8' });
     assert.equal(run.status, 0, run.stderr);
     return JSON.parse(run.stdout) as Answer;
@@ -80,8 +98,15 @@ export class VaultDouble {
     return JSON.parse(fs.readFileSync(this.store, 'utf8')) as Stored;
   }
 
+  /* Every call that would have put a Touch ID dialog in front of the owner: an unwrap's key
+     agreement and a chip signature. */
   touches(): string[] {
-    return this.state().calls.filter((c) => c.startsWith('agree'));
+    return this.state().calls.filter((c) => c.startsWith('agree') || c.startsWith('sign '));
+  }
+
+  /* The sentence each chip signature's dialog would have shown, in order. */
+  dialogs(): string[] {
+    return this.state().dialogs ?? [];
   }
 }
 

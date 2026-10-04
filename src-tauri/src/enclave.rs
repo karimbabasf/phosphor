@@ -7,8 +7,9 @@
 // process that talks to the network, parses what venues send back and hosts the agent's MCP
 // server; it is the process most likely to be holding untrusted bytes at any moment. The shell
 // is the process that draws the window and nothing else. So the shell calls the service, the
-// backend never learns where it is, and the one thing that crosses back is a 32-byte data key,
-// encrypted under a per-boot transport key on its way over loopback.
+// backend never learns where it is, and the one secret that crosses back is a 32-byte data key,
+// encrypted under a per-boot transport key on its way over loopback. The chip key's signatures
+// cross back too, in the clear: each is public the moment its bundle is sent.
 //
 // WHY XPC. The service sits in Contents/XPCServices and answers only a peer whose signature
 // passes its requirement, which is this shell and nothing else (main.swift, WHO MAY CONNECT).
@@ -204,8 +205,12 @@ fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Durat
 
 /// The ops the service answers (src-tauri/se-helper/main.swift, THE PROTOCOL), and the only ones
 /// the relay carries. Any other op is answered here and never reaches the service, so the
-/// protocol is this list and a new op is a change to it.
-const OPS: [&str; 7] = ["probe", "create", "unwrap", "presence", "commit", "sweep", "status"];
+/// protocol is this list and a new op is a change to it. The last five are the chip key's
+/// (ChipOps.swift); signIntent, like unwrap, waits on a person, and is carried as written: the
+/// service writes its dialog's sentence itself, so there is nothing for the shell to add.
+const OPS: [&str; 12] = [
+    "probe", "create", "unwrap", "presence", "commit", "sweep", "status", "chipCreate", "chipCommit", "chipStatus", "chipSweep", "signIntent",
+];
 
 /// What the service receives for a request, or the refusal the relay answers in its place. The
 /// request goes as the backend wrote it, plus, on an unwrap, the transport key the data key is
@@ -298,7 +303,8 @@ mod relay_tests {
     }
 
     #[test]
-    fn the_relay_carries_the_seven_ops_and_the_transport_key_only_to_an_unwrap() {
+    fn the_relay_carries_the_twelve_ops_and_the_transport_key_only_to_an_unwrap() {
+        assert_eq!(OPS.len(), 12);
         let transport = "00".repeat(32);
         for op in OPS {
             let out = forwarded(&serde_json::json!({ "op": op, "id": "r1" }), &transport).expect(op);
@@ -308,7 +314,19 @@ mod relay_tests {
         }
         let unwrap = forwarded(&serde_json::json!({ "op": "unwrap", "transportKey": "mine" }), &transport).unwrap();
         assert_eq!(unwrap["transportKey"], base64_encode(&[0u8; 32]), "the shell's key, never one the backend put there");
-        for request in [serde_json::json!({ "op": "delete" }), serde_json::json!({ "op": "" }), serde_json::json!({}), serde_json::json!({ "op": 7 })] {
+        // A signature request reaches the service byte for byte: the payload is what the service
+        // reads and signs, and the shell adds no sentence of its own.
+        let sign = serde_json::json!({ "op": "signIntent", "id": "r2", "keyRef": "chip:com.karimbabasf.phosphor.chip.0", "payload": "{\"signer_id\":\"vault.near\"}" });
+        assert_eq!(forwarded(&sign, &transport).unwrap(), sign);
+        for request in [
+            serde_json::json!({ "op": "delete" }),
+            serde_json::json!({ "op": "" }),
+            serde_json::json!({}),
+            serde_json::json!({ "op": 7 }),
+            serde_json::json!({ "op": "signintent" }),
+            serde_json::json!({ "op": "chipDelete" }),
+            serde_json::json!({ "op": "signIntent " }),
+        ] {
             let refused = forwarded(&request, &transport).unwrap_err();
             assert_eq!(refused["ok"], false);
             assert_eq!(refused["error"], "bad_input", "{request}");
