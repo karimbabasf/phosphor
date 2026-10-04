@@ -182,7 +182,8 @@ test('end to end: vault.json, the gate as src/main.ts wires it, the keystore and
 
 test('the app wires the gate from vault.json before anything can open the wallet', () => {
   const main = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'main.ts'), 'utf8');
-  const gate = main.indexOf('keystore.keepOwnerKeyOutWhen((vault) => ownerKeyOut(vaultPrefs.get(), vault));');
+  // vault.json's word, or the chip service's marker (src/vault/chip.ts ownerKeyGate, tests/unit/vault-chip.test.ts).
+  const gate = main.indexOf('keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);');
   assert.ok(gate > 0, 'src/main.ts sets the gate on the one keystore the app has');
   assert.ok(gate < main.indexOf('const server = createServer('), 'before the server, so before any route can open the wallet');
 });

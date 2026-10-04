@@ -10,7 +10,8 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { getAddress } from 'viem';
 
-import { decodeNonce } from '../../src/relay/payload.ts';
+import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
+import { buildNonce, decodeNonce } from '../../src/relay/payload.ts';
 import { simulationOf } from '../../src/relay/verifier.ts';
 import type { SignedIntent, VerifierEvent } from '../../src/relay/verifier.ts';
 import { buildVaultPayload, eventsMismatch, expectedEvents, readVaultPayload, signedIntentHash } from '../../src/vault/payload.ts';
@@ -40,26 +41,29 @@ const SALT = Uint8Array.from([0x25, 0x28, 0x12, 0xb3]);
 const DEADLINE = Date.parse('2026-10-04T18:57:00.839Z');
 const RANDOM = () => Uint8Array.from({ length: 15 }, (_, i) => i + 1);
 
-test('the builder writes, byte for byte, every payload the live verifier read on 2026-10-04', () => {
+test('the builder writes every payload the live verifier read on 2026-10-04 byte for byte, its nonce now living seven days longer', () => {
   let rebuilt = 0;
   for (const { run, name, entry } of ALL) {
     for (const signed of entry.signed) {
-      let body;
+      const body = JSON.parse(signed.payload) as { signer_id: string; deadline: string; nonce: string; intents: VaultIntent[] };
+      const nonce = decodeNonce(body.nonce)!;
+      let again: string;
       try {
-        body = readVaultPayload(signed.payload);
+        again = buildVaultPayload({ signerId: body.signer_id, intents: body.intents, deadlineMs: Date.parse(body.deadline), salt: nonce.salt, random: () => nonce.random });
       } catch {
         continue; // T7's payload was changed after signing on purpose
       }
-      const nonce = decodeNonce(body.nonce)!;
-      const again = buildVaultPayload({ signerId: body.signer_id, intents: body.intents, deadlineMs: Date.parse(body.deadline), salt: nonce.salt, random: () => nonce.random });
-      assert.equal(again, signed.payload, `${run} ${name}`);
+      // Recorded before the seven-day rule, when a vault nonce expired with its payload.
+      assert.equal(nonce.deadlineMs, Date.parse(body.deadline), `${run} ${name}`);
+      const lived = buildNonce({ salt: nonce.salt, deadlineMs: nonce.deadlineMs + NONCE_LIFE_AFTER_DEADLINE_MS, random: nonce.random });
+      assert.equal(again, signed.payload.replace(body.nonce, lived), `${run} ${name}`);
       rebuilt += 1;
     }
   }
   assert.ok(rebuilt >= 80, `rebuilt ${rebuilt}`);
 });
 
-test('a built payload: keys in order, a V1 nonce on the live salt whose deadline is the payload deadline', () => {
+test('a built payload: keys in order, a V1 nonce on the live salt that lives seven days past the payload deadline', () => {
   const payload = buildVaultPayload({
     signerId: getAddress(VAULT),
     intents: [{ intent: 'transfer', receiver_id: getAddress(ALLOWANCE), tokens: { [USDC]: '100000000' } }],
@@ -73,7 +77,7 @@ test('a built payload: keys in order, a V1 nonce on the live salt whose deadline
     `{"signer_id":"${VAULT}","verifying_contract":"intents.near","deadline":"2026-10-04T18:57:00.839Z","nonce":"${JSON.parse(payload).nonce}","intents":[{"intent":"transfer","receiver_id":"${ALLOWANCE}","tokens":{"${USDC}":"100000000"}}]}`,
   );
   assert.deepEqual([...nonce.salt], [...SALT]);
-  assert.equal(nonce.deadlineMs, DEADLINE);
+  assert.equal(nonce.deadlineMs, DEADLINE + NONCE_LIFE_AFTER_DEADLINE_MS);
   assert.deepEqual([...nonce.random], [...RANDOM()]);
   assert.deepEqual(readVaultPayload(payload).intents, [{ intent: 'transfer', receiver_id: ALLOWANCE, tokens: { [USDC]: '100000000' } }]);
   // Two payloads built a moment apart never share a nonce.
@@ -119,6 +123,7 @@ test('a payload read back as the verifier will read it, refused on every shape a
   const text = (over: Record<string, unknown>) => JSON.stringify({ ...o, ...over });
   const legacy = Buffer.alloc(32, 7).toString('base64');
   const later = JSON.parse(buildVaultPayload({ signerId: VAULT, intents: [], deadlineMs: DEADLINE + 1, salt: SALT, random: RANDOM })).nonce;
+  const withPayload = buildNonce({ salt: SALT, deadlineMs: DEADLINE, random: RANDOM() });
   const cases: Array<[string, unknown, RegExp]> = [
     ['a duplicated key', good.replace('"intents":', '"intents":[],"intents":'), /names intents twice/],
     ['another contract', text({ verifying_contract: 'evil.near' }), /not intents.near/],
@@ -126,7 +131,8 @@ test('a payload read back as the verifier will read it, refused on every shape a
     ['a checksummed signer', text({ signer_id: getAddress(VAULT) }), /written lowercase/],
     ['a deadline that is not a time', text({ deadline: 'soon' }), /not a time/],
     ['a legacy nonce', text({ nonce: legacy }), /not a V1 nonce/],
-    ["a nonce whose deadline is not the payload's", text({ nonce: later }), /nonce's deadline is not the payload's/],
+    ['a nonce that lives a millisecond longer than seven days past the payload', text({ nonce: later }), /does not live exactly seven days past the payload deadline/],
+    ['a nonce that expires with the payload, as before the seven-day rule', text({ nonce: withPayload }), /does not live exactly seven days past the payload deadline/],
     ['a checksummed receiver', text({ intents: [{ intent: 'transfer', receiver_id: getAddress(ALLOWANCE), tokens: { [USDC]: '1' } }] }), /receiver is written lowercase/],
     ['not JSON', '{', /not JSON/],
     ['not a string', { intents: [] }, /not a JSON string/],

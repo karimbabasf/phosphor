@@ -2,7 +2,10 @@
 // verifier has to report for a bundle of them before anything is sent.
 //
 // One payload is {signer_id, verifying_contract, deadline, nonce, intents} in that key order. The
-// nonce is V1 (src/relay/payload.ts) and its own deadline is the payload's. The intents are the four
+// nonce is V1 (src/relay/payload.ts) and lives exactly NONCE_LIFE_AFTER_DEADLINE_MS past the
+// payload's deadline, the life every nonce the app builds gets: the verifier may clean a V1 nonce
+// once its own deadline passes, and a cleaned nonce reads unused even when it ran, so the proof
+// that a vault move never ran (src/vault/submit.ts) needs it kept that long. The intents are the four
 // a vault uses, each with exactly the keys the Secure Enclave service's grammar reads:
 // add_public_key and remove_public_key {intent, public_key}, set_auth_by_predecessor_id {intent,
 // enabled}, and transfer {intent, receiver_id, tokens} with one token and no memo or msg. The
@@ -23,8 +26,10 @@ import { base58Encode } from '../chain/near.ts';
 import { oneLine } from '../intents.ts';
 import { ERC191_STANDARD, duplicateJsonKey } from '../intents-sign.ts';
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
+import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../rails/intents-relay.ts';
 import { intentsAccountProblem } from '../rails/intents-send.ts';
 import { NONCE_RANDOM_BYTES, buildNonce, decodeNonce } from '../relay/payload.ts';
+import type { DecodedNonce } from '../relay/payload.ts';
 import { isVerifierPublicKey } from '../relay/verifier.ts';
 import type { ExecutedEntry, VerifierEvent } from '../relay/verifier.ts';
 import { WEBAUTHN_STANDARD, webauthnIntentHash } from './webauthn.ts';
@@ -120,15 +125,26 @@ export function buildVaultPayload(input: VaultPayloadInput): string {
     signer_id: signer,
     verifying_contract: INTENTS_VERIFIER,
     deadline: new Date(input.deadlineMs).toISOString(),
-    nonce: buildNonce({ salt: input.salt, deadlineMs: input.deadlineMs, random: random(NONCE_RANDOM_BYTES) }),
+    nonce: buildNonce({ salt: input.salt, deadlineMs: input.deadlineMs + NONCE_LIFE_AFTER_DEADLINE_MS, random: random(NONCE_RANDOM_BYTES) }),
     intents,
   });
 }
 
 /* A payload as the verifier will read it, or a throw naming the first thing that is not a vault
    payload: a duplicated key, another key set, another contract, a deadline that is not a time, a
-   nonce that is not V1 or whose deadline is not the payload's, an intent a vault does not sign. */
+   nonce that is not V1 or does not live exactly NONCE_LIFE_AFTER_DEADLINE_MS past the payload's
+   deadline, an intent a vault does not sign. */
 export function readVaultPayload(raw: unknown): VaultPayload {
+  return parseVaultPayload(raw, (nonce, deadlineMs) => {
+    if (nonce.deadlineMs !== deadlineMs + NONCE_LIFE_AFTER_DEADLINE_MS) throw new Error('the nonce does not live exactly seven days past the payload deadline');
+  });
+}
+
+/* The same read with the chain's own nonce rule in place of the app's: a nonce that lives at least
+   to the payload's deadline. The events a bundle makes do not depend on how long its nonces live,
+   so expectedEvents reads this way, and payloads the verifier took before the seven-day rule (the
+   recorded spike2 bundles) still read; submitVault holds every payload it sends to the app's rule. */
+function parseVaultPayload(raw: unknown, nonceRule: (nonce: DecodedNonce, deadlineMs: number) => void): VaultPayload {
   if (typeof raw !== 'string' || raw === '') throw new Error('the payload is not a JSON string');
   let body: unknown;
   try {
@@ -149,7 +165,7 @@ export function readVaultPayload(raw: unknown): VaultPayload {
   if (typeof deadline !== 'string' || !Number.isFinite(deadlineMs)) throw new Error('the payload deadline is not a time');
   const parts = decodeNonce(nonce);
   if (parts === null || typeof nonce !== 'string') throw new Error('the nonce is not a V1 nonce');
-  if (parts.deadlineMs !== deadlineMs) throw new Error("the nonce's deadline is not the payload's");
+  nonceRule(parts, deadlineMs);
   if (!Array.isArray(intents)) throw new Error('the intents are not a list');
   return { signer_id: signer, verifying_contract: INTENTS_VERIFIER, deadline, nonce, intents: intents.map((intent) => vaultIntentOf(intent, signer, false)) };
 }
@@ -169,8 +185,9 @@ export function signedIntentHash(signed: { standard: string; payload: string }):
 export type BundleBefore = { predecessorAuth?: boolean };
 
 /* The events simulate_intents must report for this bundle, in order. One bundle signs for one
-   account. Throws on a payload this module would not have built, and on a bundle that sets the
-   predecessor flag when `before` does not say what it read. */
+   account. Throws on a payload this module would not have built (its nonce held to the chain's rule
+   only, see parseVaultPayload), and on a bundle that sets the predecessor flag when `before` does
+   not say what it read. */
 export function expectedEvents(bundle: readonly { standard: string; payload: string }[], before: BundleBefore): VerifierEvent[] {
   if (bundle.length === 0) throw new Error('a bundle carries at least one payload');
   const events: VerifierEvent[] = [];
@@ -178,7 +195,9 @@ export function expectedEvents(bundle: readonly { standard: string; payload: str
   let account: string | null = null;
   let flag = before.predecessorAuth;
   for (const signed of bundle) {
-    const body = readVaultPayload(signed.payload);
+    const body = parseVaultPayload(signed.payload, (nonce, deadlineMs) => {
+      if (nonce.deadlineMs < deadlineMs) throw new Error('the nonce expires before the payload does');
+    });
     if (account !== null && body.signer_id !== account) throw new Error('one bundle signs for one account');
     account = body.signer_id;
     const intent_hash = signedIntentHash(signed);

@@ -25,11 +25,16 @@
 import crypto from 'node:crypto';
 
 import type { EnclaveRef } from '../keystore/store.ts';
+import type { ChipMarker, ChipStatus } from './accounts.ts';
 
 /* The service's ops (src-tauri/se-helper/main.swift, THE PROTOCOL). commit, sweep and status work
    the keychain home of a Developer ID build: commit binds a wallet file to its key with a marker,
-   sweep deletes keys no marker names, status reads the binding with no dialog. */
-export type VaultOp = 'probe' | 'create' | 'unwrap' | 'presence' | 'commit' | 'sweep' | 'status';
+   sweep deletes keys no marker names, status reads the binding with no dialog. The chip ops are the
+   vault's own Touch ID key (PHASE2-PLAN C1): chipCreate makes it, chipCommit pins the vault, its
+   allowance and its paper key in the chip's marker, chipStatus reads chips and markers with no
+   dialog, chipSweep deletes unmarked chips, and signIntent signs one vault payload behind a Touch
+   ID whose sentence the service writes from the payload itself. */
+export type VaultOp = 'probe' | 'create' | 'unwrap' | 'presence' | 'commit' | 'sweep' | 'status' | 'chipCreate' | 'chipCommit' | 'chipStatus' | 'chipSweep' | 'signIntent';
 
 export type VaultRequest = {
   id: string;
@@ -44,9 +49,19 @@ export type VaultRequest = {
   addresses?: string;
   /** A test's per-run tag prefix for create and sweep. The app never sends one. */
   label?: string;
+  /** A chip key, `chip:<tag>`, for chipCommit, chipStatus and signIntent. */
+  keyRef?: string;
+  /** What chipCommit pins: the vault's 0x account, its allowance's, and the paper key. */
+  account?: string;
+  allowance?: string;
+  recovery?: string;
+  /** The exact payload string signIntent signs; no sentence goes with it, the service writes its own. */
+  payload?: string;
 };
 
 export type Capability = { secureEnclave: boolean; biometry: string; canAuthenticate: boolean; keychainHome: boolean };
+
+export type ChipMarkerSeen = { publicKey: string | null; recovery: string };
 
 /* What status says. `bound`: this Mac holds a marker, so no device-bound key file opens here. `key`
    and `marker`: the asked keychain key, when one was named. `pinMatches`: when the file's wrap was
@@ -67,6 +82,12 @@ export type VaultResult =
   | { ok: true; op: 'commit'; keyBlob: string; at: string | null }
   | { ok: true; op: 'sweep'; deleted: number; kept: number }
   | { ok: true; op: 'status'; status: VaultStatus }
+  | { ok: true; op: 'chipCreate'; keyRef: string; publicKey: string }
+  | { ok: true; op: 'chipCommit'; keyRef: string; at: string | null }
+  | { ok: true; op: 'chipStatus'; status: ChipStatus }
+  | { ok: true; op: 'chipSweep'; deleted: number; kept: number }
+  // `signed` as it came: src/vault/chip.ts holds it to the payload asked for and the pinned key.
+  | { ok: true; op: 'signIntent'; keyRef: string; sentence: string; signed: Record<string, unknown> }
   | { ok: false; error: string; message: string };
 
 /** What the window is told while a request waits on the person: enough to draw, nothing to sign. */
@@ -82,6 +103,10 @@ export type VaultRelay = {
    *  the first status or commit that shows a marker (no op deletes one), null until a status read the
    *  markers, which a service with no keychain home never does. */
   bound(): boolean | null;
+  /** The chip markers on this Mac that name this vault account, as the service's chipStatus answers
+   *  have shown them (no op deletes a marker): each one's chip key (null once the key is gone) and the
+   *  paper key it pins. Empty until an answer that read the keychain home names one. */
+  chipMarkers(account: string): ChipMarkerSeen[];
   /** attached, and the shell reported an enclave the person can authenticate to, on a relay that makes keys. */
   enclaveReady(): boolean;
   ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult>;
@@ -107,6 +132,13 @@ export const POLL_HOLD_MAX_MS = 30_000;
 /** A request that has not been fetched by then never will be: the shell is gone. */
 const NEVER_FETCHED_MS = 20_000;
 
+// The ops that write Phosphor's keychain group, which a relay that makes no keys answers itself.
+const KEYCHAIN_WRITES: ReadonlySet<VaultOp> = new Set(['create', 'commit', 'sweep', 'chipCreate', 'chipCommit', 'chipSweep']);
+
+// A chip key ref as the service writes one (PHASE2-PLAN C1): the chip prefix, an optional test
+// label, an upper-case UUID.
+const CHIP_REF = /^chip:com\.karimbabasf\.phosphor\.chip\.(?:[a-z0-9-]{1,40}\.)?[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
+
 type Inflight = {
   request: VaultRequest;
   resolve: (r: VaultResult) => void;
@@ -126,7 +158,9 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
      is Phosphor-only. A demo is a throwaway and must never do that. So a relay that makes no keys
      (src/main.ts: every mode but live) answers create, commit and sweep itself and never hands one to
      the shell, whatever the service says it is, and has no enclave to make a wallet with: the window
-     takes the password path, as on a Mac without Touch ID. Reads and Touch IDs pass as always. */
+     takes the password path, as on a Mac without Touch ID. Reads and Touch IDs pass as always.
+     The chip's three writes are refused the same way (chipCreate, chipCommit, chipSweep): a chip
+     marker is a Mac-wide fact too, and a demo never makes one. */
   const makesKeys = opts.makesKeys ?? true;
   const secret = opts.secret ?? null;
   const secretDigest = secret === null ? null : crypto.createHash('sha256').update(secret).digest();
@@ -135,6 +169,8 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
   let lastPoll = 0;
   let capability: Capability | null = null;
   let bound: boolean | null = null;
+  // The chip markers seen, by the lowercase 0x account each names.
+  const chipMarkersSeen = new Map<string, ChipMarkerSeen[]>();
   let stopped = false;
 
   function attached(): boolean {
@@ -169,7 +205,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
 
   function ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult> {
     if (stopped) return Promise.resolve({ ok: false, error: 'stopped', message: 'the relay is shut' });
-    if (!makesKeys && (request.op === 'create' || request.op === 'commit' || request.op === 'sweep')) {
+    if (!makesKeys && KEYCHAIN_WRITES.has(request.op)) {
       return Promise.resolve({ ok: false, error: 'no_keychain_home', message: 'a demo makes no Touch ID key and writes nothing to the keychain' });
     }
     if (transport === null) {
@@ -306,7 +342,85 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
         settle(entry, { ok: true, op: 'status', status });
         return { ok: true };
       }
+      case 'chipCreate': {
+        if (typeof body.keyRef !== 'string' || !CHIP_REF.test(body.keyRef) || typeof body.publicKey !== 'string' || !body.publicKey.startsWith('p256:')) {
+          settle(entry, { ok: false, error: 'garbled', message: 'the service answered a chip create with no chip key' });
+          return { ok: true };
+        }
+        settle(entry, { ok: true, op: 'chipCreate', keyRef: body.keyRef, publicKey: body.publicKey });
+        return { ok: true };
+      }
+      case 'chipCommit': {
+        if (typeof body.keyRef !== 'string' || body.keyRef !== entry.request.keyRef) {
+          settle(entry, { ok: false, error: 'garbled', message: 'the service answered a chip commit for another key' });
+          return { ok: true };
+        }
+        settle(entry, { ok: true, op: 'chipCommit', keyRef: body.keyRef, at: typeof body.at === 'string' ? body.at : null });
+        return { ok: true };
+      }
+      case 'chipStatus': {
+        const status = chipStatusOf(body);
+        const asked = entry.request.keyRef;
+        // An answer about one chip names that chip and no other.
+        if (asked !== undefined && status.chips.some((c) => c.keyRef !== asked)) {
+          settle(entry, { ok: false, error: 'garbled', message: 'the service answered a chip status for another key' });
+          return { ok: true };
+        }
+        if (status.keychainHome) for (const chip of status.chips) if (chip.marker !== null) noteMarker(chip.marker, chip.publicKey === '' ? null : chip.publicKey);
+        settle(entry, { ok: true, op: 'chipStatus', status });
+        return { ok: true };
+      }
+      case 'chipSweep': {
+        const count = (v: unknown): number => (typeof v === 'number' && Number.isInteger(v) && v >= 0 ? v : 0);
+        settle(entry, { ok: true, op: 'chipSweep', deleted: count(body.deleted), kept: count(body.kept) });
+        return { ok: true };
+      }
+      case 'signIntent': {
+        const signed = record(body.signed);
+        if (typeof body.keyRef !== 'string' || body.keyRef !== entry.request.keyRef || typeof body.sentence !== 'string' || body.sentence === '' || signed === null) {
+          settle(entry, { ok: false, error: 'garbled', message: 'the service answered a signature for another key, or with no sentence or signature' });
+          return { ok: true };
+        }
+        settle(entry, { ok: true, op: 'signIntent', keyRef: body.keyRef, sentence: body.sentence, signed });
+        return { ok: true };
+      }
     }
+  }
+
+  function noteMarker(marker: ChipMarker, publicKey: string | null): void {
+    const account = marker.account.toLowerCase();
+    const seen = chipMarkersSeen.get(account) ?? [];
+    if (!seen.some((m) => m.publicKey === publicKey && m.recovery === marker.recovery)) seen.push({ publicKey, recovery: marker.recovery });
+    chipMarkersSeen.set(account, seen);
+  }
+
+  function record(v: unknown): Record<string, unknown> | null {
+    return typeof v === 'object' && v !== null && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  }
+
+  /* Read strictly, as statusOf: a chip entry whose shape is off is left out, and a marker that does
+     not carry all four strings, the account a 0x one, is no marker (the service writes an unreadable
+     one with empty strings), so a garbled answer can only under-claim a chip. A marker whose key is
+     gone comes with `publicKey: null`: it still names its vault, and the key reads as '' so it never
+     equals a pinned one. */
+  function chipStatusOf(body: Record<string, unknown>): ChipStatus {
+    const chips: ChipStatus['chips'] = [];
+    for (const raw of Array.isArray(body.chips) ? body.chips : []) {
+      const c = record(raw);
+      if (c === null || typeof c.keyRef !== 'string' || !CHIP_REF.test(c.keyRef)) continue;
+      const keyGone = c.publicKey === null;
+      if (!keyGone && (typeof c.publicKey !== 'string' || !c.publicKey.startsWith('p256:'))) continue;
+      chips.push({ keyRef: c.keyRef, publicKey: keyGone ? '' : (c.publicKey as string), fresh: !keyGone && c.fresh === true, marker: markerOf(record(c.marker)) });
+    }
+    return { keychainHome: body.keychainHome === true, chips };
+  }
+
+  function markerOf(m: Record<string, unknown> | null): ChipMarker | null {
+    if (m === null) return null;
+    const { account, allowance, recovery, at } = m;
+    if (typeof account !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(account)) return null;
+    if (typeof allowance !== 'string' || typeof recovery !== 'string' || typeof at !== 'string') return null;
+    return { account, allowance, recovery, at };
   }
 
   /* Read strictly: anything not plainly true is false, and a shape that is off is null, so a
@@ -341,6 +455,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
     authenticate,
     capability: () => capability,
     bound: () => bound,
+    chipMarkers: (account) => (typeof account === 'string' ? [...(chipMarkersSeen.get(account.toLowerCase()) ?? [])] : []),
     enclaveReady: () => makesKeys && attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
     ask,
     waiting,
