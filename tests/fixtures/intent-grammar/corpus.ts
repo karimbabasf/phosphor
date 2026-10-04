@@ -4,10 +4,12 @@
 // ones seed its mutated payloads. The accounts and keys are patterns, nobody's.
 
 import { base58Encode } from '../../../src/chain/near.ts';
+import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../../src/rails/intents-relay.ts';
 import { buildNonce } from '../../../src/relay/payload.ts';
 
 export const NOW_MS = Date.UTC(2026, 9, 4, 18, 30, 0, 0);
 const DEADLINE_MS = NOW_MS + 60_000;
+const LIFE_NS = BigInt(NONCE_LIFE_AFTER_DEADLINE_MS) * 1_000_000n;
 const SALT = Uint8Array.from([0x25, 0x28, 0x12, 0xb3]); // the verifier's salt when spike2 ran
 const RANDOM = new Uint8Array(15).fill(0x6b);
 
@@ -44,8 +46,15 @@ export type Case = { name: string; payload: string; nowMs?: number; pins?: Pins;
 
 const iso = (ms: number): string => new Date(ms).toISOString();
 
+/* The nonce Phosphor builds for a payload with this deadline: it expires exactly
+   NONCE_LIFE_AFTER_DEADLINE_MS (seven days) later, the only expiry the grammar takes. */
 export function nonceAt(deadlineMs: number): string {
-  return buildNonce({ salt: SALT, deadlineMs, random: RANDOM });
+  return buildNonce({ salt: SALT, deadlineMs: deadlineMs + NONCE_LIFE_AFTER_DEADLINE_MS, random: RANDOM });
+}
+
+/* A nonce that expires at `expiryMs` itself, whatever the payload's deadline. */
+function nonceExpiring(expiryMs: number): string {
+  return buildNonce({ salt: SALT, deadlineMs: expiryMs, random: RANDOM });
 }
 
 /* A nonce of any bytes: the head, the deadline in nanoseconds and the length are the caller's. */
@@ -115,7 +124,12 @@ export const ACCEPTED: Case[] = [
   },
   {
     name: 'a deadline with nine fraction digits, to the nanosecond in the nonce',
-    payload: payload({ deadline: '2026-10-04T18:30:59.123456789Z', nonce: nonceBytes(BigInt(Date.UTC(2026, 9, 4, 18, 30, 59)) * 1_000_000n + 123_456_789n) }),
+    payload: payload({ deadline: '2026-10-04T18:30:59.123456789Z', nonce: nonceBytes(BigInt(Date.UTC(2026, 9, 4, 18, 30, 59)) * 1_000_000n + 123_456_789n + LIFE_NS) }),
+    sentence: "confirm this Mac's Touch ID key for your vault",
+  },
+  {
+    name: 'a nonce that expires exactly seven days after the deadline',
+    payload: payload({ nonce: nonceExpiring(DEADLINE_MS + 7 * 24 * 60 * 60 * 1000) }),
     sentence: "confirm this Mac's Touch ID key for your vault",
   },
   {
@@ -172,10 +186,17 @@ export const REFUSED: Case[] = [
   refuse('ten fraction digits', payload({ deadline: '2026-10-04T18:30:59.1234567891Z' }), 'deadline'),
   refuse('a number for the deadline', payload({ deadline: DEADLINE_MS }), 'deadline'),
   refuse('a legacy random nonce', payload({ nonce: Buffer.alloc(32, 0x6b).toString('base64') }), 'nonce', 'V1'),
-  refuse('a nonce of 31 bytes', payload({ nonce: nonceBytes(BigInt(DEADLINE_MS) * 1_000_000n, undefined, 31) }), 'nonce'),
+  refuse('a nonce of 31 bytes', payload({ nonce: nonceBytes(BigInt(DEADLINE_MS) * 1_000_000n + LIFE_NS, undefined, 31) }), 'nonce'),
   refuse('a nonce base64 does not write that way', payload({ nonce: sloppyNonce() }), 'nonce'),
-  refuse('a nonce whose deadline is a millisecond later', payload({ nonce: nonceAt(DEADLINE_MS + 1) }), 'nonce', 'deadline'),
-  refuse('a nonce of version 1', payload({ nonce: nonceBytes(BigInt(DEADLINE_MS) * 1_000_000n, [0x56, 0x28, 0xf6, 0xc6, 0x01]) }), 'nonce', 'V1'),
+  refuse('a nonce that expires a millisecond past seven days', payload({ nonce: nonceAt(DEADLINE_MS + 1) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires a millisecond short of seven days', payload({ nonce: nonceAt(DEADLINE_MS - 1) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires a nanosecond past seven days', payload({ nonce: nonceBytes(BigInt(DEADLINE_MS) * 1_000_000n + LIFE_NS + 1n) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires with the payload, as spike2 signed them', payload({ nonce: nonceExpiring(DEADLINE_MS) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires a day after the payload', payload({ nonce: nonceExpiring(DEADLINE_MS + 24 * 60 * 60 * 1000) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires a year after the payload', payload({ nonce: nonceExpiring(DEADLINE_MS + 365 * 24 * 60 * 60 * 1000) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires before the payload', payload({ nonce: nonceExpiring(DEADLINE_MS - 1) }), 'nonce', 'seven days'),
+  refuse('a nonce that expires before 1970', payload({ nonce: nonceBytes(-1n) }), 'nonce', 'seven days'),
+  refuse('a nonce of version 1', payload({ nonce: nonceBytes(BigInt(DEADLINE_MS) * 1_000_000n + LIFE_NS, [0x56, 0x28, 0xf6, 0xc6, 0x01]) }), 'nonce', 'V1'),
   refuse('a nonce that is not base64', payload({ nonce: '!!!!' }), 'nonce'),
   refuse('a number for the nonce', payload({ nonce: 5 }), 'nonce'),
   refuse('five intents', with1(...['1', '2', '3', '4', '5'].map((a) => move(USDC, a))), 'intents'),

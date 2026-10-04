@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 
 import { base58Encode } from '../../src/chain/near.ts';
 import { NATIVE_ASSET } from '../../src/intents.ts';
+import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
+import { buildNonce, decodeNonce } from '../../src/relay/payload.ts';
 import { chipTokenRows, REGISTRY } from '../../scripts/gen-chip-tokens.ts';
 import { ACCEPTED, CASES, CHIP, NOW_MS, PINS, RECOVERY, RULES, U128_MAX, USDC, VAULT, nonceAt, payload } from '../fixtures/intent-grammar/corpus.ts';
 import type { Case } from '../fixtures/intent-grammar/corpus.ts';
@@ -26,6 +28,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const GRAMMAR = ['src-tauri/se-helper/IntentGrammar.swift', 'src-tauri/se-helper/TokenTable.swift'].map((f) => path.join(ROOT, f));
 const DRIVER = path.join(ROOT, 'tests/swift/GrammarDriver.swift');
 const SERVICE = path.join(ROOT, 'src-tauri/se-helper/main.swift');
+const CHIP_OPS = path.join(ROOT, 'src-tauri/se-helper/ChipOps.swift');
 const SEAM = path.join(ROOT, 'tests/swift/VaultTestPlatform.swift');
 const DER_FIXTURE = path.join(ROOT, 'tests/fixtures/intent-grammar/chip-der.json');
 const LIVE_FIXTURE = path.join(ROOT, 'tests/fixtures/intent-grammar/live-webauthn.json');
@@ -457,12 +460,25 @@ test("every chip-signed MultiPayload the live verifier accepted in spike2 is reb
 });
 
 test("the grammar takes spike2's live rekey proofs, and refuses its chip-signed add_public_key and the chip switching predecessor auth back on", { skip }, () => {
-  const answers = drive(live.map((v) => {
-    const signed = JSON.parse(fromHex(v.signed.payload)) as { signer_id: string; deadline: string };
-    return { op: 'parse', payloadHex: v.signed.payload, nowMs: Date.parse(signed.deadline) - 60_000, chip: v.x963.slice(2), pins: { ...PINS, account: signed.signer_id } };
-  }));
+  // spike2 signed its nonces to expire with their payloads; the grammar takes only the seven-day
+  // life every nonce Phosphor builds carries (CONTRACTS.md, "Lead's call: nonce lifetime"). So each
+  // live payload is read twice: as signed, refused for its nonce alone, and with the same nonce
+  // parts re-dated, read for its intents.
+  const read = (payload: string, signerId: string, deadline: string, v: LiveVector) => ({
+    op: 'parse', payloadHex: Buffer.from(payload, 'utf8').toString('hex'), nowMs: Date.parse(deadline) - 60_000, chip: v.x963.slice(2), pins: { ...PINS, account: signerId },
+  });
+  const requests = live.flatMap((v) => {
+    const text = fromHex(v.signed.payload);
+    const signed = JSON.parse(text) as { signer_id: string; deadline: string; nonce: string };
+    const parts = decodeNonce(signed.nonce);
+    assert.ok(parts !== null && parts.deadlineMs === Date.parse(signed.deadline), `${v.test}: spike2's nonce expires with its payload`);
+    const renonced = text.replace(signed.nonce, buildNonce({ ...parts, deadlineMs: Date.parse(signed.deadline) + NONCE_LIFE_AFTER_DEADLINE_MS }));
+    return [read(text, signed.signer_id, signed.deadline, v), read(renonced, signed.signer_id, signed.deadline, v)];
+  });
+  const answers = drive(requests);
   live.forEach((v, i) => {
-    const a = answers[i];
+    const [asSigned, a] = [answers[2 * i], answers[2 * i + 1]];
+    assert.equal(asSigned.rule, 'nonce', `${v.test} as signed: ${asSigned.message}`);
     if (v.intents.length === 0) {
       assert.equal(a.sentence, "confirm this Mac's Touch ID key for your vault", v.test);
     } else {
@@ -529,7 +545,7 @@ test('the grammar type-checks inside the service beside main.swift, in its stdin
   // Checked with the stand-in keychain (PHOSPHOR_TESTSEAM) and never built: nothing here can reach
   // the real keychain or raise a dialog, and one module proves no name in the grammar collides.
   for (const defines of [['-D', 'PHOSPHOR_STDIO'], []]) {
-    const args = ['-typecheck', ...defines, '-D', 'PHOSPHOR_TESTSEAM', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), SERVICE, SEAM, ...GRAMMAR];
+    const args = ['-typecheck', ...defines, '-D', 'PHOSPHOR_TESTSEAM', '-D', 'PHOSPHOR_CHIP', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), SERVICE, CHIP_OPS, SEAM, ...GRAMMAR];
     const run = spawnSync('swiftc', args, { encoding: 'utf8', env: { ...process.env, TMPDIR: work } });
     assert.equal(run.status, 0, `swiftc ${defines.join(' ')}: ${run.stderr}`);
   }

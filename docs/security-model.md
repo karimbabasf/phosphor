@@ -137,6 +137,15 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   (a staged file swapped during the touch is never pinned; a cancelled restore; the crash matrix,
   for a bind and a restore; a wallet made after a start-up probe that could not read the markers
   is committed all the same; Phosphor-only only for a file the service confirmed).
+- **The backend asks the chip key to sign something its Touch ID dialog does not say.** The vault
+  service reads every payload itself, against a grammar that takes a move of known tokens out of
+  the vault, the removal of a key, or the empty rekey proof, and refuses everything else before
+  the key is touched, so a refusal never raises a dialog. The dialog's sentence is the service's,
+  written from what it read; the backend never sends one. Adding a key and switching predecessor
+  auth back on are refused by name, whatever the payload wraps them in. Proof:
+  `chip-service.test.ts` (every refusal before the key with no signature asked for, each signed
+  payload's sentence byte for byte, each signature verified in Node); `intent-grammar.test.ts`
+  (every accept and refusal, 10 000 mutated payloads read the same as Node reads them).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -230,6 +239,10 @@ your money.
   the bound file and go with the item. The app never shows or spends from those NEAR and Solana
   addresses, and a trading key is approved again. What closes it: nothing in this build; the
   backup kept off this Mac is the way back.
+- **A chip sentence names a token by its ticker, not its chain.** "move 5.00 USDC" does not say
+  whether that is USDC on NEAR or USDC bridged from Ethereum; both are in the chip's token table,
+  and a payload names each ticker once, so one sentence never says USDC twice. The value is the
+  same either way. What closes it: nothing planned.
 - **One marker refuses every device-bound file on the Mac.** Markers are one pool for the whole
   Mac, and while any exists the service refuses every device-bound key file. So the first wallet a
   signed release binds, makes or restores, from any copy and in any data folder, stops every
@@ -1158,3 +1171,39 @@ not a control: a program running as you that removes the chip entry puts the EVM
 next session, where it reaches Hyperliquid's owner actions and not the vault, whose keys on chain
 no longer include it. The chip key signs only through the vault service, which checks its own
 marker first.
+
+**The chip key signs only what the vault service reads.** The chip key is a P-256 Secure Enclave
+key made like the wallet's own (permanent, one Touch ID or login password per use, in the vault's
+keychain group and never in a file), under its own tag prefix and its own marker service
+(`src-tauri/se-helper/ChipOps.swift`), so it never makes the Mac read as bound and the wallet's
+sweep never sees it. Its marker pins the vault it signs for, the allowance it tops up and the paper
+recovery key. The service writes it once, while the key is in its first ten minutes, and no op
+deletes it or a pinned key; a chip key nobody pinned signs nothing and is swept after those ten
+minutes. A build with no keychain home (a development build, any copy without the vault profile)
+answers every chip op with a refusal.
+
+A signature request carries a key and a payload, and the service checks, in this order and before
+the one call that asks you: the request's form; a marker for that key; the key itself; the grammar
+(`src-tauri/se-helper/IntentGrammar.swift`); that the payload signs for the pinned vault; and that
+the sentence fits in 120 characters. The grammar reads a strict subset of JSON that every parser
+reads one way (printable ASCII, no escapes, no key twice, exact key sets) and takes three shapes: a
+move of tokens from the app's token table out of the vault, the removal of a key that is not the
+signing chip, and the empty proof a rekey asks of a new chip key. Every other kind the verifier
+knows is refused by name, `add_public_key` and `set_auth_by_predecessor_id` first: the first would
+give the vault to a key the backend chose, and the second would reopen the door the rekey closes.
+The deadline must fall within two minutes, and the nonce must expire exactly seven days after it,
+the life every nonce Phosphor builds carries (`NONCE_LIFE_AFTER_DEADLINE_MS`), so the app asks the
+chain about every nonce under one rule. The sentence names the pinned vault, allowance and paper
+key in words and anything else by its ends, eight characters each, and says every amount exactly:
+"move 100.00 USDC from your vault to your allowance". The dialog reads "Phosphor is trying to"
+followed by that sentence, and its context is used for that one signature and never again.
+
+The answer is the verifier's WebAuthn form: authenticator data for phosphor.money with user present
+set, client data whose challenge is the payload's SHA-256, and the signature as r || s with S
+folded into the low half of the group, which the verifier requires. The service verifies that
+signature against the chip's public key before it answers, so a signature that would fail on chain
+never leaves. It reads, wraps and echoes the payload as one value: the request's string as the
+system's JSON reader decoded it, which drops one leading byte order mark, so the backend compares
+the payload it gets back byte for byte with the one it asked for. The relay in the shell carries
+twelve ops, the five chip ops among them, adds the transport key to an unwrap only, and adds nothing
+to a signature request (`src-tauri/src/enclave.rs`).
