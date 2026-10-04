@@ -207,8 +207,9 @@ test('the vault moving between the read and the signature: the allowance key ref
 
 test('src/main.ts installs the app accounts for the rails, the demo its own, after the gate', () => {
   const main = fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'main.ts'), 'utf8');
-  const gate = main.indexOf('keystore.keepOwnerKeyOutWhen((vault) => ownerKeyOut(vaultPrefs.get(), vault));');
-  const made = main.indexOf('const accounts = createAccounts({ keystore, prefs: vaultPrefs });');
+  // Whatever the gate's argument and whatever port joins the accounts (the chip service's status, U6).
+  const gate = main.indexOf('keystore.keepOwnerKeyOutWhen(');
+  const made = main.indexOf('const accounts = createAccounts({ keystore, prefs: vaultPrefs');
   const used = main.indexOf("useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);");
   assert.ok(gate > 0 && made > gate && used > made, 'the accounts are made after the gate and installed at once');
   assert.ok(used < main.indexOf('const ledger = createLedger(cfg);'), 'before the ledger or any rail can ask');
