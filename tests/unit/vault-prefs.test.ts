@@ -15,7 +15,8 @@ import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { DEFAULT_IDLE_MINUTES, createVaultPrefs } from '../../src/vault/prefs.ts';
+import { base58Encode } from '../../src/chain/near.ts';
+import { DEFAULT_ALLOWANCE_USD, DEFAULT_IDLE_MINUTES, MAX_ALLOWANCE_USD, createVaultPrefs } from '../../src/vault/prefs.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
@@ -161,5 +162,95 @@ test('a proof names its wallet in lower case, a clear forgets it, and a file fro
 
   const old = tmpDir();
   fs.writeFileSync(path.join(old, 'vault.json'), JSON.stringify({ backedUp: true, backedUpAt: '2026-09-20T10:00:00.000Z' }, null, 2) + '\n');
-  assert.deepEqual(createVaultPrefs(old).get(), { backedUp: true, backedUpAt: '2026-09-20T10:00:00.000Z', backedUpFor: null, idleMinutes: 5 });
+  assert.deepEqual(createVaultPrefs(old).get(), {
+    backedUp: true,
+    backedUpAt: '2026-09-20T10:00:00.000Z',
+    backedUpFor: null,
+    idleMinutes: 5,
+    chip: null,
+    allowance: { sizeUsd: 100 },
+  });
+});
+
+// ---------- Phase 2: the chip entry and the allowance size ----------
+
+const CHIP_TAG = 'com.karimbabasf.phosphor.chip.p2-test.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0';
+
+/* A P-256 public key as the chip service spells it: "p256:" and the base58 of x || y. */
+function chipPublicKey(): string {
+  const jwk = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+  return 'p256:' + base58Encode(Buffer.concat([Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]));
+}
+
+test('the chip entry is written once the move is done, survives every other write, and names its vault', () => {
+  const dir = tmpDir();
+  const prefs = createVaultPrefs(dir);
+  assert.equal(prefs.get().chip, null);
+  prefs.markBackedUp();
+  assert.equal(onDisk(dir).chip, undefined, 'nothing is written for a vault that never moved');
+  const publicKey = chipPublicKey();
+  const set = prefs.setChip({ keyRef: `chip:${CHIP_TAG}`, publicKey, account: '0xAbC0000000000000000000000000000000000001' }, () => Date.parse('2026-10-04T12:00:00.000Z'));
+  const expected = { keyRef: `chip:${CHIP_TAG}`, publicKey, account: '0xabc0000000000000000000000000000000000001', migratedAt: '2026-10-04T12:00:00.000Z' };
+  assert.deepEqual(set.chip, expected);
+  prefs.markBackedUp();
+  prefs.setIdleMinutes(60);
+  prefs.setAllowanceSize(25);
+  prefs.clearBackedUp();
+  assert.deepEqual(createVaultPrefs(dir).get().chip, expected, 'every other write keeps it');
+  assert.deepEqual(onDisk(dir).chip, expected);
+  assert.equal(prefs.setChip(null).chip, null);
+  assert.equal(onDisk(dir).chip, undefined);
+  assert.equal(createVaultPrefs(dir).get().allowance.sizeUsd, 25, 'clearing the chip keeps the size');
+});
+
+test('the chip entry takes only a real key ref, a P-256 point and a 0x account', () => {
+  const prefs = createVaultPrefs(tmpDir());
+  const good = { keyRef: `chip:${CHIP_TAG}`, publicKey: chipPublicKey(), account: '0x' + 'ab'.repeat(20) };
+  for (const keyRef of [
+    CHIP_TAG,
+    `keychain:${CHIP_TAG}`,
+    'chip:com.karimbabasf.phosphor.vault.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0',
+    `chip:${CHIP_TAG.toLowerCase()}`,
+    'chip:com.karimbabasf.phosphor.chip.Bad_Label.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0',
+    `chip:${CHIP_TAG}x`,
+  ]) {
+    assert.throws(() => prefs.setChip({ ...good, keyRef }), /chip key ref/, keyRef);
+  }
+  assert.doesNotThrow(() => prefs.setChip({ ...good, keyRef: 'chip:com.karimbabasf.phosphor.chip.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0' }), 'the label is optional');
+  const offCurve = 'p256:' + base58Encode(Buffer.alloc(64, 7));
+  const short = 'p256:' + base58Encode(Buffer.alloc(33, 2));
+  for (const publicKey of [good.publicKey.slice('p256:'.length), offCurve, short, 'p256:0OIl', 'ed25519:' + good.publicKey.slice(5)]) {
+    assert.throws(() => prefs.setChip({ ...good, publicKey }), /P-256 point/, publicKey);
+  }
+  for (const account of ['0x' + 'ab'.repeat(19), 'ab'.repeat(20), 'vault.near']) {
+    assert.throws(() => prefs.setChip({ ...good, account }), /0x address/, account);
+  }
+});
+
+test('a chip entry the file holds and cannot read still counts as one', () => {
+  for (const chip of [{}, 'yes', true, { keyRef: 7 }]) {
+    const dir = tmpDir();
+    fs.writeFileSync(path.join(dir, 'vault.json'), JSON.stringify({ backedUp: false, backedUpAt: null, chip }) + '\n');
+    assert.deepEqual(createVaultPrefs(dir).get().chip, { keyRef: '', publicKey: '', account: '', migratedAt: '' }, JSON.stringify(chip));
+  }
+  const dir = tmpDir();
+  fs.writeFileSync(path.join(dir, 'vault.json'), JSON.stringify({ backedUp: false, backedUpAt: null, chip: null }) + '\n');
+  assert.equal(createVaultPrefs(dir).get().chip, null, 'null is no entry');
+});
+
+test('the allowance is $100 until somebody picks, and a pick is a dollar amount in cents', () => {
+  const dir = tmpDir();
+  const prefs = createVaultPrefs(dir);
+  assert.equal(DEFAULT_ALLOWANCE_USD, 100);
+  assert.deepEqual(prefs.get().allowance, { sizeUsd: 100 });
+  prefs.markBackedUp();
+  assert.equal(onDisk(dir).allowance, undefined, 'the default is not written down as if it were a choice');
+  assert.deepEqual(prefs.setAllowanceSize(0).allowance, { sizeUsd: 0 }, 'zero sends everything home');
+  assert.deepEqual(prefs.setAllowanceSize(12.345).allowance, { sizeUsd: 12.35 });
+  assert.deepEqual(onDisk(dir).allowance, { sizeUsd: 12.35 });
+  for (const usd of [-1, Number.NaN, Number.POSITIVE_INFINITY, MAX_ALLOWANCE_USD + 1, '5' as unknown as number]) {
+    assert.throws(() => prefs.setAllowanceSize(usd), /dollar amount/, String(usd));
+  }
+  fs.writeFileSync(path.join(dir, 'vault.json'), JSON.stringify({ backedUp: false, backedUpAt: null, allowance: { sizeUsd: -3 } }) + '\n');
+  assert.deepEqual(createVaultPrefs(dir).get().allowance, { sizeUsd: 100 }, 'a size the file cannot hold reads as the default');
 });

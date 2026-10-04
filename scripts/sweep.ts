@@ -364,6 +364,16 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // The read key of the made-up token "f00d" x 16, which pins the shell's read key to the one
   // src/http/auth.ts derives. Keys nothing.
   ['6c06cb123fcf6903ddd78df2a8ab62b9b5a4cfb58bb031186751a07701b97eb1', 'read key test vector, src-tauri/src/backend.rs'],
+  // The published vectors of the keys derived from the owner key (src/keystore/derived.ts), from
+  // two owner keys already above: the canonical Ethereum test key and the hyperliquid-python-sdk
+  // fixture. Each is an ALLOWANCE key, a GAS seed or a GAS account derived from a public test key,
+  // so it holds nothing and anyone can derive it again (tests/fixtures/derived-keys.ts).
+  ['c96e3431c7fe5789854eb223ffab755b902c08bb34fdf40bfcb9839589d3faa1', 'ALLOWANCE key derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['f393907ec2ad1db656b6bd3d8e4804ad70d12ed136c76f46dac1549606a6c64d', 'GAS seed derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['e4d620800228e29d21a180cc305b9541c170631df3b5b513b795947a27520108', 'GAS account derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a', 'ALLOWANCE key derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  ['fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879', 'GAS seed derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  ['ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7', 'GAS account derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the

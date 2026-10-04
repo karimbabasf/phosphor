@@ -55,6 +55,7 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
+import { ownerKeyOut } from './vault/accounts.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -255,6 +256,9 @@ const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, se
    fixed fifteen minutes whatever the tab said. */
 let announceLock: (() => void) | null = null;
 const vaultPrefs = createVaultPrefs(cfg.dataDir);
+/* A vault that moved to the chip keeps its owner key out of the session: the key signs one
+   Hyperliquid owner action per touch of its own, never from memory (src/vault/accounts.ts). */
+keystore.keepOwnerKeyOutWhen((vault) => ownerKeyOut(vaultPrefs.get(), vault));
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,

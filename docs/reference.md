@@ -759,7 +759,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/driver.ts      the agent the app starts for you, and the orphans it collects
     src/providers/     the two vendors the chat can run, Claude Code and Grok, each locked down
     src/web-read.ts    the mark a web read leaves: every later move in that chat waits for a click
-    src/keystore/      the encrypted key file, the lock, the session, the derivation
+    src/keystore/      the encrypted key file, the lock, the session, the derivation, and the
+                       allowance and gas keys derived from the owner key (derived.ts)
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a thin door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
