@@ -240,6 +240,13 @@ why. The screen-lock check posts the lock signal to the one shell it started; `-
 posts macOS's own instead, which every app on the Mac receives. The apps it starts keep their
 window and WebKit state in the throwaway home, not in the installed app's `~/Library`.
 
+The NEAR Intents verifier is not part of a release, and its owners can upgrade it. In the same
+clone, `node scripts/verifier-check.ts` reads which verifier is deployed (its version and the hash
+of its code) and prints `spiked: yes` only for the build the Touch ID vault was tested against,
+0.4.4. Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
+`simulate_intents`, signed by keys made for that run, and check that the verifier reports exactly
+the events the app expects. Neither sends anything.
+
 ## The lock
 
 The wallet locks after five minutes with nobody at the window by default (the Vault tab
