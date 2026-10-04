@@ -57,9 +57,12 @@ import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { ownerKeyGate } from './vault/chip.ts';
 import { liveVerifier } from './relay/verifier.ts';
+import { ownerKeyOut } from './vault/accounts.ts';
 import { createAccounts } from './vault/accounts.ts';
 import { useRailAccounts } from './intents-sign.ts';
 import { demoAccounts } from './ledger/demo.ts';
+import { ownerTouchVia } from './proposals/lifecycle.ts';
+import { useOwnerTouch } from './rails/hl-user-signed.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -275,6 +278,8 @@ const vaultPrefs = createVaultPrefs(cfg.dataDir);
    whether the owner key is out asks this same gate. */
 const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier());
 keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
+// The touch each of those owner actions asks for, read for the same vault by the same gate.
+useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: (v) => ownerKeyOut(vaultPrefs.get(), v) }));
 /* Which account the rails sign for, and with which key (src/intents-sign.ts): VAULT until the
    vault moves, then ALLOWANCE. No chip service answer is wired in yet, so a moved vault reads
    `broken` until one is, and the rails spend ALLOWANCE either way. The demo names its own. */

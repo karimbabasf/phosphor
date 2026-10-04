@@ -22,6 +22,11 @@
 //
 // They are exported as plain functions rather than a Rail on purpose. A Rail is reachable by
 // the agent through MCP; these are the primitives a rail composes, behind its own refusals.
+// The third action only the master key can sign, approveAgent, is built here as well
+// (buildApproveAgentPayload) and signed from the terminal by scripts/hl-agent.ts, never by a rail.
+//
+// Once a vault has moved to this Mac's Touch ID key, the master key is not in memory any more:
+// each of these signatures asks for a Touch ID of its own that names it (OwnerTouch, below).
 //
 // The signing scheme is the whole job, so it is stated once here and asserted against the
 // official SDK's own vectors in the tests:
@@ -53,11 +58,13 @@
 import { isAddress, parseSignature } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
 
-import { evmPrivateKey } from '../keystore/index.ts';
+import { evmPrivateKey, isOwnerTouchRequired } from '../keystore/index.ts';
 import type { Address, Hex } from 'viem';
 import { evmAddress } from '../keystore/index.ts';
 import { readTimeout, venueWriteTimeout } from '../net.ts';
 import { venueSaid } from '../venue-words.ts';
+import { ReasonError } from './reasons.ts';
+import type { ReasonCode } from './reasons.ts';
 
 // ---------- the venue table ----------
 
@@ -134,6 +141,17 @@ export const USD_CLASS_TRANSFER_TYPES = {
   ],
 } as const;
 
+// Here the agent IS typed `address`, unlike sendAsset's destination: that is the SDK's own table
+// for approve_agent, and the one scripts/hl-agent.ts has signed since the first agent was approved.
+export const APPROVE_AGENT_TYPES = {
+  'HyperliquidTransaction:ApproveAgent': [
+    { name: 'hyperliquidChain', type: 'string' },
+    { name: 'agentAddress', type: 'address' },
+    { name: 'agentName', type: 'string' },
+    { name: 'nonce', type: 'uint64' },
+  ],
+} as const;
+
 const USDC_DECIMALS = 6;
 
 // ---------- amounts ----------
@@ -186,6 +204,15 @@ export type HlUsdClassTransferAction = {
   hyperliquidChain: 'Mainnet';
   amount: string;
   toPerp: boolean;
+  nonce: number;
+};
+
+export type HlApproveAgentAction = {
+  type: 'approveAgent';
+  hyperliquidChain: 'Mainnet';
+  signatureChainId: string;
+  agentAddress: string;
+  agentName: string;
   nonce: number;
 };
 
@@ -269,27 +296,113 @@ export function buildUsdClassTransferPayload(args: {
   };
 }
 
+// The action and its message keep the field order scripts/hl-agent.ts posts and signs. The
+// address is lowercased once, as the script does, so the signed and the posted text agree.
+export function buildApproveAgentPayload(args: {
+  agentAddress: string;
+  agentName: string;
+  nonce: number;
+}): { action: HlApproveAgentAction; typedData: HlTypedData; nonce: number } {
+  const action: HlApproveAgentAction = {
+    type: 'approveAgent',
+    hyperliquidChain: hlVenue().hyperliquidChain,
+    signatureChainId: SIGNATURE_CHAIN_ID_HEX,
+    agentAddress: args.agentAddress.trim().toLowerCase(),
+    agentName: args.agentName,
+    nonce: args.nonce,
+  };
+  return {
+    action,
+    nonce: args.nonce,
+    typedData: {
+      domain: HL_DOMAIN,
+      types: APPROVE_AGENT_TYPES as unknown as HlTypedData['types'],
+      primaryType: 'HyperliquidTransaction:ApproveAgent',
+      message: {
+        hyperliquidChain: action.hyperliquidChain,
+        agentAddress: action.agentAddress,
+        agentName: action.agentName,
+        nonce: BigInt(action.nonce),
+      },
+    },
+  };
+}
+
 // ---------- the signing seam ----------
 
 export type HlSignature = { r: Hex; s: Hex; v: number };
 
 export type HlSignPort = {
   address(keysPath: string): Address;
-  signTypedData(keysPath: string, typed: HlTypedData): Promise<HlSignature>;
+  /* `lastCheck` is the executor's last check (RailHooks.lastCheck). The caller runs it right
+     before it asks; a signer that waits on a person in between (a Touch ID) runs it again once
+     the key is in hand, so Freeze pressed while the dialog is up still stops the signature. */
+  signTypedData(keysPath: string, typed: HlTypedData, lastCheck?: () => void): Promise<HlSignature>;
 };
 
 // The DEBT this file carried is paid: it used to open the key file itself, because
 // src/chain/evm.ts kept its reader private and this module could not edit it. Both now ask
 // src/keystore for the material, so there is one door, and a locked wallet closes it.
 
+/* THE MASTER KEY BEHIND A TOUCH, ONE ACTION AT A TIME (PHASE2-PLAN.md P2.8). A vault that moved
+   to the chip opens without the master key (src/keystore/store.ts, keepOwnerKeyOutWhen), and on
+   Hyperliquid that key is still the account's owner. So each of the three actions only it can
+   sign asks for a Touch ID of its own: one unwrap, one touch, one signature, and the key is zeroed
+   once the signature is made. Nothing is kept, so the next action asks again. src/main.ts installs
+   the touch (src/proposals/lifecycle.ts, ownerTouchVia) the way it installs the keystore. */
+export type OwnerTouch = {
+  // Whether the master key is out of the session, so an owner action asks for its own touch.
+  required(): boolean;
+  // One Touch ID whose dialog names `typed` exactly, the key for that one signature, then zeroed.
+  sign(typed: HlTypedData, lastCheck?: () => void): Promise<HlSignature>;
+};
+
+let ownerTouch: OwnerTouch | null = null;
+
+export function useOwnerTouch(touch: OwnerTouch | null): void {
+  ownerTouch = touch;
+}
+
+export function ownerTouchRequired(): boolean {
+  return ownerTouch?.required() ?? false;
+}
+
+/* A touch that gave no signature: cancelled, unanswered, out of reach, or an action the dialog
+   could not name. Nothing was signed. A cancel is the person saying no; anything else is a move
+   that did not go out. `touch` is the relay's own code, for the log. */
+export class OwnerTouchRefused extends ReasonError {
+  readonly touch: string;
+  constructor(touch: string, message: string) {
+    super(touch === 'user_cancel' ? 'declined' : 'not_sent', message);
+    this.name = 'OwnerTouchRefused';
+    this.touch = touch;
+  }
+}
+
+/* One EIP-712 signature with the key handed in. viem takes it as hex, a copy JavaScript cannot
+   wipe: the floor src/keystore/store.ts names for every EVM signature (evmKey). Hyperliquid wants
+   {r, s, v} with v as 27 or 28, not viem's packed 65-byte hex. */
+export async function signTypedWith(key: Hex | Buffer, typed: HlTypedData): Promise<HlSignature> {
+  const account = privateKeyToAccount(typeof key === 'string' ? key : `0x${key.toString('hex')}`);
+  const packed = await account.signTypedData(typed as never);
+  const { r, s, v, yParity } = parseSignature(packed);
+  return { r, s, v: v !== undefined ? Number(v) : 27 + yParity };
+}
+
 export const liveSignPort: HlSignPort = {
   address: evmAddress,
-  async signTypedData(keysPath, typed) {
-    const account = privateKeyToAccount(evmPrivateKey(keysPath));
-    const packed = await account.signTypedData(typed as never);
-    // Hyperliquid wants {r, s, v} with v as 27 or 28, not viem's packed 65-byte hex.
-    const { r, s, v, yParity } = parseSignature(packed);
-    return { r, s, v: v !== undefined ? Number(v) : 27 + yParity };
+  async signTypedData(keysPath, typed, lastCheck) {
+    let key: Hex;
+    try {
+      key = evmPrivateKey(keysPath);
+    } catch (err) {
+      if (!isOwnerTouchRequired(err)) throw err;
+      if (ownerTouch === null) {
+        throw new OwnerTouchRefused('no_touch', 'The owner key signs only behind Touch ID, and Touch ID is not set up in this process, so nothing was signed');
+      }
+      return ownerTouch.sign(typed, lastCheck);
+    }
+    return signTypedWith(key, typed);
   },
 };
 
@@ -461,6 +574,12 @@ export type HlActionResult = {
      `nonce` above. Before this the throw simply escaped, and the retry above it minted a new
      nonce and a new signature that the venue was perfectly happy to accept a second time. */
   ambiguous?: boolean;
+  /* sendAsset only, on an ambiguous attempt: the signature it posted. A retry posts it again with
+     the same action (sendAsset's `resend`), so the retry is the same bytes and never a second
+     signature, and on a vault on the chip never a second Touch ID for one send. */
+  signature?: HlSignature;
+  // Why nothing was signed, when a Touch ID gave no signature: 'declined' for a cancel.
+  reason?: ReasonCode;
 };
 
 type ExchangeResponse = { status?: string; response?: unknown };
@@ -524,6 +643,17 @@ async function postAction(
   return { ok: true, detail: '', body };
 }
 
+/* The signature, or the Touch ID that would have made it saying why not. A refused touch is an
+   answer, since nothing was signed; anything else throws as it always has, for the rail to word. */
+async function signFor(sign: HlSignPort, deps: HlUserSignedDeps, typed: HlTypedData): Promise<HlSignature | OwnerTouchRefused> {
+  try {
+    return await sign.signTypedData(deps.keysPath, typed, deps.lastCheck);
+  } catch (err) {
+    if (err instanceof OwnerTouchRefused) return err;
+    throw err;
+  }
+}
+
 // ---------- usdClassTransfer: spot <-> perp ----------
 
 // Moves USDC between the two books on one account. Not a transfer to anyone: same account,
@@ -562,7 +692,8 @@ export async function usdClassTransfer(
   });
 
   deps.lastCheck?.();
-  const signature = await sign.signTypedData(deps.keysPath, typedData);
+  const signature = await signFor(sign, deps, typedData);
+  if (signature instanceof OwnerTouchRefused) return { ok: false, detail: signature.message, reason: signature.reason };
   const out = await postAction(deps, action, nonce, signature);
   if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
   return {
@@ -602,6 +733,10 @@ export async function sendAsset(
        and this is a new transfer. The venue refuses a nonce it has already seen, so a genuine
        retry is refused as a duplicate rather than paying out twice. */
     nonce?: number;
+    /* Or the ambiguous attempt itself, its action and the signature it posted: the retry posts
+       those very bytes and signs nothing. The arguments must rebuild exactly that action, or
+       nothing is posted. */
+    resend?: { action: HlSendAssetAction; signature: HlSignature };
     // Both default to the spot book: the side a unified account reports its balance under, and
     // the side the exit has always paid out of.
     sourceDex?: HlDex;
@@ -667,13 +802,19 @@ export async function sendAsset(
     sourceDex,
     destinationDex: params.destinationDex ?? HL_SPOT_DEX,
     // The caller's nonce when retrying, the clock when this is a new transfer.
-    nonce: params.nonce ?? (deps.now ?? Date.now)(),
+    nonce: params.resend?.action.nonce ?? params.nonce ?? (deps.now ?? Date.now)(),
   });
+  if (params.resend !== undefined && JSON.stringify(params.resend.action) !== JSON.stringify(action)) {
+    return { ok: false, detail: 'REFUSED: the send to repeat is not the send these arguments build, so nothing was posted' };
+  }
 
   deps.lastCheck?.();
-  const signature = await sign.signTypedData(deps.keysPath, typedData);
+  const signature = params.resend?.signature ?? (await signFor(sign, deps, typedData));
+  if (signature instanceof OwnerTouchRefused) return { ok: false, detail: signature.message, reason: signature.reason };
   const out = await postAction(deps, action, nonce, signature);
-  if (!out.ok) return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous };
+  if (!out.ok) {
+    return { ok: false, detail: out.detail, action, response: out.body, nonce, ambiguous: out.ambiguous, ...(out.ambiguous === true ? { signature } : {}) };
+  }
 
   const fee = activationFeeUsdc > 0 ? `, plus the ${activationFeeUsdc} USDC activation fee the venue charges us for a fresh destination` : '';
   return {

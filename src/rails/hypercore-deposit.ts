@@ -48,10 +48,11 @@
 //      to (settleToPerp). On a unified account, which is what Karim's is, there is one balance
 //      and the step is a no-op that says so.
 //
-// The signature this rail releases is an intents `transfer` with the EVM key. The settle step
-// on a standard account signs a second, different thing: an EIP-712 usdClassTransfer with the
-// same key. Both are the app's own authority over its own money; a reader should know that a
-// module called "deposit" can produce a user-signed venue action.
+// The signature this rail releases is an intents `transfer` with the EVM key (the allowance key
+// once a vault has moved to the chip). The settle step on a standard account signs a second,
+// different thing: an EIP-712 usdClassTransfer with the owner key, which on a vault on the chip
+// asks for a Touch ID of its own. Both are the app's own authority over its own money; a reader
+// should know that a module called "deposit" can produce a user-signed venue action.
 
 import { formatUnits, isAddress } from 'viem';
 import type { AssetPin, HlDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
@@ -67,7 +68,7 @@ import { EXECUTE_MAX_AGE_MS, closedQuoteSentence, routeGate } from '../preflight
 import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { reasonOf } from './reasons.ts';
-import { accountSummary, usdClassTransfer } from './hl-user-signed.ts';
+import { accountSummary, liveSignPort, ownerTouchRequired, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERLIQUID_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
@@ -236,19 +237,22 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     };
   }
 
-  // The account id we spend inside the verifier, which is the EVM address lowercased. Read
-  // from the key, never from the draft, and compared against the draft: a draft authored for
-  // another account would sign an intent that spends nothing and release a signature for no
-  // reason. The Hyperliquid account credited is the same address, checksummed, because the
-  // venue identifies an account by the key that signs for it.
+  // The account id we spend inside the verifier, read from the intents signer, never from the
+  // draft, and compared against the draft: a draft authored for another account would sign an
+  // intent that spends nothing and release a signature for no reason. The Hyperliquid account
+  // credited is the one the owner key signs for there (the HL signer's address), because the
+  // venue identifies an account by the key that signs for it. The two are one address until a
+  // vault moves to the chip; after it the intent spends the allowance and the money still lands
+  // in the vault's own Hyperliquid account, never in one named after the allowance.
   function requireOwner(draft: HlDepositDraft): string {
     const owner = signer.address(keysPath).toLowerCase();
     if (draft.from.toLowerCase() !== owner) {
       throw new Error(`draft spends the balance of ${draft.from} but the configured key is ${owner}`);
     }
-    if (draft.hlAccount.toLowerCase() !== owner) {
+    const venue = (hl.sign ?? liveSignPort).address(keysPath).toLowerCase();
+    if (draft.hlAccount.toLowerCase() !== venue) {
       throw new Error(
-        `draft credits ${draft.hlAccount}, which is not the account this app signs for (${owner}); ` +
+        `draft credits ${draft.hlAccount}, which is not the account this app signs for on Hyperliquid (${venue}); ` +
           'collateral credited anywhere else is not margin this app can trade',
       );
     }
@@ -525,7 +529,13 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       ];
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
 
-      priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
+      if (ownerTouchRequired()) {
+        // A vault on the chip: the allowance spends, and the owner key signs a book move behind its own touch.
+        priced.lines.push('execution signs one intent with the allowance key and sends nothing on any chain; the solver credits the venue');
+        priced.lines.push('on a standard account, moving what lands from spot to perp asks for a Touch ID of its own');
+      } else {
+        priced.lines.push('execution signs one intent with the EVM key and sends nothing on any chain; the solver credits the venue');
+      }
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
       if (route.notice !== null) priced.lines.unshift(route.notice);
       const assets = { origin: { assetId: p.originAsset, decimals: p.decimals }, destination: { assetId: HYPERCORE_USDC_ASSET_ID, decimals: HYPERCORE_USDC_DECIMALS } };
