@@ -24,7 +24,7 @@ import { OwnerTouchRequired, createKeystore } from '../../src/keystore/store.ts'
 import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
 import { buildNonce } from '../../src/relay/payload.ts';
 import { createAccounts } from '../../src/vault/accounts.ts';
-import { CHIP_PAYLOAD_LIFE_MS, MARKER_RECHECK_MS, chipSign, chipStatusReader, commitChip, createChip, isChipPublicKey, ownerKeyGate, sweepChips } from '../../src/vault/chip.ts';
+import { CHIP_PAYLOAD_LIFE_MS, ChipStatusRefused, MARKER_RECHECK_MS, chipSign, chipStatusReader, commitChip, createChip, isChipPublicKey, ownerKeyGate, sweepChips } from '../../src/vault/chip.ts';
 import type { ChipPin } from '../../src/vault/chip.ts';
 import { buildVaultPayload } from '../../src/vault/payload.ts';
 import type { VaultIntent } from '../../src/vault/payload.ts';
@@ -329,6 +329,57 @@ test('createChip takes only a P-256 point, and chipCommit and chipSweep carry th
     assert.ok(swept.ok && swept.deleted === 0);
   } finally {
     await w.stop();
+  }
+});
+
+test('a service built without the chip ops, or a shell that does not relay them, reads as no chip support in calm words', async () => {
+  const relay = liveRelay();
+  // What main.swift alone (no -D PHOSPHOR_CHIP) and an older shell answer an op they do not know.
+  const shell = serve(relay, { run: () => ({ ok: false, error: 'bad_input', message: 'unknown op' }) });
+  try {
+    const jwk = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' });
+    const pin: ChipPin = { keyRef: KEY_REF, publicKey: `p256:${base58Encode(Buffer.concat([Buffer.from(jwk.x!, 'base64url'), Buffer.from(jwk.y!, 'base64url')]))}`, account: `0x${'ab'.repeat(20)}` };
+    const results = [
+      await createChip(relay),
+      await commitChip(relay, { keyRef: KEY_REF, account: `0x${'ab'.repeat(20)}`, allowance: `0x${'cd'.repeat(20)}`, recovery: PAPER }),
+      await sweepChips(relay),
+    ];
+    for (const r of results) assert.ok(!r.ok && r.code === 'chip_unsupported', JSON.stringify(r));
+    assert.equal(isChipPublicKey(pin.publicKey), true);
+    const signed = await chipSign(relay, pin, buildVaultPayload({ signerId: pin.account, intents: [], deadlineMs: Date.now() + CHIP_PAYLOAD_LIFE_MS, salt: SALT }));
+    assert.ok(!signed.ok && signed.code === 'chip_unsupported', JSON.stringify(signed));
+    await assert.rejects(chipStatusReader(relay)(KEY_REF), (err: unknown) => err instanceof ChipStatusRefused && err.code === 'chip_unsupported');
+    const said = String(refusal('chip_unsupported').error);
+    assert.ok(calm(said), said);
+  } finally {
+    await shell.stop();
+    relay.stop();
+  }
+});
+
+test('the chip ops are checked here before they are asked: a bad label, pins the service would refuse, a key ref that is not a chip\'s', async () => {
+  const relay = liveRelay();
+  const asked: VaultRequest[] = [];
+  const shell = serve(relay, { run: (r) => (asked.push(r), { ok: false, error: 'bad_input', message: 'x' }) });
+  try {
+    const good = { keyRef: KEY_REF, account: `0x${'ab'.repeat(20)}`, allowance: `0x${'cd'.repeat(20)}`, recovery: PAPER };
+    const cases: [string, Promise<{ ok: boolean; code?: string }>][] = [
+      ['a label with a capital', createChip(relay, 'Bad')],
+      ['a sweep label with a dot', sweepChips(relay, 'a.b')],
+      ['a vault key ref', commitChip(relay, { ...good, keyRef: 'chip:com.karimbabasf.phosphor.vault.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0' })],
+      ['the vault as its own allowance', commitChip(relay, { ...good, allowance: good.account.toUpperCase().replace('0X', '0x') })],
+      ['a named account as the vault', commitChip(relay, { ...good, account: 'vault.near' })],
+      ['a p256 paper key', commitChip(relay, { ...good, recovery: `p256:${base58Encode(Buffer.alloc(64, 1))}` })],
+    ];
+    for (const [what, pending] of cases) {
+      const r = await pending;
+      assert.ok(!r.ok && r.code === 'invalid_request', `${what}: ${JSON.stringify(r)}`);
+    }
+    await assert.rejects(chipStatusReader(relay)('chip:nope'), (err: unknown) => err instanceof ChipStatusRefused && err.code === 'chip_missing');
+    assert.deepEqual(asked, [], 'nothing reached the service');
+  } finally {
+    await shell.stop();
+    relay.stop();
   }
 });
 

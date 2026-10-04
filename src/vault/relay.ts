@@ -139,6 +139,10 @@ const KEYCHAIN_WRITES: ReadonlySet<VaultOp> = new Set(['create', 'commit', 'swee
 // label, an upper-case UUID.
 const CHIP_REF = /^chip:com\.karimbabasf\.phosphor\.chip\.(?:[a-z0-9-]{1,40}\.)?[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12}$/;
 
+export function isChipKeyRef(value: unknown): value is string {
+  return typeof value === 'string' && CHIP_REF.test(value);
+}
+
 type Inflight = {
   request: VaultRequest;
   resolve: (r: VaultResult) => void;
