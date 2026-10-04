@@ -5,11 +5,9 @@
 // proof, and the key removals a chip may sign. The grammar runs for real, compiled with its test
 // driver (tests/swift/GrammarDriver.swift) into this file's temp folder.
 //
-// The nonce. The app builds every vault nonce to live seven days past its payload (the lead's call,
-// CONTRACTS.md); the grammar takes that once the service's change for it is in (U5). Until then the
-// compiled grammar still asks a nonce to expire with its payload, and this test says which grammar it
-// ran against: under the older one every payload must be refused for its nonce alone, and taken with
-// the nonce rebuilt the older way.
+// The nonce. The app builds every vault nonce to live exactly seven days past its payload (the lead's
+// call, CONTRACTS.md), and the grammar takes only that life (rule `nonce`), so every payload here is
+// taken as built.
 //
 // Run: node --test tests/unit/vault-chip-grammar.test.ts
 
@@ -100,7 +98,7 @@ function payloads(tokens: { assetId: string; decimals: number }[]): { why: strin
   return out;
 }
 
-// The same payload with its nonce rebuilt to expire with the payload, as before the seven-day rule.
+// The same payload with its nonce rebuilt to expire with the payload, the life the grammar refuses.
 function shortLived(payload: string): string {
   const body = JSON.parse(payload) as { deadline: string; nonce: string };
   const nonce = decodeNonce(body.nonce)!;
@@ -118,25 +116,15 @@ test('50 payloads the app builds for the chip all pass the vault service\'s gram
     const body = JSON.parse(payload) as { deadline: string; nonce: string };
     assert.equal(decodeNonce(body.nonce)!.deadlineMs, Date.parse(body.deadline) + NONCE_LIFE_AFTER_DEADLINE_MS);
   }
-  const answers = drive(built.map((b) => parse(b.payload)));
-  const sevenDay = answers.every((a) => a.ok);
-  let accepted: { why: string; payload: string; answer: Answer }[];
-  if (sevenDay) {
-    accepted = built.map((b, i) => ({ ...b, answer: answers[i]! }));
-    t.diagnostic(`the compiled grammar takes the seven-day nonce: ${built.length} of ${built.length} accepted as built`);
-  } else {
-    // The grammar before the service's nonce change: the nonce is the only thing it refuses.
-    built.forEach((b, i) => {
-      const a = answers[i]!;
-      assert.equal(a.ok, false);
-      assert.equal(a.rule, 'nonce', `${b.why}: ${a.rule}: ${a.message}`);
-      assert.match(a.message ?? '', /nonce's deadline must equal the payload's/, b.why);
-    });
-    const older = built.map((b) => ({ ...b, payload: shortLived(b.payload) }));
-    const again = drive(older.map((b) => parse(b.payload)));
-    accepted = older.map((b, i) => ({ ...b, answer: again[i]! }));
-    t.diagnostic(`the compiled grammar predates the seven-day nonce (U5 brings it): ${built.length} refused for the nonce alone, and taken with it rebuilt to expire with the payload`);
-  }
+  // As built, and again with each nonce rebuilt to die with its payload: one compile for both.
+  const answers = drive([...built.map((b) => parse(b.payload)), ...built.map((b) => parse(shortLived(b.payload)))]);
+  const accepted = built.map((b, i) => ({ ...b, answer: answers[i]! }));
+  built.forEach((b, i) => {
+    const older = answers[built.length + i]!;
+    assert.equal(older.ok, false, `${b.why}: a nonce that dies with its payload is taken`);
+    assert.equal(older.rule, 'nonce', `${b.why}: ${older.rule}: ${older.message}`);
+  });
+  t.diagnostic(`the compiled grammar takes the seven-day nonce: ${built.length} of ${built.length} accepted as built, the same ${built.length} refused for the nonce alone when it dies with the payload`);
   for (const { why, payload, answer } of accepted) {
     assert.equal(answer.ok, true, `${why}: ${answer.rule}: ${answer.message}`);
     assert.deepEqual(answer.parsed, JSON.parse(payload), `${why}: read as JSON.parse reads it`);

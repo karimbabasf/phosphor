@@ -709,10 +709,9 @@ test('GAS\'s own transaction read by hash: only a FINAL answer decides, UNKNOWN_
 });
 
 /* The same top-up and the same ambiguous submit against the vault service's own stand-in (U5's
-   tests/unit/helpers/vault-double.ts: main.swift and its grammar compiled with the test seam), when
-   this tree's stand-in answers the chip ops. Before U5's service is merged it answers them
-   bad_input, and this says so instead of passing quietly. */
-test('the same moves against the vault service\'s own stand-in, when this tree has its chip ops', async (t) => {
+   tests/unit/helpers/vault-double.ts: main.swift, ChipOps.swift and the grammar compiled with the
+   test seam), its grammar and its software-key seam signing where the enclave would ask a touch. */
+test('the same moves against the vault service\'s own stand-in', async (t) => {
   const { VaultDouble, swiftc } = await import('./helpers/vault-double.ts');
   if (!swiftc) {
     t.skip('needs macOS with swiftc');
@@ -721,10 +720,7 @@ test('the same moves against the vault service\'s own stand-in, when this tree h
   const clock = { now: () => Date.now() };
   const standIn = new VaultDouble();
   const probe = standIn.run({ id: 'probe-chip-ops', op: 'chipStatus' });
-  if (!probe.ok) {
-    t.diagnostic(`this tree's stand-in does not answer chip ops yet (${String(probe.error)}); the wave 2 integrator's run, with U5's service merged, runs this test against it`);
-    return;
-  }
+  assert.ok(probe.ok, `the stand-in answers the chip ops: ${String(probe.error)}`);
   let signatures = 0;
   const service = {
     run(request: VaultRequest) {
