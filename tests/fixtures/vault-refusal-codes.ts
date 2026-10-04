@@ -1,5 +1,5 @@
 // Every refusal code a person's Touch ID request can come back with, read off the three places that
-// write one: the vault service (src-tauri/se-helper/main.swift), the shell's relay
+// write one: the vault service (src-tauri/se-helper/main.swift and ChipOps.swift), the shell's relay
 // (src-tauri/src/enclave.rs) and this process's relay (src/vault/relay.ts, src/proposals/lifecycle.ts).
 // Read rather than listed, so a code added to any of them without a sentence in src/http/wallet.ts
 // fails tests/unit/refusal-words.test.ts and the route tests in tests/unit/vault-routes.test.ts.
@@ -8,7 +8,8 @@ import fs from 'node:fs';
 
 const read = (rel: string): string => fs.readFileSync(new URL(`../../${rel}`, import.meta.url), 'utf8');
 
-const SERVICE = read('src-tauri/se-helper/main.swift');
+// The chip's ops live in their own file, compiled into the same service (PHASE2-PLAN C1).
+const SERVICE = read('src-tauri/se-helper/main.swift') + read('src-tauri/se-helper/ChipOps.swift');
 const SHELL = read('src-tauri/src/enclave.rs');
 const RELAY = read('src/vault/relay.ts') + read('src/proposals/lifecycle.ts');
 
