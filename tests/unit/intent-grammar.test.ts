@@ -28,6 +28,7 @@ const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const GRAMMAR = ['src-tauri/se-helper/IntentGrammar.swift', 'src-tauri/se-helper/TokenTable.swift'].map((f) => path.join(ROOT, f));
 const DRIVER = path.join(ROOT, 'tests/swift/GrammarDriver.swift');
 const SERVICE = path.join(ROOT, 'src-tauri/se-helper/main.swift');
+const CHIP_OPS = path.join(ROOT, 'src-tauri/se-helper/ChipOps.swift');
 const SEAM = path.join(ROOT, 'tests/swift/VaultTestPlatform.swift');
 const DER_FIXTURE = path.join(ROOT, 'tests/fixtures/intent-grammar/chip-der.json');
 const LIVE_FIXTURE = path.join(ROOT, 'tests/fixtures/intent-grammar/live-webauthn.json');
@@ -544,7 +545,7 @@ test('the grammar type-checks inside the service beside main.swift, in its stdin
   // Checked with the stand-in keychain (PHOSPHOR_TESTSEAM) and never built: nothing here can reach
   // the real keychain or raise a dialog, and one module proves no name in the grammar collides.
   for (const defines of [['-D', 'PHOSPHOR_STDIO'], []]) {
-    const args = ['-typecheck', ...defines, '-D', 'PHOSPHOR_TESTSEAM', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), SERVICE, SEAM, ...GRAMMAR];
+    const args = ['-typecheck', ...defines, '-D', 'PHOSPHOR_TESTSEAM', '-D', 'PHOSPHOR_CHIP', '-module-name', 'se_helper', '-module-cache-path', path.join(work, 'mc'), SERVICE, CHIP_OPS, SEAM, ...GRAMMAR];
     const run = spawnSync('swiftc', args, { encoding: 'utf8', env: { ...process.env, TMPDIR: work } });
     assert.equal(run.status, 0, `swiftc ${defines.join(' ')}: ${run.stderr}`);
   }

@@ -1,6 +1,8 @@
 #!/bin/sh
-# Builds the Secure Enclave helper twice from src-tauri/se-helper/main.swift. Called by
-# scripts/bundle-payload.ts and by `npm run se:build`. Needs only the Xcode command line tools.
+# Builds the Secure Enclave helper twice from src-tauri/se-helper: main.swift, and the chip key's
+# ops with the grammar and token table they sign by (ChipOps.swift, IntentGrammar.swift,
+# TokenTable.swift), which PHOSPHOR_CHIP compiles in. Called by scripts/bundle-payload.ts and by
+# `npm run se:build`. Needs only the Xcode command line tools.
 #
 #   src-tauri/binaries/xpc/com.karimbabasf.phosphor.vault.xpc
 #       The XPC service the app ships, copied into Contents/XPCServices by tauri.conf.json's
@@ -36,7 +38,10 @@ target="$arch-apple-macos$minimum"
 # The embedded Info.plist is what the Touch ID dialog reads the app name from: without it the
 # system would title the dialog "se-helper", which is what malware would look like.
 dev="src-tauri/binaries/se-helper-dev-$triple"
-swiftc -O -D PHOSPHOR_STDIO -target "$target" -module-name se_helper -o "$dev" "$src/main.swift" \
+# Gone first, so a build that fails cannot leave the last one behind to pass the test below.
+rm -f "$dev"
+swiftc -O -D PHOSPHOR_STDIO -D PHOSPHOR_CHIP -target "$target" -module-name se_helper -o "$dev" "$src/main.swift" "$src/ChipOps.swift" \
+  "$src/IntentGrammar.swift" "$src/TokenTable.swift" \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$src/Info.plist" 2>&1 | grep -v "warning" || true
 test -x "$dev"
 codesign -s - -f --options runtime "$dev" >/dev/null 2>&1
@@ -45,7 +50,8 @@ service="src-tauri/binaries/xpc/com.karimbabasf.phosphor.vault.xpc"
 rm -rf "$service"
 mkdir -p "$service/Contents/MacOS"
 cp "$src/XPCService-Info.plist" "$service/Contents/Info.plist"
-swiftc -O -target "$target" -module-name se_helper -o "$service/Contents/MacOS/se-helper" "$src/main.swift" 2>&1 | grep -v "warning" || true
+swiftc -O -D PHOSPHOR_CHIP -target "$target" -module-name se_helper -o "$service/Contents/MacOS/se-helper" "$src/main.swift" "$src/ChipOps.swift" \
+  "$src/IntentGrammar.swift" "$src/TokenTable.swift" 2>&1 | grep -v "warning" || true
 test -x "$service/Contents/MacOS/se-helper"
 # Hardened runtime and no entitlements: the service needs no JIT and no exception of any kind.
 # A timestamp only for a real identity; ad-hoc has no authority to timestamp against.
