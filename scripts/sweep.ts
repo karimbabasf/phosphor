@@ -384,6 +384,38 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a', 'ALLOWANCE key derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
   ['fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879', 'GAS seed derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
   ['ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7', 'GAS account derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  // The order n of the P-256 group, a curve constant published in SEC 2. src/vault/webauthn.ts
+  // folds a signature's S below n / 2 with it, the only form the NEAR Intents verifier accepts.
+  ['ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551', 'P-256 group order n, src/vault/webauthn.ts'],
+  // simulate_intents answers recorded live against the deployed verifier on 2026-10-04, kept
+  // whole as the chip vault's fixture. Public keys and signatures of keys made for that run and
+  // thrown away: the secp256k1 keys lived in memory only, the P-256 keys inside a Secure Enclave
+  // and were never stored. They hold nothing and sign for no account.
+  ['5WuawsxE5gsuyvotVXSapBJB5mq6KufujFdaeugXVR9PXuuZbunAkSmshNyCmp5cZ1XorUs8YKJCWfxw5smXwB64', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3AomBcGG1HZkx73RBXLZaDNYfFK8D5w98JiP8GxMpXVj6mm9LNbiJK7tbo4BTLBoEBsdGMFd5J9hs2Xp4qAj57wU', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5QiqLU12BYv5UM1CMAo9C1da3iWPYmjp4gXuHTWBTF51ukmffkPVAUigEm5i4iZQGtG4FTDm4j2AxftkaMbHC86e', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5FYEWeTaeHk1d7RM7u24jpZFdrfT2y8syvZZbqpGJS5DGeoTzvNwp3cT25tin8SPumzbWZviPu3KoMCkDFU47XMa', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3AomBcGG1HZkx73RBXLZaDNYfFK8D5w98JiP8GxMpXVjLjYHeQpB749dYvp8hipnruJ24zbvGC9NTpWK4ecPMkMF', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5AGcHbjAXzm4KSBjRNftiW98QVb2s68GB6hQLfaPYwpKkvNWMZegY6M9sirGBQW4SrdL2LBjHhsZ6EpYQsB1zaJr', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2wxqGkvvttAqDhcQbTzaYoRhUx7jq4P8BVinhVF443cdXDPTKaUFk6gPqMUCK8qAdVQNSXskdNd2QqiuavaZXe9i', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2k3f16qsrqLFAaA1sBHL2QkggKNqareVVCYSF7Y6LsLvFU4PwBWhDGRD4rsTRUUhacy6fcprf6bTUyWA3aLjJ6sX', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4vWDR2G32pGtTpE24Q85o8zEQ6HJ4jktMw7QGqoYaeWA4Q4KBbDaGEPTqYKJwejkuDpsbnMT6DxRW6kgXyK7Qy3z', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4wD6CM6Uwce9Lqk3vuzafHe2MJMgKYbAWeGKqVWBgZn6Jb9utUZPvmSGJcrcMszb43BRvdSH6aDq5uPwxPeL3V7B', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['enXHbd2CFcq2WtAJwscdzxf71BsFCrGbKRu9i7xYZPE2fTD3mCYFTWjGrfCo1FKy7kNhhe59b6jV8cEjqj9QUpd', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['538wkA6uVV7ZR4g3j3kd2KANkfThyrMpNUSmdQV9T1VcFpctq7ttMYmiH6mfvDagTPQjLirdXCREzv7ny67PkGFq', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3ipJdQBSAUkyEWBUiszTzPdCkaLwdfi4HyvtVgyP6q8gMSZuXmts9fPbQEVMwVZUSDFwqzgZSemDSxaQ7xtkzVM8', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3mrmGkKVSvqG9P3GmGmpA2JTcQq9HMc6FX3vcV1MHrQhYQdcQCmnK7VgyRD3MVpP3nDSigQf2EQSpzsn7uwoSQa5', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4g12EaqVtAmRKk5iXY5UbAJbpQvRnY57UGT6CfrcT7A5HC54deC9td5X2yDF162bXgMsaN1eR7oKs8g83iH1XNgd', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['41dQd2hdKXSMSGXhYnoh8v6b5qcqHh55SYb9Dg3D4kadzsfKbpeWYrBd2TnkbttJRxZkGiHhia1rQacNwj2tNeD1', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3mrmGkKVSvqG9P3GmGmpA2JTcQq9HMc6FX3vcV1MHrQhajkM5h5feGuUp7gqpFoUt1iKHNymTovokK3aWHwFjZgA', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2JGJ2rZP3jgd3PbZWGenoHMFDnP3XcxqmJuEFJteyuryzrgXt5L6FKYGsccgwDSbCiNYxr86F7kEjmCVA8FQq7T8', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5SmcrBicueeC3cK6inShCEg8vD9vYaC4agXwbdrL5Ro9zhCFBUnBRjekwPU5p44M8FffrVU2MojVqZRq2XPdFUQL', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2jDpBkTuKQM8w3zMc4ZxfeAWH2cGDEQNnJTEbW7WAwxr9vxY4GZaZHT79dCptEg4zHg2K8DsKsy4d35jxRuDCERh', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['DNKNuwXFjyhYxjHBL72mHsdiUUUrhQ7jC2z1zDrD9gC6qApiodNMyNZuV16K2zTJRnVo5EGEN3Jb6UmL6DmXaNU', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3H638KALmLxevCpXzDj8dgxEZdV56z3ubYLoxgtb4fQV6fDurM5dsyzAvc67uCBR9kt23PJdB9Li1p6np3UrsJCk', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2REktiAKbn5tivXje8ft42YGY4k45VKaMstFFphFn3pm2MfeBuEn1hwZnWJ4dm3QxrEUCpB93pcSQRUSQnQLd4tT', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2gQC9rghKPCRzZZk2Dypoorz9NhND4BdYfWj3NwLx8Fg5zEHLtxbFLLnMHuUvdcX72Hmgm1JP7nHud2eK6WFPQFX', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2ecfPZ65SiMmqiAwQf5zAFbYVK9hASxzTpY54zLfQSgKMn61xN8s3Wvpnj2Qw7wPDXM4wSZKte4jbuTnAhDCgEgv', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the
