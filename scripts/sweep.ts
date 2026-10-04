@@ -356,6 +356,11 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['LaoihSchWpZatv2FMDT22viNx84CWekqNaM4UDhLMpSSc5UJV6n2nJSvXi1PKrssfe9peAwmp1HCUX19zxS4xCf', 'a Fogo signature in a mocked RPC answer, tests/unit/chainscan-families.test.ts'],
   // The order of the secp256k1 group, a curve constant published in SEC 2.
   ['fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'secp256k1 group order n, src/invite/code.ts (invite branch)'],
+  // The order of the P-256 group, the same kind of constant, and a run of 87 hex digits with no 0 in
+  // one of spike2's Secure Enclave signatures (keys never stored, gone with their process), which
+  // the base58 pattern reads as a key.
+  ['ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551', 'P-256 group order n, tests/unit/intent-grammar.test.ts'],
+  ['581b8bed9d27df3b4332b9f26e42e4586373c7f328489fd4ab87bd99362c37f44f71aef24d261f3df76f58f', 'part of a spike2 chip signature, tests/fixtures/intent-grammar/chip-der.json'],
   // HMAC-SHA256 test vectors. RFC 4231 test case 2 ("Jefe"), and the identity proof of the made-up
   // nonce "a1b2c3d4" x 8 for the challenge "0123456789abcdef" x 4, which pins the shell and the
   // backend to the same MAC. Neither keys anything.
