@@ -176,6 +176,11 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, base58, tests/unit/near-chain.test.ts'],
   ['ed25519:49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, NEAR prefixed form'],
   ['ed25519:FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z', 'RFC 8032 ed25519 test vector 1 public key, NEAR prefixed form'],
+  // near-api-js's published test secret for its signed transfer ("serialize and sign transfer tx",
+  // @near-js/transactions@1.3.0 test/serialize.test.ts), which tests/unit/near-tx.test.ts signs with
+  // to reproduce the published signature. Prefixed as published, and the bare base58 inside it.
+  ['ed25519:3hoMW1HvnRLSFCLZnvPzWeoGwtdHzke34B2cTHM8rhcbG3TbuLKtShTv3DvyejnXKXKBiV7YPkLeqUHN1ghnqpFv', 'near-api-js published test secret, tests/unit/near-tx.test.ts'],
+  ['3hoMW1HvnRLSFCLZnvPzWeoGwtdHzke34B2cTHM8rhcbG3TbuLKtShTv3DvyejnXKXKBiV7YPkLeqUHN1ghnqpFv', 'the same near-api-js test secret without its prefix'],
   // sha256 of the empty string, the NIST vector. src/chain/near.ts asserts it on every boot to
   // prove the hash in use is really sha256, the same way keygen proves keccak256.
   ['e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'NIST sha256 of the empty string, src/chain/near.ts self check'],
