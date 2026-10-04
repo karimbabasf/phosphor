@@ -1167,10 +1167,16 @@ copies of the EVM key can stay in memory until it is reused, as after any open; 
 session points at them. The EVM key then signs one Hyperliquid owner action
 per Touch ID of its own (`withOwnerKey`), and the buffer it lends is zeroed as soon as that
 signature is made (`tests/unit/keystore-chip-session.test.ts` reads it back). `state/vault.json` is
-not a control: a program running as you that removes the chip entry puts the EVM key back in the
-next session, where it reaches Hyperliquid's owner actions and not the vault, whose keys on chain
-no longer include it. The chip key signs only through the vault service, which checks its own
-marker first.
+not a control on its own, so the same gate also reads the vault service's chip markers: a marker
+naming the vault keeps the EVM key out once the chain shows the vault moved (the marker's chip key,
+or the paper key it pins, is on the vault), even after a program running as you removes the chip
+entry (`ownerKeyGate`, `src/vault/chip.ts`). A marker alone does not count, because that program can
+have the service pin a fresh chip key to any account with no dialog; the chain decides, and the key
+stays out until it has answered. The Hyperliquid owner touch reads the same gate (`src/main.ts`), so
+a withdrawal is one Touch ID either way. A vault whose chip key is gone and whose paper key was
+retired falls back to vault.json alone, where removing the entry puts the EVM key back in the next
+session: it reaches Hyperliquid's owner actions there, not the vault, whose keys on chain no longer
+include it. The chip key signs only through the vault service, which checks its own marker first.
 
 **The chip key signs only what the vault service reads.** The chip key is a P-256 Secure Enclave
 key made like the wallet's own (permanent, one Touch ID or login password per use, in the vault's
