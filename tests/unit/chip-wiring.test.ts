@@ -17,13 +17,23 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
+
 import { base58Encode } from '../../src/chain/near.ts';
+import { liveIntentsSigner, railAccounts, useRailAccounts } from '../../src/intents-sign.ts';
+import { OwnerTouchRequired, createKeystore, useKeystore } from '../../src/keystore/index.ts';
+import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { ownerTouchVia } from '../../src/proposals/lifecycle.ts';
 import { ownerTouchRequired, useOwnerTouch } from '../../src/rails/hl-user-signed.ts';
-import { ownerKeyOut } from '../../src/vault/accounts.ts';
-import { ownerKeyGate } from '../../src/vault/chip.ts';
+import { createAccounts, ownerKeyOut } from '../../src/vault/accounts.ts';
+import { chipStatusReader, commitChip, createChip, ownerKeyGate } from '../../src/vault/chip.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
+import { createVaultRelay } from '../../src/vault/relay.ts';
+import type { VaultRequest } from '../../src/vault/relay.ts';
 import { DERIVED_VECTORS } from '../fixtures/derived-keys.ts';
+import { SoftwareChipService, serve } from './helpers/chip-fake.ts';
+import type { Answer } from './helpers/chip-fake.ts';
+import { createIntentsDouble } from './helpers/intents-double.ts';
 import { chipVault, teardown, withdrawWorld } from './helpers/owner-touch.ts';
 import { makeCtx } from './helpers/proposals.ts';
 import { tempDir } from './helpers/tmp.ts';
@@ -40,7 +50,89 @@ function chipPublicKey(): string {
   return `p256:${base58Encode(Buffer.concat([Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]))}`;
 }
 
-test.afterEach(teardown);
+function secpKey(privateKey: `0x${string}`): string {
+  return `secp256k1:${base58Encode(Buffer.from(privateKeyToAccount(privateKey).publicKey.slice(4), 'hex'))}`;
+}
+
+test.afterEach(() => {
+  teardown();
+  useRailAccounts(null);
+});
+
+type Service = { run(request: VaultRequest): Answer | Promise<Answer> };
+
+/* One Mac, wired the way src/main.ts wires it: a keystore holding the vector's owner key in an
+   enclave-wrapped file (a software P-256 key plays the enclave), vault.json, the relay with a
+   service behind it, the chain double, the owner key gate on the keystore, and the accounts the
+   rails read, asking the service through the relay. `marker` is the account the backend pins the
+   new chip key to, or null for no chip at all; `moved` puts that chip key on the vault on chain and
+   names it in vault.json, as the end of a rekey leaves them. Nothing here moves the vault. */
+async function mac(service: Service, opts: { marker?: string | null; moved?: boolean; makesKeys?: boolean } = {}) {
+  const dir = tempDir('phosphor-chip-wiring-');
+  fs.mkdirSync(path.join(dir, 'state'));
+  const keysPath = path.join(dir, 'keys.json');
+  const prefs = createVaultPrefs(path.join(dir, 'state'));
+  const relay = createVaultRelay({ transportKey: crypto.randomBytes(32), makesKeys: opts.makesKeys ?? true });
+  const shell = serve(relay, service);
+  const chain = createIntentsDouble();
+  const pair = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+  const jwk = pair.publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+  const x963 = Buffer.concat([Buffer.from([0x04]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]);
+  const store = createKeystore({ keysPath, kdf: () => ({ name: 'scrypt', N: 2 ** 14, r: 8, p: 1, salt: crypto.randomBytes(16).toString('hex') }) });
+  const ownerKeyStaysOut = ownerKeyGate(() => prefs.get(), relay, chain.verifier);
+  store.keepOwnerKeyOutWhen(ownerKeyStaysOut);
+  store.importWithEnclave({ keyBlob: crypto.randomBytes(427).toString('base64'), publicKey: x963.toString('base64'), createdAt: new Date().toISOString() }, { keys: { evm: `0x${V.old}` } });
+  store.lock();
+  const accounts = createAccounts({ keystore: store, prefs, chipStatus: chipStatusReader(relay) });
+  useKeystore(store);
+  useRailAccounts(accounts.accounts);
+
+  const vault = V.vault.toLowerCase();
+  const recovery = secpKey(generatePrivateKey());
+  let chip: { keyRef: string; publicKey: string } | null = null;
+  const marker = opts.marker === undefined ? vault : opts.marker;
+  if (marker !== null) {
+    const made = await createChip(relay);
+    assert.ok(made.ok, JSON.stringify(made));
+    const committed = await commitChip(relay, { keyRef: made.keyRef, account: marker, allowance: V.allowance.toLowerCase(), recovery });
+    assert.ok(committed.ok, JSON.stringify(committed));
+    chip = { keyRef: made.keyRef, publicKey: made.publicKey };
+    if (opts.moved === true) {
+      chain.addKey(vault, made.publicKey);
+      chain.addKey(vault, recovery);
+      prefs.setChip({ ...chip, account: vault });
+    }
+  }
+  return {
+    keysPath,
+    prefs,
+    relay,
+    chain,
+    store,
+    accounts,
+    chip,
+    recovery,
+    ownerKeyStaysOut,
+    // What src/main.ts does at start: the markers read right behind the probe, then the gate asks
+    // the chain about this wallet's vault while the person reaches for the sensor.
+    async boot() {
+      await relay.ask({ op: 'chipStatus' });
+      ownerKeyStaysOut(V.vault);
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+    // An unlock, through the enclave stand-in.
+    open() {
+      store.lock();
+      const request = store.enclaveRequest();
+      assert.ok(request !== null);
+      assert.deepEqual(store.unlockWithDataKey(seUnwrapWithSoftwareKey({ ephemeralPublicKey: request.ephemeralPublicKey, ciphertext: request.ciphertext }, pair.privateKey, Buffer.from(request.aad, 'base64'))), { ok: true });
+    },
+    stop: async () => {
+      await shell.stop();
+      relay.stop();
+    },
+  };
+}
 
 test('src/main.ts hands the Hyperliquid owner touch the keystore\'s own gate, and asks no second one', () => {
   const source = main();
@@ -116,4 +208,67 @@ test('the same withdrawal with vault.json\'s word alone handed to the touch asks
   assert.equal(done.status, 'executed', done.result?.detail ?? '');
   assert.equal(v.shell.asked.length, 2, 'two dialogs where one does: the mismatch src/main.ts no longer has');
   assert.equal(world.posts.length, 1);
+});
+
+test('src/main.ts gives the accounts the service\'s chip status through the relay, and asks it once at start behind the markers', () => {
+  const source = main();
+  const markers = source.indexOf("  void vault.ask({ op: 'chipStatus' }).then(() => {");
+  const made = source.indexOf('const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });');
+  const used = source.indexOf("useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);");
+  const asked = source.indexOf('void accounts.refresh();');
+  assert.ok(markers > 0 && made > markers, 'the markers are queued first, so the gate hears of them before anything else');
+  assert.ok(used > made && asked > used, 'installed for the rails, then asked');
+  assert.ok(asked < source.indexOf('const server = createServer('), 'before any route can ask which account to spend');
+});
+
+test('the accounts read the service\'s answer through the relay: a moved vault reads chip, and the rails sign for its allowance', async () => {
+  const service = new SoftwareChipService();
+  const m = await mac(service, { moved: true });
+  try {
+    m.open();
+    assert.throws(() => m.store.keys(), OwnerTouchRequired, 'the owner key is out of the session');
+    const before = m.accounts.accounts();
+    assert.equal(before.kind, 'broken', 'until the service has said so');
+    assert.equal(before.checked, false);
+    const seen = service.seen.length;
+    const now = await m.accounts.refresh();
+    assert.deepEqual(service.seen.slice(seen).map((r) => [r.op, r.keyRef]), [['chipStatus', m.chip!.keyRef]], 'one status read, for the key vault.json names');
+    assert.equal(now.kind, 'chip');
+    assert.equal(now.checked, true);
+    assert.deepEqual(now.chip, m.chip);
+    assert.equal(now.vault, V.vault);
+    assert.equal(now.spend, V.allowance);
+    assert.deepEqual(railAccounts(m.keysPath), now, 'what the rails read is what the accounts say');
+    assert.equal(liveIntentsSigner.address(m.keysPath), V.allowance);
+  } finally {
+    await m.stop();
+  }
+});
+
+test('with no service to ask, a moved vault stays broken and unchecked, never chip; with no chip in vault.json nothing is asked', async () => {
+  const service = new SoftwareChipService();
+  const m = await mac(service, { moved: true });
+  try {
+    m.open();
+  } finally {
+    await m.stop();
+  }
+  const asleep = await m.accounts.refresh();
+  assert.equal(asleep.kind, 'broken', 'a relay nobody answers is no answer');
+  assert.equal(asleep.checked, false);
+  assert.equal(asleep.spend, V.allowance, 'and the rails still spend the allowance, never the vault');
+
+  const fresh = new SoftwareChipService();
+  const never = await mac(fresh, { marker: null });
+  try {
+    never.open();
+    const seen = fresh.seen.length;
+    const now = await never.accounts.refresh();
+    assert.equal(fresh.seen.length, seen, 'nothing asked of the service');
+    assert.equal(now.kind, 'key');
+    assert.equal(now.spend, V.vault);
+    assert.equal(liveIntentsSigner.address(never.keysPath), V.vault);
+  } finally {
+    await never.stop();
+  }
 });

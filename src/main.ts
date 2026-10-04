@@ -55,7 +55,7 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
-import { ownerKeyGate } from './vault/chip.ts';
+import { chipStatusReader, ownerKeyGate } from './vault/chip.ts';
 import { liveVerifier } from './relay/verifier.ts';
 import { createAccounts } from './vault/accounts.ts';
 import { useRailAccounts } from './intents-sign.ts';
@@ -280,10 +280,13 @@ keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
 // The touch each of those owner actions asks for, read for the same vault by the same gate.
 useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));
 /* Which account the rails sign for, and with which key (src/intents-sign.ts): VAULT until the
-   vault moves, then ALLOWANCE. No chip service answer is wired in yet, so a moved vault reads
-   `broken` until one is, and the rails spend ALLOWANCE either way. The demo names its own. */
-const accounts = createAccounts({ keystore, prefs: vaultPrefs });
+   vault moves, then ALLOWANCE. The chip service's status answer for the key vault.json names
+   tells a moved vault (`chip`) from one the service does not back (`broken`); the rails spend
+   ALLOWANCE under both. It is asked once here, behind the markers above, and again by whatever
+   changes vault.json's chip or signs for the vault. The demo names its own. */
+const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });
 useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);
+void accounts.refresh();
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
