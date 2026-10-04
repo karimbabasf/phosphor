@@ -55,7 +55,8 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
-import { ownerKeyOut } from './vault/accounts.ts';
+import { ownerKeyGate } from './vault/chip.ts';
+import { liveVerifier } from './relay/verifier.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -242,6 +243,14 @@ if (transportKey !== null) {
       audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
     }
   });
+  /* The chip markers on this Mac, queued right behind the probe: the relay hands requests out in the
+     order asked, so no unlock the window asks for is answered before them. The owner key gate below
+     then asks the chain about any marker naming this wallet's vault (src/vault/chip.ts), while the
+     person is still at the Touch ID. */
+  void vault.ask({ op: 'chipStatus' }).then(() => {
+    const evm = keystore.addresses().evm;
+    if (evm !== null) ownerKeyStaysOut(evm);
+  });
 }
 
 const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret, handSecret: handSeatSecret });
@@ -257,8 +266,12 @@ const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, se
 let announceLock: (() => void) | null = null;
 const vaultPrefs = createVaultPrefs(cfg.dataDir);
 /* A vault that moved to the chip keeps its owner key out of the session: the key signs one
-   Hyperliquid owner action per touch of its own, never from memory (src/vault/accounts.ts). */
-keystore.keepOwnerKeyOutWhen((vault) => ownerKeyOut(vaultPrefs.get(), vault));
+   Hyperliquid owner action per touch of its own, never from memory (src/vault/accounts.ts). A chip
+   marker for the vault, once the chain shows the vault moved to it, keeps it out too, so deleting
+   vault.json's chip entry alone cannot bring it back (src/vault/chip.ts). Anything else that asks
+   whether the owner key is out asks this same gate. */
+const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier());
+keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
