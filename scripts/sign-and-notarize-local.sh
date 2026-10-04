@@ -194,7 +194,7 @@ check "app: signed by Developer ID Application" signed_by_developer_id "$app"
 check "app: hardened runtime" has_runtime "$app"
 check "app: secure timestamp" has_timestamp "$app"
 check "app: no get-task-allow entitlement" no_debugger_allowed "$app"
-check "app: payload is the checkout, entitlements are the committed ones, one team" \
+check "app: payload is the checkout, one team; signing gate: vault profile, each binary's own entitlements, the service run by hand gives 134" \
   node "$root/scripts/release-check.ts" --app "$app" --checkout "$root" --stage signed
 for code in "$app"/Contents/MacOS/* "$app"/Contents/XPCServices/*.xpc; do
   [ -e "$code" ] || continue

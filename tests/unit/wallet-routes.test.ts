@@ -23,7 +23,9 @@ import { createMarketData } from '../../src/market/index.ts';
 import { createKeystore } from '../../src/keystore/index.ts';
 import { defaultParams } from '../../src/keystore/kdf.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
+import { refusal } from '../../src/http/wallet.ts';
 import { stubView } from '../fixtures/view.ts';
+import { RAW } from '../fixtures/vault-refusal-codes.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 // The seat secret every op on /api/mcp carries (src/http/mcp.ts).
@@ -56,6 +58,7 @@ type Booted = {
   token: string;
   keystore: ReturnType<typeof createKeystore>;
   keysPath: string;
+  audit: ReturnType<typeof createAudit>;
   post: (route: string, body: unknown, opts?: { origin?: string; contentType?: string }) => Promise<{ status: number; json: any }>;
   get: (route: string, opts?: { origin?: string }) => Promise<{ status: number; json: any }>;
   getRaw: (route: string, headers: Record<string, string>) => Promise<{ status: number; json: any }>;
@@ -79,6 +82,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   process.env.PHOSPHOR_WINDOW_TOKEN = token;
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
   const keystore = createKeystore({ keysPath, mode, kdf: fast });
+  const audit = createAudit(dataDir);
   const cfg: AppConfig = {
     mode,
     port: 0,
@@ -89,7 +93,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
   };
   const server = createServer({
     cfg,
-    audit: createAudit(dataDir),
+    audit,
     store: createStore(dataDir),
     keystore,
     riskRows: [],
@@ -189,7 +193,7 @@ async function boot(mode: AppConfig['mode'] = 'demo', opts: { releaseDelayMs?: n
     });
   }
 
-  return { url, token, keystore, keysPath, post, get, getRaw, releases: () => releases, close: () => new Promise<void>((r) => server.close(() => r())) };
+  return { url, token, keystore, keysPath, audit, post, get, getRaw, releases: () => releases, close: () => new Promise<void>((r) => server.close(() => r())) };
 }
 
 // ---------- the guard ----------
@@ -398,7 +402,10 @@ test('migrate encrypts a plaintext file, destroys it, and says the state changed
       JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }),
       { mode: 0o600 },
     );
-    assert.equal((await b.get('/api/state')).json.lock.state, 'needs_migration');
+    const lock = (await b.get('/api/state')).json.lock;
+    assert.equal(lock.state, 'needs_migration');
+    // A backend the shell did not start has no vault service to ask, and vouches as it always did.
+    assert.equal(lock.verified, true);
 
     const out = await b.post('/api/wallet/migrate', { token: b.token, password: PASSWORD });
     assert.equal(out.status, 200);
@@ -408,6 +415,199 @@ test('migrate encrypts a plaintext file, destroys it, and says the state changed
     assert.equal((await b.get('/api/state')).json.lock.state, 'unlocked');
   } finally {
     await b.close();
+  }
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file during the password create or import (the
+   first run on a Mac with no Touch ID) is said in the words of the one refusal table, never the
+   system's text and the path it names. The disk error is real: a file where the keys folder goes,
+   so the write cannot make its folder (EEXIST on mkdir). */
+test('a disk that refuses the wallet file is said in calm words in the password create and import, never the system\'s text or the path', async () => {
+  const b = await boot('live');
+  const folder = path.dirname(b.keysPath);
+  try {
+    fs.writeFileSync(folder, 'not a folder');
+    for (const [route, body] of [
+      ['/api/wallet/create', { token: b.token, password: PASSWORD }],
+      ['/api/wallet/import', { token: b.token, password: PASSWORD, mnemonic: VECTOR }],
+    ] as const) {
+      const out = await b.post(route, body);
+      assert.equal(out.status, 200, route);
+      assert.deepEqual(out.json, refusal('write_failed'), `${route}: ${JSON.stringify(out.json)}`);
+      assert.ok(!RAW.test(String(out.json.error)), `${route}: ${String(out.json.error)}`);
+      assert.ok(!JSON.stringify(out.json).includes(path.dirname(folder)), route);
+    }
+    assert.equal(b.keystore.state(), 'no_wallet');
+    const entries = (await b.get('/api/log?limit=50')).json as unknown[];
+    const lines = entries.map((e) => JSON.stringify(e)).filter((l) => l.includes('the disk refused the wallet file'));
+    assert.equal(lines.length, 2, JSON.stringify(lines));
+    for (const line of lines) {
+      assert.ok(line.includes('(EEXIST on mkdir)'), line);
+      assert.ok(!line.includes(folder), 'the audit line names the path');
+    }
+  } finally {
+    fs.rmSync(folder, { force: true });
+    await b.close();
+  }
+});
+
+/* The same for encrypting a readable key file and for saving an encrypted copy. The disk errors are
+   real: a key file nobody may read (EACCES on open), and a folder nobody may write to. */
+test('a disk that refuses a key file is said in calm words in the migration and the encrypted copy, never the system\'s text or the path', async () => {
+  const entries = async (b: Booted): Promise<string[]> => ((await b.get('/api/log?limit=50')).json as unknown[]).map((e) => JSON.stringify(e)).filter((l) => l.includes('the disk refused the wallet file'));
+  const clean = (json: Record<string, unknown>, dir: string): void => {
+    assert.ok(!RAW.test(String(json.error)), String(json.error));
+    assert.ok(!JSON.stringify(json).includes(dir), JSON.stringify(json));
+  };
+
+  const m = await boot('live');
+  try {
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    const wallet = walletFromMnemonic(VECTOR);
+    fs.mkdirSync(path.dirname(m.keysPath), { recursive: true });
+    fs.writeFileSync(m.keysPath, JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }), { mode: 0o600 });
+    fs.chmodSync(m.keysPath, 0o000);
+    try {
+      const out = await m.post('/api/wallet/migrate', { token: m.token, password: PASSWORD });
+      assert.equal(out.status, 200);
+      assert.deepEqual(out.json, refusal('migrate_failed'), JSON.stringify(out.json));
+      clean(out.json, path.dirname(m.keysPath));
+    } finally {
+      fs.chmodSync(m.keysPath, 0o600);
+    }
+    assert.ok(fs.existsSync(m.keysPath), 'the readable file is where it was');
+    const lines = await entries(m);
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    assert.ok(lines[0]!.includes('(EACCES on open)') && !lines[0]!.includes(path.dirname(m.keysPath)), lines[0]);
+  } finally {
+    await m.close();
+  }
+
+  const e = await boot('live');
+  const folder = tempDir('phosphor-export-ro-');
+  try {
+    assert.equal((await e.post('/api/wallet/create', { token: e.token, password: PASSWORD })).json.ok, true);
+    fs.chmodSync(folder, 0o500);
+    const out = await e.post('/api/wallet/export', { token: e.token, password: PASSWORD, path: path.join(folder, 'backup.json') });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, refusal('export_failed'), JSON.stringify(out.json));
+    clean(out.json, folder);
+    assert.deepEqual(fs.readdirSync(folder), [], 'nothing was left in the folder');
+    const lines = await entries(e);
+    assert.equal(lines.length, 1, JSON.stringify(lines));
+    assert.ok(lines[0]!.includes('(EACCES on open)') && !lines[0]!.includes(folder), lines[0]);
+  } finally {
+    fs.chmodSync(folder, 0o700);
+    await e.close();
+  }
+});
+
+/* verify-ra1b VRA1B-02: once the key file is written the step has happened, so a failure after it
+   never answers "nothing changed", and a create never leaves a wallet whose words nobody has seen.
+   Here the audit line that records the step is refused the way a disk that is full, or out of file
+   handles, refuses it: the route still gives its usual answer, and the lost line is said on stderr. */
+function refuseLine(b: Booted, line: string): void {
+  const append = b.audit.append.bind(b.audit);
+  const auditFile = path.join(path.dirname(path.dirname(b.keysPath)), 'audit.jsonl');
+  b.audit.append = (type, msg, data) => {
+    if (msg.startsWith(line)) throw Object.assign(new Error(`EMFILE: too many open files, open '${auditFile}'`), { errno: -24, code: 'EMFILE', syscall: 'open' });
+    return append(type, msg, data);
+  };
+}
+
+// What the backend writes to stderr while `run` runs, kept off the test output.
+async function stderrOf(run: () => Promise<void>): Promise<string> {
+  const write = process.stderr.write.bind(process.stderr);
+  let said = '';
+  process.stderr.write = ((chunk: string | Uint8Array) => {
+    said += String(chunk);
+    return true;
+  }) as typeof process.stderr.write;
+  try {
+    await run();
+  } finally {
+    process.stderr.write = write;
+  }
+  return said;
+}
+
+test('a create whose audit line cannot be written still shows the words of the wallet it made, and they prove its backup', async () => {
+  const c = await boot('live');
+  try {
+    refuseLine(c, 'a new wallet was created in the window');
+    let made: { status: number; json: any } = { status: 0, json: null };
+    const said = await stderrOf(async () => {
+      made = await c.post('/api/wallet/create', { token: c.token, password: PASSWORD });
+    });
+    assert.equal(made.status, 200);
+    assert.equal(made.json.ok, true, JSON.stringify(made.json));
+    const words: string[] = made.json.mnemonic;
+    assert.equal(words.length, 12);
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    assert.equal(walletFromMnemonic(words.join(' ')).addresses.evm, made.json.addresses.evm, 'the words shown are the wallet that was made');
+    assert.equal(c.keystore.state(), 'unlocked');
+    assert.equal(c.keystore.addresses().evm, made.json.addresses.evm);
+    assert.ok(said.includes('could not log that a new wallet was created in the window'), said);
+    const asked: number[] = made.json.prove;
+    const proven = await c.post('/api/vault/backup-proven', { token: c.token, words: asked.map((index) => ({ index, word: words[index] })) });
+    assert.equal(proven.json.ok, true, JSON.stringify(proven.json));
+    assert.equal((await c.get('/api/vault')).json.backedUp, true);
+  } finally {
+    await c.close();
+  }
+});
+
+test('an import, a migration and an encrypted copy whose audit line cannot be written still answer done', async () => {
+  const i = await boot('live');
+  try {
+    refuseLine(i, 'a wallet was imported in the window');
+    let out: { status: number; json: any } = { status: 0, json: null };
+    await stderrOf(async () => {
+      out = await i.post('/api/wallet/import', { token: i.token, password: PASSWORD, mnemonic: VECTOR });
+    });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.ok, true, JSON.stringify(out.json));
+    assert.equal(out.json.addresses.evm, VECTOR_EVM);
+    assert.equal(i.keystore.addresses().evm, VECTOR_EVM);
+  } finally {
+    await i.close();
+  }
+
+  const m = await boot('live');
+  try {
+    const { walletFromMnemonic } = await import('../../src/keystore/derive.ts');
+    const wallet = walletFromMnemonic(VECTOR);
+    fs.mkdirSync(path.dirname(m.keysPath), { recursive: true });
+    fs.writeFileSync(m.keysPath, JSON.stringify({ evm: { address: wallet.addresses.evm, privateKey: wallet.keys.evm } }), { mode: 0o600 });
+    refuseLine(m, 'the plaintext key file was encrypted and destroyed');
+    let out: { status: number; json: any } = { status: 0, json: null };
+    await stderrOf(async () => {
+      out = await m.post('/api/wallet/migrate', { token: m.token, password: PASSWORD });
+    });
+    assert.equal(out.status, 200);
+    assert.equal(out.json.ok, true, JSON.stringify(out.json));
+    assert.equal(out.json.addresses.evm, VECTOR_EVM);
+    assert.equal(fs.existsSync(m.keysPath), false, 'the readable copy is gone');
+    assert.equal(m.keystore.custody(), 'software', 'the keys are encrypted');
+  } finally {
+    await m.close();
+  }
+
+  const e = await boot('live');
+  const folder = tempDir('phosphor-export-');
+  try {
+    assert.equal((await e.post('/api/wallet/create', { token: e.token, password: PASSWORD })).json.ok, true);
+    refuseLine(e, 'an encrypted backup of the wallet was written');
+    const target = path.join(folder, 'backup.json');
+    let out: { status: number; json: any } = { status: 0, json: null };
+    await stderrOf(async () => {
+      out = await e.post('/api/wallet/export', { token: e.token, password: PASSWORD, path: target });
+    });
+    assert.equal(out.status, 200);
+    assert.deepEqual(out.json, { ok: true, path: target });
+    assert.ok(fs.existsSync(target), 'the copy is saved');
+  } finally {
+    await e.close();
   }
 });
 
@@ -560,6 +760,32 @@ test('revealing the private keys hands back the EVM key and nothing else', async
     assert.match(out.json.keys.evm, /^0x[0-9a-f]{64}$/);
     assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
+    assert.equal(out.json.groups.join(''), out.json.keys.evm.slice(2));
+    assert.equal(out.json.prove, undefined, 'a key reveal asks nothing back: a phrase backs up its phrase, and a key is proven by its whole copy');
+  } finally {
+    await b.close();
+  }
+});
+
+/* A password wallet brought in as a key has no phrase either, so it is proven the way an enclave
+   one is (src/http/vault.ts, key-proven): the whole copy, typed back under the window token. */
+test('a password wallet with no phrase proves its key the way an enclave one does', async () => {
+  const b = await boot();
+  try {
+    const key = `0x${crypto.randomBytes(32).toString('hex')}`;
+    assert.equal((await b.post('/api/wallet/import', { token: b.token, password: PASSWORD, keys: { evm: key } })).json.ok, true);
+    const start = await b.post('/api/wallet/reveal', { token: b.token, password: PASSWORD, what: 'keys' });
+    const out = await b.get(`/api/wallet/reveal/${start.json.nonce}`);
+    assert.equal(out.json.keys.evm, key);
+    const groups: string[] = out.json.groups;
+    assert.equal(groups.length, 16);
+    assert.equal(out.json.prove, undefined, 'a key is proven by its whole copy, so the reveal names no three');
+    const slipped = groups.map((g, i) => (i === 7 ? `${g.slice(0, 3)}${g[3] === 'a' ? 'b' : 'a'}` : g)).join(' ');
+    const wrong = await b.post('/api/vault/key-proven', { token: b.token, key: slipped });
+    assert.equal(wrong.json.code, 'wrong_copy');
+    const right = await b.post('/api/vault/key-proven', { token: b.token, key: groups.join(' ') });
+    assert.equal(right.json.ok, true, JSON.stringify(right.json));
+    assert.equal((await b.get('/api/vault')).json.backedUp, true);
   } finally {
     await b.close();
   }

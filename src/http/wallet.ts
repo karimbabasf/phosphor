@@ -32,7 +32,8 @@ import { atomicWriteJson } from '../fsatomic.ts';
 import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
-import { mnemonicProblem } from '../keystore/derive.ts';
+import { osError } from '../err-text.ts';
+import { keyGroups, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
@@ -53,7 +54,8 @@ const MIN_PASSWORD = 8;
 const REVEAL_TTL_MS = 30_000;
 
 // The material rides in the slot as bytes, read under the password at the POST, so the GET needs
-// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for.
+// no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for of a
+// phrase (a key is proven by its whole copy, src/http/vault.ts key-proven).
 type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null; prove: number[] };
 const pending = new Map<string, Pending>();
 
@@ -128,19 +130,136 @@ export function announce(ctx: Ctx): void {
    errors (the window renders them into its own screen, and a 4xx would send it down the network
    failure path), so the shape is what has to be unambiguous: `ok` is the answer, `error` is the
    sentence, `code` is for anything that wants to branch. */
+/* EVERY CODE THE VAULT SERVICE, THE SHELL'S RELAY OR THIS PROCESS'S RELAY CAN ANSWER has its
+   sentence here, the one place they are said: src-tauri/se-helper/main.swift, src-tauri/src/enclave.rs
+   and src/vault/relay.ts. Their own messages ("no user present", "keychain key -25300") are for
+   logs and never reach a person; tests/unit/refusal-words.test.ts reads the three sources and holds
+   every code to a sentence. The words name the thing a person knows (Touch ID, this Mac, the wallet
+   file, Phosphor-only), never the parts underneath. */
+const NOTHING_CHANGED = 'That did not finish, so nothing changed. Try again.';
+const NO_ANSWER = 'Phosphor could not reach Touch ID just now, so nothing changed. Try again.';
+const NOT_SAVED_HERE = 'This wallet file is not the one Phosphor saved on this Mac, so it stayed closed and nothing moved. Your backup brings your wallet back.';
+const OTHER_MAC = 'This wallet file was made on another Mac, so this Mac cannot open it. Restore it here from your backup.';
+
 const REFUSALS: Record<string, string> = {
   wrong_password: 'That password is wrong.',
   enclave_required: 'This wallet opens with Touch ID, not a password.',
-  enclave_unavailable: 'The Secure Enclave is not reachable from this build, so this needs a password.',
-  user_cancel: 'You cancelled the Touch ID prompt.',
-  foreign: 'This wallet file was made on another Mac. Restore it here from your recovery phrase.',
-  not_backed_up: 'Back up your recovery phrase first.',
-  no_wallet: 'There is no wallet on this computer yet.',
-  no_mnemonic: 'This wallet has no recovery phrase, because it was imported from private keys.',
-  damaged: 'The key file on this computer cannot be read. Your recovery words will bring the wallet back.',
+  enclave_unavailable: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  user_cancel: 'Touch ID was cancelled. Nothing changed.',
+  foreign: OTHER_MAC,
+  not_backed_up: 'Back up your wallet first: its recovery phrase, or its private key when it has no phrase.',
+  no_wallet: 'There is no wallet on this Mac yet.',
+  no_mnemonic: 'This wallet has no recovery phrase. Its private key is its backup.',
+  has_mnemonic: 'This wallet has a recovery phrase. Back up the phrase instead.',
+  // The key reveal of a wallet whose payload holds no EVM key. Not `no_key`, which is the vault
+  // service's answer to a commit for a key the keychain does not have (below).
+  no_private_key: 'This wallet holds no private key to show.',
+  same_wallet: 'This Mac already holds that wallet, and it opens with Touch ID.',
+  damaged: 'The wallet file on this Mac cannot be read, and nothing moved. Your backup brings the wallet back.',
+  // A reveal whose touch went through on a wallet that is open and working: the wallet is fine.
+  reveal_failed: 'Phosphor could not show your backup just now, and nothing changed. Try again.',
   locked_out: 'Too many tries. Wait a moment and try again.',
   busy: 'A move is being signed, so the wallet locks the moment its signature is made.',
+  // The vault service (src-tauri/se-helper/main.swift).
+  interaction_required: 'Touch ID could not ask you just now, so nothing changed. Unlock your Mac and try again.',
+  auth_failed: 'Touch ID did not match, so nothing changed. Try again.',
+  crypto_failed: 'Phosphor could not use its key on this Mac just now, so nothing changed. Try again.',
+  se_unavailable: 'This Mac cannot keep a key behind Touch ID, so nothing changed.',
+  foreign_key: OTHER_MAC,
+  bad_input: NOTHING_CHANGED,
+  keychain_unavailable: 'Phosphor could not reach its saved keys on this Mac just now, so nothing changed. Try again in a moment.',
+  // Any Phosphor-only wallet on the Mac refuses every older wallet file, another wallet's too (audit1b AU1B-02).
+  blob_refused: 'A wallet on this Mac is Phosphor-only, so Phosphor no longer opens this older wallet file here, and nothing moved. Your backup brings your wallet back.',
+  pin_mismatch: NOT_SAVED_HERE,
+  not_committed: NOT_SAVED_HERE,
+  no_key: NOTHING_CHANGED,
+  stale_key: NOTHING_CHANGED,
+  marker_exists: NOTHING_CHANGED,
+  nothing_bound: NOTHING_CHANGED,
+  // The shell's relay (src-tauri/src/enclave.rs) and this process's (src/vault/relay.ts).
+  helper_missing: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  helper_spawn: NO_ANSWER,
+  helper_io: NO_ANSWER,
+  helper_garbled: NOTHING_CHANGED,
+  helper_unverified: NO_ANSWER,
+  helper_timeout: 'Touch ID did not answer in time, so nothing changed. Try again.',
+  helper_unreachable: NO_ANSWER,
+  no_relay: 'Touch ID did not answer. Open the Phosphor app and try again.',
+  stopped: NO_ANSWER,
+  timeout: 'Touch ID did not answer in time, so nothing changed. Try again.',
+  relay: NO_ANSWER,
+  transport: NOTHING_CHANGED,
+  garbled: NOTHING_CHANGED,
+  // Making the wallet Phosphor-only (src/http/custody.ts).
+  wallet_locked: 'Open your wallet first.',
+  not_enclave: 'Only a wallet that opens with Touch ID can be made Phosphor-only.',
+  no_keychain_home: 'This copy of Phosphor cannot do this, so your wallet stays as it is.',
+  bind_busy: 'Phosphor is already doing this. It finishes in a moment.',
+  touch_waiting: 'A move is waiting for your Touch ID. Finish it, then try again.',
+  install_pending: 'Your wallet is saved, and nothing moved. Phosphor finishes setting it up the next time you open it.',
+  // A readable key file on a Mac that keeps a Phosphor-only wallet (reaudit1b RA1B-01).
+  plaintext_refused: 'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file, and nothing changed. If the file is your wallet, restore it from your backup.',
+  // The same file, in a copy whose vault service cannot read the keychain home (verify-ra1b VRA1B-01).
+  plaintext_unchecked: 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.',
+  // Every new key file (src/http/custody.ts): Touch ID opened nothing it just made, or the disk refused it.
+  proof_failed: 'Phosphor could not open the file it just made, so nothing changed. Try again.',
+  write_failed: 'Phosphor could not save the wallet file on this Mac, so nothing changed. Check that the Mac has free space, then try again.',
+  // Forget overwrites the file before it removes it, so a disk that stops it part way may leave
+  // the file unreadable: never "nothing changed" here.
+  forget_failed: 'Phosphor could not finish removing the wallet file on this Mac. Your backup still brings the wallet back. Check that the Mac has free space, then try again.',
+  // The move from a readable key file writes the encrypted one before it destroys the readable
+  // copies, so a disk that stops it may have done the first half: not "nothing changed" either.
+  migrate_failed: 'Phosphor could not finish encrypting your keys on this Mac. Check that the Mac has free space, then try again.',
+  export_failed: 'Phosphor could not save the encrypted copy there, and your wallet is unchanged. Check that you can save to that folder and that the disk has free space, then try again.',
 };
+
+/* Whether a code has a sentence of its own, rather than the one said for a code nobody named. */
+export function knownRefusal(code: string): boolean {
+  return Object.hasOwn(REFUSALS, code);
+}
+
+export function refusalCodes(): string[] {
+  return Object.keys(REFUSALS);
+}
+
+/* A disk that refused a key file (full, a permission, a directory where the file goes), said in
+   the words of this table and nothing of the system's: its text names the file's path (reaudit1b
+   RA1B-03). The audit line keeps the system's code and the call that failed. Null for a failure
+   the system did not raise: that is the app's own sentence, written on purpose, which may name
+   what a person needs, such as the file it left alone. */
+export function diskRefusal(ctx: Pick<Ctx, 'audit'>, step: string, err: unknown, code: 'write_failed' | 'forget_failed' | 'migrate_failed' | 'export_failed'): JsonBody | null {
+  const os = osError(err);
+  if (os === null) return null;
+  auditSafely(ctx, 'app_start', `${step}: the disk refused the wallet file (${os.code} on ${os.syscall})`, { code: os.code, syscall: os.syscall });
+  return refusal(code);
+}
+
+/* An audit line on a path that answers all the same. The audit file sits on the disk that may just
+   have refused the key file, and then the line is what is lost, never the sentence; the system's
+   text goes to stderr only, as in the router's catch (verify-ra1b VRA1B-02). */
+function auditSafely(ctx: Pick<Ctx, 'audit'>, type: 'app_start' | 'error', msg: string, data?: Record<string, unknown>): void {
+  try {
+    ctx.audit.append(type, msg, data);
+  } catch (logErr) {
+    process.stderr.write(`phosphor: could not log that ${msg}: ${errText(logErr)}\n`);
+  }
+}
+
+/* AFTER THE KEY FILE IS WRITTEN the step has happened, and the route gives its usual answer: the
+   wallet is made (its words are shown on that answer alone), imported or encrypted. What follows the
+   write is bookkeeping, its audit line (on the disk that may be full) and the broadcast, and a
+   failure there is logged where it can be and never takes the answer's place: a create never leaves
+   a wallet whose words nobody has seen, and nothing says "nothing changed" (verify-ra1b VRA1B-02). */
+function afterSave(ctx: Ctx, line: string, data: Record<string, unknown>): void {
+  auditSafely(ctx, 'app_start', line, data);
+  try {
+    ctx.session.touch();
+    announce(ctx);
+  } catch (err) {
+    const os = osError(err);
+    auditSafely(ctx, 'error', `${line}, but the window was not told (${os === null ? errText(err) : `${os.code} on ${os.syscall}`})`, os ?? undefined);
+  }
+}
 
 export function refusal(code: string, retryInSec?: number): JsonBody {
   const wait =
@@ -149,7 +268,7 @@ export function refusal(code: string, retryInSec?: number): JsonBody {
       : undefined;
   return {
     ok: false,
-    error: wait ?? REFUSALS[code] ?? 'That did not work.',
+    error: wait ?? (knownRefusal(code) ? REFUSALS[code] : NOTHING_CHANGED),
     code,
     ...(retryInSec !== undefined ? { retryInSec } : {}),
   };
@@ -269,21 +388,22 @@ export async function handleWalletCreate(ctx: Ctx, req: http.IncomingMessage, re
   if (body === null) return;
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let made: Awaited<ReturnType<Ctx['keystore']['create']>>;
   try {
-    const made = await ctx.keystore.create(password);
-    // The words are audited by their absence: the line says a wallet exists and names the
-    // address, which is the fact a log is for. The phrase is returned once, here, and never
-    // written anywhere this process controls.
-    // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
-    // run's next step.
-    const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
-    ctx.audit.append('app_start', 'a new wallet was created in the window', { evm: made.addresses.evm });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
+    made = await ctx.keystore.create(password);
   } catch (err) {
-    fail(res, 400, errText(err));
+    const disk = diskRefusal(ctx, 'a new wallet was not made', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
   }
+  // The words are audited by their absence: the line says a wallet exists and names the
+  // address, which is the fact a log is for. The phrase is returned once, here, and never
+  // written anywhere this process controls.
+  // Returning the words is a reveal, so it leaves what a reveal leaves for Prove it, the first
+  // run's next step.
+  const prove = made.addresses.evm === null ? [] : rememberPhrase(made.mnemonic.split(' '), made.addresses.evm, ctx.keystore.kdfParams());
+  afterSave(ctx, 'a new wallet was created in the window', { evm: made.addresses.evm });
+  sendJson(res, 200, { ok: true, mnemonic: made.mnemonic.split(' '), addresses: made.addresses, prove });
 }
 
 export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -300,17 +420,31 @@ export async function handleWalletImport(ctx: Ctx, req: http.IncomingMessage, re
   const raw = body.keys !== null && typeof body.keys === 'object' ? (body.keys as Partial<RailKeys>) : undefined;
   if (mnemonic === undefined && raw === undefined) return fail(res, 400, 'bring twelve words or an EVM private key');
 
+  let out: Awaited<ReturnType<Ctx['keystore']['importWallet']>>;
   try {
-    const out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
-    ctx.audit.append('app_start', `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, { ok: true, addresses: out.addresses });
+    out = await ctx.keystore.importWallet(password, { mnemonic, keys: raw });
   } catch (err) {
-    fail(res, 400, errText(err));
+    const disk = diskRefusal(ctx, 'a wallet was not imported', err, 'write_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
   }
+  afterSave(ctx, `a wallet was imported in the window (${mnemonic !== undefined ? 'recovery phrase' : 'private keys'})`, {
+    evm: out.addresses.evm,
+  });
+  sendJson(res, 200, { ok: true, addresses: out.addresses });
+}
+
+/* Whether this Mac keeps a Phosphor-only wallet, any data folder's, asked of the vault service now
+   when it has not said so already. A backend the shell did not start has no service to ask and no
+   such wallet it could open, so false, as before. 'unchecked' from a service with no keychain home:
+   it cannot read the markers, so its bound: false says nothing (verify-ra1b VRA1B-01). Null when the
+   service did not answer. */
+async function phosphorOnlyHere(ctx: Ctx): Promise<boolean | 'unchecked' | null> {
+  if (!ctx.vault.fromShell()) return false;
+  if (ctx.vault.bound() === true) return true;
+  const asked = await ctx.vault.ask({ op: 'status' });
+  if (!asked.ok || asked.op !== 'status') return null;
+  return asked.status.keychainHome ? asked.status.bound : 'unchecked';
 }
 
 export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -324,27 +458,39 @@ export async function handleWalletMigrate(ctx: Ctx, req: http.IncomingMessage, r
   if (ctx.cfg.mode === 'demo') {
     return fail(res, 403, 'demo mode never migrates a wallet, because migrating destroys a plaintext key file. Start Phosphor in live mode to do this.');
   }
+  /* NOT ON A MAC THAT KEEPS A PHOSPHOR-ONLY WALLET (reaudit1b RA1B-01). No pin covers a readable
+     key file, so a program running as the owner can move the bound file aside and put its own
+     wallet here; encrypting it, then moving it behind Touch ID, would make that wallet the app's.
+     Asked of the service at this click, not read off the window's card. A copy whose service cannot
+     tell refuses too: it cannot know the Mac keeps none. */
+  const here = await phosphorOnlyHere(ctx);
+  if (here !== false) {
+    const why = here === true ? 'this Mac keeps a Phosphor-only wallet' : here === 'unchecked' ? 'this build cannot read the keychain home, so it cannot tell whether this Mac keeps a Phosphor-only wallet' : 'the vault service did not say whether this Mac keeps a Phosphor-only wallet';
+    ctx.audit.append('approve_attempt_rejected', `a readable key file was not opened: ${why}`, { known: here === true });
+    return sendJson(res, 200, refusal(here === true ? 'plaintext_refused' : here === 'unchecked' ? 'plaintext_unchecked' : 'keychain_unavailable'));
+  }
   const password = passwordOf(body);
   if (password === null) return fail(res, 400, `the password must be at least ${MIN_PASSWORD} characters`);
+  let out: Awaited<ReturnType<Ctx['keystore']['migrate']>>;
   try {
-    const out = await ctx.keystore.migrate(password);
-    ctx.audit.append('app_start', `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
-      destroyed: out.destroyed.map((p) => path.basename(p)),
-      evm: out.addresses.evm,
-    });
-    ctx.session.touch();
-    announce(ctx);
-    sendJson(res, 200, {
-      ok: true,
-      destroyed: out.destroyed,
-      addresses: out.addresses,
-      // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
-      // system that keeps snapshots, and the only complete answer is a fresh wallet.
-      note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
-    });
+    out = await ctx.keystore.migrate(password);
   } catch (err) {
-    fail(res, 400, errText(err));
+    const disk = diskRefusal(ctx, 'the readable key file was not encrypted', err, 'migrate_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
   }
+  afterSave(ctx, `the plaintext key file was encrypted and destroyed (${out.destroyed.length} file(s))`, {
+    destroyed: out.destroyed.map((p) => path.basename(p)),
+    evm: out.addresses.evm,
+  });
+  sendJson(res, 200, {
+    ok: true,
+    destroyed: out.destroyed,
+    addresses: out.addresses,
+    // Said out loud rather than buried in a doc: an overwrite is not an erasure on a file
+    // system that keeps snapshots, and the only complete answer is a fresh wallet.
+    note: 'Overwritten and deleted. A Time Machine or APFS snapshot taken before now may still hold a copy, so move to a fresh wallet later if that matters.',
+  });
 }
 
 export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
@@ -370,11 +516,14 @@ export async function handleWalletExport(ctx: Ctx, req: http.IncomingMessage, re
   }
   try {
     await ctx.keystore.exportTo(target, password);
-    ctx.audit.append('app_start', 'an encrypted backup of the wallet was written', { to: target });
-    sendJson(res, 200, { ok: true, path: target });
   } catch (err) {
-    fail(res, 400, errText(err));
+    const disk = diskRefusal(ctx, 'the encrypted copy was not saved', err, 'export_failed');
+    if (disk !== null) return sendJson(res, 200, disk);
+    return fail(res, 400, errText(err));
   }
+  // The copy is saved: its audit line is bookkeeping, as in afterSave.
+  auditSafely(ctx, 'app_start', 'an encrypted backup of the wallet was written', { to: target });
+  sendJson(res, 200, { ok: true, path: target });
 }
 
 // ---------- reveal ----------
@@ -401,20 +550,23 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
   // be a full unlock, announced and releasing the queue, on a password typed to see the words: the
   // wallet then stayed open for signing until the idle lock, and every plan waiting on an unlock
   // re-armed.
-  const read = await ctx.keystore.readWithPassword(password, (payload) => (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null);
+  const read = await ctx.keystore.readWithPassword(password, (payload) => ({
+    secret: (what === 'keys' ? payload.evm?.privateKey : payload.mnemonic) ?? null,
+  }));
   if (!read.ok) {
     if (read.error === 'no_wallet') return sendJson(res, 200, refusal('no_wallet'));
     ctx.audit.append('approve_attempt_rejected', `reveal refused: ${read.error}`, { error: read.error, what });
     return sendJson(res, 200, refusal(read.error, read.retryInSec));
   }
-  if (what === 'mnemonic' && (typeof read.value !== 'string' || read.value === '')) {
+  const secret = typeof read.value.secret === 'string' && read.value.secret !== '' ? read.value.secret : null;
+  if (what === 'mnemonic' && secret === null) {
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
+  // The phrase is proven by three of its words, so its reveal leaves the proof behind; a key is
+  // proven by the whole copy typed back (POST /api/vault/key-proven), which needs nothing kept here.
   let prove: number[] = [];
-  if (what === 'mnemonic' && typeof read.value === 'string') {
-    const wallet = ctx.keystore.addresses().evm;
-    if (wallet !== null) prove = rememberPhrase(read.value.split(' '), wallet, ctx.keystore.kdfParams());
-  }
+  const wallet = ctx.keystore.addresses().evm;
+  if (wallet !== null && secret !== null && what === 'mnemonic') prove = rememberPhrase(secret.split(' '), wallet, ctx.keystore.kdfParams());
 
   // Nonces that were issued and never spent are dropped here, and each slot is wiped by its own
   // timer at its expiry as well: a window that never spends one leaves no key behind past it.
@@ -427,7 +579,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
 
   wipeOnLock(ctx.keystore);
   const nonce = crypto.randomBytes(32).toString('hex');
-  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: typeof read.value === 'string' ? Buffer.from(read.value, 'utf8') : null, prove });
+  pending.set(nonce, { what, expires: at + REVEAL_TTL_MS, secret: secret === null ? null : Buffer.from(secret, 'utf8'), prove });
   setTimeout(() => {
     const held = pending.get(nonce);
     if (held === undefined) return;
@@ -487,6 +639,8 @@ export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMe
     keys: {
       evm: secret,
     },
+    // The same key in the sixteen groups of four the Vault shows.
+    groups: secret === null ? [] : keyGroups(secret),
   });
 }
 

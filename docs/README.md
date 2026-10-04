@@ -2,7 +2,7 @@
 
 These pages are the user documentation for Phosphor, the local Mac app that holds your keys,
 your venue connections and your rules while an agent proposes moves and you click. They describe
-version 0.10.14, the version in `package.json`. The site at
+version 0.10.15, the version in `package.json`. The site at
 [phosphor.money/docs](https://phosphor.money/docs) is rendered from these
 files, and the three developer documents below sit beside them.
 
@@ -12,7 +12,7 @@ files, and the three developer documents below sit beside them.
 - [Money](money.md): the two pockets, deposit, swap, send, fund and withdraw from Hyperliquid, settling, fees and refusals.
 - [Trading](trading.md): Trade mode, a proposed trade, the click, armed plans and their session key, what runs after a lock.
 - [Policy](policy.md): the rules, the click threshold, the click after a web page, policy as sentences, changing a rule, the three verdicts.
-- [Security](security.md): what the agent can read, draft and never decide, why a web page is not an instruction, the window token, the enclave, the lock, the honest limits.
+- [Security](security.md): what the agent can read, draft and never decide, why a web page is not an instruction, the window token, the Secure Enclave, the lock, the honest limits.
 - [Tools](tools.md): every MCP tool the app registers, grouped, one line each.
 - [Troubleshooting](troubleshooting.md): a late or unconfirmed move, a venue that does not answer, Gatekeeper, an agent that will not connect, the unlock queue, a refused address.
 - [Known limits](known-limits.md): what this build does not cover, what each limit means for your money, and what closes it.

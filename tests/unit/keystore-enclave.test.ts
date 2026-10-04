@@ -13,10 +13,11 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { canonical } from '../../src/keystore/envelope.ts';
 import { seUnwrapWithSoftwareKey, seWrap } from '../../src/keystore/sewrap.ts';
-import { createKeystore, keystorePathFor, readHeader } from '../../src/keystore/store.ts';
+import { createKeystore, keystorePathFor, readHeader, stagedPathFor } from '../../src/keystore/store.ts';
 import type { EnclaveRef, Keystore } from '../../src/keystore/store.ts';
 import { tempDir } from './helpers/tmp.ts';
 
@@ -206,6 +207,27 @@ test('the payload can be rewritten in place while open, and only while open', ()
   assert.equal(store.keys().evm?.address, made.addresses.evm);
 });
 
+/* audit1b AU1B-04, accepted while this holds: updatePayload seals a new payload under the data key
+   and header the file already has, and the vault service's pin covers the wrap and the header but
+   not the payload, so an older copy sealed that way would pass the pin if it were put back. Nothing
+   in the app calls it: every file the app writes gets a data key of its own. Before anything does,
+   give each payload a new data key (a full write, committed again) or bring the payload into the pin. */
+test('nothing in the app rewrites a payload under the same data key, so no older copy of a file shares its pin', () => {
+  const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const callers: string[] = [];
+  const walk = (dir: string): void => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      // scripts/scratch is gitignored: local drivers, never the app.
+      if (entry.isDirectory()) {
+        if (full !== path.join(root, 'scripts', 'scratch')) walk(full);
+      } else if (/\.(ts|js)$/.test(entry.name) && /\bupdatePayload\b/.test(fs.readFileSync(full, 'utf8'))) callers.push(path.relative(root, full));
+    }
+  };
+  for (const dir of ['src', 'operator', 'scripts']) walk(path.join(root, dir));
+  assert.deepEqual(callers, ['src/keystore/store.ts'], 'updatePayload has a caller now: close AU1B-04 first (a new data key per payload, or the payload in the pin)');
+});
+
 test('forget shreds the file and leaves no wallet', () => {
   const keysPath = tmpKeys();
   const store = createKeystore({ keysPath, kdf: FAST_KDF });
@@ -217,4 +239,29 @@ test('forget shreds the file and leaves no wallet', () => {
   assert.equal(store.state(), 'no_wallet');
   assert.equal(store.custody(), null);
   assert.deepEqual(store.addressReport().addresses, { evm: null, solana: null, near: null, nearPublicKey: null });
+});
+
+/* audit1b AU1B-03: the staged file is checked with lstat and then read. A link put in its place
+   between the two used to be followed by the read. Made to happen every time here: the check is
+   answered with a regular file's stat while a link to another wallet's staged file sits there. */
+test('a link swapped in for the staged file after its check is not followed', (t) => {
+  const keysPath = tmpKeys();
+  const store = createKeystore({ keysPath, mode: 'live', kdf: FAST_KDF });
+  store.createWithEnclave(fakeEnclave().ref);
+  store.stageRewrap(fakeEnclave().ref);
+  const staged = stagedPathFor(keysPath);
+  const read = store.stagedOnDisk();
+  assert.ok(read !== null && read !== 'unreadable', 'the staged file this app wrote did not read back');
+
+  // The same bytes, elsewhere, behind a link at the staged path.
+  const elsewhere = path.join(path.dirname(keysPath), 'elsewhere.json');
+  fs.renameSync(staged, elsewhere);
+  fs.symlinkSync(elsewhere, staged);
+  assert.equal(store.stagedOnDisk(), 'unreadable', 'a link seen by the check');
+
+  const lstat = fs.lstatSync.bind(fs);
+  const regular = lstat(elsewhere);
+  const swapped = t.mock.method(fs, 'lstatSync', ((p: fs.PathLike) => (String(p) === staged ? regular : lstat(p))) as typeof fs.lstatSync);
+  assert.equal(store.stagedOnDisk(), 'unreadable', 'the read followed a link put there after the check');
+  assert.ok(swapped.mock.calls.some((call) => String(call.arguments[0]) === staged), 'the check no longer runs through lstat, so this test proves nothing');
 });

@@ -202,6 +202,29 @@ fn post(relay: &Relay, path: &str, body: &serde_json::Value, read_timeout: Durat
     body_of_ours(&response, &challenge)
 }
 
+/// The ops the service answers (src-tauri/se-helper/main.swift, THE PROTOCOL), and the only ones
+/// the relay carries. Any other op is answered here and never reaches the service, so the
+/// protocol is this list and a new op is a change to it.
+const OPS: [&str; 7] = ["probe", "create", "unwrap", "presence", "commit", "sweep", "status"];
+
+/// What the service receives for a request, or the refusal the relay answers in its place. The
+/// request goes as the backend wrote it, plus, on an unwrap, the transport key the data key is
+/// sealed under. The shell adds nothing else and reads nothing out of it: the reason string, the
+/// blobs, the AAD and the addresses are the backend's to compose.
+fn forwarded(request: &serde_json::Value, transport: &str) -> Result<serde_json::Value, serde_json::Value> {
+    let op = request.get("op").and_then(|op| op.as_str()).unwrap_or("");
+    if !OPS.contains(&op) {
+        return Err(failure("bad_input", "the relay carries no such op"));
+    }
+    let mut out = request.clone();
+    if op == "unwrap" {
+        if let Some(map) = out.as_object_mut() {
+            map.insert("transportKey".to_string(), serde_json::Value::String(hex_to_base64(transport)));
+        }
+    }
+    Ok(out)
+}
+
 /// One turn of the relay: ask, call, answer. Returns false when the hop failed and the caller
 /// should pause before trying again.
 fn turn(relay: &Relay) -> bool {
@@ -212,14 +235,10 @@ fn turn(relay: &Relay) -> bool {
     let Some(request) = pending.get("request").filter(|r| r.is_object()) else {
         return true;
     };
-    // The request is relayed to the service as the backend wrote it, plus the transport key the
-    // backend cannot know and the service needs. The shell adds nothing else and reads nothing
-    // out of it: the reason string, the blobs and the AAD are the backend's to compose.
-    let mut forwarded = request.clone();
-    if let Some(map) = forwarded.as_object_mut() {
-        map.insert("transportKey".to_string(), serde_json::Value::String(hex_to_base64(&relay.transport)));
-    }
-    let mut answer = call(&forwarded);
+    let mut answer = match forwarded(request, &relay.transport) {
+        Ok(request) => call(&request),
+        Err(refused) => refused,
+    };
     if let Some(map) = answer.as_object_mut() {
         map.insert("relay".to_string(), serde_json::Value::String(relay.relay.clone()));
         if let Some(id) = request.get("id") {
@@ -276,6 +295,24 @@ mod relay_tests {
         assert_eq!(base64_encode(b"hello"), "aGVsbG8=");
         assert_eq!(base64_encode(b""), "");
         assert_eq!(base64_encode(&[0u8; 32]).len(), 44);
+    }
+
+    #[test]
+    fn the_relay_carries_the_seven_ops_and_the_transport_key_only_to_an_unwrap() {
+        let transport = "00".repeat(32);
+        for op in OPS {
+            let out = forwarded(&serde_json::json!({ "op": op, "id": "r1" }), &transport).expect(op);
+            assert_eq!(out["op"], op);
+            assert_eq!(out["id"], "r1", "the request goes as the backend wrote it");
+            assert_eq!(out.get("transportKey").is_some(), op == "unwrap", "{op}");
+        }
+        let unwrap = forwarded(&serde_json::json!({ "op": "unwrap", "transportKey": "mine" }), &transport).unwrap();
+        assert_eq!(unwrap["transportKey"], base64_encode(&[0u8; 32]), "the shell's key, never one the backend put there");
+        for request in [serde_json::json!({ "op": "delete" }), serde_json::json!({ "op": "" }), serde_json::json!({}), serde_json::json!({ "op": 7 })] {
+            let refused = forwarded(&request, &transport).unwrap_err();
+            assert_eq!(refused["ok"], false);
+            assert_eq!(refused["error"], "bad_input", "{request}");
+        }
     }
 
     #[test]

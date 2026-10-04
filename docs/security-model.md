@@ -7,7 +7,7 @@ What this app defends against, how, and where the v1 boundary honestly sits.
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
 defends against and the test that proves each defence, what stays open, what the invite tools
-guard, and how to check a release yourself. It describes version 0.10.14. The rest of the
+guard, and how to check a release yourself. It describes version 0.10.15. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -112,7 +112,31 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   requirement); the `update.rs` tests under `cargo test` (the download, the version inside, the
   archive, and a bundle that passes minisign without the Developer ID refused).
 - **Another program asks the Secure Enclave service to open the wallet.** On a signed release
-  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`.
+  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`;
+  `vault-peer-check.test.ts` (a foreign app refused, the app answered).
+- **A wallet file swapped on disk for one wrapped to your enclave key.** Anyone can wrap to that
+  key: its public half is in the file. On a Developer ID build that carries the keychain
+  entitlement, a bound wallet's file is checked against a pin only the vault service can write,
+  before any Touch ID, so a substitute or an edited file is refused, and once a wallet on this Mac
+  is bound, no device-bound key file opens on it. That last rule is for the whole Mac: the first
+  wallet a signed release binds or makes, in any data folder, stops every device-bound wallet here
+  from opening, the owner's own included, until it is restored from its backup. A demo makes no
+  key and writes nothing to the keychain group, whatever build runs it. Such a build never falls
+  back to a device key, and a signed release is such a build: its service carries the vault
+  profile. Proof: `vault-service.test.ts` (the service's own rules against a stand-in keychain);
+  `vault-bind.test.ts` and `vault-relay.test.ts` (a demo backend writes nothing to the keychain).
+- **A wallet file swapped while it is being made or bound.** Create, restore, the move from a
+  password and the bind write the new file beside the live one, prove it with one Touch ID and
+  commit it from the bytes held in memory, and only then put those bytes in place; the staged file
+  is never read back. Every key in Phosphor's keychain home is committed, even after a start-up
+  check that could not read the markers, and the window says Phosphor-only only once the service
+  confirms the file in place. A crash leaves the old file whole or the new one committed, and the next
+  start finishes or removes the staged file by the service's answer about it. A restore that is
+  cancelled or refused leaves the wallet that was there exactly as it was; it used to shred it
+  before the Touch ID, so the window token alone could wipe a wallet. Proof: `vault-bind.test.ts`
+  (a staged file swapped during the touch is never pinned; a cancelled restore; the crash matrix,
+  for a bind and a restore; a wallet made after a start-up probe that could not read the markers
+  is committed all the same; Phosphor-only only for a file the service confirmed).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -136,12 +160,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   the same step. Proof: attacks `10-screen-lock-shell`, `10-screen-lock-backend` (the wallet
   shuts); `lock-when-signed.test.ts` (a move already signing); `firstrun-e2e.test.ts` and
   `scripts/firstrun-lock-proof.ts` (the first run).
-- **One Touch ID opens more than it should.** A Touch ID that shows your deposit address or your
-  recovery phrase leaves a locked wallet locked. A Touch ID that approves a move on a locked
-  wallet opens it for that move alone: no trading plan arms on it, even while the app starts, and
-  your rules run again after the touch, before anything signs. Proof: `vault-routes.test.ts` (the
-  address and the phrase), `approve-touch-lease.test.ts`, `touch-recheck.test.ts`,
-  `runner-host.test.ts` (the plans).
+- **One Touch ID opens more than it should.** A Touch ID that shows your deposit address, your
+  recovery phrase or, on a wallet with no phrase, your private key leaves a locked wallet locked. A
+  Touch ID that approves a move on a locked wallet opens it for that move alone: no trading plan
+  arms on it, even while the app starts, and your rules run again after the touch, before anything
+  signs. Proof: `vault-routes.test.ts` (the address, the phrase and the key),
+  `approve-touch-lease.test.ts`, `touch-recheck.test.ts`, `runner-host.test.ts` (the plans).
 - **Freeze is pressed while a move is on its way.** Every rail reads Freeze again as its last step
   before the key signs, and a plan reads it before it fires, arms or changes, so a move that passed
   its checks before you pressed Freeze signs nothing, whether you clicked it, touched it or your
@@ -171,21 +195,58 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 
 ### What stays open
 
-These are true of 0.10.14. [Known limits](known-limits.md) gives each one with what it means for
+These are true of 0.10.15. [Known limits](known-limits.md) gives each one with what it means for
 your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
   can sign. A program able to read that process's memory has it; the hardened runtime is there to
   refuse that. A lock by any door drops the key and every key or phrase you asked to see and the
   window has not read yet, and an unread one also goes when it expires, but copies left by a
-  signature, an unlock, a new wallet or words shown to you can stay in memory until it is reused,
+  signature, an unlock, a new wallet or words or a key shown to you can stay in memory until it is reused,
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
   closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
   never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
-- **The Touch ID key is bound to this Mac, not to Phosphor.** Another app running as you can ask
-  to use it and show its own Touch ID dialog. Approve a Touch ID dialog only for something you
-  started in Phosphor, and read its sentence. What closes it: custody binding, which needs a
-  keychain entitlement no build carries yet.
+- **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
+  the vault service carried its provisioning profile, or by a copy you build yourself, has a key
+  another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
+  dialog only for something you started in Phosphor, and read its sentence. A signed release with
+  the profile keeps the key of a wallet it makes in a keychain group only its vault service can
+  reach, with a pin per bound wallet file and never a device key. What closes it for older
+  wallets: Make it Phosphor-only in the Vault tab (the bind), one Touch ID, once the backup is
+  proven.
+- **Old copies of a wallet file still open on this Mac until the keys change.** A bind moves the
+  key into Phosphor's keychain, and Phosphor stops opening any device-bound file on this Mac, but
+  it cannot reach a copy of the old file made before: a Time Machine backup, a sync folder, a copy
+  you made. Any program running as you can load the old key from such a copy and ask for your
+  Touch ID with its own dialog, and an older Phosphor build opens it too. Phosphor shreds only the
+  copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
+  yourself. What closes it: moving to new keys that never existed outside the keychain, so the
+  old key holds nothing. The chip vault plans that; it is not built.
+- **A bound wallet's key is one keychain item.** After the bind, and for every wallet a signed
+  release makes, the key lives in one item in the vault's keychain group and in no file, so no copy
+  of the wallet file opens without it. If the item is gone (the Mac erased or replaced, its
+  keychain reset), the backup is the only way back, which is why the bind asks for a proven one. A
+  key backup holds the EVM key alone: an older wallet's NEAR, Solana and trading keys live only in
+  the bound file and go with the item. The app never shows or spends from those NEAR and Solana
+  addresses, and a trading key is approved again. What closes it: nothing in this build; the
+  backup kept off this Mac is the way back.
+- **One marker refuses every device-bound file on the Mac.** Markers are one pool for the whole
+  Mac, and while any exists the service refuses every device-bound key file. So the first wallet a
+  signed release binds, makes or restores, from any copy and in any data folder, stops every
+  device-bound wallet on the Mac from opening in Phosphor, a live one in another folder included,
+  until it is restored from its backup as a bound wallet. The lock card says why and offers that
+  restore. A demo writes nothing to the group, so a demo never does it. What closes it: binding
+  every wallet on the Mac. The rule stays, because it is what keeps a device-bound file swapped in
+  for a bound wallet from opening.
+- **A readable key file is trusted only on a Mac known to have no Phosphor-only wallet.** A
+  readable `keys.json` is a wallet from before encryption, which nothing pins. Phosphor reads it as
+  your wallet, and offers to encrypt it, only once its vault service has read this Mac's keychain
+  and found no Phosphor-only wallet. Everywhere else it leaves the file closed (served unverified,
+  never encrypted): on a Mac where any wallet is Phosphor-only, where the lock card points to the
+  backup, and in a copy whose vault service cannot read the keychain (the development shell,
+  `npm run tauri dev`, or a copy built without the Developer ID), which cannot tell and points to
+  the downloaded app or the backup. The one exception is the bare backend (`npm run app`): it has
+  no vault service to ask, so it reads the file as your wallet, as it always has.
 - **A program running as you can read and propose.** It can read the read key and the agent's
   secret file, and a seat taken with that file waits for your click until you allow it. It can
   also read the secret that an agent Phosphor started carries in its environment, and a move filed
@@ -319,7 +380,7 @@ It should be built by this repository's release workflow, from the tag of its ve
 ```
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.14
+  --source-ref refs/tags/v0.10.15
 ```
 
 With `--repo` alone, the check also passes for a file any other workflow in this repository
@@ -335,7 +396,7 @@ the tag builds:
 cd /Applications/Phosphor.app/Contents/Resources/phosphor
 find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
 
-git clone --depth 1 --branch v0.10.14 https://github.com/karimbabasf/phosphor.git
+git clone --depth 1 --branch v0.10.15 https://github.com/karimbabasf/phosphor.git
 cd phosphor && npm run bundle
 ```
 

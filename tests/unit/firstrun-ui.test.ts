@@ -17,12 +17,16 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
+
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
 const VAULT = read('../../ui/screens/vault.js');
 const CSS = read('../../ui/design/agentpick.css');
@@ -230,7 +234,8 @@ function build(): World {
   sandbox.PhosphorMoneyIn = { render: (host: Any) => { host.appendChild(makeNode('div')); } };
   sandbox.PhosphorApi = {
     vaultCreate: () => Promise.resolve({ ok: true, addresses: { evm: '0xabc' } }),
-    vaultRestore: () => Promise.resolve({ ok: true, addresses: {} }),
+    vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return answerFor('/api/vault/restore').then((a) => (a && Object.keys(a as Any).length ? (a as Any) : { ok: true, addresses: { evm: '0xabc' } })); },
+    vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return answerFor('/api/vault/restore').then((a) => (a && Object.keys(a as Any).length ? (a as Any) : { ok: true, addresses: { evm: '0xabc' } })); },
     walletCreate: () => Promise.resolve({ ok: true, mnemonic: [], addresses: {} }),
     walletImport: (payload: Any) => { calls.push({ route: '/api/wallet/import', ...payload }); return Promise.resolve({ ok: true, addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
@@ -244,6 +249,7 @@ function build(): World {
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   runInContext(FIRSTRUN, sandbox, { filename: 'ui/screens/firstrun.js' });
 
   const store = sandbox.PhosphorState;
@@ -256,7 +262,7 @@ function build(): World {
 async function atPicker(world: World): Promise<Any> {
   world.sandbox.PhosphorFirstRun.open();
   buttonNamed(world.screen, 'Get started').click();
-  buttonNamed(world.screen, 'Create wallet').click();
+  buttonNamed(world.screen, 'Create a new wallet').click();
   await flush();
   buttonNamed(world.screen, 'Continue').click();
   await flush();
@@ -470,15 +476,17 @@ async function atAssistant(world: World, pick?: string): Promise<Any> {
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.screen;
   buttonNamed(screen, 'Get started').click();
-  (find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any).click();
+  (find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have a wallet')) as Any).click();
   buttonNamed(screen, 'Continue').click(); // choose
   find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
   buttonNamed(screen, 'Continue').click(); // password
-  assert.ok(visibleText(screen).includes('Bring your wallet in'), 'the import path skipped the phrase');
+  assert.ok(visibleText(screen).includes('Restore your wallet'), 'the import path skipped the phrase');
   find(screen, 'textarea')[0].value = PHRASE;
   buttonNamed(screen, 'Continue').click(); // the phrase
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/wallet/import' && c.mnemonic === PHRASE), 'the phrase was not imported');
+  assert.ok(visibleText(screen).includes('Your wallet is back'), 'the wallet that came back was not named');
+  buttonNamed(screen, 'Continue').click(); // restored
   buttonNamed(screen, 'Continue').click(); // addresses
   buttonNamed(screen, 'Do this later').click(); // money
   await flush();
@@ -622,4 +630,228 @@ test('a refusal from the policy route is shown as its one sentence over the same
   buttonNamed(screen, 'Continue').click();
   assert.equal(world.calls.filter((c) => c.route === '/api/policy/threshold').length, 2);
   assert.ok(visibleText(screen).includes('Type a number of dollars above 0.'));
+});
+
+/* ---------- a wallet that exists already ---------- */
+
+const KEY_GROUPS = '3f9a 07c2 b41e 5d68 e2a0 9b17 4c3d f805 1a6e c9b2 7e41 0d5f a8c3 62e9 d07b 3b14';
+
+test('with Touch ID, the first run offers a calm second path beside Create: Restore takes the phrase or the key behind one Touch ID', async () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  assert.ok(visibleText(screen).includes('Create your wallet'));
+  const other = buttonNamed(screen, 'I already have a wallet');
+  assert.ok(other, 'a second way in beside Create');
+  assert.match(other.className, /btn-quiet/, 'it is the quiet one: Create stays the main action');
+  other.click();
+  assert.ok(visibleText(screen).includes('Restore your wallet'), visibleText(screen).join(' | '));
+  assert.ok(visibleText(screen).includes('Type your recovery phrase, or your private key if your wallet has no phrase. It never leaves this Mac. One Touch ID saves the wallet here.'));
+  const restore = buttonNamed(screen, 'Restore');
+  assert.equal(restore.getAttribute('data-pending-label'), 'Waiting for Touch ID');
+
+  const box = (): Any => find(screen, 'textarea')[0];
+  box().value = PHRASE.split(' ').slice(0, 11).join(' ');
+  restore.click();
+  assert.ok(visibleText(screen).includes('That is 11 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
+  box().value = KEY_GROUPS.slice(0, -1);
+  buttonNamed(screen, 'Restore').click();
+  assert.ok(visibleText(screen).includes('That is 63 characters. A private key is 64.'));
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, 0, 'nothing is sent before it reads right');
+
+  world.answers['/api/vault/restore'] = { ok: false, code: 'bad_key', error: 'That is not a private key.' };
+  box().value = KEY_GROUPS;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.ok(visibleText(screen).includes('That key is not right. Check every character against your copy.'));
+  assert.equal((world.calls.filter((c) => c.route === '/api/vault/restore').at(-1) as Any).key, '0x' + KEY_GROUPS.replace(/ /g, ''));
+
+  delete world.answers['/api/vault/restore'];
+  box().value = ` ${PHRASE.toUpperCase()} `;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.equal((world.calls.filter((c) => c.route === '/api/vault/restore').at(-1) as Any).mnemonic, PHRASE);
+  // The wallet that came back is named before any address: a slip restores a wallet too.
+  assert.ok(visibleText(screen).includes('Your wallet is back'), visibleText(screen).join(' | '));
+  assert.ok(visibleText(screen).includes('This is the wallet 0xabc. Check it is the one you expect.'));
+  assert.equal(find(screen, '.firstrun-address')[0].textContent, '0xabc', 'the whole address is not in its well');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(visibleText(screen).includes('Your addresses'), 'named, the flow goes on as after Create');
+});
+
+/* What a person types off a paper key, read one way on every screen (ui/core/custody.js): an o
+   for a 0, a stray letter, the numbers the sheet prints beside each group. Each is said by the
+   group it is in, and nothing is sent until the key reads right. */
+test('the restore field reads a key the way the backup shows it, and names the group a stray character is in', async () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'I already have a wallet').click();
+  const box = (): Any => find(screen, 'textarea')[0];
+  const groups = KEY_GROUPS.split(' ');
+
+  box().value = groups.map((g, i) => (i === 5 ? 'e2ao' : g)).join(' ');
+  buttonNamed(screen, 'Restore').click();
+  assert.ok(visibleText(screen).includes('Group 6 has a character a private key never uses. A key has only 0 to 9 and a to f.'), visibleText(screen).join(' | '));
+  assert.ok(!visibleText(screen).some((t) => /words/.test(t)), 'a key with a slip was read as words');
+
+  box().value = groups.join('').replace(/^(.{40})./, '$1g');
+  buttonNamed(screen, 'Restore').click();
+  assert.ok(visibleText(screen).includes('Group 11 has a character a private key never uses. A key has only 0 to 9 and a to f.'), 'a key typed whole: the group is its place in fours');
+  box().value = 'x' + groups.join('');
+  buttonNamed(screen, 'Restore').click();
+  assert.ok(visibleText(screen).includes('That has a character a private key never uses. A key has only 0 to 9 and a to f.'));
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, 0, 'a key that cannot be right was sent');
+
+  // The sixteen groups as the sheet prints them: a number, with or without a dot, before each.
+  box().value = groups.map((g, i) => `${i + 1}${i % 2 ? '.' : ''} ${g}`).join('\n');
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.equal((world.calls.filter((c) => c.route === '/api/vault/restore').at(-1) as Any).key, '0x' + groups.join(''));
+});
+
+test('"That is not my wallet" goes back to the field with the line that says what to look at, and a second restore goes through', async () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'I already have a wallet').click();
+  find(screen, 'textarea')[0].value = KEY_GROUPS;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.ok(visibleText(screen).includes('This is the wallet 0xabc. Check it matches the address on your copy.'));
+  const wrong = buttonNamed(screen, 'That is not my wallet');
+  assert.match(wrong.className, /btn-quiet/);
+  wrong.click();
+  assert.ok(visibleText(screen).includes('Restore your wallet'));
+  assert.ok(visibleText(screen).includes('Then a character is off. Check your copy group by group and try again.'));
+  assert.equal(find(screen, 'textarea')[0].value, '', 'the key stayed in the field');
+  assert.equal(buttonNamed(screen, 'Create a new wallet'), undefined, 'a new wallet was offered over the one just restored');
+  find(screen, 'textarea')[0].value = KEY_GROUPS;
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, 2);
+  assert.ok(visibleText(screen).includes('Your wallet is back'));
+});
+
+test('Create a new wallet takes the first run back to Create, and the restore path counts as the wallet step', () => {
+  const world = build();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  buttonNamed(screen, 'I already have a wallet').click();
+  const phase = find(screen, '.screen-phase').find((p: Any) => p.dataset.phase === 'Wallet') as Any;
+  assert.equal(phase.getAttribute('data-current'), 'true');
+  buttonNamed(screen, 'Create a new wallet').click();
+  assert.ok(visibleText(screen).includes('Create your wallet'));
+  assert.ok(buttonNamed(screen, 'Create a new wallet'));
+});
+
+test('without Touch ID, I already have a wallet takes a private key as well as a phrase', async () => {
+  const world = build();
+  world.store.put({ ...world.store.get(), vault: { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } } });
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.screen;
+  buttonNamed(screen, 'Get started').click();
+  const tile = find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have a wallet')) as Any;
+  assert.ok(tile.textContent.includes('Restore it from its recovery phrase, or its private key if it has no phrase.'));
+  tile.click();
+  buttonNamed(screen, 'Continue').click();
+  find(screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+  buttonNamed(screen, 'Continue').click();
+  find(screen, 'textarea')[0].value = `0x${KEY_GROUPS}`;
+  buttonNamed(screen, 'Continue').click();
+  await flush();
+  const sent = world.calls.find((c) => c.route === '/api/wallet/import') as Any;
+  assert.equal(sent.keys.evm, '0x' + KEY_GROUPS.replace(/ /g, ''));
+  assert.equal(sent.mnemonic, undefined);
+});
+
+
+/* Every code the backend can say, and every code the service and the relays can answer, as the
+   backend says it and again carrying the service's own log text: the first run's line is a
+   sentence, and a cancel is the quiet one. */
+test('every refusal a first-run restore can be handed reads as a sentence, and no service text reaches it', async () => {
+  const codes = [...new Set([...refusalCodes(), ...VAULT_REFUSAL_CODES])];
+  for (const code of codes) {
+    for (const answer of [refusal(code), { ok: false, code, error: SERVICE_MESSAGE }]) {
+      const world = build();
+      world.sandbox.PhosphorFirstRun.open();
+      const screen = world.screen;
+      buttonNamed(screen, 'Get started').click();
+      buttonNamed(screen, 'I already have a wallet').click();
+      world.answers['/api/vault/restore'] = answer;
+      find(screen, 'textarea')[0].value = KEY_GROUPS;
+      buttonNamed(screen, 'Restore').click();
+      await flush();
+      const line = find(screen, '.firstrun-error')[0];
+      const said = visibleText(line).join(' ');
+      assert.ok(said.length > 0, `${code}: nothing was said`);
+      assert.ok(!RAW.test(said), `${code}: ${said}`);
+      for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}: ${said}`);
+      assert.equal(line.getAttribute('data-tone'), code === 'user_cancel' ? 'quiet' : null, code);
+    }
+  }
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in each first-run create and
+   restore, with Touch ID and with a password: the line is the table's one sentence, never the
+   system's text or the key file's path. */
+test('a disk that refuses the wallet file in a first-run create or restore is one calm sentence, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
+  assert.deepEqual(answer, refusal('write_failed'));
+  const said = (screen: Any): string[] => find(screen, '.firstrun-error').filter((n: Any) => !n.hidden).map((n: Any) => visibleText(n).join(' '));
+  const sentence = refusal('write_failed').error as string;
+  const PASSWORD_ONLY = { ...ENCLAVE, enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } };
+  const flows: Array<[string, (world: World) => Promise<void>]> = [
+    ['create with Touch ID', async (world) => {
+      world.sandbox.PhosphorApi.vaultCreate = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      buttonNamed(world.screen, 'Create a new wallet').click();
+    }],
+    ['restore with Touch ID', async (world) => {
+      world.answers['/api/vault/restore'] = answer as Answer;
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      buttonNamed(world.screen, 'I already have a wallet').click();
+      find(world.screen, 'textarea')[0].value = KEY_GROUPS;
+      buttonNamed(world.screen, 'Restore').click();
+    }],
+    ['create with a password', async (world) => {
+      world.store.put({ ...world.store.get(), vault: PASSWORD_ONLY });
+      world.sandbox.PhosphorApi.walletCreate = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      (find(world.screen, '.choice').find((c: Any) => c.textContent.startsWith('Create a new wallet')) as Any).click();
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+      buttonNamed(world.screen, 'Continue').click();
+    }],
+    ['restore with a password', async (world) => {
+      world.store.put({ ...world.store.get(), vault: PASSWORD_ONLY });
+      world.sandbox.PhosphorApi.walletImport = () => Promise.resolve(answer);
+      world.sandbox.PhosphorFirstRun.open();
+      buttonNamed(world.screen, 'Get started').click();
+      (find(world.screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have a wallet')) as Any).click();
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'input').forEach((i: Any) => { i.value = 'a long enough password'; });
+      buttonNamed(world.screen, 'Continue').click();
+      find(world.screen, 'textarea')[0].value = PHRASE;
+      buttonNamed(world.screen, 'Continue').click();
+    }],
+  ];
+  for (const [name, run] of flows) {
+    const world = build();
+    await run(world);
+    await flush();
+    await flush();
+    assert.deepEqual(said(world.screen), [sentence], `${name}: ${JSON.stringify(said(world.screen))}`);
+    for (const line of said(world.screen)) assert.ok(!RAW.test(line), `${name}: ${line}`);
+  }
 });

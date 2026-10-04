@@ -143,3 +143,23 @@ test('the app locks on the time the Vault tab shows: five minutes by default, an
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+/* The flag the bind flow reads names the wallet it was proven for (src/http/vault.ts,
+   backupProven), so a key file swapped in from outside the app does not inherit it. */
+test('a proof names its wallet in lower case, a clear forgets it, and a file from before names none', () => {
+  const dir = tmpDir();
+  const prefs = createVaultPrefs(dir);
+  assert.equal(prefs.get().backedUpFor, null);
+  const marked = prefs.markBackedUp(() => Date.parse('2026-10-02T10:00:00.000Z'), '0xAbC0000000000000000000000000000000000001');
+  assert.deepEqual([marked.backedUp, marked.backedUpAt, marked.backedUpFor], [true, '2026-10-02T10:00:00.000Z', '0xabc0000000000000000000000000000000000001']);
+  assert.equal(onDisk(dir).backedUpFor, '0xabc0000000000000000000000000000000000001');
+  prefs.clearBackedUp();
+  assert.equal(onDisk(dir).backedUpFor, undefined);
+  assert.equal(createVaultPrefs(dir).get().backedUpFor, null);
+  prefs.markBackedUp();
+  assert.equal(createVaultPrefs(dir).get().backedUpFor, null, 'a proof with no wallet names none');
+
+  const old = tmpDir();
+  fs.writeFileSync(path.join(old, 'vault.json'), JSON.stringify({ backedUp: true, backedUpAt: '2026-09-20T10:00:00.000Z' }, null, 2) + '\n');
+  assert.deepEqual(createVaultPrefs(old).get(), { backedUp: true, backedUpAt: '2026-09-20T10:00:00.000Z', backedUpFor: null, idleMinutes: 5 });
+});

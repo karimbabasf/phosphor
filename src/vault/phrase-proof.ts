@@ -1,6 +1,8 @@
-// What "backed up" is proven against: three words of the phrase the last reveal or a new wallet
-// showed, kept as one slow hash for as long as it takes to write twelve words down and type three
-// of them back.
+// What "backed up" is proven against for a recovery phrase: three of the words the last reveal or a
+// new wallet showed, kept as one slow hash for as long as it takes to write the phrase down and type
+// three of them back. One proof is held at a time. A phrase carries a checksum, so three words show a
+// copy that reads; a wallet with no phrase backs up a raw private key, which has none, and is proven
+// by the whole copy typed back instead (src/http/vault.ts, key-proven), which needs nothing kept here.
 //
 // The proof used to read the phrase off the open wallet, so a reveal had to leave the wallet open,
 // for signing as much as for reading, until the idle lock. A reveal opens nothing now
@@ -33,7 +35,7 @@ export const PHRASE_PROOF_MISSES = 5;
 type Held = { positions: number[]; kdf: KdfParams; hash: Promise<Buffer>; wallet: string; until: number; tries: number };
 let held: Held | null = null;
 /* The wipe when the half hour is up, so the proof leaves memory then and not at the next check.
-   Its clock stops while the Mac sleeps, which is why checkPhrase still reads the wall clock. */
+   Its clock stops while the Mac sleeps, which is why a check still reads the wall clock. */
 let expiry: NodeJS.Timeout | null = null;
 // The three a wallet is asked for, kept past a forget so a reveal made again asks the same three.
 let asked: { wallet: string; positions: number[] } | null = null;
@@ -42,10 +44,8 @@ type Answer = { index: number; word: string };
 
 // The answers as one string, in position order, so the same words typed in any order hash the same.
 function spelled(answers: Answer[]): string {
-  return [...answers]
-    .sort((a, b) => a.index - b.index)
-    .map((answer) => `${answer.index}:${answer.word.trim().toLowerCase()}`)
-    .join('\n');
+  const parts = [...answers].sort((a, b) => a.index - b.index).map((answer) => `${answer.index}:${answer.word.trim().toLowerCase()}`);
+  return ['phrase', ...parts].join('\n');
 }
 
 function pick(total: number): number[] {
@@ -56,15 +56,14 @@ function pick(total: number): number[] {
 
 /* Returns the positions the window asks for. `kdf` is the keystore's (Keystore.kdfParams), so a
    test suite that runs the keystore cheaply runs this cheaply too. The hash runs after the answer
-   that showed the words has gone out, so a reveal waits on none of it. */
+   that showed the backup has gone out, so a reveal waits on none of it. */
 export function rememberPhrase(words: string[], wallet: string, kdf: KdfParams, now: number = Date.now()): number[] {
   forgetPhrase();
   const owner = wallet.toLowerCase();
-  const positions =
-    asked !== null && asked.wallet === owner && asked.positions.every((at) => at < words.length) ? asked.positions : pick(words.length);
+  const positions = asked !== null && asked.wallet === owner && asked.positions.every((at) => at < words.length) ? asked.positions : pick(words.length);
   asked = { wallet: owner, positions };
   const secret = spelled(positions.map((index) => ({ index, word: words[index] ?? '' })));
-  // Never a throw into the route that showed the words: a hash that fails is a check that answers 'none'.
+  // Never a throw into the route that showed the backup: a hash that fails is a check that answers 'none'.
   const hash = Promise.resolve().then(() => deriveKek(secret, kdf));
   hash.catch(() => undefined);
   held = { positions, kdf, hash, wallet: owner, until: now + PHRASE_PROOF_MS, tries: 0 };
@@ -73,9 +72,9 @@ export function rememberPhrase(words: string[], wallet: string, kdf: KdfParams, 
   return [...positions];
 }
 
-/* 'none' when nothing was revealed for this wallet in the last half hour, or the tries ran out:
-   the window shows the words again rather than calling a right answer wrong. Answers at any
-   positions but the three asked are a miss. */
+/* 'none' when nothing was revealed for this wallet in the last half hour, or the tries ran out: the
+   window shows the words again rather than calling a right answer wrong. Answers at any positions
+   but the three asked are a miss. */
 export async function checkPhrase(answers: Answer[], wallet: string | null, now: number = Date.now()): Promise<'match' | 'mismatch' | 'none'> {
   const proof = held;
   if (proof === null || now > proof.until || wallet === null || proof.wallet !== wallet.toLowerCase() || proof.tries >= PHRASE_PROOF_MISSES) {

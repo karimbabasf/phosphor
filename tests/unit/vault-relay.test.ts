@@ -120,6 +120,123 @@ test('a request nobody fetches fails on its own clock, and a stopped relay fails
   assert.equal(relay.attached(), false, 'a shell that stopped polling is gone');
 });
 
+test('commit, sweep and status come back typed, read strictly, and probe carries the keychain home', async () => {
+  const relay = createVaultRelay({ transportKey: transport });
+  const answered = async (request: Parameters<typeof relay.ask>[0], body: Record<string, unknown>) => {
+    const asked = relay.ask(request);
+    const handed = await relay.next(1000);
+    assert.equal(handed?.op, request.op);
+    relay.answer({ id: handed!.id, ok: true, ...body });
+    return { handed: handed!, result: await asked };
+  };
+
+  const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
+  const committed = await answered({ op: 'commit', ...material }, { keyBlob: 'keychain:k', at: '2026-10-02T00:00:00Z' });
+  assert.equal(committed.handed.addresses, 'd', 'the addresses travel with the wrap');
+  assert.deepEqual(committed.result, { ok: true, op: 'commit', keyBlob: 'keychain:k', at: '2026-10-02T00:00:00Z' });
+  const elsewhere = await answered({ op: 'commit', ...material }, { keyBlob: 'keychain:other' });
+  assert.equal(!elsewhere.result.ok && elsewhere.result.error, 'garbled', 'a commit answered for another key is no commit');
+
+  assert.deepEqual((await answered({ op: 'sweep', label: 'run-1' }, { deleted: 2, kept: 1 })).result, { ok: true, op: 'sweep', deleted: 2, kept: 1 });
+  assert.deepEqual((await answered({ op: 'sweep' }, { deleted: -4, kept: 'x' })).result, { ok: true, op: 'sweep', deleted: 0, kept: 0 });
+
+  const full = await answered({ op: 'status', ...material }, {
+    keychainHome: true, bound: true, key: { present: true, fresh: false }, marker: { at: '2026-10-02T00:00:00Z' }, pinMatches: true,
+  });
+  assert.deepEqual(full.result, {
+    ok: true, op: 'status',
+    status: { keychainHome: true, bound: true, key: { present: true, fresh: false }, marker: { at: '2026-10-02T00:00:00Z' }, pinMatches: true },
+  });
+  const garbled = await answered({ op: 'status' }, { keychainHome: 'yes', bound: 1, key: 'k', marker: [], pinMatches: 'true' });
+  assert.deepEqual(garbled.result, {
+    ok: true, op: 'status', status: { keychainHome: false, bound: false, key: null, marker: null },
+  }, 'anything not plainly true reads as false, so a garbled answer never claims a binding');
+
+  await answered({ op: 'probe' }, { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true });
+  assert.equal(relay.capability()?.keychainHome, true);
+  await answered({ op: 'probe' }, { secureEnclave: true, biometry: 'touchid', canAuthenticate: true });
+  assert.equal(relay.capability()?.keychainHome, false);
+});
+
+/* verify-ra1b VRA1B-01: bound() is what the service read off this Mac's markers. A service with no
+   keychain home (the development shell's, a copy built without the Developer ID) answers bound: false
+   whatever the Mac holds, so that answer never says the Mac keeps no Phosphor-only wallet. */
+test('only a status that read the markers tells the relay whether this Mac keeps a Phosphor-only wallet', async () => {
+  const relay = createVaultRelay({ transportKey: transport });
+  const status = async (body: Record<string, unknown>): Promise<void> => {
+    const asked = relay.ask({ op: 'status' });
+    const handed = await relay.next(1000);
+    relay.answer({ id: handed!.id, ok: true, key: null, marker: null, ...body });
+    assert.equal((await asked).ok, true);
+  };
+  assert.equal(relay.bound(), null, 'nothing said yet');
+  await status({ keychainHome: false, bound: false });
+  assert.equal(relay.bound(), null, 'a service that cannot read the markers said this Mac keeps none');
+  await status({ keychainHome: true, bound: false });
+  assert.equal(relay.bound(), false);
+  await status({ keychainHome: true, bound: true });
+  assert.equal(relay.bound(), true);
+  await status({ keychainHome: false, bound: false });
+  await status({ keychainHome: true, bound: false });
+  assert.equal(relay.bound(), true, 'no op deletes a marker, and no answer takes one back');
+  relay.stop();
+});
+
+/* A demo's relay (src/main.ts: makesKeys only in live mode). The marker a signed release's commit
+   writes is for the whole Mac, so a demo never hands the shell create, commit or sweep, whatever
+   the service says it is, and has no enclave to make a wallet with. Reads and Touch IDs pass. */
+test('a relay that makes no keys answers create, commit and sweep itself, and the shell never sees one', async () => {
+  const material = { keyBlob: 'keychain:k', ephemeralPublicKey: 'e', ciphertext: 'c', aad: 'a', addresses: 'd' };
+  const writes = [{ op: 'create' as const }, { op: 'commit' as const, ...material }, { op: 'sweep' as const }, { op: 'sweep' as const, label: 'run-1' }];
+  for (const keychainHome of [true, false]) {
+    const relay = createVaultRelay({ transportKey: transport, makesKeys: false });
+    // Before the service has said what it is, too.
+    for (const request of writes) {
+      const early = await relay.ask(request);
+      assert.deepEqual(early, { ok: false, error: 'no_keychain_home', message: 'a demo makes no Touch ID key and writes nothing to the keychain' }, `${request.op} before the probe`);
+    }
+    assert.equal(relay.queued(), 0, 'a write reached the queue before the probe');
+    const probe = relay.ask({ op: 'probe' });
+    const asked = await relay.next(1000);
+    relay.answer({ id: asked!.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome });
+    assert.equal((await probe).ok, true);
+    assert.equal(relay.capability()?.keychainHome, keychainHome);
+    assert.equal(relay.enclaveReady(), false, 'a demo was offered a Touch ID wallet');
+
+    for (const request of writes) {
+      const refused = await relay.ask(request);
+      assert.equal(!refused.ok && refused.error, 'no_keychain_home', request.op);
+      assert.equal(relay.queued(), 0, `${request.op} was queued for the shell`);
+    }
+    assert.equal(await relay.next(30), null, 'the shell was handed a write');
+
+    // Reading still reaches the shell, and comes back typed.
+    const status = relay.ask({ op: 'status', ...material });
+    const read = await relay.next(1000);
+    assert.equal(read?.op, 'status');
+    relay.answer({ id: read!.id, ok: true, keychainHome, bound: false, key: null, marker: null });
+    assert.deepEqual(await status, { ok: true, op: 'status', status: { keychainHome, bound: false, key: null, marker: null } });
+    for (const op of ['unwrap', 'presence'] as const) {
+      const pending = relay.ask({ op, ...material, reason: 'x' });
+      const handed = await relay.next(1000);
+      assert.equal(handed?.op, op);
+      relay.answer({ id: handed!.id, ok: false, error: 'user_cancel', message: 'cancelled' });
+      await pending;
+    }
+  }
+
+  // The live app's relay is unchanged: it makes keys.
+  const live = createVaultRelay({ transportKey: transport });
+  const probe = live.ask({ op: 'probe' });
+  const asked = await live.next(1000);
+  live.answer({ id: asked!.id, ok: true, secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true });
+  await probe;
+  assert.equal(live.enclaveReady(), true);
+  void live.ask({ op: 'create' });
+  assert.equal((await live.next(1000))?.op, 'create');
+  live.stop();
+});
+
 test('the dialog sentence comes from the draft fields and never from agent text', () => {
   const swap = reasonFor({
     draft: {

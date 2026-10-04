@@ -432,7 +432,11 @@ live chain, and there is no setting that points them anywhere else. Nothing here
   moves nothing, anywhere, ever. An invite claim there is refused before any read, unless
   `PHOSPHOR_DEMO_INVITE` names the pretend world `scripts/invite-window-proof.ts` writes
   (`src/invite/demo.ts`): then the claim is signed as always and run in memory, and nothing leaves
-  the Mac.
+  the Mac. A demo makes no Touch ID key and writes nothing to Phosphor's keychain group, whatever
+  build runs it, because one marker there stops every device-bound wallet on the Mac from opening
+  (`src/vault/relay.ts`, `makesKeys`): its wallet is a password wallet. `PHOSPHOR_DEMO_ENCLAVE=1`
+  lets a test or proof harness that runs the backend from a checkout make keys in demo mode; the
+  shell never passes it.
 
 Shipped `config.json` is `mode: "live"`. Demo is no longer the default anywhere. It stays in the
 codebase because the test suite and the e2e proof run against it offline.
@@ -535,6 +539,17 @@ An install with an older plaintext `keys.json` reads as `needs_migration` and ke
 EVM address is unchanged, and only then overwrites the plaintext with random bytes, fsyncs,
 truncates and unlinks it, along with every `keys.json.bak*` beside it. On APFS with snapshots an
 overwrite is not an erasure, so the honest answer after migrating is to rotate to a fresh wallet.
+Its addresses are only the ones the keys in it derive: an address the file names with no key
+behind it is not served, here or in any opened payload. On a Mac where the vault service says any
+wallet is Phosphor-only (`vault.enclave.phosphorOnlyHere`), nothing pins such a file, so it is
+served with `verified: false`, the lock card says it stayed closed and offers the restore, and the
+migration route asks the service at the click and refuses with `plaintext_refused` before it reads
+the file. A backend the shell started serves the file unverified until the service has answered;
+one it did not start has no service to ask and vouches for it as before. A service with no keychain
+home (`npm run tauri dev`, a copy built without the Developer ID) cannot read the markers, so its
+answer settles nothing: there a developer's readable `keys.json` stays unverified,
+`phosphorOnlyHere` stays null, and Encrypt now is refused with `plaintext_unchecked`, which turns
+the lock card into the closed card with that sentence and Restore from your backup.
 
 EVM address derivation goes through viem, the same library the rails sign with, so the codebase has
 one derivation path rather than two that have to agree. The trap this avoids is silent and
@@ -561,23 +576,38 @@ Encryption at rest with no hardened runtime moves a key from a file anyone can r
 anyone can read: any process running as you can attach to the backend with `task_for_pid` and take
 the unlocked key out of memory. `fill(0)` on lock is best effort and says so in the source.
 
-So the bundle carries `src-tauri/entitlements.plist` and a `bundle.macOS` block asking for the
-hardened runtime without `get-task-allow`, which is the entitlement that would let a debugger
-attach (`tests/unit/code-signing.test.ts` holds the file to that, and to the one entitlement
-V8 needs, `allow-jit`). `signingIdentity` is `-` in the config, so `tauri build` on its own makes
-an ad hoc bundle, locally and on the release runner alike. The release workflow's sign job then
-runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC service
-inside out with the Developer ID from its secrets (hardened runtime, secure timestamp), has Apple
-notarize the app and the disk image, and staples both. A release without those secrets fails
-before it signs anything. That job installs and builds nothing (the build job, which holds no
-secret, does). Before it signs, it holds the unsigned app to its own checkout with
-`scripts/release-check.ts` (first-party payload files byte for byte, the digest the shell
-carries, the committed entitlements on the app's executables and none on any other binary), and
-it runs the same check
-on the signed app in the DMG and in the update; the rest of the DMG is the build job's and goes
-unchecked. It deletes the signing keychain right
+So the bundle asks for the hardened runtime, and no binary in it carries `get-task-allow`, which
+is the entitlement that would let a debugger attach. Each binary carries its own set: the shell
+`src-tauri/entitlements.plist`, with no JIT and nothing only a provisioning profile can grant;
+node `src-tauri/entitlements-node.plist`, the one entitlement V8 needs, `allow-jit`, and nothing
+else; the Secure Enclave service the three its Developer ID provisioning profile allows
+(`com.apple.application-identifier`, `com.apple.developer.team-identifier`, and
+`keychain-access-groups` set to the one group `35Z6P26CBD.com.karimbabasf.phosphor.vault`, never
+the profile's `35Z6P26CBD.*`). `tests/unit/code-signing.test.ts` holds the two files to that.
+`signingIdentity` is `-` in the config, so `tauri build` on its own makes an ad hoc bundle,
+locally and on the release runner alike; Tauri signs the shell and node with the one file the
+config names, node's, so an ad hoc build's backend starts too. The release workflow's sign job
+then runs `scripts/notarize-mac.sh`: it signs every nested binary and the Secure Enclave XPC
+service inside out with the Developer ID from its secrets (hardened runtime, secure timestamp),
+each with the set its path is given, the service once, with `src-tauri/signing/vault.provisionprofile`
+embedded in it first; has Apple notarize the app and the disk image, and staples both. A release
+without those secrets fails before it signs anything. That job installs and builds nothing (the
+build job, which holds no secret, does). Before it signs, it holds the unsigned app to its own
+checkout with `scripts/release-check.ts` (first-party payload files byte for byte, the digest the
+shell carries, the ad hoc pass's entitlements on the app's executables and none on any other
+binary, and no binary asking for a newer macOS than `minimumSystemVersion`, 13.5;
+`scripts/build-se-helper.sh` builds the service for that version, never for the Mac that builds
+it). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
+(this service's team and app id, Developer ID, more than a year left, listing the certificate
+that signed), each path's entitlements, that the service run by hand gets past AMFI (it aborts in
+`xpc_main` with 134; a refused one is killed with 137), and that the profile, the certificate and
+`APPLE_TEAM_ID` name one team. The job runs the same checks on the signed app in the DMG and in
+the update; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
-Node's own crypto. The same chain runs on
+Node's own crypto. Then the smoke job, which holds no secret, runs the service by hand from both
+signed apps on each Apple silicon macOS GitHub hosts, and nothing is published until it reaches
+`xpc_main` on macOS 15 and 26 (macOS 14 runs too, without holding the release, until GitHub
+retires it on 2026-11-02). The same chain, all but the smoke job, runs on
 a Mac, checks included, with nothing published:
 
     npm run notarize:local
@@ -597,12 +627,92 @@ with a data key wrapped to a key the enclave made and cannot export, and every c
 Touch ID dialog the app composes. The service answers only a peer whose code signature passes its
 requirement: under Developer ID, Apple's anchor, the app's Team ID and `com.karimbabasf.phosphor`;
 under ad hoc, that identifier alone (`sh scripts/xpc-attack.sh` plays a foreign process against a
-built bundle). Every build so far, ad hoc or Developer ID, keeps the enclave key bound to this Mac
-rather than to Phosphor's signature: the keychain home needs the keychain-access-groups
-entitlement, which no build carries yet, so the key is a CryptoKit device key. The Vault tab's Keys
-row says so in one line ("Bound to this Mac rather than to Phosphor"). A build whose profile grants
-that entitlement keeps the key in the keychain, binds it to the app, and the service is then the
-only process that can reach it.
+built bundle). Where the enclave key lives depends on the build that made it. A Developer ID
+build carries the vault profile, so the service holds `keychain-access-groups`, and a key it makes
+lives in the keychain under that group, bound to the app: the service is the only process that can
+reach it. A key made before the profile shipped, or by an ad hoc build (which can carry no profile:
+AMFI kills an ad hoc binary that claims a keychain group), is a CryptoKit device key, bound to this
+Mac rather than to Phosphor's signature, and the Vault tab's Keys row offers the step that moves
+it (Phosphor-only access, below).
+
+The service is ready for that build. It reads its own Team ID from its code signature: with one,
+every keychain call names the group `<team>.com.karimbabasf.phosphor.vault`, `create` makes the key
+there or refuses with `keychain_unavailable` (never a device key), and a wallet is bound by
+`commit`, which writes a marker holding a pin of the wallet file: SHA-256 over the key's tag, the
+wrapped data key, the header without its addresses and the header's addresses. Every unwrap is
+checked against it before the Touch ID, so a file wrapped to the same public key by anyone else is
+refused (`pin_mismatch`); while any marker exists a device-bound key file is refused
+(`blob_refused`); a key no marker names opens only while nothing is bound or in its first ten
+minutes (`not_committed`); `sweep` deletes keys no marker names after those ten minutes and never a
+marked one; `status` reads all of this with no dialog. With no Team ID (ad hoc, and the stdin
+development helper whoever signs it) the service keeps the device key path. The shell's relay
+carries these seven ops and no other (`src-tauri/src/enclave.rs`). `vault-service.test.ts` runs the
+rules against a stand-in keychain compiled into the test alone.
+
+**Every new key file, and the bind** (`src/http/custody.ts`). Create, restore, the move from a
+password and `POST /api/vault/bind` all write the new file to `keys.enc.json.bind` beside the live
+one and leave the live file alone. One Touch ID unwraps exactly the bytes this process wrote, held
+in memory; `commit` pins those same bytes for every key in the keychain home, whatever the
+start-up probe said (its one read of the markers can fail on a build that has the home); only then
+do they replace `keys.enc.json` in one rename, and the file they replace is overwritten through a
+descriptor taken before it. Nothing in that sequence reads the staged file back from disk, so a
+file swapped in while the dialog is up is never what gets proven, pinned or put in place. A new
+wallet therefore never exists unbound on such a build, and a failed step changes nothing: a
+cancelled touch or a refused commit shreds the staged file and leaves the wallet that was there.
+A commit whose answer was lost is settled by `status` before anything is dropped. The vault slice
+says `binding: 'app'` (the window's Phosphor-only) only once the service has said the file in place
+is the committed one: a commit of its bytes that landed, or a `status` asked once the shell's probe
+answers. Until then a key in the keychain home reads `'unconfirmed'`, and a later `status` that
+reads the markers corrects a probe that could not.
+
+The bind takes a wallet whose key is a device-bound blob into the keychain home. A person reads it
+as one plain name on every screen, in the Touch ID sentence ("Make your wallet Phosphor-only on this
+Mac") and in the audit log: Phosphor-only (the Keys row's Phosphor-only access card, its button
+Make it Phosphor-only). The wallet must
+be open (its payload is resealed from memory under a fresh data key, so nothing in it changes),
+its backup proven (`backedUp` in the vault slice; a proof names the address of the wallet it was
+made for, checked against the address an open derived and never the file's header, so it is null,
+not known yet, until this process has opened the wallet), no move waiting on a Touch ID, and the build
+must have a keychain home. It is window only, behind the token, and never an MCP op. Refusals each
+have a sentence (`wallet_locked`, `not_backed_up`, `touch_waiting`, `bind_busy`, `not_enclave`,
+`no_keychain_home`, `keychain_unavailable`); a bound wallet answers `{ ok: true, binding: 'app' }`
+again with no dialog.
+
+Every code the service, the shell's relay and the backend's relay can answer has one sentence, in
+one table (`src/http/wallet.ts`, `REFUSALS`), in the words a person knows: Touch ID, this Mac, the
+wallet file. The service's own message (`no user present`, `keychain key -25300`) is for logs and is
+never the sentence; a code with no sentence yet is said as "That did not finish, so nothing changed.
+Try again." `tests/unit/refusal-words.test.ts` reads the codes off the three sources, so a new one
+without a sentence fails, and `vault-routes.test.ts` sends each one back on a create, an unlock and
+a reveal. A reveal whose Touch ID went through on an open wallet and still could not read it answers
+`reveal_failed` (the wallet is fine), never `damaged`. A disk that refuses a key file (full, a
+permission, a directory where the file goes) answers from the same table: `write_failed` when a
+create or a restore, by Touch ID or by password, could not write it, `forget_failed` when Forget
+could not finish removing it, `migrate_failed` when encrypting a readable key file could not finish,
+and `export_failed` when an encrypted copy could not be saved where the person asked. The system's
+own text names the file's path, so it never reaches a window; the audit line keeps only the
+system's code and the call that failed (`diskRefusal` in `src/http/wallet.ts`), and an audit file
+the disk refuses as well loses that line, never the sentence. A sentence the app writes on purpose
+may still name what a person needs, such as the file a step left alone. Once the password create,
+import, migration or encrypted copy has written its file, the step has happened and the route gives
+its usual answer (a create shows the new wallet's words): its audit line and the broadcast after the
+write are bookkeeping, and one the disk refuses is lost to stderr, never put in the answer's place.
+
+A crash leaves at most a staged file, and the next start (once the shell's probe answers, whatever
+it said) and every custody step after it settle it by the service's answer about it, never by the
+probe's, with no dialog: staged and not
+committed, it is shredded and the live file opens as before; committed and not renamed, it is put
+in place and the open goes on with it; renamed, there is nothing staged, or a staged file equal to
+the live one, which is removed. With no answer (no shell, a keychain the service cannot read)
+nothing is touched, and nothing that would write the staged path again runs until there is one.
+Every step that reads the live file for the enclave and every step that replaces it runs under one
+lock, in the order asked (`src/vault/custody-lock.ts`): an unlock during a bind waits for it and
+opens the bound file, and a second bind while one runs is refused. After the first open of a bound
+file, the copies of the key file this app itself can leave beside it (a write cut short between
+its temp file and the rename) are shredded and unused keys are swept; nothing the app did not
+write is touched. `vault-bind.test.ts` runs all of it against the service's own rules with the
+stand-in keychain, including a crash matrix that kills real backends before the commit, between
+the commit and the rename, and after the rename.
 
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships

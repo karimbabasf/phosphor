@@ -27,7 +27,7 @@ file was built from the public code. It needs the GitHub CLI (`brew install gh`)
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.14
+  --source-ref refs/tags/v0.10.15
 ```
 
 Put the version you downloaded in the last line. It passes only for a file that this
@@ -76,10 +76,22 @@ a Mac that has one, the first run is short: Create your wallet is one click and 
 There is nothing to write down yet. The app then shows your addresses and asks which agent you
 use, see [Connect an agent](connect-an-agent.md).
 
+If you already have a wallet (a Mac lost or replaced, the case the backup is for), press I already
+have a wallet beside Create a new wallet. Type your recovery phrase, or your private key if your
+wallet has no phrase, and one Touch ID restores it here. The key can be typed the way the backup
+shows it: with or without 0x, the spaces or line breaks between the groups, even the numbers in
+front of each group. A character a key never uses (an o for a 0) is named by its group before
+anything is sent. With no wallet on this Mac yet, nothing is replaced, so no backup is asked for; a
+cancelled Touch ID leaves the Mac as it was.
+
+Before any address, the next screen, Your wallet is back, names the wallet that came back with its
+full address. Check it against the address on your copy: a key with one slipped character restores
+a wallet too, an empty one. If it is not yours, press That is not my wallet and type the copy again.
+
 ### With a password
 
-Without an enclave, the app asks you to make a new wallet or bring one in with its recovery
-words. Set a password of at least eight characters. Nobody can reset it, not the app and not your
+Without a Secure Enclave, the app asks you to create a new wallet or restore one from its recovery
+phrase, or from its private key if it has no phrase. Set a password of at least eight characters. Nobody can reset it, not the app and not your
 assistant. The app then shows twelve recovery words once, and asks you to type three of them back
 by their number before it goes on. Take as long as writing them down takes. If Phosphor locks
 meanwhile, after five quiet minutes or when your screen locks, the lock card covers the words;
@@ -94,15 +106,19 @@ Vault tab, see [Policy](policy.md#changing-a-rule).
 ### A wallet from another Mac
 
 A wallet file made on a different Mac cannot be opened here, because its key lives in that Mac's
-enclave. The window says Made on another Mac and asks for your recovery phrase, twelve or
-twenty-four words, to bring the wallet here.
+Secure Enclave. This is what moving to a new Mac with Migration Assistant looks like, so the window skips
+the welcome and says Made on another Mac: your wallet file came with you and your money has not
+moved. Type your recovery phrase, twelve or twenty-four words, or the private key of a wallet that
+has no phrase (see [A wallet with no phrase](#a-wallet-with-no-phrase)), to open it here. The next
+screen sets the wallet that came back beside the one the old file names. With no copy at hand,
+open Phosphor on the Mac that made the wallet, then Vault, Back it up, and come back with the copy.
 
 ## The backup words
 
 The recovery phrase is the only way back to the wallet. Anyone who has it has your money, and
 nobody from this app will ever ask you for it.
 
-On an enclave wallet the phrase is not shown at first run. Open the Vault tab: under Safety, the
+On a Touch ID wallet the phrase is not shown at first run. Open the Vault tab: under Safety, the
 Recovery phrase row has Back it up. Touch ID shows the words in that row only. Write them down
 somewhere that is not this Mac, click I wrote them down, then Prove it and type three of the
 words back by their number. Only that turns the row's line from Not backed up yet to Backed up.
@@ -116,23 +132,71 @@ forget a wallet whose phrase has not been proven backed up: its Forget row says 
 A password wallet shows its words at creation. In the Vault tab, Show my words (in the Recovery
 phrase row) and Save an encrypted copy (in the Restore row) both ask for the password.
 
+### A wallet with no phrase
+
+A wallet brought in as a key has no recovery phrase, so its backup is the private key itself, and
+anyone who has it has your money. Under Safety its row is Private key: Back it up and a Touch ID
+(or your password, on a password wallet) show the key in that row only, in sixteen numbered groups
+of four characters, with the wallet it opens under them. Write the groups down or Print them, then
+click I wrote it down and type the whole key back from your copy, once. Only a copy that opens this
+very wallet turns the row to Backed up; the line at the foot of the window says Private key not
+backed up until then, and Forget waits for it the same way.
+
+The whole copy, and not three groups of it, because a key has no checksum: a copy with one slip is
+simply another wallet, and you would find out the day you restore it. A phrase does carry a
+checksum, which is why three of its words are enough. If a group is off, the row names it while the
+key you were just shown is still on screen; two misses show the key again. Later, Check my copy
+checks a copy against this wallet the same way, with no Touch ID and nothing changed. Never check a
+copy by restoring it over the wallet you have: after its Touch ID, a restore replaces the wallet on
+this Mac with whatever wallet the copy makes. A cancelled Touch ID leaves the wallet you have as it
+was.
+
+To bring the wallet back, on this Mac or another one, use Restore from a key in the Restore row
+(or the Made on another Mac screen). Type the key as you wrote it: with or without 0x, with or
+without the spaces between the groups. The note that says Restored names the wallet it brought,
+so check it against the one your copy opens. While the wallet on this Mac is not backed up, the
+Restore row says Back up first instead, before anything is typed: a restore of another wallet would
+replace the only copy of this one.
+
 ## Touch ID and the Secure Enclave
 
-The Keys row in the Vault tab, under Your wallet, says which kind of wallet you have. On an
-enclave wallet it reads Touch ID: the key is behind the Secure Enclave on this Mac, and Touch ID
+The Keys row in the Vault tab, under Your wallet, says which kind of wallet you have. A Touch
+ID wallet's row reads Touch ID: the key is behind the Secure Enclave on this Mac, and Touch ID
 or your Mac login password opens it. The key file, `keys.enc.json`, sits under `~/.phosphor`,
 outside the app and outside any code checkout. Its contents are sealed with a data key, and that
-data key is wrapped to a key the enclave made and cannot export. Nothing on disk opens the file
-without the enclave.
+data key is wrapped to a key the Secure Enclave made and cannot export. Nothing on disk opens the
+file without the Secure Enclave.
 
-On an enclave wallet, every click you make on a proposal ends in a Touch ID dialog. The dialog
+On a Touch ID wallet, every click you make on a proposal ends in a Touch ID dialog. The dialog
 is drawn by macOS, and its sentence is composed by the app from the proposal's own numbers: the
 amount, the receiver shortened to eight characters at each end (a NEAR name whole), and the chain. Read it before you
 confirm. [Security](security.md) says what this does and does not protect against.
 
 A password wallet says Password in the Keys row: "Locked with your password on this Mac." On a
-Mac that has an enclave, the row also shows Protect with Touch ID, which moves the same wallet
-behind the enclave. Nothing moves and the addresses stay the same.
+Mac that has a Secure Enclave, the row also shows Protect with Touch ID, which moves the same
+wallet behind the Secure Enclave. Nothing moves and the addresses stay the same.
+
+A wallet made before the signed app could keep its key where only Phosphor reaches it: any app on
+this Mac can ask to open it, with its own Touch ID prompt. On a signed release the Keys row then
+shows Phosphor-only access: once your backup is proven (Back it up first takes you there), Make it
+Phosphor-only does what it says, with one Touch ID that checks Phosphor opens your wallet the new
+way before anything changes; a cancel changes nothing. The same wallet, the same addresses. The row
+then says Phosphor-only since that day. From then on the wallet's key is in one place on this Mac
+that only Phosphor reaches, so your backup is the way back if anything happens to this Mac; that is
+why the step asks for it first. Copies of your wallet file saved before then (a Time Machine backup,
+a sync folder) still open the old way, so approve a Touch ID prompt only when you started it. A
+private key backup is the EVM key alone: an older wallet whose file also holds a NEAR key, a Solana
+key or a trading key keeps those only in the Phosphor-only file, and the backup cannot bring them
+back if that one key is lost (the app never shows or spends from those NEAR and Solana addresses,
+and a trading key is approved again). [Known limits](known-limits.md) says more.
+
+Phosphor-only is one rule for the whole Mac, not for one wallet. The first time a signed release
+makes a Touch ID wallet Phosphor-only, or makes or restores one, from any copy of Phosphor and in
+any folder, every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in
+Phosphor, even one in another folder. Its lock card then offers Restore, and its backup brings it back. So before
+you make or restore a second wallet on this Mac, make the one you have Phosphor-only, or at least
+prove its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
+alone.
 
 ## The five minute lock
 

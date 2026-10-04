@@ -55,6 +55,7 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
+import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
 import { refreshRegistration } from './http/mutation.ts';
@@ -222,11 +223,20 @@ const transportKey = /^[0-9a-f]{64}$/i.test(transportHex) ? Buffer.from(transpor
 const relaySecret = /^[0-9a-f]{64}$/i.test(handshake[4] ?? '') ? (handshake[4] as string) : null;
 // No relay secret means no relay: a transport key with nothing to gate the routes would let the
 // page play the shell, so both must arrive or neither counts.
-const vault = createVaultRelay({ transportKey: relaySecret !== null ? transportKey : null, secret: relaySecret });
+// A demo makes no Touch ID key and writes nothing to the keychain (src/vault/relay.ts, makesKeys).
+// PHOSPHOR_DEMO_ENCLAVE=1 lets a test or proof harness that runs this backend from a checkout make
+// keys in demo mode; the shell never passes it (src-tauri/src/backend.rs).
+const vault = createVaultRelay({
+  transportKey: relaySecret !== null ? transportKey : null,
+  secret: relaySecret,
+  makesKeys: cfg.mode === 'live' || process.env.PHOSPHOR_DEMO_ENCLAVE === '1',
+});
 if (transportKey !== null) {
   void vault.ask({ op: 'probe' }).then((probe) => {
     if (probe.ok && probe.op === 'probe') {
       audit.append('app_start', probe.capability.secureEnclave ? 'the Secure Enclave is reachable through the shell' : 'this Mac has no Secure Enclave the shell can reach', { ...probe.capability });
+      // A wallet file a crash left half put in place is finished or removed before anyone asks.
+      void settleAtStart({ keystore, vault, audit, announce: () => announceLock?.() });
     } else if (!probe.ok) {
       audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
     }

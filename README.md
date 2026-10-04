@@ -30,7 +30,9 @@ The app is the car. The agent is the driver. You hold the key.
 Phosphor runs on your Mac and nowhere else. There is no server, no account and no telemetry. Every
 request it sends to NEAR Intents' 1Click service carries the label `phosphor`, which 1Click's
 public explorer shows. Your keys sit in a sealed file on your own disk: sealed to the Mac's Secure
-Enclave on a Touch ID wallet, with your password on a password wallet. Any MCP agent
+Enclave on a Touch ID wallet, with your password on a password wallet. On a signed release a Touch
+ID wallet is Phosphor-only, or becomes so with one Touch ID once it is backed up: no other app on
+the Mac can ask to open it. Any MCP agent
 drives the app (Claude Code, Codex, anything that speaks MCP), or the app runs its own assistant.
 The agent reads your money, prices a move and proposes it. The agent can never approve. A send, a
 withdrawal, a rule change and any move above your click threshold wait for your click in the
@@ -63,7 +65,7 @@ commit it prints (0.10.2 and later; use the tag of the version you downloaded):
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.14
+  --source-ref refs/tags/v0.10.15
 ```
 
 The app and the disk image are signed with an Apple Developer ID and notarised by Apple, so

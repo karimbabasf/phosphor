@@ -186,12 +186,36 @@
       return net.postJson('/api/vault/backup-proven', { words: words }, { busy: 'reveal', label: 'Checking your words' });
     },
 
+    /* The same pair for a wallet with no phrase: its private key, in
+       sixteen groups, and the whole copy typed back, which is the proof. */
+    vaultRevealKey: function () {
+      return net.postJson('/api/vault/reveal-key', {}, { busy: 'reveal', label: 'Waiting for Touch ID', touch: true });
+    },
+
+    vaultKeyProven: function (key) {
+      return net.postJson('/api/vault/key-proven', { key: key }, { busy: 'reveal', label: 'Checking your copy' });
+    },
+
+    // The same check on a key already proven: no Touch ID, nothing written.
+    vaultKeyCheck: function (key) {
+      return net.postJson('/api/vault/key-check', { key: key }, { busy: 'reveal', label: 'Checking your copy' });
+    },
+
     vaultRestore: function (mnemonic) {
       return net.postJson('/api/vault/restore', { mnemonic: mnemonic }, { busy: 'wallet', label: 'Restoring your wallet', touch: true });
     },
 
+    vaultRestoreKey: function (key) {
+      return net.postJson('/api/vault/restore', { key: key }, { busy: 'wallet', label: 'Restoring your wallet', touch: true });
+    },
+
     vaultMigrate: function (password) {
       return net.postJson('/api/vault/migrate', { password: password }, { busy: 'wallet', label: 'Moving your keys', touch: true });
+    },
+
+    // An older wallet's key moves into Phosphor's keychain: one Touch ID.
+    vaultBind: function () {
+      return net.postJson('/api/vault/bind', {}, { busy: 'wallet', label: 'Binding your wallet', touch: true });
     },
 
     vaultForget: function () {

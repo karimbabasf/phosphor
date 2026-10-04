@@ -175,8 +175,11 @@ export function reasonFor(proposal: Pick<Proposal, 'draft'>): string {
 
 export const UNLOCK_REASON = 'Open your Phosphor vault';
 export const REVEAL_REASON = 'Reveal your recovery phrase';
+export const KEY_REASON = 'Reveal your private key';
 export const CREATE_REASON = 'Confirm your new Phosphor wallet';
 export const MIGRATE_REASON = 'Move your wallet behind the Secure Enclave';
 export const RESTORE_REASON = 'Restore a wallet from its recovery phrase';
+export const RESTORE_KEY_REASON = 'Restore a wallet from its private key';
 export const FORGET_REASON = 'Forget this wallet on this Mac';
+export const BIND_REASON = 'Make your wallet Phosphor-only on this Mac';
 export const ADDRESS_REASON = 'Show your deposit address';

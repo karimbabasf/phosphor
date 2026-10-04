@@ -65,6 +65,32 @@ test('the service answers only a peer that passes its code signing requirement',
   assert.ok(/swiftc -O -D PHOSPHOR_STDIO[^\n]*"\$dev"/.test(build), 'only the dev build gets it');
 });
 
+test('both builds are for the oldest macOS the app supports, never the macOS that builds them', () => {
+  // swiftc's default target is the builder's own macOS: 0.10.13's service asked for 15.0, the
+  // release runner's, inside an app that says 13.5. scripts/release-check.ts names any binary that does.
+  assert.ok(build.includes('minimum="$(plutil -extract bundle.macOS.minimumSystemVersion raw -o - src-tauri/tauri.conf.json)"'));
+  assert.ok(build.includes('target="$arch-apple-macos$minimum"'));
+  const swiftc = build.split('\n').filter((l) => l.startsWith('swiftc '));
+  assert.equal(swiftc.length, 2, 'the service and the development build');
+  for (const line of swiftc) assert.ok(line.includes(' -target "$target" '), line);
+});
+
+test('both peer checks are the Developer ID branch of the requirement in Apple TN3127, team kept', () => {
+  // TN3127, "Xcode designated requirement for Developer ID code": anchor apple generic and
+  // identifier X and (certificate leaf[field.1.2.840.113635.100.6.1.9], the Mac App Store, or
+  // certificate 1[field.1.2.840.113635.100.6.2.6] and certificate leaf[field.1.2.840.113635.100.6.1.13]
+  // and certificate leaf[subject.OU] = TEAM). Phosphor ships through Developer ID alone, so that
+  // branch is the whole requirement on both sides.
+  const branch = (id: string, team: string): string =>
+    `anchor apple generic and identifier "${id}" and certificate 1[field.1.2.840.113635.100.6.2.6] ` +
+    `and certificate leaf[field.1.2.840.113635.100.6.1.13] and certificate leaf[subject.OU] = "${team}"`;
+  const literals = (code: string): string => [...code.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).join('').replaceAll('\\"', '"');
+  const inSwift = swift.slice(swift.indexOf('return "anchor apple generic'), swift.indexOf('\n  }\n  return "identifier'));
+  assert.equal(literals(inSwift).replace('\\(hostIdentifier)', 'com.karimbabasf.phosphor').replace('\\(team)', 'T1'), branch('com.karimbabasf.phosphor', 'T1'));
+  const inC = bridge.slice(bridge.indexOf('snprintf(requirement, sizeof requirement,'), bridge.indexOf('service, team);'));
+  assert.equal(literals(inC).replace('%s', 'com.karimbabasf.phosphor.vault').replace('%s', 'T1'), branch('com.karimbabasf.phosphor.vault', 'T1'));
+});
+
 test('the shell reaches the service only over XPC in a release build, and checks it back', () => {
   assert.ok(rust.includes('pub const SERVICE: &str = "com.karimbabasf.phosphor.vault";'));
   assert.ok(rust.includes('xpc::call(SERVICE, &request.to_string(), HELPER_TIMEOUT)'));

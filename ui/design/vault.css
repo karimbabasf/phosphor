@@ -305,6 +305,17 @@
   color: var(--warn);
 }
 
+/* A Touch ID the person cancelled is their choice, not a warning: the meta
+   line's tone, no glyph. */
+.vault-error[data-tone="quiet"] {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
+.vault-error[data-tone="quiet"] > .vault-error-icon {
+  display: none;
+}
+
 /* ---------- the freeze ---------- */
 
 .vault-freeze-open .icon,
@@ -465,6 +476,25 @@
   display: none;
 }
 
+/* The done check pops on the spring as a backup is proven or a wallet made
+   Phosphor-only in this window (chatcard.css mcard-pop, the move card's). */
+[data-pop="true"] > .vault-backup-mark {
+  animation: vault-pop var(--dur-spring) var(--ease-spring) 60ms both;
+}
+
+@keyframes vault-pop {
+  from { opacity: 0; transform: scale(0.3); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+/* A proven backup's two actions stack in the row's action column: Show my
+   key, and Check my copy under it. */
+.vault-row[data-surface="backup"] .vault-row-act {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+}
+
 .vault-backup-line[data-backed="true"] {
   color: var(--text);
 }
@@ -525,6 +555,25 @@
 
 @container (max-width: 360px) {
   .vault-words { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* A private key in sixteen groups of four: read one character at a time,
+   so Geist Mono, and four to a row wherever four fit (this rule comes after
+   the words' three and two), which keeps a row of the screen a row of the
+   printed sheet. Under that, two to a row, as the words go. */
+.vault-key {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.vault-key .word-text,
+.vault-key-input {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum";
+  letter-spacing: 0.04em;
+}
+
+@container (max-width: 330px) {
+  .vault-key { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
 /* ---------- limits ----------
@@ -861,11 +910,13 @@
     column-gap: var(--s-5);
   }
 
+  /* Each tile keeps its own height: an uneven bottom edge beats an empty
+     card stretched beside a tall one (the Keys row with its card open). */
   .vault-grid {
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
     gap: var(--s-2);
-    align-items: stretch;
+    align-items: start;
   }
 
   .vault-grid > .vault-row-wide,
@@ -900,6 +951,10 @@
     justify-content: flex-start;
   }
 
+  .vault-row[data-surface="backup"] .vault-row-act {
+    align-items: flex-start;
+  }
+
   .vault-row-act > .btn-quiet:last-child {
     margin-right: 0;
     margin-left: calc(var(--s-3) * -1);
@@ -907,6 +962,10 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
+  [data-pop="true"] > .vault-backup-mark {
+    animation: none;
+  }
+
   .vault-row,
   .netsel,
   .netsel .chev-icon,

@@ -12,11 +12,15 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createContext, runInContext } from 'node:vm';
 
+import { diskRefusal, refusal, refusalCodes } from '../../src/http/wallet.ts';
+import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES, diskError } from '../fixtures/vault-refusal-codes.ts';
+
 type Any = Record<string, any>;
 
 const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const LOCK = read('../../ui/screens/lock.js');
 const FIRSTRUN = read('../../ui/screens/firstrun.js');
 const SHELL = read('../../ui/screens/shell.js');
@@ -111,7 +115,21 @@ function matches(node: Any, selector: string): boolean {
   return true;
 }
 
+/* A selector with a descendant step ("a b") matches its last part on a node with an ancestor
+   for each step before it, as the shell's reveal asks for its section. */
+function under(node: Any, steps: string[]): boolean {
+  if (!steps.length) return true;
+  for (let at = node.parentNode; at; at = at.parentNode) {
+    if (matches(at, steps[steps.length - 1]!) && under(at, steps.slice(0, -1))) return true;
+  }
+  return false;
+}
+
 function find(root: Any, selector: string): Any[] {
+  const chain = selector.trim().split(/\s+(?![^\[]*\])/);
+  if (chain.length > 1 && !selector.includes(',')) {
+    return find(root, chain[chain.length - 1]!).filter((n: Any) => under(n, chain.slice(0, -1)));
+  }
   const out: Any[] = [];
   const wanted = selector.split(',').map((s) => s.trim());
   const walk = (n: Any): void => {
@@ -138,6 +156,11 @@ function textOf(node: Any): string[] {
 }
 
 const buttonNamed = (root: Any, label: string): Any => find(root, 'button').find((b: Any) => b.textContent === label) as Any;
+// What a person can see: nothing under a hidden parent.
+const shown = (nodes: Any[]): Any[] => nodes.filter((n: Any) => {
+  for (let at = n; at; at = at.parentNode) if (at.hidden) return false;
+  return true;
+});
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
 /* ---------- the window ---------- */
@@ -234,6 +257,7 @@ function build(state: Any, sources: string[]): World {
     vaultUnlock: (purpose?: string) => { calls.push({ route: '/api/vault/unlock', purpose }); return Promise.resolve(answer.unlock); },
     vaultCreate: () => { calls.push({ route: '/api/vault/create' }); return Promise.resolve(answer.create); },
     vaultRestore: (mnemonic: string) => { calls.push({ route: '/api/vault/restore', mnemonic }); return Promise.resolve(answer.restore); },
+    vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restore); },
     walletCreate: (password: string) => { calls.push({ route: '/api/wallet/create', password }); return Promise.resolve({ ok: true, mnemonic: [], addresses: {} }); },
     connection: () => Promise.resolve({ missing: true }),
     driver: () => Promise.resolve({}),
@@ -244,6 +268,7 @@ function build(state: Any, sources: string[]): World {
   createContext(sandbox);
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   for (const source of sources) {
     const file = source === LOCK ? 'ui/screens/lock.js' : source === FIRSTRUN ? 'ui/screens/firstrun.js' : 'ui/screens/shell.js';
     runInContext(source, sandbox, { filename: file });
@@ -271,7 +296,7 @@ test('an enclave wallet locks to one button and never a password field', async (
   assert.equal(screen.hidden, false, 'the lock screen is not up');
   assert.equal(find(screen, 'input').length, 0, 'a field was drawn on an enclave lock screen');
   assert.equal(find(screen, 'form').length, 0);
-  const buttons = find(screen, 'button');
+  const buttons = shown(find(screen, 'button'));
   assert.equal(buttons.length, 1, 'more than one button on the lock screen');
   assert.equal(buttons[0].textContent, 'Unlock with Touch ID');
   assert.ok(textOf(screen).includes('Phosphor is locked'));
@@ -312,7 +337,93 @@ test('a refusal other than a cancel is on the screen, in words', async () => {
   world.answer.unlock = { ok: false, error: 'no relay', code: 'enclave_unavailable' };
   find(world.nodes['screen-lock'], 'button')[0].click();
   await flush();
-  assert.ok(textOf(world.nodes['screen-lock']).some((t) => t.startsWith('The Secure Enclave did not answer')));
+  assert.ok(textOf(world.nodes['screen-lock']).includes('Touch ID did not answer. Open the Phosphor app and try again.'));
+  assert.equal(shown(find(world.nodes['screen-lock'], 'button.lock-forgot')).length, 0, 'a restore offered for a Touch ID that may answer next time');
+});
+
+/* A wallet file this Mac will not open is not opened by asking again: the line says what happened
+   and the way under it is the backup, in the card. */
+for (const code of ['pin_mismatch', 'not_committed', 'blob_refused', 'damaged']) {
+  test(`${code}: the lock card says the file stayed closed and offers the restore that opens it`, async () => {
+    const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ hasMnemonic: false }) }, [LOCK]);
+    world.sandbox.PhosphorLock.boot();
+    const screen = world.nodes['screen-lock'];
+    assert.equal(shown(find(screen, 'button.lock-forgot')).length, 0, 'the restore was offered before anything was refused');
+    world.answer.unlock = { ok: false, error: 'a sentence the card says better', code };
+    buttonNamed(screen, 'Unlock with Touch ID').click();
+    await flush();
+    const line = textOf(find(screen, '.lock-error')[0]).join(' ');
+    assert.ok(line.endsWith('Restore your wallet from your private key to open it here.'), line);
+    assert.ok(/nothing moved/.test(line), line);
+    // Another wallet made Phosphor-only refuses this one too (audit1b AU1B-02), so the line says why without calling it a copy.
+    if (code === 'blob_refused') assert.ok(line.startsWith('A wallet on this Mac is Phosphor-only, so Phosphor no longer opens this older wallet file here'), line);
+    const way = shown(find(screen, 'button.lock-forgot'));
+    assert.equal(way.length, 1, 'no way to use the backup the line names');
+    assert.equal(way[0].textContent, 'Restore from your private key');
+    way[0].click();
+    const step = find(screen, '.lock-restore')[0];
+    assert.equal(step.hidden, false);
+    assert.equal(shown(find(screen, 'button')).some((b: Any) => b.textContent === 'Unlock with Touch ID'), false, 'the refused button stayed beside the restore');
+    assert.ok(textOf(step).includes('Type your private key, 64 characters. Phosphor opens your wallet from it here, behind Touch ID.'));
+    world.answer.restore = { ok: true, addresses: { evm: WALLET } };
+    const field = find(step, 'textarea')[0];
+    field.value = GROUPS.join(' ');
+    buttonNamed(step, 'Restore').click();
+    buttonNamed(step, 'Restore').click();
+    await flush();
+    await flush();
+    assert.equal((world.calls.find((c) => c.route === '/api/vault/restore') as Any).key, '0x' + GROUPS.join(''));
+    assert.ok(world.calls.some((c) => c.route === 'toast' && c.message === `Restored. This Mac now holds the wallet ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}.`), 'the wallet that came back was not named');
+    assert.ok(world.calls.some((c) => c.route === 'refresh'));
+    // Back puts the unlock button where it was.
+    const back = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+    back.sandbox.PhosphorLock.boot();
+    back.answer.unlock = { ok: false, error: 'x', code };
+    buttonNamed(back.nodes['screen-lock'], 'Unlock with Touch ID').click();
+    await flush();
+    assert.equal(shown(find(back.nodes['screen-lock'], 'button.lock-forgot'))[0].textContent, 'Restore from your recovery phrase');
+    shown(find(back.nodes['screen-lock'], 'button.lock-forgot'))[0].click();
+    buttonNamed(back.nodes['screen-lock'], 'Back').click();
+    assert.equal(shown(find(back.nodes['screen-lock'], 'button')).some((b: Any) => b.textContent === 'Unlock with Touch ID'), true);
+  });
+}
+
+/* Every code the backend can say, and every code the service and the relays can answer, as the
+   backend says it and again carrying the service's own log text: the card shows a sentence. */
+test('every refusal an unlock can be handed reads as a sentence on the lock card, and no service text reaches it', async () => {
+  const codes = [...new Set([...refusalCodes(), ...VAULT_REFUSAL_CODES])].filter((c) => c !== 'user_cancel');
+  for (const code of codes) {
+    for (const answer of [refusal(code), { ok: false, code, error: SERVICE_MESSAGE }]) {
+      const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+      world.sandbox.PhosphorLock.boot();
+      world.answer.unlock = answer;
+      buttonNamed(world.nodes['screen-lock'], 'Unlock with Touch ID').click();
+      await flush();
+      const said = textOf(find(world.nodes['screen-lock'], '.lock-error')[0]).join(' ');
+      assert.ok(said.length > 0, `${code}: nothing was said`);
+      assert.ok(!RAW.test(said), `${code}: ${said}`);
+      for (const part of SERVICE_MESSAGE.split('; ')) assert.ok(!said.includes(part), `${code}: ${said}`);
+    }
+  }
+});
+
+/* What the service writes for its logs never reaches the card, whatever answer carries it. */
+test('a refusal that is not a sentence is never put on the card: the card says Touch ID did not finish', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState() }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  for (const [error, code] of [['no user present', 'interaction_required'], ['keychain key -25300', 'auth_failed'], ['', 'a_code_from_a_newer_service']]) {
+    world.answer.unlock = { ok: false, error, code };
+    buttonNamed(screen, 'Unlock with Touch ID').click();
+    await flush();
+    const said = textOf(find(screen, '.lock-error')[0]).join(' ');
+    assert.equal(said, 'Touch ID did not finish, so nothing changed. Try again.', `${code}: ${said}`);
+  }
+  // The backend's own sentence for a code is what the card says.
+  world.answer.unlock = { ok: false, error: 'Touch ID could not ask you just now, so nothing changed. Unlock your Mac and try again.', code: 'interaction_required' };
+  buttonNamed(screen, 'Unlock with Touch ID').click();
+  await flush();
+  assert.equal(textOf(find(screen, '.lock-error')[0]).join(' '), 'Touch ID could not ask you just now, so nothing changed. Unlock your Mac and try again.');
 });
 
 test('a password wallet still locks to a password field and posts /api/unlock', async () => {
@@ -513,10 +624,12 @@ test('a forgotten password has a way back where this Mac has Touch ID: the phras
   assert.equal(forgot.textContent, 'Forgot your password? Restore from your recovery phrase');
   const step = find(screen, '.lock-restore')[0];
   const form = find(screen, 'form')[0];
+  const fine = find(screen, '.lock-fine')[0];
   assert.equal(step.hidden, true);
   forgot.click();
   assert.equal(step.hidden, false);
   assert.equal(form.hidden, true, 'the password field stayed beside the phrase');
+  assert.equal(fine.hidden, true, 'the card still says what the password does to a person who forgot it');
   const phrase = find(step, 'textarea')[0];
   const go = buttonNamed(step, 'Restore');
   phrase.value = 'one two';
@@ -539,14 +652,296 @@ test('a forgotten password has a way back where this Mac has Touch ID: the phras
   // Back to the password, and no way back offered where there is no Touch ID to restore behind.
   buttonNamed(step, 'Use my password').click();
   assert.equal(form.hidden, false);
+  assert.equal(fine.hidden, false);
   const bare = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', enclave: { attached: true, ready: false, capability: null, keyMadeAt: null, binding: null } }) }, [LOCK]);
   bare.sandbox.PhosphorLock.boot();
   assert.equal(find(bare.nodes['screen-lock'], 'button.lock-forgot').length, 0, 'a restore offered where it cannot run');
 });
 
+// Sixteen made-up groups of four, a private key as the Vault's backup shows one.
+const GROUPS = ['3f9a', '07c2', 'b41e', '5d68', 'e2a0', '9b17', '4c3d', 'f805', '1a6e', 'c9b2', '7e41', '0d5f', 'a8c3', '62e9', 'd07b', '3b14'];
+// The wallet a file names in its header, made up.
+const WALLET = '0x8902231e893D97D9834081469D87D79C8fA8Aede';
+
+test('a password wallet with no phrase comes back from its private key, in the same card', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', hasMnemonic: false }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const forgot = find(screen, 'button.lock-forgot')[0];
+  assert.equal(forgot.textContent, 'Forgot your password? Restore from your private key');
+  forgot.click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.ok(textOf(step).includes('Type your private key, 64 characters. This Mac then holds that wallet behind Touch ID, and the password is no longer needed.'));
+  const field = find(step, 'textarea')[0];
+  assert.equal(field.getAttribute('aria-label'), 'Private key');
+  const go = buttonNamed(step, 'Restore');
+  field.value = GROUPS.slice(0, 15).join(' ');
+  go.click();
+  assert.ok(textOf(step).includes('That is 60 characters. A private key is 64.'));
+  field.value = GROUPS.join(' ');
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press replaced the wallet');
+  assert.ok(textOf(step).some((t) => t.startsWith('This replaces the wallet on this Mac with the one your key opens.')));
+  go.click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'the restore was not posted');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  assert.equal(post.mnemonic, undefined);
+});
+
+/* A cancel on the restore's Touch ID is the person's choice: said quietly under the buttons, and
+   the confirm goes with it, so the next press asks again rather than going straight to Touch ID. */
+test('a cancelled restore on the lock card says so under the buttons, quietly, and the next press asks again', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software', hasMnemonic: false }) }, [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  find(screen, 'button.lock-forgot')[0].click();
+  const step = find(screen, '.lock-restore')[0];
+  const field = find(step, 'textarea')[0];
+  const go = buttonNamed(step, 'Restore');
+  field.value = GROUPS.join(' ');
+  world.answer.restore = { ok: false, error: 'Touch ID was cancelled. Nothing changed.', code: 'user_cancel' };
+  go.click();
+  go.click();
+  await flush();
+  await flush();
+  const sure = find(step, '.lock-restore-sure')[0];
+  assert.equal(sure.hidden, true, 'the confirm stayed armed after a cancel');
+  const note = find(step, '.lock-restore-note')[0];
+  assert.equal(note.hidden, false);
+  assert.equal(textOf(note).join(' '), 'Touch ID was cancelled. Nothing changed.');
+  assert.equal(note.getAttribute('data-tone'), 'quiet');
+  assert.equal(find(note, '.lock-error-icon').length, 0, 'a cancel wore the warning glyph');
+  const kids = step.childNodes;
+  assert.ok(kids.indexOf(note) > kids.indexOf(find(step, '.lock-restore-actions')[0]), 'the cancel line is not under the buttons');
+  const posts = world.calls.filter((c) => c.route === '/api/vault/restore').length;
+  go.click();
+  await flush();
+  assert.equal(world.calls.filter((c) => c.route === '/api/vault/restore').length, posts, 'the next single press went straight to Touch ID');
+  assert.equal(sure.hidden, false, 'the next press did not ask again');
+});
+
+/* ---------- a readable key file ---------- */
+
+/* reaudit1b RA1B-01: on a Mac that keeps a Phosphor-only wallet, Phosphor does not open a readable key
+   file. The card says so in plain words, offers no password and no Encrypt now, and its way back
+   takes the recovery phrase or the private key, told apart by what was typed. Elsewhere the card is
+   the one every older install has seen. */
+function readableKeyFile(here: boolean | null): Any {
+  return {
+    lock: { state: 'needs_migration', idleLocksInSec: null, verified: here !== true },
+    vault: vaultState({
+      custody: 'software',
+      state: 'needs_migration',
+      hasMnemonic: false,
+      enclave: { attached: true, ready: true, capability: { secureEnclave: true, biometry: 'touchid', canAuthenticate: true, keychainHome: true }, keyMadeAt: null, binding: null, phosphorOnlyHere: here },
+    }),
+  };
+}
+
+/* What a person can read: leaf text with no hidden parent. */
+function shownText(root: Any): string[] {
+  const out: string[] = [];
+  const walk = (n: Any): void => {
+    if (n.hidden) return;
+    if (n.childNodes.length === 0) {
+      if (n.textContent !== '') out.push(n.textContent);
+      return;
+    }
+    for (const child of n.childNodes) walk(child);
+  };
+  walk(root);
+  return out;
+}
+
+const PHRASE = 'abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about';
+
+test('a readable key file on a Mac that keeps a Phosphor-only wallet: the card says it stayed closed and offers the backup, never Encrypt now', async () => {
+  for (const here of [null, false]) {
+    const before = build(readableKeyFile(here), [LOCK]);
+    before.sandbox.PhosphorLock.boot();
+    assert.ok(textOf(before.nodes['screen-lock']).includes('Your keys are not encrypted'), `phosphorOnlyHere ${here}: the card every older install has seen`);
+    assert.ok(buttonNamed(before.nodes['screen-lock'], 'Encrypt now'));
+  }
+
+  const world = build(readableKeyFile(null), [LOCK]);
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  // The service answers after the first frame: the card is replaced in place.
+  world.put(readableKeyFile(true));
+  assert.deepEqual(shownText(screen), [
+    'This key file stayed closed',
+    'Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open the readable key file it found here, and nothing moved.',
+    'If this file is your wallet, restore it from your backup: your recovery phrase, or your private key if it has no phrase.',
+    'Restore from your backup',
+  ]);
+  assert.equal(find(screen, 'input').length, 0, 'a password field on a file Phosphor did not open');
+  assert.equal(buttonNamed(screen, 'Encrypt now'), undefined);
+  const way = find(screen, 'button.lock-forgot')[0];
+  assert.equal(way.focused, true, 'focus did not land on the way back');
+  way.click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.equal(step.hidden, false);
+  const field = find(step, 'textarea')[0];
+  assert.equal(field.getAttribute('aria-label'), 'Recovery phrase or private key');
+  const go = buttonNamed(step, 'Restore');
+  field.value = 'one two';
+  go.click();
+  assert.ok(textOf(step).includes('That is 2 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
+  field.value = PHRASE;
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press restored');
+  go.click();
+  await flush();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.equal(post?.mnemonic, PHRASE);
+  assert.equal(post?.key, undefined);
+  for (const said of [...shownText(screen), ...textOf(step)]) assert.ok(!RAW.test(said), said);
+
+  // A private key, typed in the groups its backup shows, goes as a key.
+  const other = build(readableKeyFile(true), [LOCK]);
+  other.sandbox.PhosphorLock.boot();
+  find(other.nodes['screen-lock'], 'button.lock-forgot')[0].click();
+  const keyStep = find(other.nodes['screen-lock'], '.lock-restore')[0];
+  find(keyStep, 'textarea')[0].value = GROUPS.join(' ');
+  buttonNamed(keyStep, 'Restore').click();
+  await flush();
+  assert.ok(textOf(keyStep).includes('This puts the wallet your backup opens on this Mac, behind Touch ID, in place of the key file found here. Press Restore again to go ahead.'));
+  buttonNamed(keyStep, 'Restore').click();
+  await flush();
+  await flush();
+  const keyPost = other.calls.find((c) => c.route === '/api/vault/restore');
+  assert.equal(keyPost?.key, '0x' + GROUPS.join(''));
+  assert.equal(keyPost?.mnemonic, undefined);
+  for (const said of textOf(keyStep)) assert.ok(!RAW.test(said), said);
+});
+
+/* The migration's own answer when the window's card was drawn before the service said: the route
+   refuses, and the card says it in the backend's sentence, never a code. */
+test('a migration the backend refuses on such a Mac is said in its sentence on the card', async () => {
+  const world = build(readableKeyFile(null), [LOCK]);
+  const refused = refusal('plaintext_refused');
+  world.sandbox.PhosphorApi.walletMigrate = (password: string) => {
+    world.calls.push({ route: '/api/wallet/migrate', password });
+    return Promise.resolve(refused);
+  };
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  const fields = find(screen, 'input');
+  fields[0].value = 'a long enough password';
+  fields[1].value = 'a long enough password';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/migrate'));
+  assert.match(refused.error as string, /^Phosphor already keeps a Phosphor-only wallet on this Mac, so it did not open this key file/);
+  assert.ok(textOf(screen).includes(refused.error as string), JSON.stringify(textOf(screen)));
+  assert.ok(!RAW.test(refused.error as string), refused.error as string);
+});
+
+/* verify-ra1b VRA1B-01: a copy whose vault service cannot read the keychain home tells the window
+   nothing either way, so the card is the usual one. Its Encrypt now is refused for good, so the card
+   becomes the closed card: the table's sentence, which names the downloaded app and the backup, and
+   the backup way itself. */
+test('on a copy that cannot check, Encrypt now turns the card into the closed card, in the table\'s sentence, with the backup way', async () => {
+  const state = readableKeyFile(null);
+  state.lock.verified = false;
+  state.vault.enclave.capability.keychainHome = false;
+  const world = build(state, [LOCK]);
+  const refused = refusal('plaintext_unchecked');
+  world.sandbox.PhosphorApi.walletMigrate = (password: string) => {
+    world.calls.push({ route: '/api/wallet/migrate', password });
+    return Promise.resolve(refused);
+  };
+  world.sandbox.PhosphorLock.boot();
+  const screen = world.nodes['screen-lock'];
+  assert.ok(textOf(screen).includes('Encrypt now'), JSON.stringify(textOf(screen)));
+  const fields = find(screen, 'input');
+  fields[0].value = 'a long enough password';
+  fields[1].value = 'a long enough password';
+  find(screen, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  assert.ok(world.calls.some((c) => c.route === '/api/wallet/migrate'));
+  assert.equal(refused.error, 'This copy of Phosphor cannot check whether this Mac keeps a Phosphor-only wallet, so it left this key file closed, and nothing changed. Open it in the Phosphor app you downloaded, or restore your wallet from your backup.');
+  assert.deepEqual(shownText(screen), ['This key file stayed closed', refused.error, 'Restore from your backup']);
+  assert.equal(find(screen, 'input').length, 0, 'a password field on a file this copy will not open');
+  assert.equal(buttonNamed(screen, 'Encrypt now'), undefined);
+  const way = find(screen, 'button.lock-forgot')[0];
+  assert.equal(way.focused, true, 'focus did not land on the way back');
+
+  // The same state drawn again keeps the closed card: nothing brings Encrypt now back.
+  world.put(state);
+  assert.deepEqual(shownText(screen), ['This key file stayed closed', refused.error, 'Restore from your backup']);
+
+  // The way it names works from here: the backup restores, behind the second press.
+  find(screen, 'button.lock-forgot')[0].click();
+  const step = find(screen, '.lock-restore')[0];
+  assert.equal(step.hidden, false);
+  find(step, 'textarea')[0].value = PHRASE;
+  const go = buttonNamed(step, 'Restore');
+  go.click();
+  await flush();
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/restore'), false, 'one press restored');
+  go.click();
+  await flush();
+  await flush();
+  assert.equal(world.calls.find((c) => c.route === '/api/vault/restore')?.mnemonic, PHRASE);
+  for (const said of [...shownText(screen), ...textOf(step)]) assert.ok(!RAW.test(said), said);
+});
+
+/* reaudit1b RA1B-03: a disk that refuses the wallet file, simulated as the system raises it and put
+   through the backend's own mapping (src/http/wallet.ts diskRefusal), in each restore the lock card
+   offers: the line under the field is the table's one sentence, never the system's text or the key
+   file's path. */
+test('a disk that refuses a key file in a restore or in Encrypt now on the lock card is one calm sentence, never the system\'s text or its path', async () => {
+  const raw = diskError();
+  assert.ok(RAW.test(raw.message), 'the guard does not see what a disk error says');
+  const answer = diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'write_failed');
+  const sentence = refusal('write_failed').error as string;
+  const cards: Array<[string, Any, string]> = [
+    ['the password card', { lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ custody: 'software' }) }, PHRASE],
+    ['a readable key file kept closed', readableKeyFile(true), GROUPS.join(' ')],
+  ];
+  for (const [where, state, typed] of cards) {
+    const world = build(state, [LOCK]);
+    world.answer.restore = answer;
+    world.sandbox.PhosphorLock.boot();
+    const screen = world.nodes['screen-lock'];
+    find(screen, 'button.lock-forgot')[0].click();
+    const step = find(screen, '.lock-restore')[0];
+    find(step, 'textarea')[0].value = typed;
+    buttonNamed(step, 'Restore').click();
+    buttonNamed(step, 'Restore').click();
+    await flush();
+    await flush();
+    const lines = find(step, '.lock-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+    assert.deepEqual(lines, [sentence], `${where}: ${JSON.stringify(lines)}`);
+    for (const line of lines) assert.ok(!RAW.test(line), `${where}: ${line}`);
+  }
+
+  // Encrypt now, on a readable key file the disk will not let the app read or replace.
+  const migrate = build(readableKeyFile(false), [LOCK]);
+  migrate.sandbox.PhosphorApi.walletMigrate = () => Promise.resolve(diskRefusal({ audit: { append: () => undefined } } as never, 'simulated', raw, 'migrate_failed'));
+  migrate.sandbox.PhosphorLock.boot();
+  const card = migrate.nodes['screen-lock'];
+  for (const field of find(card, 'input')) field.value = 'a long enough password';
+  find(card, 'form')[0].dispatch('submit');
+  await flush();
+  await flush();
+  const said = find(card, '.lock-card-error').filter((n: Any) => !n.hidden).map((n: Any) => textOf(n).join(' '));
+  assert.deepEqual(said, [refusal('migrate_failed').error], `Encrypt now: ${JSON.stringify(said)}`);
+  for (const line of said) assert.ok(!RAW.test(line), `Encrypt now: ${line}`);
+});
+
 /* ---------- the first run ---------- */
 
-test('with the enclave ready, the first run is the welcome, Create wallet, the addresses, the assistant, then Home', async () => {
+test('with the enclave ready, the first run is the welcome, Create a new wallet, the addresses, the assistant, then Home', async () => {
   const world = build({ lock: { state: 'no_wallet', idleLocksInSec: null }, vault: vaultState({ custody: null, state: 'no_wallet' }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
@@ -564,16 +959,18 @@ test('with the enclave ready, the first run is the welcome, Create wallet, the a
   assert.equal(find(screen, '.screen-progress').length, 0, 'a step count on the welcome');
   welcome[0].click();
 
-  // Create wallet: one button, nothing typed, the first of three steps.
+  // Create wallet: nothing typed, the first of three steps, Create the main action and the way
+  // back for a wallet that exists quiet beside it.
   assert.equal(find(screen, 'input.input, textarea').length, 0, 'the enclave first run asks for something typed');
   const buttons = find(screen, 'button');
-  assert.equal(buttons.length, 1, 'more than one button on the create screen');
-  assert.equal(buttons[0].textContent, 'Create wallet');
+  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['I already have a wallet', 'Create a new wallet']);
+  assert.match(buttons[0].className, /btn-quiet/);
+  assert.match(buttons[1].className, /btn-primary/);
   assert.ok(textOf(screen).includes('Step 1 of 3'));
   assert.ok(textOf(screen).some((t) => t.startsWith('Locked by this Mac')), 'the enclave create screen does not say where the key is held');
 
-  buttons[0].click();
-  assert.equal(buttons[0].getAttribute('data-pending-label'), 'Waiting for Touch ID');
+  buttons[1].click();
+  assert.equal(buttons[1].getAttribute('data-pending-label'), 'Waiting for Touch ID');
   await flush();
   assert.ok(world.calls.some((c) => c.route === '/api/vault/create'));
   assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'the password route was posted');
@@ -599,20 +996,27 @@ test('a cancelled Touch ID on Create says so and stays on the screen', async () 
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  find(screen, 'button')[0].click();
+  buttonNamed(screen, 'Create a new wallet').click();
   await flush();
-  assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing was changed.'));
-  assert.equal(find(screen, 'button')[0].textContent, 'Create wallet');
+  assert.ok(textOf(screen).includes('Touch ID was cancelled. Nothing changed.'));
+  // A cancel is the person's own choice: the quiet line, no warning glyph.
+  const line = find(screen, '.firstrun-error').find((n: Any) => !n.hidden) as Any;
+  assert.equal(line.getAttribute('data-tone'), 'quiet');
+  assert.equal(find(line, '.firstrun-error-icon').length, 0);
+  assert.ok(buttonNamed(screen, 'Create a new wallet'), 'still on Create');
 });
 
-test('a file made on another Mac opens, after the welcome, on Restore: one field, one button, 12 or 24 words', async () => {
+/* A person who moved Macs with Migration Assistant already owns the wallet: no welcome, no invite
+   for "your new wallet", straight to what happened and the way in. */
+test('a file made on another Mac opens straight on Made on another Mac: no welcome, no invite, one field, 12 or 24 words', async () => {
   const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
   world.sandbox.PhosphorFirstRun.boot();
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
-  assert.ok(textOf(screen).includes('Welcome to Phosphor'));
-  buttonNamed(screen, 'Get started').click();
+  assert.ok(!textOf(screen).includes('Welcome to Phosphor'), 'an owner who moved Macs was welcomed as new');
   assert.ok(textOf(screen).includes('Made on another Mac'));
+  assert.ok(textOf(screen).includes('Your wallet file came with you, and your money has not moved. This Mac cannot open a file another Mac made, so type your recovery phrase to open the wallet here.'));
+  assert.ok(textOf(screen).includes('No copy of your recovery phrase? On the Mac that made this wallet, open Phosphor, then Vault, Recovery phrase, Back it up. Come back here with the copy.'));
   const fields = find(screen, 'textarea');
   assert.equal(fields.length, 1, 'the restore screen does not have exactly one field');
   assert.equal(find(screen, 'input').length, 0);
@@ -627,13 +1031,87 @@ test('a file made on another Mac opens, after the welcome, on Restore: one field
   assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
 
   const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
+  world.answer.restore = { ok: true, addresses: { evm: WALLET } };
   fields[0].value = '  ' + words.join('   ').toUpperCase() + '\n';
   buttons[0].click();
   await flush();
   const post = world.calls.find((c) => c.route === '/api/vault/restore');
   assert.ok(post, 'nothing was posted');
   assert.equal(post.mnemonic, words.join(' '));
-  assert.ok(textOf(screen).includes('Your addresses'), 'restore did not go on to the addresses');
+  assert.ok(textOf(screen).includes('Your wallet is back'), 'the wallet that came back was not named');
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Your addresses'));
+  // The invite step is missing from this window, and the flow keeps its last step all the same.
+  buttonNamed(screen, 'Continue').click();
+  assert.ok(textOf(screen).includes('Your assistant'), 'the step after the addresses was dropped');
+});
+
+/* A file with no phrase, carried to a new Mac (Migration Assistant does this), comes back from the
+   key its owner backed up. The header says which backup it is, and it reads without the enclave;
+   it also names the wallet, so the one that comes back is set beside it. */
+test('a file with no phrase made on another Mac asks for its private key, and sets the wallet that came back beside the one the file names', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null, addresses: { evm: WALLET } }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Made on another Mac'));
+  assert.ok(textOf(screen).includes('Your wallet file came with you, and your money has not moved. This Mac cannot open a file another Mac made, so type your private key to open the wallet here.'));
+  assert.ok(textOf(screen).includes('No copy of your key? On the Mac that made this wallet, open Phosphor, then Vault, Private key, Back it up. Come back here with the copy.'));
+  assert.ok(textOf(screen).includes('Private key, 64 characters'));
+  const field = find(screen, 'textarea')[0];
+  const restore = buttonNamed(screen, 'Restore');
+  field.value = 'not a key';
+  restore.click();
+  await flush();
+  assert.ok(textOf(screen).includes('That has a character a private key never uses. A key has only 0 to 9 and a to f.'));
+  world.answer.restore = { ok: true, addresses: { evm: WALLET } };
+  field.value = `0x ${GROUPS.join(' ').toUpperCase()}`;
+  restore.click();
+  await flush();
+  const post = world.calls.find((c) => c.route === '/api/vault/restore');
+  assert.ok(post, 'nothing was posted');
+  assert.equal(post.key, '0x' + GROUPS.join(''));
+  assert.ok(textOf(screen).includes('Your wallet is back'));
+  assert.ok(textOf(screen).includes(`This is the wallet ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}. Check it matches the address on your copy.`));
+  assert.ok(textOf(screen).includes('The same wallet your file from the other Mac names.'));
+});
+
+test('a key that brings back another wallet than the file names says so, and leads with Try again', async () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null, addresses: { evm: WALLET } }, vault: vaultState({ foreign: true, hasMnemonic: false }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  const other = '0x1111111111111111111111111111111111112222';
+  world.answer.restore = { ok: true, addresses: { evm: other } };
+  find(screen, 'textarea')[0].value = GROUPS.join(' ');
+  buttonNamed(screen, 'Restore').click();
+  await flush();
+  assert.ok(textOf(screen).includes('This is a different wallet'));
+  assert.ok(textOf(screen).includes(`This is the wallet ${other.slice(0, 6)}...${other.slice(-4)}.`), 'the line asks to check what the app already found wrong');
+  assert.ok(textOf(screen).includes(`The wallet file from your other Mac is ${WALLET.slice(0, 6)}...${WALLET.slice(-4)}. If that one is yours, a character is off in what you typed.`));
+  const buttons = find(find(screen, '.screen-actions')[0], 'button');
+  assert.deepEqual(buttons.map((b: Any) => b.textContent), ['Keep this wallet', 'Try again']);
+  assert.match(buttons[1].className, /btn-primary/);
+  // The file here is no longer the other Mac's: a second try is a plain restore, with the line.
+  world.put({ vault: vaultState({ foreign: false, hasMnemonic: false, state: 'unlocked' }) });
+  buttons[1].click();
+  assert.ok(textOf(screen).includes('Restore your wallet'));
+  assert.ok(textOf(screen).includes('Then a character is off. Check your copy group by group and try again.'));
+});
+
+test('the terms come first on a flow with no welcome', () => {
+  const world = build({ lock: { state: 'locked', idleLocksInSec: null }, vault: vaultState({ foreign: true }) }, [FIRSTRUN]);
+  world.sandbox.PhosphorTerms = {
+    required: () => true,
+    firstRunOwns: () => true,
+    content: (host: Any) => { const p = world.sandbox.document.createElement('p'); p.textContent = 'The terms.'; host.appendChild(p); return p; },
+    accept: () => Promise.resolve({ ok: true }),
+  };
+  world.sandbox.PhosphorFirstRun.boot();
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.ok(textOf(screen).includes('Before you start'), textOf(screen).join(' | '));
+  assert.ok(!textOf(screen).includes('Made on another Mac'), 'the wallet step came before the terms');
 });
 
 test('without an enclave the software first run keeps its screens after the welcome: nine steps from Get started', () => {
@@ -645,7 +1123,7 @@ test('without an enclave the software first run keeps its screens after the welc
   assert.equal(find(screen, 'button')[0].textContent, 'Get started');
   find(screen, 'button')[0].click();
   assert.ok(textOf(screen).includes('Step 1 of 9'));
-  assert.ok(textOf(screen).includes('Create or bring a wallet'));
+  assert.ok(textOf(screen).includes('Create or restore a wallet'));
   buttonNamed(screen, 'Continue').click();
   assert.ok(textOf(screen).includes('Step 2 of 9'));
   assert.ok(textOf(screen).includes('Set a password'));
@@ -663,6 +1141,22 @@ test('the shell routes deposit frames to the store and the card, and says "not b
     deposit: null,
   };
   const world = build(state, [SHELL]);
+  /* The world with the Vault in it: the backup row the notice glides to, and its Back it up. */
+  const views = world.sandbox.document.createElement('div');
+  const vaultView = world.sandbox.document.createElement('section');
+  vaultView.className = 'view';
+  const backupRow = world.sandbox.document.createElement('div');
+  backupRow.setAttribute('data-reveal', 'backup');
+  const backItUp = world.sandbox.document.createElement('button');
+  backItUp.setAttribute('data-reveal-focus', '');
+  let focusedWith: Any | null = null;
+  backItUp.focus = (opts: Any) => { backItUp.focused = true; focusedWith = opts; };
+  backupRow.appendChild(backItUp);
+  vaultView.appendChild(backupRow);
+  views.appendChild(vaultView);
+  views.scrollTo = () => {};
+  world.nodes.views = views;
+  world.nodes['view-vault'] = vaultView;
   world.sandbox.PhosphorShell.boot();
   await flush();
   assert.ok(world.events.deposit && world.events.deposit.length === 1, 'the shell does not listen for deposit frames');
@@ -692,11 +1186,23 @@ test('the shell routes deposit frames to the store and the card, and says "not b
   assert.equal(notice.hidden, true, 'the line stayed after the phrase was proven');
   world.put({ vault: vaultState({ custody: null, state: 'no_wallet', backedUp: false }) });
   assert.equal(notice.hidden, true, 'a backup line with no wallet to back up');
+  // A wallet with no phrase is told about the backup it has: its private key.
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: false, hasMnemonic: false }) });
+  assert.equal(text.textContent, 'Private key not backed up.');
+  assert.equal(act.textContent, 'Back it up');
+  world.put({ vault: vaultState({ state: 'unlocked', backedUp: true, hasMnemonic: false }) });
+  assert.equal(notice.hidden, true, 'the line stayed after the key was proven');
 
-  // The line is a way in.
+  // The line is a way in: the Vault, glided to the backup row once it is up, the cursor on Back it
+  // up. Scrolled to while the Vault still faded in, the row stayed under the window's foot.
   world.put({ vault: vaultState({ state: 'unlocked', backedUp: false }) });
   act.click();
-  assert.ok(world.calls.some((c) => c.route === 'focusRecovery'));
+  await flush();
+  assert.equal(world.sandbox.document.body.getAttribute('data-view'), 'vault');
+  assert.equal(vaultView.getAttribute('data-active'), 'true');
+  assert.equal(backItUp.focused, true, 'the cursor stayed on the notice');
+  assert.equal((focusedWith as Any | null)?.preventScroll, true, 'the focus scrolled on its own, against the glide');
+  assert.equal(world.calls.some((c) => c.route === 'focusRecovery'), false, 'the row was scrolled to while the Vault faded in');
 });
 
 test('the notice says the one thing that matters most: the app not answering, then a freeze, then the backup', async () => {

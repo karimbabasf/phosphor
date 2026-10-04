@@ -17,10 +17,11 @@
    confirm step of Freeze.
 
    Everything here reads off the state's `vault` and `policy` slices and the
-   two address routes; nothing here draws a key. The one secret that ever
-   reaches this screen is the recovery phrase, shown once behind a fresh Touch
-   ID or the password, held in this file's memory until Done, and wiped the
-   moment the window locks or the person leaves the tab.
+   two address routes. The one secret that ever reaches this screen is the
+   backup: the recovery phrase, or the private key of a wallet that has no
+   phrase, shown once behind a fresh Touch ID or the password, held in this
+   file's memory until Done, and wiped the moment the window locks or the
+   person leaves the tab.
 
    Karim, 2026-09-15: "I hate how the vault has to be so scrollable, make it
    wider, make the info easier to read." So the assistant and safety sit side
@@ -41,6 +42,9 @@
   ];
   var ASK_CHOICES = [25, 100, 500, 1000];
   var PROVE_COUNT = 3;
+  // A private key as the backup shows it: sixteen groups of four (src/keystore/derive.ts).
+  var KEY_GROUPS = 16;
+  var KEY_GROUP = /^[0-9a-f]{4}$/;
 
   /* What the freeze does, from the code that runs it (src/kill.ts and
      src/runner/host.ts stopAll): every open position on the trading account is
@@ -77,6 +81,7 @@
   var network = 'eth';
   var tokensOpen = false;
   var phrase = null;
+  var shownKey = null;
   var migrateOffered = false;
   var agents = null;
 
@@ -89,7 +94,7 @@
     mounted = true;
     store.subscribe(render);
     store.select('lock', function () {
-      /* A locked window is not a place for the phrase. */
+      /* A locked window is not a place for the phrase or the key. */
       var state = store.get() || {};
       if (state.lock && state.lock.state !== 'unlocked') wipePhrase();
     });
@@ -233,8 +238,34 @@
 
   function say(node, words) {
     var slot = node.querySelector('.vault-error-text') || node;
+    dom.setAttr(node, 'data-tone', null);
     dom.setText(slot, words || '');
     dom.setHidden(node, !words);
+  }
+
+  /* The same line for what is not a problem: a Touch ID the person chose to
+     cancel. The meta line's tone and no warning glyph; amber stays for a
+     refusal that needs reading (DESIGN.md, Caution Amber). */
+  function note(node, words) {
+    say(node, words);
+    dom.setAttr(node, 'data-tone', 'quiet');
+  }
+
+  var CANCELLED = 'Touch ID was cancelled. Nothing changed.';
+  var UNFINISHED = 'That did not finish, so nothing changed. Try again.';
+
+  /* A refusal's sentence is the backend's, said once per code
+     (src/http/wallet.ts); anything that is not a sentence never reaches the
+     page (ui/core/custody.js). */
+  function refusalWords(answer, fallback) {
+    var custody = window.PhosphorCustody;
+    return custody ? custody.sentence(answer, fallback || UNFINISHED) : (fallback || UNFINISHED);
+  }
+
+  /* A cancel in the quiet line, anything else in the row's warning line. */
+  function sayRefusal(node, answer, words) {
+    if (answer && answer.code === 'user_cancel') note(node, CANCELLED);
+    else say(node, words);
   }
 
   function build(host) {
@@ -519,18 +550,37 @@
      words are shown here, in place, behind a fresh Touch ID or the password
      typed into the row itself, then three of them are typed back and the app
      checks them against the phrase it holds. Nothing about the phrase ever
-     goes into the conversation. */
+     goes into the conversation.
+
+     A wallet brought in as a key has no phrase, so the same row backs up its
+     private key: the key in sixteen groups of four, then the whole copy typed
+     back once. A phrase has a checksum and three words show a copy that
+     reads; a key has none, and one wrong character is simply another wallet,
+     so nothing short of the whole copy proves it. */
   function buildBackup(host) {
     var r = row('Recovery phrase', 'backup');
     refs.backupRow = r.node;
+    // The foot notice's Back it up glides here (ui/screens/shell.js reveal) and lands on the button.
+    r.node.setAttribute('data-reveal', 'backup');
+    refs.backupTitle = r.title;
     refs.backupState = dom.el('p', 'vault-text vault-backup-line');
     refs.backupMark = append(refs.backupState, icon('shield', 'vault-backup-mark'));
     refs.backupLine = dom.el('span', 'vault-backup-words');
     refs.backupState.appendChild(refs.backupLine);
     r.main.appendChild(refs.backupState);
+    refs.backupWhy = text('vault-sub', 'Showing it takes Touch ID, so only you can see it.');
+    refs.backupWhy.hidden = true;
+    r.main.appendChild(refs.backupWhy);
     refs.backupGo = button('Back it up', 'btn-sm', 'Waiting for Touch ID');
+    refs.backupGo.setAttribute('data-reveal-focus', '');
     r.act.appendChild(refs.backupGo);
     dom.on(refs.backupGo, 'click', startReveal);
+    /* A proven key's copy, checked whole again, for a copy kept or made
+       later: under Show my key, in the row's own action column. */
+    refs.checkCopy = button('Check my copy', 'btn-quiet btn-sm');
+    refs.checkCopy.hidden = true;
+    r.act.appendChild(refs.checkCopy);
+    dom.on(refs.checkCopy, 'click', function () { startCheck(false); });
     refs.phraseFlow = dom.el('div', 'vault-flow');
     refs.phraseFlow.hidden = true;
     r.body.appendChild(refs.phraseFlow);
@@ -540,61 +590,104 @@
   function renderBackup(vault) {
     var has = !!vault.custody;
     var backed = vault.backedUp === true;
-    var noWords = vault.hasMnemonic === false;
+    var noWords = has && vault.hasMnemonic === false;
+    var enclave = vault.custody === 'secure-enclave';
     var when = dateWords(vault.backedUpAt);
+    dom.setText(refs.backupTitle, noWords ? 'Private key' : 'Recovery phrase');
     var words = !has
       ? 'There is nothing to back up until a wallet exists.'
-      : noWords
-        ? 'This wallet was brought in as a key, so it has no phrase. Its key file is its backup.'
-        : backed
-          ? 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.'
+      : backed
+        ? (noWords
+          ? 'Backed up' + (when ? ' on ' + when : '') + '. Your whole copy matched.'
+          : 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.')
+        : noWords
+          ? 'Not backed up yet. This wallet has no recovery phrase, so its key is the only way back if this Mac is lost.'
           : 'Not backed up yet. It is the only way back to this wallet if this Mac is lost.';
     dom.setText(refs.backupLine, words);
-    dom.setAttr(refs.backupState, 'data-backed', has && backed && !noWords ? 'true' : null);
-    if (refs.backupMark) dom.setAttr(refs.backupMark, 'data-hidden', has && backed && !noWords ? null : 'true');
-    var enclave = vault.custody === 'secure-enclave';
-    dom.setText(refs.backupGo.querySelector('.btn-label'), backed ? 'Show my words' : 'Back it up');
+    dom.setAttr(refs.backupState, 'data-backed', has && backed ? 'true' : null);
+    if (refs.backupMark) dom.setAttr(refs.backupMark, 'data-hidden', has && backed ? null : 'true');
+    if (has && backed && popMark) {
+      popMark = false;
+      pop(refs.backupState);
+    }
+    var closed = !phrase && !shownKey && refs.phraseFlow.hidden;
+    dom.setText(refs.backupGo.querySelector('.btn-label'), backed ? (noWords ? 'Show my key' : 'Show my words') : 'Back it up');
     dom.setAttr(refs.backupGo, 'data-pending-label', enclave ? 'Waiting for Touch ID' : 'Opening');
     refs.backupGo.className = backed ? 'btn btn-ghost btn-sm' : 'btn btn-sm';
-    dom.setHidden(refs.backupGo, !has || noWords || !!phrase || !refs.phraseFlow.hidden);
+    dom.setHidden(refs.backupGo, !has || !closed);
+    // Said beside the button that raises the Touch ID, and gone with it.
+    dom.setHidden(refs.backupWhy, !(noWords && enclave && !backed && closed));
+    dom.setHidden(refs.checkCopy, !(noWords && backed && closed));
   }
 
   function wipePhrase() {
     phrase = null;
-    if (!refs.phraseFlow) return;
+    shownKey = null;
+    if (!refs.phraseFlow) return Promise.resolve();
+    var closing = Promise.resolve();
     if (!refs.phraseFlow.hidden || refs.phraseFlow.childNodes.length) {
-      shrink(refs.backupRow, refs.phraseFlow, function () {
+      closing = Promise.resolve(shrink(refs.backupRow, refs.phraseFlow, function () {
         dom.clear(refs.phraseFlow);
         refs.phraseFlow.hidden = true;
         delete refs.phraseFlow.dataset.step;
         render();
-      }, refs.backupGo);
+      }, refs.backupGo));
     }
     if (refs.backupGo) refs.backupGo.disabled = false;
+    return closing;
+  }
+
+  /* PROVEN. The flow closes, the row comes into view with its done line
+     whole, and the shield tick pops on the spring as the state says backed
+     up (DESIGN.md: "the done check pops"). No toast: the row says it, in
+     view. */
+  var popMark = false;
+
+  function proven() {
+    popMark = true;
+    wipePhrase().then(function () { bringIntoView(refs.backupRow); });
+    return window.PhosphorShell.refresh({});
+  }
+
+  /* The line's tick pops once on the spring (vault.css vault-pop), then the
+     attribute goes, so the next proof pops again. */
+  function pop(node) {
+    if (!node) return;
+    dom.setAttr(node, 'data-pop', null);
+    dom.setAttr(node, 'data-pop', 'true');
+    window.setTimeout(function () { dom.setAttr(node, 'data-pop', null); }, 1200);
   }
 
   /* The way in, from this row, the notice, the deposit card's reminder and
      the first money landing: Touch ID for an enclave wallet, the password
-     typed here for a password wallet. */
+     typed here for a password wallet. The words, or the key of a wallet that
+     has no words. */
   function startReveal() {
     if (!mounted) return;
-    if (window.PhosphorShell.view && window.PhosphorShell.view() !== 'vault') window.PhosphorShell.setView('vault', { fromClick: true });
+    /* From another view the row is brought in by the shell once the Vault is
+       up (a scroll asked for while it still fades in lands nowhere). */
+    var away = window.PhosphorShell.view && window.PhosphorShell.view() !== 'vault';
+    if (away) window.PhosphorShell.setView('vault', { fromClick: true, reveal: 'backup' });
     var state = store.get() || {};
     var vault = state.vault || {};
-    if (!vault.custody || vault.hasMnemonic === false) return;
-    bringIntoView(refs.backupRow);
-    if (vault.custody === 'secure-enclave') revealWithTouch();
-    else askPassword('words');
+    if (!vault.custody) return;
+    var noWords = vault.hasMnemonic === false;
+    if (!away) bringIntoView(refs.backupRow);
+    if (vault.custody === 'secure-enclave') {
+      if (noWords) revealKeyWithTouch();
+      else revealWithTouch();
+    } else askPassword(noWords ? 'key' : 'words');
   }
 
   function revealWithTouch() {
     phrase = null;
+    shownKey = null;
     refs.backupGo.disabled = true;
     window.PhosphorShell.setPending(refs.backupGo, true);
     api.vaultReveal()
       .then(function (answer) {
         if (answer && answer.ok === false) {
-          if (answer.code !== 'user_cancel') flowProblem(answer.error || 'That did not work.');
+          if (answer.code !== 'user_cancel') flowProblem(answer.code === 'reveal_failed' ? 'Phosphor could not show your recovery phrase just now, and nothing changed. Try again.' : refusalWords(answer));
           return;
         }
         if (!answer || !Array.isArray(answer.words) || !answer.words.length) {
@@ -612,12 +705,49 @@
       });
   }
 
-  /* A password wallet's way to its words: the password, typed into the row
-     at the moment of the reveal and held nowhere. A control that shows a key
-     on one click because a password was typed ten minutes ago is a key an
-     unattended window hands out. */
+  /* The key's twin of the reveal above, for a wallet with no phrase: its own
+     Touch ID and the key once, in sixteen groups. */
+  function revealKeyWithTouch() {
+    phrase = null;
+    shownKey = null;
+    refs.backupGo.disabled = true;
+    window.PhosphorShell.setPending(refs.backupGo, true);
+    api.vaultRevealKey()
+      .then(function (answer) {
+        if (answer && answer.ok === false) {
+          if (answer.code !== 'user_cancel') flowProblem(answer.code === 'reveal_failed' ? 'Phosphor could not show your key just now, and nothing changed. Try again.' : refusalWords(answer));
+          return;
+        }
+        if (!keyCameBack(answer)) {
+          flowProblem('No key came back.');
+          return;
+        }
+        shownKey = { groups: answer.groups.slice(), address: answer.address || null };
+        showKey();
+      })
+      .catch(function (err) { flowProblem(net.readable(err)); })
+      .finally(function () {
+        window.PhosphorShell.setPending(refs.backupGo, false);
+        refs.backupGo.disabled = false;
+        render();
+      });
+  }
+
+  function keyCameBack(answer) {
+    if (!answer || !Array.isArray(answer.groups) || answer.groups.length !== KEY_GROUPS) return false;
+    for (var i = 0; i < answer.groups.length; i += 1) {
+      if (typeof answer.groups[i] !== 'string' || !KEY_GROUP.test(answer.groups[i])) return false;
+    }
+    return true;
+  }
+
+  /* A password wallet's way to its words, or to its key when it has no
+     words: the password, typed into the row at the moment of the reveal and
+     held nowhere. A control that shows a key on one click because a password
+     was typed ten minutes ago is a key an unattended window hands out. */
   function askPassword(purpose) {
     var flow = refs.phraseFlow;
+    var forKey = purpose === 'key';
     grow(refs.backupRow, function () {
       dom.clear(flow);
       flow.hidden = false;
@@ -626,7 +756,9 @@
       var form = dom.el('form', 'vault-form');
       form.appendChild(text('vault-sub', purpose === 'words'
         ? 'Type your password to see your recovery phrase. It shows here once and is not saved anywhere.'
-        : 'Type your password.'));
+        : forKey
+          ? 'Type your password to see your private key. It shows here once and is not saved anywhere.'
+          : 'Type your password.'));
       var field = dom.el('div', 'field');
       field.appendChild(dom.el('label', 'label', 'Password'));
       var input = dom.el('input', 'input');
@@ -640,7 +772,7 @@
       var tools = dom.el('div', 'vault-actions');
       var go = dom.el('button', 'btn btn-sm');
       go.type = 'submit';
-      go.appendChild(dom.el('span', 'btn-label', 'Show my words'));
+      go.appendChild(dom.el('span', 'btn-label', forKey ? 'Show my key' : 'Show my words'));
       dom.setAttr(go, 'data-pending-label', 'Checking');
       var cancel = button('Cancel', 'btn-quiet btn-sm');
       tools.appendChild(go);
@@ -658,13 +790,19 @@
         }
         say(error, '');
         window.PhosphorShell.setPending(go, true);
-        api.revealStart(password, 'mnemonic')
+        api.revealStart(password, forKey ? 'keys' : 'mnemonic')
           .then(function (answer) {
-            if (answer && answer.ok === false) throw Object.assign(new Error(answer.error || 'That did not work.'), { code: answer.code });
+            if (answer && answer.ok === false) throw Object.assign(new Error(refusalWords(answer)), { code: answer.code });
             return api.revealFetch(answer.nonce);
           })
           .then(function (material) {
             input.value = '';
+            if (forKey) {
+              if (!keyCameBack(material)) throw new Error('No key came back.');
+              shownKey = { groups: material.groups.slice(), address: null };
+              showKey();
+              return;
+            }
             var words = material && Array.isArray(material.mnemonic) ? material.mnemonic : [];
             if (!words.length) throw new Error('No phrase came back.');
             phrase = { words: words.slice(), paths: null, prove: provable(material.prove, words.length) };
@@ -742,7 +880,7 @@
     var tools = dom.el('div', 'vault-actions');
     var wrote = button('I wrote them down', 'btn-sm');
     var print = button('Print', 'btn-ghost btn-sm');
-    var done = button('Done', 'btn-quiet btn-sm');
+    var done = button('Hide words', 'btn-quiet btn-sm');
     tools.appendChild(wrote);
     tools.appendChild(print);
     tools.appendChild(done);
@@ -761,16 +899,24 @@
     if (!words || !words.length) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet somewhere that is not near your computer.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', '');
     for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
     sheet.appendChild(list);
+    sheetFoot(sheet, 'the words');
     document.body.appendChild(sheet);
     try {
       window.print();
     } finally {
       if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
     }
+  }
+
+  /* What whoever finds the paper later needs: how to use it, and when it was
+     printed (a newer sheet wins). */
+  function sheetFoot(sheet, what) {
+    sheet.appendChild(dom.el('p', '', 'To restore this wallet on any Mac: install Phosphor from phosphor.money, choose I already have a wallet, and type ' + what + ' in order.'));
+    sheet.appendChild(dom.el('p', '', 'Printed on ' + dateWords(new Date().toISOString()) + '.'));
   }
 
   /* Prove. The three positions the app picked when it showed the words, the
@@ -870,17 +1016,213 @@
               say(error, 'Those words do not match. Look at your copy again.');
               return;
             }
-            say(error, answer.error || 'That did not work.');
+            say(error, refusalWords(answer));
             return;
           }
-          wipePhrase();
-          window.PhosphorToast.show('Backed up. Your copy of the phrase is right.');
-          return window.PhosphorShell.refresh({});
+          return proven();
         })
         .catch(function (err) { say(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(prove, false); });
     });
     if (inputs[0] && inputs[0].focus) inputs[0].focus();
+  }
+
+  /* ---------- safety: the private key, for a wallet with no phrase ----------
+
+     The phrase's flow, with the proof a key needs: the key once, numbered in
+     groups of four so it can be copied by hand or printed, then the whole
+     copy typed back once and checked against this wallet by the app
+     (POST /api/vault/key-proven). Print, never Copy. */
+
+  function showKey(note) {
+    if (!shownKey) return;
+    grow(refs.backupRow, function () { drawKey(note); }, refs.phraseFlow);
+  }
+
+  // The wallet the key opens, to check a restore against: the reveal's own, or the state's.
+  function keyWallet() {
+    if (shownKey && shownKey.address) return shownKey.address;
+    var lock = (store.get() || {}).lock || {};
+    return lock.addresses && typeof lock.addresses.evm === 'string' ? lock.addresses.evm : null;
+  }
+
+  function drawKey(note) {
+    var flow = refs.phraseFlow;
+    dom.clear(flow);
+    flow.hidden = false;
+    flow.dataset.step = 'key';
+    render();
+
+    var warn = dom.el('p', 'vault-warn');
+    append(warn, icon('lock', 'icon-16'));
+    warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads this key can take your money.'));
+    flow.appendChild(warn);
+
+    if (note) {
+      var again = problem();
+      flow.appendChild(again);
+      say(again, note);
+    }
+
+    var grid = dom.el('ol', 'words vault-words vault-key');
+    grid.setAttribute('aria-label', 'Your private key, in sixteen groups of four');
+    for (var i = 0; i < shownKey.groups.length; i += 1) {
+      var item = dom.el('li', 'word');
+      item.appendChild(dom.el('span', 'meta num', String(i + 1)));
+      item.appendChild(dom.el('span', 'body word-text key-text', shownKey.groups[i]));
+      grid.appendChild(item);
+    }
+    flow.appendChild(grid);
+
+    var wallet = keyWallet();
+    if (wallet) flow.appendChild(text('vault-sub', 'It opens the wallet ' + shortWallet(wallet) + '.'));
+
+    var tools = dom.el('div', 'vault-actions');
+    var wrote = button('I wrote it down', 'btn-sm');
+    var print = button('Print', 'btn-ghost btn-sm');
+    var done = button('Hide key', 'btn-quiet btn-sm');
+    tools.appendChild(wrote);
+    tools.appendChild(print);
+    tools.appendChild(done);
+    flow.appendChild(tools);
+
+    dom.on(print, 'click', function () { printKey(shownKey ? shownKey.groups : [], keyWallet()); });
+    dom.on(wrote, 'click', function () { startCheck(true); });
+    dom.on(done, 'click', wipePhrase);
+    if (wrote.focus) wrote.focus();
+  }
+
+  /* The phrase's sheet, for the key: the numbered groups, the wallet they
+     open, and nothing else from the window. */
+  function printKey(groups, wallet) {
+    if (!groups || groups.length !== KEY_GROUPS) return;
+    var sheet = dom.el('div', 'print-sheet');
+    sheet.appendChild(dom.el('h1', '', 'Phosphor private key'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has the money. Keep this sheet away from your Mac.'));
+    var list = dom.el('ol', 'print-key');
+    for (var i = 0; i < groups.length; i += 1) list.appendChild(dom.el('li', '', groups[i]));
+    sheet.appendChild(list);
+    if (wallet) sheet.appendChild(dom.el('p', '', 'It opens the wallet ' + wallet + '.'));
+    sheetFoot(sheet, 'the sixteen groups');
+    document.body.appendChild(sheet);
+    try {
+      window.print();
+    } finally {
+      if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+    }
+  }
+
+  /* Check your copy: the whole key, typed from the copy, against this wallet,
+     with no Touch ID. Straight after the key was shown (`proving`) a match is
+     the proof and marks the key backed up; on a key already proven it is
+     Check my copy, which writes nothing. Never through Restore, which would
+     replace this wallet with whatever a slip makes. */
+  function startCheck(proving) {
+    grow(refs.backupRow, function () { drawCheck(proving === true && !!shownKey); }, refs.phraseFlow);
+  }
+
+  function drawCheck(proving) {
+    var flow = refs.phraseFlow;
+    dom.clear(flow);
+    flow.hidden = false;
+    flow.dataset.step = proving ? 'prove' : 'check';
+    render();
+
+    flow.appendChild(dom.el('p', 'vault-flow-title', 'Check your copy'));
+    flow.appendChild(text('vault-sub', proving
+      ? 'Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'
+      : 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+
+    var field = dom.el('div', 'field');
+    field.appendChild(dom.el('label', 'label', 'Private key'));
+    var input = dom.el('textarea', 'input phrase-input vault-key-input');
+    input.name = 'key';
+    input.rows = 2;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    field.appendChild(input);
+    flow.appendChild(field);
+
+    var error = problem();
+    flow.appendChild(error);
+    var right = dom.el('p', 'vault-text vault-backup-line vault-check-line');
+    right.setAttribute('role', 'status');
+    dom.setAttr(right, 'data-backed', 'true');
+    append(right, icon('shield', 'vault-backup-mark'));
+    right.appendChild(dom.el('span', 'vault-backup-words', 'Your copy is right, to the last character.'));
+    right.hidden = true;
+    flow.appendChild(right);
+
+    var tools = dom.el('div', 'vault-actions');
+    var check = button('Check', 'btn-sm', 'Checking');
+    var other = proving ? button('Show the key again', 'btn-quiet btn-sm') : button('Done', 'btn-quiet btn-sm');
+    tools.appendChild(check);
+    tools.appendChild(other);
+    flow.appendChild(tools);
+
+    var misses = 0;
+    dom.on(other, 'click', function () {
+      if (proving) showKey();
+      else wipePhrase();
+    });
+    dom.on(input, 'input', function () {
+      say(error, '');
+      right.hidden = true;
+    });
+    dom.on(check, 'click', function () {
+      var read = window.PhosphorCustody.readKey(input.value);
+      var hex = read.hex;
+      right.hidden = true;
+      /* Said here so a slip of the keyboard is caught before anything is
+         sent, and named by its group (ui/core/custody.js). */
+      if (read.problem) {
+        say(error, read.problem);
+        return;
+      }
+      say(error, '');
+      window.PhosphorShell.setPending(check, true);
+      (proving ? api.vaultKeyProven('0x' + hex) : api.vaultKeyCheck('0x' + hex))
+        .then(function (answer) {
+          if (answer && answer.ok === false && answer.code !== 'wrong_copy') {
+            say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : refusalWords(answer));
+            return;
+          }
+          if (answer && (answer.ok === true && (proving || answer.matches === true))) {
+            input.value = '';
+            if (proving) return proven();
+            right.hidden = false;
+            return;
+          }
+          /* Another wallet. Straight after the key was shown, the app still
+             holds it here, so the line can name the group to look at; two
+             misses show the key again. */
+          misses += 1;
+          if (proving && misses >= 2) {
+            showKey('Two tries did not match. Check your copy group by group, then try again.');
+            return;
+          }
+          var off = proving ? firstSlip(hex) : -1;
+          say(error, off >= 0
+            ? 'Group ' + (off + 1) + ' does not match the key Phosphor showed you. Check it on your copy, then try again.'
+            : 'That copy opens a different wallet. Show your key and check it group by group.');
+        })
+        .catch(function (err) { say(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(check, false); });
+    });
+    if (input.focus) input.focus();
+  }
+
+  /* The first group of what was typed that differs from the key on screen a
+     moment ago, or -1. Compared here, in the window that already holds the
+     key; nothing about it is sent. */
+  function firstSlip(hex) {
+    if (!shownKey || !Array.isArray(shownKey.groups)) return -1;
+    for (var i = 0; i < shownKey.groups.length; i += 1) {
+      if (hex.slice(i * 4, i * 4 + 4) !== shownKey.groups[i]) return i;
+    }
+    return -1;
   }
 
   /* ---------- safety: your limits ---------- */
@@ -1179,7 +1521,134 @@
     tools.appendChild(refs.migrate);
     r.main.appendChild(tools);
     dom.on(refs.migrate, 'click', function () { openMigrate(false); });
+    refs.custodyRow = r.node;
+    buildBind(r.body);
     host.appendChild(r.node);
+  }
+
+  /* ---------- your wallet: making an older wallet Phosphor-only ----------
+
+     A wallet made before the vault profile shipped keeps a key any app on this
+     Mac can ask to use, behind its own Touch ID prompt. On a build with a
+     keychain home, Make it Phosphor-only moves it to a key only Phosphor can
+     reach, with one Touch ID (src/http/custody.ts, the bind). The card asks
+     for the backup first, because from then on the key lives in one place on
+     this Mac, and it says what the step does not reach: copies of the wallet
+     file saved before today. One plain name, Phosphor-only, on every line a
+     person reads (never bind, keychain or marker). */
+  var bound = false;
+  var bindDrawn = false;
+
+  function buildBind(host) {
+    var flow = dom.el('div', 'vault-flow vault-bind');
+    flow.hidden = true;
+    refs.bindFlow = flow;
+    refs.bindTitle = dom.el('p', 'vault-flow-title', 'Phosphor-only access');
+    flow.appendChild(refs.bindTitle);
+    refs.bindDone = dom.el('p', 'vault-text vault-backup-line');
+    refs.bindDone.setAttribute('data-backed', 'true');
+    // The Private key row's own done mark, the shield with its check.
+    append(refs.bindDone, icon('shield', 'vault-backup-mark'));
+    refs.bindDone.appendChild(dom.el('span', 'vault-backup-words', 'Phosphor-only. No other app on this Mac can open your wallet.'));
+    flow.appendChild(refs.bindDone);
+    refs.bindGives = text('vault-text');
+    flow.appendChild(refs.bindGives);
+    refs.bindWhy = text('vault-sub', 'One Touch ID checks that Phosphor opens your wallet the new way before anything changes.');
+    flow.appendChild(refs.bindWhy);
+    refs.bindCopies = text('vault-sub');
+    flow.appendChild(refs.bindCopies);
+    refs.bindError = problem();
+    flow.appendChild(refs.bindError);
+    var actions = dom.el('div', 'vault-actions');
+    refs.bindActions = actions;
+    refs.bindGo = button('Make it Phosphor-only', 'btn-sm', 'Waiting for Touch ID');
+    refs.bindFirst = button('Back it up first', 'btn-ghost btn-sm');
+    actions.appendChild(refs.bindGo);
+    actions.appendChild(refs.bindFirst);
+    flow.appendChild(actions);
+    dom.on(refs.bindGo, 'click', bindWithTouch);
+    dom.on(refs.bindFirst, 'click', focusRecovery);
+    host.appendChild(flow);
+  }
+
+  /* 'first' while the backup is not proven, 'offer' once it is, 'done' after
+     it lands in this window; null when there is nothing to do here: a wallet
+     already Phosphor-only, a password wallet, or a build with no keychain home. */
+  function bindStep(vault) {
+    var enclave = vault.enclave || {};
+    var cap = enclave.capability || {};
+    if (bound && enclave.binding === 'app') return 'done';
+    if (vault.custody !== 'secure-enclave' || enclave.binding !== 'device') return null;
+    if (cap.keychainHome !== true || vault.state !== 'unlocked') return null;
+    return vault.backedUp === true ? 'offer' : 'first';
+  }
+
+  function renderBind(vault) {
+    var step = bindStep(vault);
+    var was = refs.bindFlow.hidden ? null : refs.bindFlow.getAttribute('data-step');
+    var apply = function () {
+      dom.setHidden(refs.bindFlow, step === null);
+      dom.setAttr(refs.bindFlow, 'data-step', step);
+      if (step === null) return;
+      var backup = vault.hasMnemonic === false ? 'private key' : 'recovery phrase';
+      dom.setHidden(refs.bindTitle, step === 'done');
+      dom.setHidden(refs.bindDone, step !== 'done');
+      dom.setText(refs.bindGives, step === 'first'
+        ? 'Back up your ' + backup + ' first. After this step only Phosphor can open your wallet on this Mac, so your copy is the way back if anything happens to this Mac.'
+        : 'Today any app on this Mac can ask to open your wallet, with its own Touch ID prompt. After this, only Phosphor can.');
+      dom.setHidden(refs.bindGives, step === 'done');
+      dom.setHidden(refs.bindWhy, step !== 'offer');
+      dom.setText(refs.bindCopies, step === 'done'
+        ? 'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way. Approve a Touch ID prompt only when you started it.'
+        : 'Copies of your wallet file saved before today, such as one in Time Machine, still open the old way.');
+      dom.setHidden(refs.bindCopies, step === 'first');
+      dom.setHidden(refs.bindGo, step !== 'offer');
+      dom.setHidden(refs.bindFirst, step !== 'first');
+      dom.setHidden(refs.bindActions, step === 'done');
+    };
+    // Drawn as it is on the first render; a change after that slides, as the row's other steps do.
+    if (was === step || !bindDrawn) {
+      bindDrawn = true;
+      return apply();
+    }
+    say(refs.bindError, '');
+    if (step === null) {
+      shrink(refs.custodyRow, refs.bindFlow, apply);
+      return;
+    }
+    /* THE FINISH. The offer goes out first, evenly, over 200 ms (motion.js
+       swap), then the card takes its new height on the same slide as the
+       backup's flow while the done line comes in, and its tick pops on the
+       spring: nothing under the cursor jumps. */
+    if (step === 'done' && was === 'offer') {
+      shrink(refs.custodyRow, [refs.bindTitle, refs.bindGives, refs.bindWhy, refs.bindCopies, refs.bindActions], function () {
+        apply();
+        pop(refs.bindDone);
+      }, [refs.bindDone, refs.bindCopies]);
+      return;
+    }
+    grow(refs.custodyRow, apply, refs.bindFlow);
+  }
+
+  function bindWithTouch() {
+    say(refs.bindError, '');
+    refs.bindGo.disabled = true;
+    window.PhosphorShell.setPending(refs.bindGo, true);
+    api.vaultBind()
+      .then(function (answer) {
+        if (!answer || answer.ok !== true) {
+          sayRefusal(refs.bindError, answer, refusalWords(answer));
+          return null;
+        }
+        bound = true;
+        return window.PhosphorShell.refresh({});
+      })
+      .catch(function (err) { say(refs.bindError, net.readable(err)); })
+      .finally(function () {
+        window.PhosphorShell.setPending(refs.bindGo, false);
+        refs.bindGo.disabled = false;
+        render();
+      });
   }
 
   function renderCustody(vault) {
@@ -1187,15 +1656,20 @@
     var custody = vault.custody;
 
     if (custody === 'secure-enclave') {
+      /* Which of the two keys is live, in words, off the binding and never the
+         signature. A Phosphor-only key is made new by that step, so its date is
+         the day it became Phosphor-only, never the wallet's age. */
+      var app = enclave.binding === 'app';
       var made = dateWords(enclave.keyMadeAt);
       dom.setText(refs.custodyValue, 'Touch ID');
-      dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? ' Made on ' + made + '.' : ''));
-      /* Which of the two bindings is live, in words, off the binding and never
-         the signature: every build so far, signed or not, keeps the key bound to
-         this Mac, where any process running as you can present it. */
-      var device = enclave.binding === 'device';
-      dom.setText(refs.custodyMore, device ? 'Bound to this Mac rather than to Phosphor, so another app running as you could ask to use this key with a Touch ID prompt of its own.' : '');
-      dom.setHidden(refs.custodyMore, !device);
+      dom.setText(refs.custodyLine, 'Behind the Secure Enclave on this Mac. Touch ID or your Mac login password opens it.' + (made ? (app ? ' Phosphor-only since ' : ' Made on ') + made + '.' : ''));
+      /* A key any app here could ask to use is said by the card below, with
+         the step that changes it; where the card cannot show (a build with no
+         keychain home), a worry with nothing to do is not said at all. A
+         Phosphor-only wallet keeps one quiet line for good, with what the
+         step did not reach; right after it lands the card says it. */
+      dom.setText(refs.custodyMore, app ? 'Only Phosphor can open your wallet on this Mac. Older copies of the file still open the old way.' : '');
+      dom.setHidden(refs.custodyMore, !(app && !bound));
       var reach = enclave.attached === false
         ? 'Touch ID only works inside the Phosphor app. Open the app to use this wallet.'
         : (enclave.ready === false ? 'This Mac cannot check your Touch ID right now, so the wallet cannot be opened here.' : '');
@@ -1230,6 +1704,8 @@
     if (enclave.attached === false) return 'Touch ID protection needs the Phosphor app.';
     if (cap && cap.secureEnclave === false) return 'This Mac has no Secure Enclave.';
     if (cap && cap.canAuthenticate === false) return 'This Mac cannot check who you are. Set up Touch ID or a login password, then come back.';
+    // An enclave that answers and is not ready is a demo, which makes no Touch ID wallet (src/vault/relay.ts).
+    if (cap && cap.secureEnclave === true && cap.canAuthenticate === true) return 'A demo keeps its wallet behind a password, so the wallets on this Mac stay as they are.';
     return 'Touch ID is not available on this Mac right now.';
   }
 
@@ -1241,18 +1717,28 @@
     refs.recoveryLine = text();
     r.main.appendChild(refs.recoveryLine);
     refs.restore = button('Restore from a phrase', 'btn-ghost btn-sm');
+    // What a wallet with no phrase backs up (the Private key row) comes back here too.
+    refs.restoreKey = button('Restore from a key', 'btn-quiet btn-sm');
     /* A password wallet has a second copy of itself: the file, encrypted
        under the same password. */
     refs.exportPassword = button('Save an encrypted copy', 'btn-quiet btn-sm');
     var actions = dom.el('div', 'vault-actions');
+    refs.restoreActions = actions;
     actions.appendChild(refs.restore);
+    actions.appendChild(refs.restoreKey);
     actions.appendChild(refs.exportPassword);
     r.main.appendChild(actions);
+    /* Not backed up, this button is Back up first: a password wallet shows its
+       backup straight here, a Touch ID wallet goes to its backup row, whose
+       line says why before its own Touch ID. */
     dom.on(refs.restore, 'click', function () {
       var vault = (store.get() || {}).vault || {};
-      if (vault.custody === 'software' && vault.backedUp !== true) startReveal();
-      else startRestore();
+      if (vault.custody && vault.backedUp !== true) {
+        if (vault.custody === 'software') startReveal();
+        else focusRecovery();
+      } else startRestore();
     });
+    dom.on(refs.restoreKey, 'click', startRestoreKey);
     dom.on(refs.exportPassword, 'click', startExport);
     refs.recoveryFlow = dom.el('div', 'vault-flow');
     refs.recoveryFlow.hidden = true;
@@ -1265,18 +1751,30 @@
     var enclave = vault.custody === 'secure-enclave';
     var ready = !!(vault.enclave && vault.enclave.ready === true);
     /* Restoring makes the wallet behind the Secure Enclave, so a Mac without
-       one cannot do it here. A password wallet that is not proven backed up
-       would be lost if the phrase made a different one, so its way in is the
-       backup first. */
+       one cannot do it here. A wallet that is not proven backed up would be
+       lost if the backup typed made a different one, so its way in is the
+       backup first, before anything is typed. */
     var canRestore = enclave || ready;
-    var guarded = vault.custody === 'software' && vault.backedUp !== true;
+    var guarded = has && vault.backedUp !== true;
+    var keyOnly = has && vault.hasMnemonic === false;
+    var backup = keyOnly ? 'Your private key' : 'Your recovery phrase';
     dom.setText(refs.recoveryLine, !has
       ? 'Your recovery phrase brings a wallet back on any Mac.'
-      : canRestore
-        ? 'Your recovery phrase brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.'
-        : 'Your recovery phrase brings this wallet back on any Mac with Touch ID.');
+      : !canRestore
+        ? backup + ' brings this wallet back on any Mac with Touch ID.'
+        : guarded
+          ? 'Back up this wallet first, so restoring another one here never loses it.'
+          : backup + ' brings this wallet back on any Mac. Restoring here replaces the wallet on this Mac, behind Touch ID.');
     dom.setText(refs.restore.querySelector('.btn-label'), guarded ? 'Back up first' : 'Restore from a phrase');
+    /* The backup this wallet has leads: a wallet with no phrase restores from
+       a key, so its key button is the filled one, first. */
+    var keyFirst = keyOnly && !guarded;
+    refs.restore.className = keyFirst ? 'btn btn-quiet btn-sm' : 'btn btn-ghost btn-sm';
+    refs.restoreKey.className = keyFirst ? 'btn btn-ghost btn-sm' : 'btn btn-quiet btn-sm';
+    var first = keyFirst ? refs.restoreKey : refs.restore;
+    if (refs.restoreActions.firstChild !== first) refs.restoreActions.insertBefore(first, refs.restoreActions.firstChild);
     dom.setHidden(refs.restore, !canRestore || !refs.recoveryFlow.hidden);
+    dom.setHidden(refs.restoreKey, !canRestore || guarded || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.exportPassword, !has || enclave || !refs.recoveryFlow.hidden);
   }
 
@@ -1358,7 +1856,10 @@
       api.vaultRestore(words.join(' '))
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            say(error, restoreProblem(answer.code, answer.error));
+            sayRefusal(error, answer, restoreProblem(answer));
+            // A refusal is the end of this press: the next one asks again.
+            asked = false;
+            sure.hidden = true;
             return;
           }
           input.value = '';
@@ -1376,17 +1877,113 @@
     if (input.focus) input.focus();
   }
 
+  /* Restore from a key: the private key a wallet with no phrase backs up,
+     taken back exactly as the backup shows it. The same two presses, the
+     same refusals, and the wallet it brought named in the toast, so a copy
+     with a slip in it shows as a different wallet at once. */
+  function startRestoreKey() {
+    var flow = refs.recoveryFlow;
+    grow(refs.recoveryRow, function () {
+      dom.clear(flow);
+      flow.hidden = false;
+      flow.dataset.step = 'restore-key';
+      render();
+      drawRestoreKey(flow);
+    }, flow);
+  }
+
+  function drawRestoreKey(flow) {
+    flow.appendChild(dom.el('p', 'vault-flow-title', 'Restore from a key'));
+    flow.appendChild(text('vault-sub', 'The wallet that key opens replaces the one on this Mac. Money stays where it is; only this Mac changes which wallet it holds. 64 characters, with or without 0x.'));
+
+    var field = dom.el('div', 'field');
+    field.appendChild(dom.el('label', 'label', 'Private key'));
+    var input = dom.el('textarea', 'input phrase-input vault-key-input');
+    input.name = 'key';
+    input.rows = 2;
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    field.appendChild(input);
+    flow.appendChild(field);
+
+    var error = problem();
+    flow.appendChild(error);
+
+    var sure = text('vault-confirm-text');
+    sure.hidden = true;
+    flow.appendChild(sure);
+
+    var tools = dom.el('div', 'vault-actions');
+    var go = button('Restore', 'btn-sm', 'Waiting for Touch ID');
+    var cancel = button('Cancel', 'btn-quiet btn-sm');
+    tools.appendChild(go);
+    tools.appendChild(cancel);
+    flow.appendChild(tools);
+
+    var asked = false;
+    dom.on(cancel, 'click', function () {
+      input.value = '';
+      closeRecovery();
+    });
+    dom.on(go, 'click', function () {
+      var read = window.PhosphorCustody.readKey(input.value);
+      var hex = read.hex;
+      if (read.problem) {
+        say(error, read.problem);
+        return;
+      }
+      say(error, '');
+      if (!asked) {
+        asked = true;
+        dom.setText(sure, 'This Mac will hold the wallet that key opens instead of the one it holds now. Nothing moves. Press Restore again to go ahead.');
+        sure.hidden = false;
+        return;
+      }
+      window.PhosphorShell.setPending(go, true);
+      api.vaultRestoreKey('0x' + hex)
+        .then(function (answer) {
+          if (answer && answer.ok === false) {
+            sayRefusal(error, answer, restoreProblem(answer));
+            // A refusal is the end of this press: the next one asks again.
+            asked = false;
+            sure.hidden = true;
+            return;
+          }
+          input.value = '';
+          closeRecovery();
+          var evm = answer && answer.addresses && typeof answer.addresses.evm === 'string' ? answer.addresses.evm : '';
+          window.PhosphorToast.show(evm ? 'Restored. This Mac now holds the wallet ' + shortWallet(evm) + '.' : 'Restored. This Mac now holds the wallet that key opens.');
+          return window.PhosphorShell.refresh({});
+        })
+        .catch(function (err) { say(error, net.readable(err)); })
+        .finally(function () { window.PhosphorShell.setPending(go, false); });
+    });
+    dom.on(input, 'input', function () {
+      asked = false;
+      sure.hidden = true;
+    });
+    if (input.focus) input.focus();
+  }
+
   function wordsOf(value) {
     var clean = String(value || '').trim().toLowerCase();
     return clean ? clean.split(/\s+/) : [];
   }
 
-  function restoreProblem(code, error) {
+  function shortWallet(address) {
+    return address.length > 12 ? address.slice(0, 6) + '...' + address.slice(-4) : address;
+  }
+
+  function restoreProblem(answer) {
+    var code = answer && answer.code;
+    var noWords = (((store.get() || {}).vault) || {}).hasMnemonic === false;
     if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
-    if (code === 'not_backed_up') return 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its phrase first.';
-    if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing changed.';
-    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
-    return error || 'That did not work.';
+    if (code === 'bad_key') return 'That key is not right. Check every character against your copy.';
+    if (code === 'same_wallet') return 'This Mac already holds that wallet, and it opens. Nothing to restore.';
+    if (code === 'not_backed_up') return 'The wallet on this Mac is not proven backed up, so it cannot be replaced. Back up its ' + (noWords ? 'private key' : 'recovery phrase') + ' first.';
+    return refusalWords(answer);
   }
 
   /* The encrypted copy of a password wallet, written by the app under the
@@ -1464,7 +2061,7 @@
         .then(function (answer) {
           if (answer && answer.ok === false) {
             input.value = '';
-            say(error, answer.code === 'wrong_password' ? 'That password is wrong.' : (answer.error || 'That did not work.'));
+            say(error, answer.code === 'wrong_password' ? 'That password is wrong.' : refusalWords(answer));
             return;
           }
           input.value = '';
@@ -1886,18 +2483,21 @@
     host.appendChild(r.node);
   }
 
+  /* A wallet with no phrase waits for its key's backup the same way: the app
+     refuses to forget either kind until its backup is proven. */
   function forgetAllowed(vault) {
-    return vault.backedUp === true || vault.foreign === true || vault.hasMnemonic === false;
+    return vault.backedUp === true || vault.foreign === true;
   }
 
   function renderForget(vault) {
     dom.setHidden(refs.forgetRow, !vault.custody);
     var allowed = forgetAllowed(vault);
+    var backup = vault.hasMnemonic === false ? 'private key' : 'recovery phrase';
     dom.setText(refs.forgetOpen.querySelector('.btn-label'), allowed ? 'Forget this wallet' : 'Back up first');
     refs.forgetOpen.className = allowed ? 'btn btn-quiet btn-sm' : 'btn btn-ghost btn-sm';
     dom.setText(refs.forgetLine, allowed
-      ? 'Removes this wallet from this Mac. Your recovery phrase brings it back, here or on any Mac.'
-      : 'Removes this wallet from this Mac. The app allows it once your recovery phrase is backed up, so nothing is lost.');
+      ? 'Removes this wallet from this Mac. Your ' + backup + ' brings it back, here or on any Mac.'
+      : 'Removes this wallet from this Mac. The app allows it once your ' + backup + ' is backed up, so nothing is lost.');
   }
 
   function closeForget(returnFocus) {
@@ -1919,9 +2519,9 @@
     api.vaultForget()
       .then(function (answer) {
         if (answer && answer.ok === false) {
-          say(refs.forgetError, answer.code === 'not_backed_up'
-            ? 'Refused: the phrase is not proven backed up. Back it up in Safety first.'
-            : (answer.code === 'user_cancel' ? 'Touch ID was cancelled. Nothing changed.' : (answer.error || 'That did not work.')));
+          sayRefusal(refs.forgetError, answer, answer.code === 'not_backed_up'
+            ? 'Refused: the ' + ((((store.get() || {}).vault) || {}).hasMnemonic === false ? 'private key' : 'recovery phrase') + ' is not proven backed up. Back it up in Safety first.'
+            : refusalWords(answer));
           return;
         }
         closeForget(true);
@@ -1943,6 +2543,7 @@
     renderBackup(vault);
     renderLimits(state);
     renderCustody(vault);
+    renderBind(vault);
     renderRecovery(vault);
     renderForget(vault);
     var verifiedKey = (vault.state || '') + ':' + (vault.custody || '');
@@ -1951,11 +2552,13 @@
     offerMigration(state);
   }
 
+  /* "Oct 3, 2026", held together by non-breaking spaces so a line never ends
+     on "Oct". */
   function dateWords(iso) {
     if (!iso) return '';
     var when = new Date(iso);
     if (isNaN(when.getTime())) return '';
-    return when.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' });
+    return when.toLocaleDateString('en-US', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/ /g, '\u00a0');
   }
 
   /* ---------- migration ---------- */
@@ -2030,7 +2633,7 @@
       api.vaultMigrate(input.value)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            dom.setText(error, migrateProblem(answer.code, answer.error));
+            dom.setText(error, migrateProblem(answer));
             error.hidden = false;
             if (answer.code === 'wrong_password') {
               input.value = '';
@@ -2051,11 +2654,11 @@
     input.focus();
   }
 
-  function migrateProblem(code, error) {
+  function migrateProblem(answer) {
+    var code = answer && answer.code;
     if (code === 'wrong_password') return 'That password is wrong.';
-    if (code === 'user_cancel') return 'Touch ID was cancelled. Your keys are where they were.';
-    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
-    return error || 'That did not work.';
+    if (code === 'user_cancel') return CANCELLED;
+    return refusalWords(answer);
   }
 
   /* The same pair lock.js uses: the page behind the card is frosted by the

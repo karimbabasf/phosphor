@@ -78,6 +78,8 @@ async function main(): Promise<number> {
       PHOSPHOR_KEYS: keysPath,
       PHOSPHOR_PORT: String(port),
       ACC_MODE: 'demo',
+      // A demo makes no keys unless run from a checkout like this (src/vault/relay.ts, makesKeys).
+      PHOSPHOR_DEMO_ENCLAVE: '1',
     },
     stdio: ['pipe', 'pipe', 'pipe'],
   });

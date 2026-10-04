@@ -241,6 +241,13 @@ body[data-firstrun="true"] #page {
   color: var(--warn);
 }
 
+/* A cancel the person chose: the fine print's tone, no glyph. Amber stays for
+   a refusal that needs reading. */
+.lock-error[data-tone="quiet"] {
+  font-weight: 400;
+  color: var(--text-2);
+}
+
 /* The one button: full width, 48 tall, the ink with the ground's letters on
    it. The arrow slides in from behind the word on hover. */
 .lock-unlock {
@@ -340,6 +347,23 @@ body[data-firstrun="true"] #page {
   .lock-forgot:hover { color: var(--text); }
 }
 
+/* On a plain card the way back keeps to its words' width, its text on the
+   paragraph's left edge, with room for its focus ring under the words. */
+.screen-card > .lock-forgot {
+  align-self: flex-start;
+  margin-top: calc(var(--s-2) * -1);
+  margin-left: calc(var(--s-2) * -1);
+}
+
+/* Under a refusal on the Touch ID card, the way back sits with the line that
+   names it, its words on the line's own left edge (the glyph and its gap). */
+.lock-form > .lock-forgot {
+  align-self: flex-start;
+  margin-top: calc(var(--s-2) * -1);
+  margin-left: 20px;
+  text-align: left;
+}
+
 .lock-forgot:active {
   color: var(--text);
   background-color: var(--press);
@@ -380,6 +404,11 @@ body[data-firstrun="true"] #page {
 .lock-restore-sure[hidden],
 .lock-restore > .lock-error[hidden] {
   display: none;
+}
+
+/* The cancel line sits under the buttons it answers. */
+.lock-restore-note {
+  margin-top: calc(var(--s-1) * -1);
 }
 
 .lock-phrase {

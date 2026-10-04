@@ -27,11 +27,16 @@ esac
 identity="${APPLE_SIGNING_IDENTITY:--}"
 src="src-tauri/se-helper"
 mkdir -p src-tauri/binaries
+# Both builds are for the oldest macOS the app supports, not for the Mac that builds them, which is
+# swiftc's default: built that way on the release runner, 0.10.13 shipped a service that asked for
+# macOS 15.0 inside an app that says 13.5. scripts/release-check.ts holds every binary to it.
+minimum="$(plutil -extract bundle.macOS.minimumSystemVersion raw -o - src-tauri/tauri.conf.json)"
+target="$arch-apple-macos$minimum"
 
 # The embedded Info.plist is what the Touch ID dialog reads the app name from: without it the
 # system would title the dialog "se-helper", which is what malware would look like.
 dev="src-tauri/binaries/se-helper-dev-$triple"
-swiftc -O -D PHOSPHOR_STDIO -module-name se_helper -o "$dev" "$src/main.swift" \
+swiftc -O -D PHOSPHOR_STDIO -target "$target" -module-name se_helper -o "$dev" "$src/main.swift" \
   -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$src/Info.plist" 2>&1 | grep -v "warning" || true
 test -x "$dev"
 codesign -s - -f --options runtime "$dev" >/dev/null 2>&1
@@ -40,7 +45,7 @@ service="src-tauri/binaries/xpc/com.karimbabasf.phosphor.vault.xpc"
 rm -rf "$service"
 mkdir -p "$service/Contents/MacOS"
 cp "$src/XPCService-Info.plist" "$service/Contents/Info.plist"
-swiftc -O -module-name se_helper -o "$service/Contents/MacOS/se-helper" "$src/main.swift" 2>&1 | grep -v "warning" || true
+swiftc -O -target "$target" -module-name se_helper -o "$service/Contents/MacOS/se-helper" "$src/main.swift" 2>&1 | grep -v "warning" || true
 test -x "$service/Contents/MacOS/se-helper"
 # Hardened runtime and no entitlements: the service needs no JIT and no exception of any kind.
 # A timestamp only for a real identity; ad-hoc has no authority to timestamp against.

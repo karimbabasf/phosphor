@@ -260,20 +260,30 @@ admin fallback writes the app's path into a shell line run as root (`path_breaks
 notarize both and staples the tickets before anything is checksummed, so a first open needs no
 Gatekeeper step.
 
-The release runs as four jobs, so that no job that can sign also runs code it did not write. The
+The release runs as five jobs, so that no job that can sign also runs code it did not write. The
 build job installs and compiles everything (npm, cargo build scripts, the Tauri CLI) and holds no
 secret. The sign job installs nothing. It reads the signing secrets in the `release` environment,
 which lets only `v*` tags in and waits for the maintainer's approval (see
 [Known limits](known-limits.md#a-release-rests-on-one-github-account)). Before any key
 is in it, it holds the build job's app to its own checkout (`scripts/release-check.ts`): every
 first-party payload file byte for byte, the payload digest the
-shell carries, and the entitlements of every binary, the committed `src-tauri/entitlements.plist`
-on the app's executables and none anywhere else, because `notarize-mac.sh` keeps a nested binary's
-entitlements as it found them. Then it runs
-`notarize-mac.sh`, deletes the signing keychain right after it, signs the updater bundle with
+shell carries, and the entitlements of every binary: the file Tauri's ad hoc pass was given on the
+app's executables, and none anywhere else. It also holds every binary to the oldest macOS the app
+supports, `minimumSystemVersion` in `tauri.conf.json` (13.5): a compiler builds for the Mac it runs
+on unless told otherwise, and the Secure Enclave service, built that way, asked for macOS 15.0 in
+0.10.13 and 0.10.14. Then it runs `notarize-mac.sh`, which signs every
+binary with the entitlements its path is given and none it arrived with: the shell
+`src-tauri/entitlements.plist` (no JIT), node `src-tauri/entitlements-node.plist` (`allow-jit`
+alone, which V8 needs), and the Secure Enclave service three made from its Developer ID
+provisioning profile (`src-tauri/signing/vault.provisionprofile`, embedded in it), which give it
+the one keychain group `35Z6P26CBD.com.karimbabasf.phosphor.vault`. Before Apple sees the app, the
+signing gate (`scripts/signing-gate.ts`) checks the profile, each path's entitlements, that the
+service run by hand gets past AMFI (it aborts in `xpc_main` with 134; 137 is AMFI killing it), and
+that the profile, the signing certificate and the release's team are one team. Then the job
+deletes the signing keychain, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
+one team on every binary and the signing gate once more. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
 app inside it, and nothing checks what else sits beside the app before the DMG is signed and
 notarized. The split keeps the secrets from the build. This check stops the build
 from changing a first-party file in the payload or adding an entitlement before signing. It
@@ -281,7 +291,15 @@ cannot vouch for the compiled programs (the shell, the bundled Node, the Secure 
 or for `node_modules`, which the build job made and the sign job signs as handed over; only a
 reproducible build could. The release build also does not run `npm audit signatures` or the
 key-process package test again: CI runs both on pushes to main and on pull requests, so a release
-is only as checked as the CI run on its commit. The publish
+is only as checked as the CI run on its commit. The smoke job holds no secret and no permission:
+it takes the signed files, checks them against the sign job's digests, and on each Apple silicon
+macOS that GitHub hosts (15 and 26, and 14 until GitHub retires it on 2026-11-02) runs the vault
+service by hand, from the app in the DMG and the app in the update. Each must reach `xpc_main`,
+which aborts with 134 and says it cannot be run directly. On 15 and 26, 137, a dyld error or any
+other answer fails the release before anything is published, because the publish job needs them;
+the macOS 14 leg reports without holding the release, since GitHub fails that runner's jobs in
+brownout windows until it retires it. No runner has macOS 13, so the floor of 13.5 is held by the
+release check above, not by a run. The publish
 job holds no secret and only writes the GitHub Release; the site job holds the Blob token alone,
 in its own `release-site` environment, which lets only `v*` tags in and asks no approval. It
 starts only after the sign job the maintainer approved, so a release asks for one approval, and

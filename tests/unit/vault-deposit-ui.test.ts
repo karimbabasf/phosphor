@@ -687,6 +687,18 @@ test('every time the card opens it lands on the token list, and the address wait
   assert.deepEqual(Object.keys(world.stored), [], 'the second acknowledgement was written down');
 });
 
+/* A key is proven by its whole copy, typed back once: the card says that, not three of its groups. */
+test('on a wallet with no phrase, the backup card in the deposit card asks for the whole key back', async () => {
+  const world = build({ vault: { custody: 'secure-enclave', backedUp: false, hasMnemonic: false } });
+  await openCard(world);
+  const dialog = world.dialog();
+  world.store.put(Object.assign({}, world.store.get(), { deposit: frame({ phase: 'credited', amount: 5, ms: 41000 }) }));
+  const backup = find(dialog, '.deposit-backup')[0];
+  assert.equal(backup.hidden, false);
+  assert.ok(textOf(backup).includes('Your private key is the only way back to this wallet. Show it once, write it down, and type it back whole to prove your copy.'), String(textOf(backup)));
+  assert.ok(!textOf(backup).some((t) => /three groups/.test(t)));
+});
+
 /* ---------- the reminder at every start ---------- */
 
 test('with money in and the phrase not proven, the backup card is up once per start, with an X that puts it away', async () => {
@@ -709,6 +721,17 @@ test('with money in and the phrase not proven, the backup card is up once per st
   // A later frame with the same facts does not raise a second card this session.
   world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 13 } }));
   assert.equal(world.card(), card, 'the reminder came back inside one session');
+});
+
+test('a wallet with no phrase is reminded of the backup it has, its private key, and the same press opens it', async () => {
+  const world = build({ vault: { custody: 'secure-enclave', backedUp: false, hasMnemonic: false } });
+  world.store.put(Object.assign({}, world.store.get(), { basic: { totalUsd: 12.5 } }));
+  const card = world.card();
+  assert.ok(card, 'no reminder for a wallet with no phrase');
+  assert.ok(textOf(card).includes('Your private key is not backed up yet.'), String(textOf(card)));
+  assert.equal(textOf(card).some((t) => t.includes('recovery phrase')), false, 'a wallet with no phrase was told about a phrase');
+  find(card, 'button')[0].click();
+  assert.ok(world.calls.some((c) => c.route === 'startReveal'));
 });
 
 test('the reminder waits while a request is waiting, and never shows for an empty or proven wallet', async () => {

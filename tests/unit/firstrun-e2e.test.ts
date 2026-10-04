@@ -47,6 +47,7 @@ const UI = [
   'core/state.js',
   'core/net.js',
   'core/api.js',
+  'core/custody.js',
   'core/events.js',
   'core/invite.js',
   'screens/invite.js',
@@ -533,7 +534,7 @@ async function toWords(w: Window): Promise<string[]> {
   code.dispatch('input');
   code.dispatch('paste');
   await until(() => visibleText(w.screen).includes('waiting for you'), `the code was not checked: ${visibleText(w.screen)}`);
-  await press(w, 'Continue', 'Create or bring a wallet');
+  await press(w, 'Continue', 'Create or restore a wallet');
   await press(w, 'Continue', 'Set a password');
   for (const field of find(w.screen, 'input.input')) field.value = PASSWORD;
   await press(w, 'Continue', 'Save your recovery words');

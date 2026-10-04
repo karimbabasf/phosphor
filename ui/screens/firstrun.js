@@ -31,17 +31,23 @@
   var api = window.PhosphorApi;
   var store = window.PhosphorState;
 
+  /* A wallet that came back (restore, foreign, import) is named on its own
+     step before any address: a backup with one slip in it restores a wallet
+     too, an empty one. A file another Mac made belongs to someone who already
+     has the wallet, so that flow has no welcome and no invite: they would
+     greet an owner who just moved Macs as a new user. */
   var FLOWS = {
     create: ['welcome', 'invite', 'choose', 'password', 'words', 'prove', 'addresses', 'money', 'connect', 'threshold', 'done'],
-    import: ['welcome', 'invite', 'choose', 'password', 'import', 'addresses', 'money', 'connect', 'threshold', 'done'],
+    import: ['welcome', 'invite', 'choose', 'password', 'import', 'restored', 'addresses', 'money', 'connect', 'threshold', 'done'],
     enclave: ['welcome', 'invite', 'create', 'addresses', 'connect'],
-    foreign: ['welcome', 'invite', 'foreign', 'addresses', 'connect']
+    recover: ['welcome', 'invite', 'restore', 'restored', 'addresses', 'connect'],
+    foreign: ['foreign', 'restored', 'addresses', 'connect']
   };
 
   /* What the progress names. The welcome, the terms and the invite come
      before any of it and are not counted. */
   var PHASES = [
-    { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'foreign'] },
+    { name: 'Wallet', steps: ['choose', 'password', 'import', 'create', 'restore', 'foreign', 'restored'] },
     { name: 'Backup', steps: ['words', 'prove'] },
     { name: 'Money', steps: ['addresses', 'money'] },
     { name: 'Assistant', steps: ['connect', 'threshold', 'done'] }
@@ -72,7 +78,10 @@
      sentence off this rather than asserting a connection nobody made. `moneyIn` is whether the
      money step saw the balance land. `invite` is a code the app said is good, with what it
      holds, until the addresses step claims it; `claim` is that claim once asked for. */
-  var draft = { path: 'create', password: '', mnemonic: [], prove: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '', invite: '', inviteAmount: '', inviteAsset: '', claim: null };
+  /* `restored` is the wallet a restore brought back (its address, what it came from, and the
+     address the person can expect it to be, when the app knows one); `retry` is the line the
+     field shows after "That is not my wallet". */
+  var draft = { path: 'create', password: '', mnemonic: [], prove: [], threshold: 100, addresses: null, agent: null, moneyIn: false, backedUp: false, wordsNote: '', invite: '', inviteAmount: '', inviteAsset: '', claim: null, restored: null, retry: '' };
   var open_ = false;
 
   function boot() {
@@ -90,14 +99,15 @@
     var vault = state.vault || {};
     var base = vault.foreign === true
       ? FLOWS.foreign
-      : (vault.enclave && vault.enclave.ready === true ? FLOWS.enclave : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
+      : (vault.enclave && vault.enclave.ready === true ? (draft.path === 'restore' ? FLOWS.recover : FLOWS.enclave) : (draft.path === 'import' ? FLOWS.import : FLOWS.create));
     var steps = base.slice();
     /* The invite step needs its screen (ui/screens/invite.js). A window without it goes
        straight from the welcome to the wallet, as the terms step leaves when it has nothing
-       to show. */
-    if (!window.PhosphorInvite) steps.splice(steps.indexOf('invite'), 1);
+       to show. A flow with no invite step (another Mac's file) loses nothing here. */
+    var invite = steps.indexOf('invite');
+    if (!window.PhosphorInvite && invite >= 0) steps.splice(invite, 1);
     var terms = window.PhosphorTerms;
-    if (terms && typeof terms.required === 'function' && typeof terms.content === 'function' && terms.required(state)) steps.splice(1, 0, 'terms');
+    if (terms && typeof terms.required === 'function' && typeof terms.content === 'function' && terms.required(state)) steps.splice(steps[0] === 'welcome' ? 1 : 0, 0, 'terms');
     return steps;
   }
 
@@ -116,6 +126,8 @@
     draft.path = 'create';
     draft.backedUp = false;
     draft.wordsNote = '';
+    draft.restored = null;
+    draft.retry = '';
     dropInvite();
     draft.claim = null;
     STEPS = flowOf();
@@ -384,6 +396,8 @@
     else if (name === 'invite') screenInvite();
     else if (name === 'create') screenCreate();
     else if (name === 'foreign') screenForeign();
+    else if (name === 'restore') screenRestore();
+    else if (name === 'restored') screenRestored();
     else if (name === 'choose') screenChoose();
     else if (name === 'password') screenPassword();
     else if (name === 'words') screenWords();
@@ -466,6 +480,18 @@
       back.appendChild(dom.el('span', 'btn-label', 'Back'));
       row.appendChild(back);
       dom.on(back, 'click', function () { go(step - 1); });
+    }
+    /* `aside` is the step's other way forward, quiet beside the primary: it
+       changes the path, and the flow redraws on the step that takes its place. */
+    if (opts.aside) {
+      var aside = dom.el('button', 'btn btn-quiet');
+      aside.appendChild(dom.el('span', 'btn-label', opts.aside.label));
+      row.appendChild(aside);
+      dom.on(aside, 'click', function () {
+        draft.path = opts.aside.path;
+        reflow();
+        draw();
+      });
     }
     if (opts.skip) {
       var skip = dom.el('button', 'btn btn-quiet');
@@ -622,13 +648,13 @@
     error.hidden = true;
     card.appendChild(error);
 
-    actions('Create wallet', function (button) {
+    actions('Create a new wallet', function (button) {
       error.hidden = true;
       window.PhosphorShell.setPending(button, true);
       api.vaultCreate()
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, vaultProblem(answer.code || answer.error));
+            refused(error, answer);
             return;
           }
           draft.addresses = answer.addresses || null;
@@ -636,42 +662,186 @@
         })
         .catch(function (err) { fail(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false, pending: 'Waiting for Touch ID' });
+    }, { back: false, pending: 'Waiting for Touch ID', aside: { label: 'I already have a wallet', path: 'restore' } });
     card.appendChild(dom.el('p', 'meta', 'One Touch ID confirms it. Nothing to write down yet.'));
   }
 
-  /* A version 2 file another Mac made. Its key lives in that Mac's Secure
-     Enclave and nothing here can ask it, so the only way in is the phrase. */
-  function screenForeign() {
-    card.appendChild(dom.el('h1', 'title', 'Made on another Mac'));
-    card.appendChild(dom.el('p', 'body dim', 'The wallet file on this Mac was made by a different Mac, so this one cannot open it. Type your recovery phrase to bring the wallet here.'));
+  /* The same first run for a wallet that exists already: a Mac lost or
+     replaced, the case the backup is for. Its recovery phrase or, for a wallet
+     with none, its private key brings it here, and one Touch ID proves this Mac
+     opens it before the screen says so, as Create does. With no wallet on this
+     Mac there is nothing a restore could replace, so it asks for no backup. */
+  function screenRestore() {
+    card.appendChild(dom.el('h1', 'title', 'Restore your wallet'));
+    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, or your private key if your wallet has no phrase. It never leaves this Mac. One Touch ID saves the wallet here.'));
+    var f = phraseField('Recovery phrase or private key');
+    card.appendChild(f.node);
+    var error = dom.el('p', 'body firstrun-error');
+    error.hidden = true;
+    card.appendChild(error);
+    retryLine(error);
 
-    var f = phraseField('Recovery phrase, 12 or 24 words');
+    /* Back from "That is not my wallet" a wallet exists already, the one with the slip, so the
+       way to a new one is not offered: the person is fixing a character. */
+    var opts = { back: false, pending: 'Waiting for Touch ID' };
+    if (!draft.retry) opts.aside = { label: 'Create a new wallet', path: 'create' };
+    actions('Restore', function (button) {
+      var sent = restoreFrom(f.input.value, error);
+      if (sent === null) return;
+      restoring(button, f, error, sent, null);
+    }, opts);
+  }
+
+  /* A phrase or a key, told apart by what was typed: a private key has digits,
+     and the words of a recovery phrase never do (ui/core/custody.js). The
+     route for it, or null once the problem is said. */
+  function restoreFrom(value, error) {
+    var custody = window.PhosphorCustody;
+    if (custody.isKey(value)) {
+      var key = custody.readKey(value);
+      if (key.problem) {
+        fail(error, key.problem);
+        return null;
+      }
+      draft.retry = '';
+      return { from: 'key', sent: api.vaultRestoreKey('0x' + key.hex) };
+    }
+    var words = wordsOf(value);
+    if (words.length === 12 || words.length === 24) {
+      draft.retry = '';
+      return { from: 'phrase', sent: api.vaultRestore(words.join(' ')) };
+    }
+    fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. A recovery phrase is 12 or 24, and a private key is 64 characters.');
+    return null;
+  }
+
+  /* One restore in flight, from any of the three screens: on its way back the
+     field is cleared and the next step names the wallet that came back. */
+  function restoring(button, f, error, asked, expected) {
+    error.hidden = true;
+    window.PhosphorShell.setPending(button, true);
+    asked.sent
+      .then(function (answer) {
+        if (answer && answer.ok === false) {
+          refused(error, answer);
+          return;
+        }
+        f.input.value = '';
+        draft.addresses = answer.addresses || null;
+        var evm = answer.addresses && typeof answer.addresses.evm === 'string' ? answer.addresses.evm : '';
+        draft.restored = { evm: evm, from: asked.from, expected: expected };
+        go('restored');
+      })
+      .catch(function (err) { fail(error, net.readable(err)); })
+      .finally(function () { window.PhosphorShell.setPending(button, false); });
+  }
+
+  /* After "That is not my wallet": the field's line says what to look at. */
+  function retryLine(error) {
+    if (draft.retry) fail(error, draft.retry);
+  }
+
+  /* A version 2 file another Mac made: a person who moved Macs (Migration
+     Assistant brings the file along) and already owns the wallet. Its key
+     lives in that Mac's Secure Enclave and nothing here can ask it, so the
+     only way in is the backup: the phrase, or the private key of a wallet
+     that has no phrase (the file's header says which, and it reads without
+     the enclave). The header's address is what the person expects to get
+     back, and the next step sets the two side by side. Once a restore has
+     run, the file here is no longer the other Mac's, and a second try is a
+     plain restore. */
+  function screenForeign() {
+    var vault = stateNow().vault || {};
+    if (draft.retry && vault.foreign !== true) {
+      screenRestore();
+      return;
+    }
+    var keyOnly = vault.hasMnemonic === false;
+    var lock = stateNow().lock || {};
+    var expected = lock.addresses && typeof lock.addresses.evm === 'string' ? lock.addresses.evm : null;
+    card.appendChild(dom.el('h1', 'title', 'Made on another Mac'));
+    card.appendChild(dom.el('p', 'body dim', 'Your wallet file came with you, and your money has not moved. This Mac cannot open a file another Mac made, so type your ' + (keyOnly ? 'private key' : 'recovery phrase') + ' to open the wallet here.'));
+
+    var f = phraseField(keyOnly ? 'Private key, 64 characters' : 'Recovery phrase, 12 or 24 words');
+    if (keyOnly) {
+      f.input.name = 'key';
+      f.input.rows = 2;
+    }
     card.appendChild(f.node);
     var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
 
     actions('Restore', function (button) {
-      var words = wordsOf(f.input.value);
-      if (words.length !== 12 && words.length !== 24) {
-        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      var asked;
+      if (keyOnly) {
+        var key = window.PhosphorCustody.readKey(f.input.value);
+        if (key.problem) return fail(error, key.problem);
+        asked = { from: 'key', sent: api.vaultRestoreKey('0x' + key.hex) };
+      } else {
+        var words = wordsOf(f.input.value);
+        if (words.length !== 12 && words.length !== 24) {
+          return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+        }
+        asked = { from: 'phrase', sent: api.vaultRestore(words.join(' ')) };
       }
-      error.hidden = true;
-      window.PhosphorShell.setPending(button, true);
-      api.vaultRestore(words.join(' '))
-        .then(function (answer) {
-          if (answer && answer.ok === false) {
-            fail(error, vaultProblem(answer.code || answer.error));
-            return;
-          }
-          f.input.value = '';
-          draft.addresses = answer.addresses || null;
-          next();
-        })
-        .catch(function (err) { fail(error, net.readable(err)); })
-        .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { back: false, pending: 'Restoring' });
+      restoring(button, f, error, asked, expected);
+    }, { back: false, pending: 'Waiting for Touch ID' });
+    /* The way forward for a person whose copy is still on the old Mac. */
+    card.appendChild(dom.el('p', 'meta', keyOnly
+      ? 'No copy of your key? On the Mac that made this wallet, open Phosphor, then Vault, Private key, Back it up. Come back here with the copy.'
+      : 'No copy of your recovery phrase? On the Mac that made this wallet, open Phosphor, then Vault, Recovery phrase, Back it up. Come back here with the copy.'));
+  }
+
+  /* THE WALLET THAT CAME BACK, named before any address or money is on
+     screen: a backup with one slipped character restores a wallet too, an
+     empty one, and this is where that shows rather than in a balance of $0
+     later. The full address sits in a well, read one character at a time
+     against the copy. Where the app knows the wallet to expect (the file the
+     other Mac made names it), the two are set side by side. A restore marks
+     the wallet backed up, so "That is not my wallet" can always try again. */
+  function screenRestored() {
+    var r = draft.restored || { evm: '', from: 'phrase', expected: null };
+    var key = r.from === 'key';
+    var differs = !!(r.expected && r.evm && r.expected.toLowerCase() !== r.evm.toLowerCase());
+    card.appendChild(dom.el('h1', 'title', differs ? 'This is a different wallet' : 'Your wallet is back'));
+    // Where the app already knows it is not the expected one, the line under the well says so instead.
+    card.appendChild(dom.el('p', 'body dim', 'This is the wallet ' + shortAddress(r.evm) + '.' + (differs ? '' : key ? ' Check it matches the address on your copy.' : ' Check it is the one you expect.')));
+    var well = dom.el('p', 'firstrun-address mono', r.evm);
+    well.setAttribute('aria-label', 'Wallet address');
+    card.appendChild(well);
+    if (r.expected) {
+      var line = dom.el('p', 'body firstrun-error');
+      card.appendChild(line);
+      if (differs) {
+        fail(line, 'The wallet file from your other Mac is ' + shortAddress(r.expected) + '. If that one is yours, ' + (key ? 'a character' : 'a word') + ' is off in what you typed.');
+      } else {
+        note(line, 'The same wallet your file from the other Mac names.');
+      }
+    }
+    var primary = actions('Continue', function () { next(); }, { back: false });
+    var wrong = dom.el('button', 'btn btn-quiet');
+    wrong.appendChild(dom.el('span', 'btn-label', 'That is not my wallet'));
+    primary.parentNode.insertBefore(wrong, primary);
+    dom.on(wrong, 'click', function () {
+      draft.retry = key
+        ? 'Then a character is off. Check your copy group by group and try again.'
+        : 'Then a word is off. Check your recovery phrase word by word and try again.';
+      go(step - 1);
+    });
+    /* A wallet the app knows is not the expected one leads with the way back. */
+    if (differs) {
+      primary.className = 'btn btn-ghost btn-lg';
+      wrong.className = 'btn btn-primary btn-lg';
+      dom.setText(wrong.querySelector('.btn-label'), 'Try again');
+      primary.parentNode.insertBefore(primary, wrong);
+      dom.setText(primary.querySelector('.btn-label'), 'Keep this wallet');
+    }
+  }
+
+  function shortAddress(address) {
+    var a = String(address || '');
+    return a.length > 12 ? a.slice(0, 6) + '...' + a.slice(-4) : a;
   }
 
   /* THE TERMS, the first step for a person with no wallet yet. The words are
@@ -821,12 +991,12 @@
 
   /* 1. Two paths, as one choice: the tile picked is raised, with a tick. */
   function screenChoose() {
-    card.appendChild(dom.el('h1', 'title', 'Create or bring a wallet'));
+    card.appendChild(dom.el('h1', 'title', 'Create or restore a wallet'));
     var options = dom.el('div', 'firstrun-choices');
     options.setAttribute('role', 'radiogroup');
     options.setAttribute('aria-label', 'Which wallet');
-    options.appendChild(choice('Make a new wallet', 'A new wallet starts empty. You add money in a minute.', 'create'));
-    options.appendChild(choice('I already have one', 'Bring it in with its recovery phrase, 12 or 24 words.', 'import'));
+    options.appendChild(choice('Create a new wallet', 'A new wallet starts empty. You add money in a minute.', 'create'));
+    options.appendChild(choice('I already have a wallet', 'Restore it from its recovery phrase, or its private key if it has no phrase.', 'import'));
     card.appendChild(options);
     actions('Continue', function () { go('password'); });
   }
@@ -903,7 +1073,7 @@
       api.walletCreate(draft.password)
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.code || answer.error));
+            fail(error, saidOr(answer, walletProblem(answer.code || answer.error)));
             return;
           }
           /* The words come back exactly once, on this response, and are never
@@ -964,7 +1134,7 @@
     var tick = icon('done', 'ack-check');
     if (tick) drawn.appendChild(tick);
     check.appendChild(drawn);
-    check.appendChild(dom.el('span', 'ack-text', 'I have saved these somewhere that is not this computer.'));
+    check.appendChild(dom.el('span', 'ack-text', 'I have saved these somewhere that is not this Mac.'));
     card.appendChild(check);
 
     var primary = actions('Continue', function () { go('prove'); }, { disabled: true, back: false });
@@ -1113,37 +1283,47 @@
     });
   }
 
-  /* The import path's own step: the phrase, 12 or 24 words, in a box that
-     wraps, with every helper that would remember or correct it off. */
+  /* The import path's own step: the phrase, 12 or 24 words, or the private key
+     of a wallet that has no phrase, in a box that wraps, with every helper that
+     would remember or correct it off. A key is read the way every screen reads
+     one (ui/core/custody.js). */
   function screenImport() {
-    card.appendChild(dom.el('h1', 'title', 'Bring your wallet in'));
-    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, 12 or 24 words, with a space between each.'));
-    var f = phraseField('Recovery phrase');
+    card.appendChild(dom.el('h1', 'title', 'Restore your wallet'));
+    card.appendChild(dom.el('p', 'body dim', 'Type your recovery phrase, 12 or 24 words, or your private key if your wallet has no phrase. It never leaves this Mac.'));
+    var f = phraseField('Recovery phrase or private key');
     card.appendChild(f.node);
     var error = dom.el('p', 'body firstrun-error');
     error.hidden = true;
     card.appendChild(error);
+    retryLine(error);
 
     actions('Continue', function (button) {
+      var custody = window.PhosphorCustody;
+      var asKey = custody.isKey(f.input.value);
+      var key = asKey ? custody.readKey(f.input.value) : null;
       var words = wordsOf(f.input.value);
-      if (words.length !== 12 && words.length !== 24) {
-        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. It should be 12 or 24.');
+      if (key && key.problem) return fail(error, key.problem);
+      if (!asKey && words.length !== 12 && words.length !== 24) {
+        return fail(error, 'That is ' + words.length + (words.length === 1 ? ' word' : ' words') + '. A recovery phrase is 12 or 24, and a private key is 64 characters.');
       }
       error.hidden = true;
+      draft.retry = '';
       window.PhosphorShell.setPending(button, true);
-      api.walletImport({ password: draft.password, mnemonic: words.join(' ') })
+      api.walletImport(key ? { password: draft.password, keys: { evm: '0x' + key.hex } } : { password: draft.password, mnemonic: words.join(' ') })
         .then(function (answer) {
           if (answer && answer.ok === false) {
-            fail(error, walletProblem(answer.code || answer.error));
+            fail(error, saidOr(answer, walletProblem(answer.code || answer.error)));
             return;
           }
           f.input.value = '';
           draft.addresses = answer.addresses || null;
-          go('addresses');
+          var evm = answer.addresses && typeof answer.addresses.evm === 'string' ? answer.addresses.evm : '';
+          draft.restored = { evm: evm, from: key ? 'key' : 'phrase', expected: null };
+          go('restored');
         })
         .catch(function (err) { fail(error, err && err.status === 409 ? walletProblem('exists') : net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(button, false); });
-    }, { pending: 'Bringing it in' });
+    }, { pending: 'Restoring' });
   }
 
   /* 5. The address picker when the window has one, the plain address list
@@ -1443,19 +1623,30 @@
 
   function walletProblem(code) {
     if (code === 'wrong_password') return 'That password did not work.';
-    if (code === 'exists') return 'There is already a wallet on this computer.';
-    if (code === 'no_wallet') return 'There is no wallet on this computer.';
-    return 'That did not work.';
+    if (code === 'exists') return 'There is already a wallet on this Mac.';
+    if (code === 'no_wallet') return 'There is no wallet on this Mac.';
+    return 'That did not finish, so nothing changed. Try again.';
   }
 
-  /* The vault routes' refusals, in the words of the screen that asked. */
-  function vaultProblem(code) {
-    if (code === 'user_cancel') return 'Touch ID was cancelled. Nothing was changed.';
-    if (code === 'enclave_unavailable') return 'Touch ID did not answer. Open the Phosphor app and try again.';
-    if (code === 'bad_phrase') return 'That phrase is not right. Check every word and the order they are in.';
-    if (code === 'not_backed_up') return 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.';
-    if (code === 'garbled') return 'The Secure Enclave answered the wrong thing. Try again.';
-    return walletProblem(code);
+  /* A password route's refusal: the backend's sentence when it reads as one (a disk that would not
+     take the wallet file, say), else this screen's words (ui/core/custody.js). */
+  function saidOr(answer, fallback) {
+    var custody = window.PhosphorCustody;
+    return custody ? custody.sentence(answer, fallback) : fallback;
+  }
+
+  /* A vault route's refusal on a step. A cancel is the person's own choice,
+     said in the quiet line with no warning glyph; the codes this screen says
+     better in its own words have them here; every other code is the backend's
+     sentence for it (src/http/wallet.ts), the one place those are written. */
+  function refused(node, answer) {
+    var code = answer && answer.code;
+    if (code === 'user_cancel') return note(node, window.PhosphorCustody ? window.PhosphorCustody.CANCELLED : 'Touch ID was cancelled. Nothing changed.');
+    if (code === 'bad_phrase') return fail(node, 'That phrase is not right. Check every word and the order they are in.');
+    if (code === 'bad_key') return fail(node, 'That key is not right. Check every character against your copy.');
+    if (code === 'not_backed_up') return fail(node, 'The wallet already on this Mac is not backed up yet, so it cannot be replaced.');
+    var custody = window.PhosphorCustody;
+    return fail(node, custody ? custody.sentence(answer, walletProblem(code)) : walletProblem(code));
   }
 
   /* A phrase is typed into a box that wraps, with every helper that would
@@ -1497,8 +1688,19 @@
      than the step's own words, never red. */
   function fail(node, message) {
     dom.clear(node);
+    dom.setAttr(node, 'data-tone', null);
     var glyph = icon('warning', 'firstrun-error-icon');
     if (glyph) node.appendChild(glyph);
+    node.appendChild(dom.el('span', '', message));
+    node.hidden = false;
+  }
+
+  /* The same line for something that is not a problem (a cancel the person
+     chose, a check that came out right): quiet words, no glyph. Amber stays
+     for what needs reading (DESIGN.md, Caution Amber). */
+  function note(node, message) {
+    dom.clear(node);
+    dom.setAttr(node, 'data-tone', 'quiet');
     node.appendChild(dom.el('span', '', message));
     node.hidden = false;
   }

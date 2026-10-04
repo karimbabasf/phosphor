@@ -26,13 +26,15 @@ switches to another user, when you close the window, and when you press Lock now
 in memory while the Mac sleeps. When the screen locks, the Mac switches user or the window closes,
 a move that has not been signed yet gets its signature first, two minutes at most, while nothing
 new starts. Copies of the key, and of your recovery phrase, that an unlock, a signature, a new
-wallet or words shown to you left as text are not overwritten: JavaScript cannot wipe them, so
+wallet or words or a key shown to you left as text are not overwritten: JavaScript cannot wipe them, so
 they stay in memory until it is reused, after the lock too. The check behind Prove it, made when a
 wallet is created or its words are shown, also outlives a lock: it goes when the words are proven
 or shown again, after five wrong tries, after half an hour with the Mac awake, or when the app
 quits. It keeps only the three positions it asks for and one slow hash of those three words, the
 same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
-guesses to make before it learns them, and three words of twelve do not open the wallet.
+guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
+with no phrase backs up its private key instead, and its whole copy typed back is the proof, so
+nothing of the key is kept for it.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right
@@ -71,23 +73,95 @@ serves and no program can fetch.
 What closes it: the agent's door moving onto a socket the operating system can identify the
 caller of. Until then the seat secret is the credential in its place.
 
-## The Secure Enclave key is bound to this Mac, not to Phosphor
+## An older wallet's key answers any app on this Mac
 
-Every build so far, the signed releases included, keeps the Secure Enclave key bound to this Mac
-rather than to Phosphor. The keychain home that would tie it to the app needs the
-keychain-access-groups entitlement, and no build carries it yet, so the key is a CryptoKit key any
-program running as you can load. On a signed release the vault service answers only the signed
-Phosphor app, and on a copy you build yourself it checks the app's identifier alone; the key
-itself does not care who asks.
+A Touch ID wallet made before Phosphor-only existed, and any Touch ID wallet that a copy of
+Phosphor you build yourself makes, keeps its key where any program running as you on this Mac can
+ask to use it. Only a signed release can keep a key that Phosphor alone reaches: that takes a
+permission Apple signs for Phosphor's developer, and a copy you build yourself cannot carry it.
 
 What it means: another app running as you could ask to use the key, and macOS would show that
 app's own Touch ID prompt, not Phosphor's. Approve a Touch ID prompt only for something you started
-in Phosphor, and read the sentence in it. The Keys row in the Vault tab says the same in one line.
+in Phosphor, and read the sentence in it.
 
-What closes it: a Developer ID provisioning profile that grants the keychain entitlement, so the
-key lives in the keychain where only Phosphor can ask for it. A signed update still verifies either
-way: the updater checks the bundle's own update signature, and then its Developer ID code
-signature against Phosphor's Team ID, before it replaces anything.
+What closes it: on a signed release, the Vault tab's Keys row shows Phosphor-only access, and once
+the wallet's backup is proven, Make it Phosphor-only moves its key to where only Phosphor reaches
+it, with one Touch ID. The same wallet, the same addresses. Every Touch ID wallet a signed release
+makes is Phosphor-only from the start. Before it asks for Touch ID, Phosphor checks that a
+Phosphor-only wallet's file is the one it saved, so a file someone else made for the same key, or
+an edited one, is refused. A signed update verifies either way: the updater checks the bundle's own
+update signature, and then its Developer ID code signature against Phosphor's Team ID, before it
+replaces anything. Four limits stay, below.
+
+## Phosphor-only is one rule for the whole Mac
+
+The first time a signed release makes a Touch ID wallet Phosphor-only, or makes or restores one,
+every older Touch ID wallet on this Mac that is not Phosphor-only stops opening in Phosphor. That
+holds for every copy of Phosphor and every data folder on the Mac, not only the one that made the
+change, and for copies of the older wallet's file too.
+
+What it means: a second wallet made in another folder, even one for a test, shuts your first
+wallet out of Phosphor while that one is still older. Its money is not touched: its lock card says
+why and offers Restore, and its backup brings it back here as a Phosphor-only wallet. So before you
+make or restore a second wallet on this Mac, make the one you have Phosphor-only, or at least prove
+its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
+alone.
+
+What closes it: making every wallet on the Mac Phosphor-only. The rule itself stays, because it is
+what keeps a file swapped in for your wallet from opening the older way.
+
+## A Phosphor-only wallet's key is in one place on this Mac
+
+A Phosphor-only wallet's key is kept in one place on this Mac that only Phosphor reaches, not in
+the wallet file, so no copy of the file opens the wallet without it, and it never leaves this Mac.
+
+What it means: if this Mac is erased, lost or replaced, or the passwords and keys macOS keeps for
+you are reset, the wallet file cannot open again, here or on any other Mac, and your backup (the
+recovery phrase, or the private key of a wallet that has no phrase) is the only way back. That is
+why Make it Phosphor-only asks for a proven backup first. A private key backup holds the EVM key
+alone: an older wallet whose file also holds a NEAR key, a Solana key or a trading key keeps those
+only in the Phosphor-only file, and the backup cannot bring them back. The app never shows or
+spends from those NEAR and Solana addresses, and a trading key is approved again.
+
+What closes it: nothing in this build. Keep your backup somewhere that is not this Mac.
+
+## Old copies of a wallet file still open on this Mac until the keys change
+
+Making a wallet Phosphor-only writes a new wallet file for it, and from then on Phosphor on this Mac
+refuses the older file, before any Touch ID. What the step cannot reach is a copy of the old
+`keys.enc.json` saved before that day: a Time Machine backup or local snapshot, a sync folder, a
+copy you made, the file on another disk. Such a copy still opens the old way on this Mac: any
+program running as you can ask for your Touch ID with it, in its own dialog, and a Phosphor from
+before Phosphor-only opens it too. The keys inside are your wallet's keys, so such a copy can spend
+the same money.
+
+What Phosphor deletes: only the copies it wrote itself, the temp file a write cut short leaves
+beside the key file, and only after the Phosphor-only file has opened once. It never touches a Time
+Machine snapshot, a sync folder or a file you made. A backup you exported with a password is a
+password file: this step does not change it, and anyone with the file and the password opens it
+anywhere.
+
+What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
+Touch ID dialog only for something you started in Phosphor. What closes it: moving the wallet to
+new keys that never existed outside Phosphor's reach, so an old copy holds nothing. The chip vault
+plans that; it is not built.
+
+## A readable key file is trusted only on a Mac known to have no Phosphor-only wallet
+
+A wallet from before encryption lives in a readable `keys.json`, and nothing pins that file to a
+wallet. On a Mac where any wallet is Phosphor-only, Phosphor does not open one: a program running as
+you could have put its own wallet where the Phosphor-only file was. The lock card says the key file
+stayed closed and offers Restore from your backup, and Phosphor will not encrypt the file. A copy of
+Phosphor that cannot read its keychain (the development shell, `npm run tauri dev`, or a copy built
+without the Developer ID) cannot tell whether the Mac keeps one, so it does not open the file
+either: Encrypt now says so, and the card points to the Phosphor app you downloaded and offers
+Restore from your backup. On a Mac with no
+Phosphor-only wallet, the Phosphor app still reads the file as your wallet and offers to encrypt it,
+as it always has. The one exception is the bare backend (`npm run app`), which has no vault service
+to ask: it reads the file as your wallet on any Mac.
+
+What it means: "Your keys are not encrypted" is only for a wallet made before Phosphor encrypted
+keys. If you never had one, do not set a password there.
 
 ## The venues are not ours
 

@@ -20,6 +20,7 @@ const read = (path: string): string => readFileSync(new URL(path, import.meta.ur
 const LINKS = read('../../ui/core/links.js');
 const DOM = read('../../ui/core/dom.js');
 const STATE = read('../../ui/core/state.js');
+const CUSTODY = read('../../ui/core/custody.js');
 const MOTION = read('../../ui/design/motion.js');
 const DEVMODE = read('../../ui/design/devmode.js');
 const DEVMODE_CSS = read('../../ui/design/devmode.css');
@@ -302,6 +303,7 @@ function build(state: Any, opts: Options = {}): World {
   runInContext(LINKS, sandbox, { filename: 'ui/core/links.js' });
   runInContext(DOM, sandbox, { filename: 'ui/core/dom.js' });
   runInContext(STATE, sandbox, { filename: 'ui/core/state.js' });
+  runInContext(CUSTODY, sandbox, { filename: 'ui/core/custody.js' });
   if (opts.motion === 'real') runInContext(MOTION, sandbox, { filename: 'ui/design/motion.js' });
   if (opts.devmode) runInContext(DEVMODE, sandbox, { filename: 'ui/design/devmode.js' });
   if (opts.field) runInContext(FIELD, sandbox, { filename: 'ui/design/field.js' });
@@ -338,11 +340,10 @@ const firstRun = (vault: Any, opts: Options = {}): World =>
 
 /* ---------- the welcome ---------- */
 
-test('every flow opens on the welcome, and Get started goes to that flow\'s own first step, under the phases it has', () => {
+test('every flow for a new wallet opens on the welcome, and Get started goes to that flow\'s own first step, under the phases it has', () => {
   const flows: Array<[string, Any, string, number, string[]]> = [
     ['enclave', {}, 'Create your wallet', 3, ['Wallet', 'Money', 'Assistant']],
-    ['software', SOFTWARE, 'Create or bring a wallet', 9, ['Wallet', 'Backup', 'Money', 'Assistant']],
-    ['foreign', { foreign: true }, 'Made on another Mac', 3, ['Wallet', 'Money', 'Assistant']],
+    ['software', SOFTWARE, 'Create or restore a wallet', 9, ['Wallet', 'Backup', 'Money', 'Assistant']],
   ];
   for (const [name, vault, firstTitle, count, phases] of flows) {
     const world = firstRun(vault);
@@ -381,6 +382,16 @@ test('every flow opens on the welcome, and Get started goes to that flow\'s own 
     assert.equal(named.filter((p: Any) => p.getAttribute('data-current') === 'true').length, 1);
     assert.equal(find(progress[0], '.screen-progress-seg').length, 0, `${name}: a segment per step is back`);
   }
+
+  // A file another Mac made: its owner moved Macs, so the card opens on what happened.
+  const world = firstRun({ foreign: true });
+  world.sandbox.PhosphorFirstRun.open();
+  const screen = world.nodes['screen-firstrun'];
+  assert.ok(!textOf(screen).includes('Welcome to Phosphor'), 'an owner who moved Macs was welcomed as new');
+  assert.ok(textOf(screen).includes('Made on another Mac'));
+  const progress = find(screen, '.screen-progress')[0];
+  assert.ok(textOf(progress).includes('Step 1 of 4'), textOf(progress).join());
+  assert.deepEqual(find(progress, '.screen-phase').map((p: Any) => find(p, '.screen-phase-name')[0].textContent), ['Wallet', 'Money', 'Assistant']);
 });
 
 test('the create screen says where the key is held in three lines, and the technical form waits for the developer switch', () => {
@@ -583,7 +594,7 @@ test('the welcome plays its entrance once, after the field, and a fast click thr
   assert.equal(ghostsAfterOne[0].parentNode, null, 'the first leaving body was not thrown away by the next click');
   const live = find(shell, '.screen-body').filter((b: Any) => !String(b.className).includes('screen-body-ghost'));
   assert.equal(live.length, 1, 'more than one live body');
-  assert.ok(textOf(live[0]).includes('Create or bring a wallet'));
+  assert.ok(textOf(live[0]).includes('Create or restore a wallet'));
   assert.equal(find(live[0], 'button').some((b: Any) => b.focused), true, 'the live body did not take the focus');
   const entrances = world.animations.filter((a) => a.keyframes.y && a.keyframes.y[0] === 8);
   assert.equal(entrances.length, 3, 'one entrance per step change');
@@ -620,7 +631,7 @@ test('the addresses step uses the network picker when the window has one, and ta
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  buttonNamed(screen, 'Create wallet').click();
+  buttonNamed(screen, 'Create a new wallet').click();
   await flush();
   assert.ok(textOf(screen).includes('Your addresses'));
   const rendered = world.calls.find((c) => c.route === 'netpick.render');
@@ -637,7 +648,7 @@ test('without the picker the addresses step falls back to the plain address list
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  buttonNamed(screen, 'Create wallet').click();
+  buttonNamed(screen, 'Create a new wallet').click();
   await flush();
   assert.ok(world.calls.some((c) => c.route === 'moneyin.render'));
 });
@@ -769,7 +780,7 @@ test('with the terms still to accept, the welcome comes first and the terms are 
   await flush();
   assert.equal(world.calls.filter((c) => c.route === '/api/terms/accept').length, 1);
   assert.equal(world.sandbox.PhosphorState.get().terms.accepted, true);
-  assert.ok(textOf(screen).includes('Create or bring a wallet'), 'the flow did not go on after the terms');
+  assert.ok(textOf(screen).includes('Create or restore a wallet'), 'the flow did not go on after the terms');
   assert.ok(textOf(find(screen, '.screen-progress')[0]).includes('Step 1 of 9'));
   // Back from the first wallet step is the welcome: the accepted terms are not asked again.
   buttonNamed(screen, 'Back').click();
@@ -781,23 +792,24 @@ test('the import path asks for the phrase it imports, 12 or 24 words, never stra
   world.sandbox.PhosphorFirstRun.open();
   const screen = world.nodes['screen-firstrun'];
   buttonNamed(screen, 'Get started').click();
-  const choice = find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have one')) as Any;
+  const choice = find(screen, '.choice').find((c: Any) => c.textContent.startsWith('I already have a wallet')) as Any;
   choice.click();
   assert.equal(choice.getAttribute('aria-checked'), 'true');
-  assert.ok(textOf(find(screen, '.screen-progress')[0]).includes('Step 1 of 8'), 'the import path counts the new wallet\'s backup steps');
+  assert.ok(textOf(find(screen, '.screen-progress')[0]).includes('Step 1 of 9'), 'the import path counts the new wallet\'s backup steps, or not the wallet it names');
   buttonNamed(screen, 'Continue').click();
   const fields = find(screen, 'input.input');
   fields[0].value = 'longenough';
   fields[1].value = 'longenough';
   buttonNamed(screen, 'Continue').click();
-  assert.ok(textOf(screen).includes('Bring your wallet in'), 'the phrase was never asked for');
+  assert.ok(textOf(screen).includes('Restore your wallet'), 'the phrase was never asked for');
   assert.equal(world.calls.some((c) => c.route === '/api/wallet/create'), false, 'a new wallet was made on the import path');
   const box = find(screen, 'textarea')[0];
   assert.ok(box, 'the phrase is not typed into a box that wraps');
   box.value = 'one two three';
   buttonNamed(screen, 'Continue').click();
-  assert.ok(textOf(screen).includes('That is 3 words. It should be 12 or 24.'));
-  const words = Array.from({ length: 24 }, (_v, i) => 'w' + (i + 1));
+  assert.ok(textOf(screen).includes('That is 3 words. A recovery phrase is 12 or 24, and a private key is 64 characters.'));
+  // Letters only: the words of a phrase never hold a digit, and a digit is what makes a key.
+  const words = Array.from({ length: 24 }, (_v, i) => 'word' + String.fromCharCode(97 + i));
   box.value = words.join('  ').toUpperCase();
   buttonNamed(screen, 'Continue').click();
   await flush();
@@ -805,6 +817,8 @@ test('the import path asks for the phrase it imports, 12 or 24 words, never stra
   assert.ok(post, 'nothing was imported');
   assert.equal(post.mnemonic, words.join(' '));
   assert.equal(post.password, 'longenough');
+  assert.ok(textOf(screen).includes('Your wallet is back'), 'the wallet that came back was not named');
+  buttonNamed(screen, 'Continue').click();
   assert.ok(textOf(screen).includes('Your addresses'));
 });
 

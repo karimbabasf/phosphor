@@ -387,7 +387,7 @@ function toolCtx(report: Any, extra: Partial<Ctx> = {}): { ctx: Ctx; shown: Any[
     deposits: { show: (chain: string, symbol: string, address: string | null) => { shown.push({ chain, symbol, address }); return { phase: 'watching' }; } },
     audit: { append: (_type: string, line: string) => { audited.push(line); } },
     keystore: { custody: () => 'password', state: () => 'locked', enclave: () => null, header: () => null },
-    vault: { attached: () => false, enclaveReady: () => false, capability: () => 'none', waiting: () => null },
+    vault: { attached: () => false, enclaveReady: () => false, capability: () => 'none', bound: () => null, waiting: () => null },
     vaultPrefs: { get: () => ({ backedUp: false, backedUpAt: null, idleMinutes: 15 }) },
   } as unknown as Ctx;
   return { ctx, shown, audited };

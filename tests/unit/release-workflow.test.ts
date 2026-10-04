@@ -9,17 +9,34 @@
 //   - the keychain is deleted by the step right after notarize-mac.sh, whatever happened;
 //   - the sign job reads the signing secrets in the `release` environment and the site job the
 //     Blob token alone in `release-site`, after the sign job, so a release asks for one approval;
+//   - the signed service starts on each Apple silicon macOS GitHub hosts, in a job that holds
+//     nothing, before anything is published;
 //   - a dry run builds, signs and notarizes, and publishes nothing.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 import { parseWorkflow, type Yaml } from './helpers/workflow-yaml.ts';
+import { tempDir } from './helpers/tmp.ts';
 
 const root = new URL('../../', import.meta.url);
-const workflow = parseWorkflow(fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8'));
+const source = fs.readFileSync(new URL('.github/workflows/release.yml', root), 'utf8');
+const workflow = parseWorkflow(source);
 
 type Step = { name?: string; uses?: string; run?: string; if?: string; env?: Record<string, string>; with?: Record<string, Yaml>; 'working-directory'?: string; id?: string };
-type Job = { steps: Step[]; environment?: string; permissions?: Record<string, string>; needs?: string | string[]; if?: string; outputs?: Record<string, string>; env?: Record<string, string> };
+type Job = {
+  steps: Step[];
+  environment?: string;
+  permissions?: Record<string, string>;
+  needs?: string | string[];
+  if?: string;
+  outputs?: Record<string, string>;
+  env?: Record<string, string>;
+  'runs-on'?: string;
+  'continue-on-error'?: string;
+  strategy?: { 'fail-fast'?: boolean; matrix?: Record<string, Yaml> };
+};
 
 const jobs = workflow.jobs as unknown as Record<string, Job>;
 const all = (job: Job) => JSON.stringify(job);
@@ -52,7 +69,7 @@ test('the install and build detector sees commands and not sentences', () => {
 });
 
 test('the workflow parses to the jobs it describes', () => {
-  assert.deepEqual(Object.keys(jobs), ['build', 'sign', 'publish', 'site']);
+  assert.deepEqual(Object.keys(jobs), ['build', 'sign', 'smoke', 'publish', 'site']);
   for (const job of Object.values(jobs)) assert.ok(Array.isArray(job.steps) && job.steps.length > 0);
 });
 
@@ -86,6 +103,7 @@ test('no job that holds a signing secret installs, builds or runs code it did no
     };
     for (const script of scripts) walk(script);
     assert.ok(read.has('scripts/payload-digest.ts'), 'the release check reads the digest rule the bundler wrote');
+    assert.ok(read.has('scripts/signing-gate.ts'), 'and runs the signing gate notarize-mac.sh runs, held to the same imports');
     assert.match(all(job), /bash scripts\/notarize-mac\.sh/);
     assert.doesNotMatch(fs.readFileSync(new URL('scripts/notarize-mac.sh', root), 'utf8'), /\bnpx\b|\bnpm\b|tauri signer|TAURI_SIGNING/);
   }
@@ -171,24 +189,107 @@ test('a dry run builds, signs and notarizes, and publishes nothing', () => {
   assert.match(version?.run ?? '', /\npublish=false\nif \[ "\$GITHUB_REF_TYPE" = tag \]; then\n[\s\S]*\n {2}if \[ "\$DRY_RUN" != true \]; then publish=true; fi\nfi\n/);
   assert.equal(jobs.build.outputs?.publish, '${{ steps.version.outputs.publish }}');
   assert.equal(jobs.sign.if, undefined, 'a dry run signs and notarizes');
+  assert.equal(jobs.smoke.if, undefined, 'and starts the service on every macOS');
   for (const name of ['publish', 'site']) assert.equal(jobs[name].if, "needs.build.outputs.publish == 'true'", name);
   const attest = jobs.sign.steps.find((step) => step.uses?.startsWith('actions/attest-build-provenance@'));
   assert.equal(attest?.if, "env.PUBLISH == 'true'");
   assert.equal(jobs.sign.env?.PUBLISH, '${{ needs.build.outputs.publish }}');
-  for (const name of ['build', 'sign']) assert.doesNotMatch(all(jobs[name]), /gh release|site-upload|BLOB_/, name);
+  for (const name of ['build', 'sign', 'smoke']) assert.doesNotMatch(all(jobs[name]), /gh release|site-upload|BLOB_/, name);
 });
 
 test('what the later jobs download is checked against the digests the sign job wrote', () => {
   const sums = jobs.sign.steps.find((step) => step.id === 'sums');
   assert.match(sums?.run ?? '', /shasum -a 256/);
   assert.equal(jobs.sign.outputs?.sums, '${{ steps.sums.outputs.sums }}');
-  for (const name of ['publish', 'site']) {
+  // macOS has shasum where Ubuntu has sha256sum; both read the sign job's lines.
+  for (const name of ['smoke', 'publish', 'site']) {
     const steps = jobs[name].steps;
     const take = steps.findIndex((step) => step.uses?.startsWith('actions/download-artifact@'));
-    const check = steps.findIndex((step) => /sha256sum --check --strict/.test(step.run ?? ''));
+    const check = steps.findIndex((step) => /(?:sha256sum|shasum -a 256) --check --strict/.test(step.run ?? ''));
     assert.ok(take >= 0 && check === take + 1, `${name} checks right after it downloads`);
     assert.equal(steps[check].env?.SUMS, '${{ needs.sign.outputs.sums }}');
     assert.ok([jobs[name].needs].flat().includes('sign'));
+  }
+});
+
+test('the signed service is started on each Apple silicon macOS GitHub hosts, by a job that holds nothing, before anything is published', () => {
+  const smoke = jobs.smoke;
+  assert.deepEqual([...secretsOf(smoke)], []);
+  assert.equal(smoke.environment, undefined, 'no environment, so no approval to wait for');
+  assert.deepEqual(smoke.permissions, {});
+  assert.doesNotMatch(all(smoke), KEYCHAIN);
+  for (const step of smoke.steps) {
+    for (const pattern of INSTALLS_OR_BUILDS) assert.doesNotMatch(step.run ?? '', pattern, `smoke: ${step.name}`);
+    if (step.uses) assert.match(step.uses, /^actions\/download-artifact@[0-9a-f]{40}$/, `smoke: ${step.name}`);
+  }
+  // The build is aarch64 alone and the -intel and -large labels are x64, so every leg is a plain
+  // macos-<n> label, each run to the end.
+  assert.equal(jobs.build.env?.TARGET, 'aarch64-apple-darwin');
+  assert.equal(smoke['runs-on'], '${{ matrix.os }}');
+  const labels = smoke.strategy?.matrix?.os;
+  assert.ok(Array.isArray(labels) && labels.length > 0, 'a list of runners');
+  const major = (label: Yaml): number => {
+    const found = /^macos-(\d+)$/.exec(String(label));
+    assert.ok(found, `${label} is not an Apple silicon runner`);
+    return Number(found[1]);
+  };
+  assert.equal(smoke.strategy?.['fail-fast'], false, 'every leg reports');
+  // One leg, the oldest, runs without holding the release: GitHub fails a retiring runner's jobs
+  // in brownout windows, and a brownout must never fail a release. Its line says when it goes.
+  const retiring = /^\$\{\{ matrix\.os == '(macos-\d+)' \}\}$/.exec(smoke['continue-on-error'] ?? '')?.[1];
+  assert.ok(retiring !== undefined && labels.includes(retiring), 'one named leg does not hold the release');
+  assert.equal(Math.min(...labels.map(major)), major(retiring), 'and it is the oldest');
+  const line = new RegExp(String.raw`^ +- ${retiring} # (\d{4}-\d{2}-\d{2}): .*Delete this line after (\d{4}-\d{2}-\d{2})`, 'm').exec(source);
+  assert.ok(line !== null && line[1] < line[2], `the ${retiring} line says the date to delete it`);
+  // The rest hold it: the macOS the sign job checked on and a newer one.
+  const holding = labels.filter((label) => label !== retiring).map(major);
+  const signedOn = major(jobs.sign['runs-on'] ?? '');
+  assert.ok(holding.includes(signedOn), 'the macOS the sign job checked on');
+  assert.ok(holding.some((version) => version > signedOn), 'and a newer one');
+  assert.ok([smoke.needs].flat().includes('sign'));
+  assert.ok([jobs.publish.needs].flat().includes('smoke'), 'publishing waits for the legs that hold it');
+  // Both apps that ship: the one in the DMG and the one in the update.
+  const run = runs(smoke);
+  assert.match(run, /^smoke "\$RUNNER_TEMP\/dmg\/Phosphor\.app" "the DMG" \|\| failed=1$/m);
+  assert.match(run, /^smoke "\$RUNNER_TEMP\/update\/Phosphor\.app" "the update" \|\| failed=1$/m);
+  assert.match(run, /^exit "\$failed"$/m);
+});
+
+/* The step's own function, run the way Actions runs a step, against stand-in services. The
+   stand-ins exit with the code rather than die of the signal: bash reads both the same, and an
+   abort leaves a crash report on every run (tests/unit/signing-gate.test.ts says why). */
+test('the smoke step passes a service that reaches xpc_main and fails every other start', { skip: process.platform !== 'darwin' && 'needs macOS plutil' }, () => {
+  const fn = /^smoke\(\) \{\n[\s\S]*?\n\}$/m.exec(runs(jobs.smoke))?.[0];
+  assert.ok(fn, 'the step defines smoke()');
+  const dir = tempDir('release-smoke-');
+  let apps = 0;
+  const start = (program: string) => {
+    apps += 1;
+    const app = path.join(dir, `app-${apps}`, 'Phosphor.app');
+    const service = path.join(app, 'Contents', 'XPCServices', 'com.karimbabasf.phosphor.vault.xpc', 'Contents');
+    fs.mkdirSync(path.join(service, 'MacOS'), { recursive: true });
+    fs.writeFileSync(path.join(service, 'Info.plist'), '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>se-helper</string></dict></plist>\n');
+    fs.writeFileSync(path.join(service, 'MacOS', 'se-helper'), `#!/bin/sh\n${program}\n`, { mode: 0o755 });
+    const script = `${fn}\nfailed=0\nsmoke "$1" "the stand-in" || failed=1\nexit "$failed"\n`;
+    return spawnSync('bash', ['--noprofile', '--norc', '-eo', 'pipefail', '-c', script, 'smoke', app], { encoding: 'utf8', env: { ...process.env, RUNNER_TEMP: dir } });
+  };
+  const said = "echo 'An XPC Service cannot be run directly.' >&2";
+
+  const started = start(`${said}\nexit 134`);
+  assert.equal(started.status, 0, started.stderr);
+  assert.match(started.stdout, /the stand-in: the vault service run by hand gave 134: An XPC Service cannot be run directly\./);
+
+  const refused = [
+    [`kill -KILL $$`, /AMFI refused the vault service on macOS [\d.]+: it was killed before main/],
+    [`echo 'dyld[71]: Symbol not found: _swift_task_create' >&2\nexit 134`, /dyld could not start the vault service/],
+    [`exit 134`, /did not reach xpc_main/],
+    [`${said}\nexit 0`, /did not reach xpc_main/],
+    [`exit 0`, /did not reach xpc_main/],
+  ] as const;
+  for (const [program, why] of refused) {
+    const result = start(program);
+    assert.equal(result.status, 1, program);
+    assert.match(result.stderr, why, program);
   }
 });
 

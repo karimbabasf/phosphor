@@ -83,9 +83,13 @@ test('the script signs inside out, staples the app before the updater bundle and
     return i;
   };
   const order = [
-    at('--preserve-metadata=entitlements "$file"'),
-    at('--preserve-metadata=entitlements "$nested"'),
-    at('sign --entitlements "$entitlements" "$app"'),
+    at('node "$root/scripts/signing-gate.ts" --entitlements "$profile" > "$work/vault.entitlements"'),
+    at('cp "$profile" "$service/Contents/embedded.provisionprofile"'),
+    at('xattr -cr "$app"'),
+    at('sign --entitlements "$node_entitlements" "$file"'),
+    at('sign --entitlements "$work/vault.entitlements" "$service"'),
+    at('sign --entitlements "$shell_entitlements" "$app"'),
+    at('node "$root/scripts/signing-gate.ts" --app "$app" --checkout "$root"'),
     at('notarize_file "$work/Phosphor.zip" app'),
     at('xcrun stapler staple "$app"'),
     at('tar --no-mac-metadata --no-xattrs -czf "$tarball"'),
@@ -98,4 +102,20 @@ test('the script signs inside out, staples the app before the updater bundle and
   assert.match(script, /codesign --force --timestamp --options runtime/, 'hardened runtime and secure timestamp on all code');
   assert.match(script, /Contents\/XPCServices/, 'nested XPC services are named where they are signed');
   assert.doesNotMatch(script, /tauri signer|TAURI_SIGNING|\bnpx\b/, 'the update key is never in the script that holds the keychain');
+});
+
+/* The vault service gets its profile and its own entitlements, and nothing else signs it after
+   that. The old loops re-signed every nested binary and bundle keeping the entitlements they
+   arrived with, and the service is built with none: it would have shipped unentitled, and AMFI
+   would have had nothing to refuse until a person's vault failed to open. */
+test('each path is signed with its own entitlements, the service once, and nothing keeps what the build left', () => {
+  assert.doesNotMatch(script, /--preserve-metadata/, 'no binary keeps the entitlements the build job gave it');
+  assert.equal(script.match(/"\$service"\s*$/gm)?.length, 1, 'one signing of the service');
+  assert.match(script, /\[ "\$file" = "\$service\/Contents\/MacOS\/\$service_main" \] && continue/, 'the per-file loop leaves the service\'s executable to the service\'s own signing');
+  assert.match(script, /if \[ "\$file" = "\$app\/Contents\/MacOS\/node" \]; then\n\s+sign --entitlements "\$node_entitlements" "\$file"\n\s+else\n\s+sign "\$file"\n/, 'node gets its file, every other Mach-O none');
+  assert.match(script, /if \[ "\$nested" = "\$service" \]; then\n\s+sign --entitlements "\$work\/vault\.entitlements" "\$service"\n\s+else\n\s+sign "\$nested"\n/, 'the service its set, every other nested bundle none');
+  assert.match(script, /shell_entitlements="\$root\/src-tauri\/entitlements\.plist"/);
+  assert.match(script, /node_entitlements="\$root\/src-tauri\/entitlements-node\.plist"/);
+  assert.match(script, /profile="\$root\/src-tauri\/signing\/vault\.provisionprofile"/);
+  assert.match(step('Sign, notarize and staple the app and the DMG'), /APPLE_TEAM_ID: \$\{\{ secrets\.APPLE_TEAM_ID \}\}/, 'the gate in the signing step checks the team the secrets name');
 });
