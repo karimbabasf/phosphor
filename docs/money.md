@@ -21,6 +21,21 @@ on its own line that opens the Trade tab, where everything about Hyperliquid liv
 Nothing else holds money. The app signs no transaction on any chain: every move is an intent or
 a venue action signed by the one key in your wallet, and the bridge does the chain work.
 
+### Once your vault moves to Touch ID
+
+Moving your vault to this Mac's Touch ID key splits your NEAR Intents balance in two. Until you
+move it, nothing on this page changes: one account holds everything and every move spends from it.
+
+- Your vault is your wallet's own address, the same one as before. Deposits, invite claims, the
+  trading account and every Hyperliquid withdrawal land here. Money leaves it only through a step
+  you confirm with Touch ID.
+- Your allowance is a second account inside NEAR Intents, with a key the app derives from your
+  wallet key at every unlock and never writes down. Every swap, send, payout and Hyperliquid
+  deposit spends from it, under the same clicks as before, and a refund goes back to it.
+
+"All" of a coin means all the allowance holds. Until this process has opened your wallet once,
+the app cannot name the allowance, so nothing is proposed before your first unlock.
+
 ## Deposit
 
 Money comes in through the deposit card, never through a tool. Press Add money on the Basic or
@@ -393,7 +408,8 @@ agent attaches to a receiver is kept as data and never drawn as a name.
 
 `propose_hl_deposit` moves USDC from your intents balance into your Hyperliquid account so a plan
 has collateral. One signed intent, nothing sent on any chain, and the account credited is your
-own. The card is titled Fund trading. Under the click threshold it runs on its own, with the same
+own. Once your vault has moved, the allowance pays and the vault's trading account is credited; a
+deposit that fails refunds to the allowance. The card is titled Fund trading. Under the click threshold it runs on its own, with the same
 exceptions as a swap: an assistant that read outside text, or one started outside Phosphor and
 not allowed yet, waits for your click.
 

@@ -41,7 +41,9 @@ import {
   erc191SignatureField,
   intentsApi,
   intentsNativeRail,
+  liveIntentsSigner,
 } from '../../src/rails/intents-native.ts';
+import { KINDS, MOVED_VAULT, signerOf, useKind } from './helpers/rail-kinds.ts';
 import type {
   GeneratedIntent,
   IntentsApiPort,
@@ -1323,4 +1325,38 @@ test('a swap whose quote carries no dollar figure on a side asks for a click, an
 
   const priced = await railOf(harness()).simulate(draftOf());
   assert.equal(priced.ask, undefined, 'a priced quote asks for nothing');
+});
+
+// ---------- both kinds of wallet (PHASE2-PLAN.md C6) ----------
+
+for (const kind of KINDS) {
+  test(`kind ${kind}: the live signer signs the 1Click swap once, for the account it spends, refunds and credits that account`, async () => {
+    const run = useKind(kind, TEST_KEY);
+    try {
+      const h = harness();
+      const result = await railOf(h, { signer: liveIntentsSigner }).execute(draftOf());
+      assert.equal(result.ok, true, result.detail);
+      // The quote is asked for the account the move spends: 1Click refunds to it and, for a swap, credits it.
+      assert.equal((h.quotes[0] as Record<string, unknown>).account, OWNER);
+      assert.deepEqual(h.generated, [{ signerId: OWNER, depositAddress: HANDLE }]);
+      assert.equal(h.submitted.length, 1);
+      const { payload, signature } = h.submitted[0];
+      assert.equal(await signerOf(payload, signature), OWNER, 'the signature recovers to the account the payload names');
+      assert.deepEqual(run.asks, kind === 'key' ? { owner: 1, allowance: 0 } : { owner: 0, allowance: 1 }, 'one key, the one its kind uses, once');
+    } finally {
+      run.restore();
+    }
+  });
+}
+
+test('kind chip: a draft authored for the vault is refused before any key is asked for', async () => {
+  const run = useKind('chip', TEST_KEY);
+  try {
+    const h = harness();
+    await assert.rejects(() => railOf(h, { signer: liveIntentsSigner }).execute(draftOf({ from: MOVED_VAULT, to: MOVED_VAULT })), /draft is authored for/);
+    assert.deepEqual(run.asks, { owner: 0, allowance: 0 });
+    assert.equal(h.submitted.length, 0);
+  } finally {
+    run.restore();
+  }
 });

@@ -20,6 +20,7 @@ import { CLAIM_DEADLINE_MS, INVITE_ASSET_ID, intentHashOf } from '../../src/invi
 import { CLAIMS_FILE, createClaimStore } from '../../src/invite/store.ts';
 import type { ClaimRecord } from '../../src/invite/store.ts';
 import { TEST_QUOTE_KEY } from './helpers/signed-quote.ts';
+import { useRailAccounts } from '../../src/intents-sign.ts';
 import {
   CODE,
   CODE_ADDRESS,
@@ -790,4 +791,28 @@ test('a claim that goes straight to Plan B asks the clock too: a Mac more than t
   assert.equal(third.ok, true);
   assert.equal(h.frames.at(-1)?.status, 'landed');
   assert.equal(h.frames.at(-1)?.reason, undefined);
+});
+
+test('once the vault has moved, a claim still pays the vault, on the relay and on Plan B, never the allowance the rails spend (PHASE2-PLAN.md C6)', async () => {
+  const allowance = '0xf6beee2877dc58331cfa06c66cc47b5f2535a379';
+  useRailAccounts(() => ({ kind: 'chip', vault: WALLET, spend: allowance }));
+  try {
+    const h = harness();
+    assert.equal((await h.service.claim(CODE)).ok, true);
+    await h.service.idle();
+    const body = JSON.parse(h.world.published[0]!.payload) as { intents: Array<{ receiver_id: string }> };
+    assert.equal(body.intents[0]!.receiver_id, WALLET_ID);
+    assert.equal((h.audit.find((e) => e.type === 'invite_claimed')!.data as { receiver: string }).receiver, WALLET_ID);
+    assert.equal(h.world.balances.get(allowance) ?? 0n, 0n, 'nothing reached the allowance');
+
+    const world = freshWorld();
+    world.relayMode = 'auth';
+    const planB = harness({ world });
+    assert.equal((await planB.service.claim(CODE)).ok, true);
+    await planB.service.idle();
+    assert.equal(world.oneclick.submitted.length, 1, '1Click took the claim');
+    assert.equal(planB.service.landed()[0]!.receiver, WALLET_ID, 'and was held to the vault as the receiver');
+  } finally {
+    useRailAccounts(null);
+  }
 });

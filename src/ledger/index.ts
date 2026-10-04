@@ -9,10 +9,11 @@
 // and the stamp of the pass, and each pocket read carries its own ok flag.
 import type { AppConfig, LedgerSnapshot } from '../types.ts';
 import { loadDemoLedger, loadDemoReads } from './demo.ts';
-import { fetchIntentsHoldings, REFRESH_PERIOD_MS, type IntentsRead } from './intents.ts';
+import { fetchIntentsHoldings, mergeIntentsReads, REFRESH_PERIOD_MS, type AccountRead, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient, type OneClickToken } from '../intents.ts';
 import { evmAddress } from '../keystore/index.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
 
@@ -28,8 +29,15 @@ export type Ledger = {
   // What the intents.near verifier holds for this app. Separate from snapshot() because it is
   // not a chain balance, a verifier outage must not mark a chain stale, and it is undefined
   // rather than empty when no read was attempted (demo mode, or no key), because "not asked"
-  // and "holds nothing" are different facts.
+  // and "holds nothing" are different facts. Once the vault has moved to the chip this is the
+  // vault's read and the allowance's together, every row naming its account (reads()).
   intents(): IntentsRead | undefined;
+  /* The reads intents() is made of, one per account (PHASE2-PLAN.md C6), as the last pass named
+     them. Under kind key both are the vault and its one read. Under kind chip `spend` is the
+     allowance the rails sign for and `vault` is where deposits land; null is an account nobody
+     can name yet (an allowance before this process has opened the wallet). Optional because the
+     tests build many ledgers by hand. */
+  reads?(): { vault: AccountRead | null; spend: AccountRead | null };
   // What the Hyperliquid account holds. Same contract as intents(): undefined when never asked.
   hyperliquid(): HlRead | undefined;
   refresh(): Promise<LedgerSnapshot>;
@@ -81,6 +89,7 @@ function createDemoLedger(cfg: AppConfig): Ledger {
   return {
     snapshot: () => current,
     intents: () => reads.intents,
+    reads: () => reads.split,
     hyperliquid: () => reads.hyperliquid,
     // The fixture is static and nothing is re-fetched, but the stamp is a claim about WHEN the
     // balances were last read, and src/view/basic.ts holds it against the last fill. See the
@@ -170,6 +179,8 @@ async function resolveLivePrices(
 // keystore's plaintext header, one file read, which is nothing next to the RPC calls behind it.
 // Exported because the Hyperliquid reads in src/main.ts have to name the same account, for
 // the same reason: the trading account is this address and nothing in config.
+// It is the VAULT in every kind of wallet: deposits, invites and the trading account stay there
+// once the vault moves to the chip, and only the rails move to the allowance (spendAccountId).
 export function intentsAccountId(cfg: AppConfig): string | null {
   try {
     return evmAddress(cfg.keysPath).toLowerCase();
@@ -178,11 +189,28 @@ export function intentsAccountId(cfg: AppConfig): string | null {
   }
 }
 
+/* The account the rails spend from (src/intents-sign.ts railAccounts), lowercased: the vault
+   under kind key, the allowance once the vault has moved, and null while that allowance cannot be
+   named yet. Asked on every pass, like the vault. */
+export function spendAccountId(cfg: AppConfig): string | null {
+  const vault = intentsAccountId(cfg);
+  try {
+    const accounts = railAccounts(cfg.keysPath);
+    return accounts.kind === 'key' ? vault : (accounts.spend?.toLowerCase() ?? null);
+  } catch {
+    // A read, so the vault alone is a safe answer; the signer asks again and fails by name.
+    return vault;
+  }
+}
+
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: string) => void): Ledger {
   // Shared client so the 186-entry token list is fetched once per process, not per refresh.
   const oneClick = oneClickClient({ fetchImpl });
   const listeners = refreshListeners();
-  let liveIntents: IntentsRead | undefined;
+  // One read per account (PHASE2-PLAN.md C6), each keeping its own misses and its own last good
+  // holdings, and the accounts the last pass read: intents() and reads() answer from these.
+  let byAccount = new Map<string, IntentsRead>();
+  let named: { vault: string | null; spend: string | null } = { vault: null, spend: null };
   let liveHl: HlRead | undefined;
   // Reads started and the newest one written, so a slow read that answers after a newer one
   // has written is dropped at the write: the last answer to arrive is not the newest read, and
@@ -201,8 +229,10 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   // and says why, once, in the log. Blanking the row would say the deposit is gone; marking it
   // stale on the first miss flashed a warning over a readable balance (the wallet report waits
   // for two in a row, see intentsUnreadWhy). The reason used to be captured here and dropped.
-  async function refreshIntents(account: string | null): Promise<IntentsRead | undefined> {
+  // Per account: the allowance's misses are its own, and its line names it.
+  async function refreshIntents(account: string | null, which = ''): Promise<IntentsRead | undefined> {
     if (account === null) return undefined;
+    const last = byAccount.get(account);
     const read = await fetchIntentsHoldings({
       rpcUrl: NEAR_RPC_URL,
       accountId: account,
@@ -211,11 +241,20 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
       fetchImpl,
     });
     if (read.ok) return { ...read, failures: 0 };
-    const failures = (liveIntents?.failures ?? 0) + 1;
-    log(`phosphor: the verifier read failed (${read.error ?? 'no reason given'}), ${failures} in a row`);
-    if (liveIntents === undefined) return { ...read, failures };
-    return { ...read, holdings: liveIntents.holdings, fetchedAt: liveIntents.fetchedAt, failures };
+    const failures = (last?.failures ?? 0) + 1;
+    log(`phosphor: the verifier read${which} failed (${read.error ?? 'no reason given'}), ${failures} in a row`);
+    if (last === undefined) return { ...read, failures };
+    return { ...read, holdings: last.holdings, fetchedAt: last.fetchedAt, failures };
   }
+
+  // The vault's read alone under kind key; under kind chip the vault's and the allowance's together.
+  function combined(): IntentsRead | undefined {
+    const vault = named.vault === null ? undefined : byAccount.get(named.vault);
+    const spend = named.spend === null || named.spend === named.vault ? undefined : byAccount.get(named.spend);
+    if (vault === undefined || spend === undefined) return vault ?? spend;
+    return mergeIntentsReads([vault, spend]);
+  }
+  let liveIntents: IntentsRead | undefined;
 
   // The trading account is the same address the verifier credits, checksummed by the venue's
   // reader. A failed read keeps the last good figures under ok:false, as the verifier read does.
@@ -242,13 +281,26 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     const livePrices = resolveLivePrices(fetchImpl, current.prices, current.priceAsOf ?? {});
 
     // Resolved here, on this pass, so a wallet created after boot is read from its first
-    // refresh on. See intentsAccountId for the bug this closes.
+    // refresh on. See intentsAccountId for the bug this closes. The allowance is read beside
+    // the vault once the vault has moved; the trading account is the vault's in every kind.
     const account = intentsAccountId(cfg);
-    const [intentsRead, hlRead, priced] = await Promise.all([refreshIntents(account), refreshHyperliquid(account), livePrices]);
+    const spend = spendAccountId(cfg);
+    const apart = spend !== null && spend !== account ? spend : null;
+    const [intentsRead, spendRead, hlRead, priced] = await Promise.all([
+      refreshIntents(account),
+      refreshIntents(apart, ' for the allowance'),
+      refreshHyperliquid(account),
+      livePrices,
+    ]);
     // A newer read has already written: this answer is older than what is on screen.
     if (seq < written) return current;
     written = seq;
-    liveIntents = intentsRead;
+    const next = new Map<string, IntentsRead>();
+    if (account !== null && intentsRead !== undefined) next.set(account, intentsRead);
+    if (apart !== null && spendRead !== undefined) next.set(apart, spendRead);
+    byAccount = next;
+    named = { vault: account, spend };
+    liveIntents = combined();
     liveHl = hlRead;
 
     /* What this app owns sits inside the Intents verifier and inside the Hyperliquid account,
@@ -266,9 +318,12 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     return current;
   }
 
+  const accountRead = (account: string | null): AccountRead | null => (account === null ? null : { account, read: byAccount.get(account) });
+
   return {
     snapshot: () => current,
     intents: () => liveIntents,
+    reads: () => ({ vault: accountRead(named.vault), spend: accountRead(named.spend) }),
     hyperliquid: () => liveHl,
     refresh,
     onRefresh: listeners.add,
