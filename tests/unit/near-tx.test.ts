@@ -183,12 +183,12 @@ test('the signature verifies against the key over sha256 of the body, and a wron
   assert.throws(() => signTransaction(tx, new Uint8Array(31)), /32 bytes/);
 });
 
-test('gas: 50 TGas bought at the NEP-642 floor plus 0.01 NEAR is 0.06 NEAR, and a dearer block raises it', () => {
+test('gas: 50 TGas attached and 8 for fees, bought at the NEP-642 floor, plus 0.002 NEAR of storage is 0.06 NEAR; a dearer block raises it', () => {
   assert.equal(EXECUTE_INTENTS_GAS, 50n * TGAS);
   assert.equal(MIN_GAS_PURCHASE_PRICE, 1_000_000_000n);
   assert.equal(GAS_LOW_YOCTO, 6n * 10n ** 22n);
   assert.equal(gasNeededYocto(100_000_000n), GAS_LOW_YOCTO, 'the burn price today sits under the floor');
-  assert.equal(gasNeededYocto(2_000_000_000n), 50n * TGAS * 2_000_000_000n + 10n ** 22n);
+  assert.equal(gasNeededYocto(2_000_000_000n), 58n * TGAS * 2_000_000_000n + 2n * 10n ** 21n);
 });
 
 // ---------- the submit, against a fake RPC ----------
@@ -224,9 +224,18 @@ const rpcError = (cause: string, data: unknown = 'Server error'): Answer => ({
 });
 const RATE_LIMITED: Answer = { body: { jsonrpc: '2.0', id: 'phosphor', error: { code: -429, message: 'Rate limits exceeded' } } };
 const HTTP_429: Answer = { http: 429, body: { message: 'Too Many Requests' } };
+// nearcore answers a tx poll at FINAL on a hash it never saw with TIMEOUT_ERROR, not UNKNOWN_TRANSACTION.
 const TIMEOUT_ERROR = rpcError('TIMEOUT_ERROR', 'Timeout');
 const UNKNOWN_TRANSACTION = rpcError('UNKNOWN_TRANSACTION', "Transaction doesn't exist");
-const INVALID_NONCE = rpcError('INVALID_TRANSACTION', { TxExecutionError: { InvalidTxError: { InvalidNonce: { ak_nonce: AK_NONCE + 1, tx_nonce: AK_NONCE + 1 } } } });
+// INVALID_TRANSACTION carries its variant in data, as nearcore 2.13.4 serializes InvalidTxError.
+const invalidTx = (variant: unknown): Answer => rpcError('INVALID_TRANSACTION', { TxExecutionError: { InvalidTxError: variant } });
+const INVALID_SIGNATURE = invalidTx('InvalidSignature');
+const EXPIRED = invalidTx('Expired');
+const KEY_NOT_FOUND = invalidTx({ InvalidAccessKeyError: { AccessKeyNotFound: { account_id: 'gas', public_key: 'ed25519:key' } } });
+const INVALID_NONCE = invalidTx({ InvalidNonce: { tx_nonce: AK_NONCE + 1, ak_nonce: AK_NONCE + 1 } });
+const SHARD_CONGESTED = invalidTx({ ShardCongested: { shard_id: 6, congestion_level: 1 } });
+const NOT_ENOUGH_BALANCE = invalidTx({ NotEnoughBalance: { signer_id: 'gas', balance: '1', cost: '2' } });
+const NOT_ENOUGH_ALLOWANCE = invalidTx({ InvalidAccessKeyError: { NotEnoughAllowance: { account_id: 'gas', public_key: 'ed25519:key', allowance: '1', cost: '2' } } });
 
 // The hash of whatever the call is about: the sent bytes for send_tx, the asked hash for tx.
 function hashOf(params: Record<string, unknown>): string {
@@ -237,7 +246,7 @@ function hashOf(params: Record<string, unknown>): string {
 
 // A FINAL answer shaped as nearcore 2.13.4 returns it (read live 2026-10-04): the transaction
 // becomes receipt R1 on intents.near, and R2 is the refund to the signer.
-function final(main: Record<string, unknown>, logs: string[] = LOGS) {
+function final(main: Record<string, unknown>, logs: string[] = LOGS, status = 'FINAL') {
   return (params: Record<string, unknown>): Answer => {
     const txHash = hashOf(params);
     return {
@@ -245,7 +254,7 @@ function final(main: Record<string, unknown>, logs: string[] = LOGS) {
         jsonrpc: '2.0',
         id: 'phosphor',
         result: {
-          final_execution_status: 'FINAL',
+          final_execution_status: status,
           status: 'Failure' in main ? main : { SuccessValue: '' },
           transaction: { hash: txHash, signer_id: GAS.accountId, receiver_id: 'intents.near', priority_fee: 0 },
           transaction_outcome: {
@@ -263,6 +272,7 @@ function final(main: Record<string, unknown>, logs: string[] = LOGS) {
   };
 }
 const EXECUTED = final({ SuccessValue: '' });
+const NOT_FINAL_YET = final({ SuccessValue: '' }, LOGS, 'EXECUTED_OPTIMISTIC');
 const PANICKED = final({ Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: 'Smart contract panicked: invalid signature' } } } } });
 
 type ChainOptions = {
@@ -276,11 +286,13 @@ type ChainOptions = {
 };
 
 /* The chain double. Each list answers in order and its last entry repeats. Every request must carry
-   a deadline, and an executed send moves the key's nonce on, the way the chain does. */
+   a deadline, and a transaction that reaches an outcome moves the key's nonce on once, the way the
+   chain does. */
 function fakeChain(o: ChainOptions = {}) {
   const calls: Call[] = [];
+  const landed = new Set<string>();
   let nonce = AK_NONCE;
-  const queues = { block: [...(o.block ?? [])], send: [...(o.sends ?? [EXECUTED])], poll: [...(o.polls ?? [UNKNOWN_TRANSACTION])] };
+  const queues = { block: [...(o.block ?? [])], send: [...(o.sends ?? [EXECUTED])], poll: [...(o.polls ?? [TIMEOUT_ERROR])] };
   const next = (list: Script[], params: Record<string, unknown>): Answer => {
     const script = list.length > 1 ? list.shift()! : list[0];
     return typeof script === 'function' ? script(params) : script;
@@ -302,7 +314,11 @@ function fakeChain(o: ChainOptions = {}) {
     }
     if (method === 'send_tx') {
       const reply = next(queues.send, params);
-      if (typeof reply === 'object' && 'result' in (reply.body as object)) nonce += 1;
+      const hash = hashOf(params);
+      if (typeof reply === 'object' && 'result' in (reply.body as object) && !landed.has(hash)) {
+        landed.add(hash);
+        nonce += 1;
+      }
       return reply;
     }
     if (method === 'tx') return next(queues.poll, params);
@@ -399,54 +415,87 @@ test('failed: the verifier refused the intents, so nothing ran, and its words ar
   assert.equal(sends(chain.calls).length, 1);
 });
 
-test('failed: a transaction the node refuses on the first send was never taken, and is not sent again', async () => {
-  const chain = fakeChain({ sends: [INVALID_NONCE] });
-  const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
-  assert.equal(outcome.status, 'failed');
-  assert.match(outcome.reason ?? '', /the chain refused the transaction: INVALID_TRANSACTION .*InvalidNonce/);
-  assert.equal(outcome.gasBurnt, null);
-  assert.equal(sends(chain.calls).length, 1);
-  assert.equal(polls(chain.calls).length, 0);
+test('failed: bytes no block will ever take (a bad signature, an expired block hash, a key not on the account) are not sent again', async () => {
+  for (const [refusal, words] of [[INVALID_SIGNATURE, /InvalidSignature/], [EXPIRED, /Expired/], [KEY_NOT_FOUND, /AccessKeyNotFound/]] as const) {
+    const chain = fakeChain({ sends: [refusal] });
+    const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
+    assert.equal(outcome.status, 'failed');
+    assert.match(outcome.reason ?? '', /the chain refused the transaction: INVALID_TRANSACTION/);
+    assert.match(outcome.reason ?? '', words);
+    assert.equal(outcome.gasBurnt, null);
+    assert.equal(sends(chain.calls).length, 1);
+    assert.equal(polls(chain.calls).length, 0);
+  }
 });
 
-test('unknown: a timeout is asked for by hash and the identical bytes go again until the budget, never a new signature', async () => {
+test('a refusal a later block can lift is never failed: nearcore says it about a copy it already forwarded, so the identical bytes go again', async () => {
+  for (const refusal of [SHARD_CONGESTED, NOT_ENOUGH_BALANCE, NOT_ENOUGH_ALLOWANCE, INVALID_NONCE]) {
+    const lifted = fakeChain({ sends: [refusal, EXECUTED] });
+    const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(lifted));
+    assert.equal(outcome.status, 'executed');
+    assert.equal(sends(lifted.calls).length, 2);
+    assert.equal(new Set(sends(lifted.calls)).size, 1);
+
+    const stuck = fakeChain({ sends: [refusal] });
+    const end = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(stuck));
+    assert.equal(end.status, 'unknown', 'refused to the end of the budget is still unknown');
+    assert.match(end.reason ?? '', /INVALID_TRANSACTION/);
+  }
+});
+
+test('unknown: a timeout sends the identical bytes again until the budget runs out, never a new signature and never past the budget', async () => {
   const clock = fakeClock();
-  const chain = fakeChain({ sends: [TIMEOUT_ERROR], polls: [UNKNOWN_TRANSACTION] });
+  const chain = fakeChain({ sends: [TIMEOUT_ERROR] });
   const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain, clock));
   assert.equal(outcome.status, 'unknown');
   assert.equal(outcome.gasBurnt, null);
+  assert.match(outcome.reason ?? '', /TIMEOUT_ERROR/);
   const sent = sends(chain.calls);
-  assert.ok(sent.length >= 3, `the same bytes resent after each "no record of it" (${sent.length} sends)`);
+  assert.ok(sent.length >= 3, `${sent.length} sends`);
   assert.equal(new Set(sent).size, 1, 'every send carried the identical bytes');
   assert.equal(outcome.txHash, hashOf({ signed_tx_base64: sent[0] }));
-  for (const poll of polls(chain.calls)) {
-    assert.deepEqual(poll.params, { tx_hash: outcome.txHash, sender_account_id: GAS.accountId, wait_until: 'FINAL' });
-  }
-  assert.ok(clock.elapsed() >= SUBMIT_BUDGET_MS && clock.elapsed() < SUBMIT_BUDGET_MS + 10_000, `gave up at ${clock.elapsed()} ms`);
+  assert.equal(clock.elapsed(), SUBMIT_BUDGET_MS, 'the last pause stops at the budget');
 });
 
-test('a timeout whose transaction then reads FINAL by hash is executed, with no second send', async () => {
-  const chain = fakeChain({ sends: [TIMEOUT_ERROR], polls: [EXECUTED] });
+test('a timeout, then the identical bytes again: send_tx answers the transaction it already took with its FINAL outcome', async () => {
+  const chain = fakeChain({ sends: [TIMEOUT_ERROR, EXECUTED] });
   const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
   assert.equal(outcome.status, 'executed');
-  assert.equal(sends(chain.calls).length, 1);
-  assert.equal(polls(chain.calls).length, 1);
+  assert.equal(sends(chain.calls).length, 2);
+  assert.equal(new Set(sends(chain.calls)).size, 1);
 });
 
-test('a lost reply (the fetch itself failed or timed out) is asked about, never called failed', async () => {
+test('a lost reply (the fetch itself failed or timed out) is never failed: the identical bytes go again', async () => {
   for (const lost of ['network', 'timeout'] as const) {
-    const chain = fakeChain({ sends: [lost], polls: [EXECUTED] });
+    const chain = fakeChain({ sends: [lost, EXECUTED] });
     const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
     assert.equal(outcome.status, 'executed', lost);
-    assert.equal(sends(chain.calls).length, 1, lost);
+    assert.equal(new Set(sends(chain.calls)).size, 1, lost);
   }
 });
 
-test('a resend refused after a copy may have landed is asked for by hash: the first copy ran', async () => {
-  const chain = fakeChain({ sends: [TIMEOUT_ERROR, INVALID_NONCE], polls: [UNKNOWN_TRANSACTION, EXECUTED] });
+test('an answer short of FINAL is asked for by hash, and a poll that times out sends the identical bytes again', async () => {
+  const chain = fakeChain({ sends: [NOT_FINAL_YET, EXECUTED], polls: [TIMEOUT_ERROR] });
   const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
   assert.equal(outcome.status, 'executed');
-  assert.deepEqual(chain.calls.filter((c) => c.method === 'send_tx' || c.method === 'tx').map((c) => c.method), ['send_tx', 'tx', 'send_tx', 'tx']);
+  assert.deepEqual(chain.calls.filter((c) => c.method === 'send_tx' || c.method === 'tx').map((c) => c.method), ['send_tx', 'tx', 'send_tx']);
+  const [poll] = polls(chain.calls);
+  assert.deepEqual(poll.params, { tx_hash: outcome.txHash, sender_account_id: GAS.accountId, wait_until: 'FINAL' });
+  assert.equal(new Set(sends(chain.calls)).size, 1);
+});
+
+test('a rate-limited poll is asked again as a poll', async () => {
+  const chain = fakeChain({ sends: [NOT_FINAL_YET], polls: [RATE_LIMITED, EXECUTED] });
+  const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
+  assert.equal(outcome.status, 'executed');
+  assert.deepEqual(chain.calls.filter((c) => c.method === 'send_tx' || c.method === 'tx').map((c) => c.method), ['send_tx', 'tx', 'tx']);
+});
+
+test('bytes refused after an earlier copy may have landed are asked for by hash: the earlier copy ran', async () => {
+  const chain = fakeChain({ sends: [TIMEOUT_ERROR, EXPIRED], polls: [EXECUTED] });
+  const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
+  assert.equal(outcome.status, 'executed');
+  assert.deepEqual(chain.calls.filter((c) => c.method === 'send_tx' || c.method === 'tx').map((c) => c.method), ['send_tx', 'send_tx', 'tx']);
   assert.equal(new Set(sends(chain.calls)).size, 1);
 });
 
@@ -462,12 +511,12 @@ test('-429 and HTTP 429: not taken, so the identical bytes go again after a paus
   assert.equal(clock.elapsed(), 1000 + 2000);
 });
 
-test('an error the RPC does not explain (internal, or not even an object) may hide a copy: asked about, then unknown', async () => {
-  for (const odd of [rpcError('INTERNAL_ERROR'), { body: { jsonrpc: '2.0', id: 'phosphor', error: 'boom' } }]) {
-    const chain = fakeChain({ sends: [odd], polls: [UNKNOWN_TRANSACTION] });
+test('an error the RPC does not explain (internal, routed, not even an object) may hide a copy: never failed', async () => {
+  for (const odd of [rpcError('INTERNAL_ERROR'), rpcError('REQUEST_ROUTED'), UNKNOWN_TRANSACTION, { body: { jsonrpc: '2.0', id: 'phosphor', error: 'boom' } }]) {
+    const chain = fakeChain({ sends: [odd] });
     const outcome = await submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain));
     assert.equal(outcome.status, 'unknown');
-    assert.ok(polls(chain.calls).length > 0);
+    assert.ok(sends(chain.calls).length >= 2);
     assert.equal(new Set(sends(chain.calls)).size, 1);
   }
 });
@@ -496,7 +545,7 @@ test('gas_low follows the block gas price once it passes the purchase floor', as
   const chain = fakeChain({ amount: '100000000000000000000000', gasPrice: '2000000000' });
   await assert.rejects(
     submitExecuteIntents({ gasSeed: SEED, signed: ONE }, deps(chain)),
-    (err: unknown) => err instanceof NearTxError && err.code === 'gas_low' && /needs 0\.11 NEAR/.test(err.message),
+    (err: unknown) => err instanceof NearTxError && err.code === 'gas_low' && /needs 0\.118 NEAR: 58 TGas bought upfront/.test(err.message),
   );
   assert.equal(sends(chain.calls).length, 0);
 });

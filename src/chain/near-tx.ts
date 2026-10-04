@@ -16,21 +16,22 @@
 //
 // Gas. NEP-642 is live at protocol 86: attached gas is bought upfront at min_gas_purchase_price,
 // 0.001 NEAR per TGas, and what is not burnt comes back in a refund receipt a block later. So the
-// account needs the attached gas times that price free at every submit, and `gas_low` refuses
-// before anything is signed. 50 TGas is about three times the heaviest call the vault makes: 68 live
+// account needs the attached gas and the call's own fees, at that price, free at every submit, and
+// `gas_low` refuses before anything is signed. 50 TGas is about three times the heaviest call the vault makes: 68 live
 // execute_intents read back on 2026-10-04 burnt 3.07 TGas plus 3.31 per signed intent, and a
 // webauthn intent adds about 1.1 for its P-256 check.
 //
 // After the bytes leave there are three answers. executed: the verifier's receipt ran. failed: it
-// did not and never will (the chain refused the transaction, or the verifier refused the intents).
-// unknown: anything else. A rate limit, a timeout or a lost reply is never "failed": the transaction
-// is asked for by its hash and the IDENTICAL bytes are sent again, never re-signed, so at most one
-// copy can run.
+// did not and never can (the verifier refused the intents, or the node refused bytes no block will
+// ever take). unknown: anything else. A rate limit, a timeout, a lost reply or a refusal that a later
+// block could lift is never "failed": the IDENTICAL bytes are sent again, never re-signed, so at most
+// one copy can run. send_tx is idempotent on identical bytes and waits for their outcome, which makes
+// a resend the poll that also recovers a copy a node dropped.
 
 import crypto from 'node:crypto';
 
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
-import { isTimeout, readTimeout, venueWriteTimeout } from '../net.ts';
+import { READ_TIMEOUT_MS, VENUE_WRITE_TIMEOUT_MS, isTimeout, withTimeout } from '../net.ts';
 import { oneLine } from '../venue-words.ts';
 import { base58Decode, base58Encode, nearChainSpec } from './near.ts';
 
@@ -46,15 +47,20 @@ export const EXECUTE_INTENTS_GAS = 50n * TGAS;
    gas price is higher, that is the price. */
 export const MIN_GAS_PURCHASE_PRICE = 1_000_000_000n;
 
-/* On top of the attached gas: the account's storage stake (an implicit account with its one key
-   stores 182 bytes, 0.00182 NEAR at 10^19 yocto a byte), the conversion burn and the action's
-   execution fees. Under 0.003 NEAR together today. */
-const GAS_MARGIN = YOCTO_PER_NEAR / 100n;
+/* The call's own fees on top of the attached gas: creating the receipt and the FunctionCall action,
+   sent and executed. Protocol 86's runtime config puts them at 1.2 TGas plus 0.05 TGas a kilobyte of
+   args, 4.5 TGas at the 64 KiB allowed here. Counted at the purchase price, which is never lower
+   than the price the sending part burns at. */
+const FEE_GAS = 8n * TGAS;
+
+// What the account must keep for its own storage: an implicit account with its one key stores 182
+// bytes, 0.00182 NEAR at 10^19 yocto a byte.
+const STORAGE_RESERVE = 2n * 10n ** 21n;
 
 // What the gas account must hold for one submit at a given block gas price.
 export function gasNeededYocto(gasPrice: bigint): bigint {
   const price = gasPrice > MIN_GAS_PURCHASE_PRICE ? gasPrice : MIN_GAS_PURCHASE_PRICE;
-  return EXECUTE_INTENTS_GAS * price + GAS_MARGIN;
+  return (EXECUTE_INTENTS_GAS + FEE_GAS) * price + STORAGE_RESERVE;
 }
 
 // The same at today's gas price, which sits under the floor: 0.06 NEAR.
@@ -65,9 +71,10 @@ export const GAS_LOW_YOCTO = gasNeededYocto(0n);
 export const MAX_PAYLOADS = 8;
 const MAX_ARGS_BYTES = 64 * 1024;
 
-/* How long a submit keeps asking after the first send before it answers unknown. send_tx at FINAL
-   answers in a few seconds; past a minute the signed intents are near their own two-minute
-   deadline, and the caller's proof by the verifier's nonce is the better question. */
+/* How long a submit keeps asking after the first send before it answers unknown; no request or
+   pause runs past it. send_tx at FINAL answers in a few seconds; past a minute the signed intents
+   are near their own two-minute deadline, and the caller's proof by the verifier's nonce is the
+   better question. */
 export const SUBMIT_BUDGET_MS = 60_000;
 
 // ---------- refusals ----------
@@ -322,16 +329,16 @@ function withDefaults(deps: SubmitDeps): Deps {
 /* One JSON-RPC exchange, sorted into what the callers branch on. `rate_limited` is FastNEAR's free
    tier saying no, as HTTP 429 or as code -429 in the body: the request was not taken. `no_answer` is
    a failure to hear back, which for a send is not a failure to send. `cause` is nearcore's own name
-   for an error (error.cause.name, else error.name). */
+   for an error (error.cause.name, else error.name), and `data` its detail as sent. */
 type Reply =
   | { kind: 'result'; result: unknown }
-  | { kind: 'error'; cause: string; detail: string }
+  | { kind: 'error'; cause: string; detail: string; data: unknown }
   | { kind: 'rate_limited' }
   | { kind: 'no_answer'; why: string };
 
 type RpcBody = { result?: unknown; error?: { name?: unknown; code?: unknown; message?: unknown; data?: unknown; cause?: { name?: unknown; info?: unknown } } };
 
-async function exchange(method: string, params: unknown, deps: Deps, waits: boolean): Promise<Reply> {
+async function exchange(method: string, params: unknown, deps: Deps, timeoutMs: number): Promise<Reply> {
   const { fetchImpl } = deps;
   let res: Response;
   try {
@@ -339,8 +346,7 @@ async function exchange(method: string, params: unknown, deps: Deps, waits: bool
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ jsonrpc: '2.0', id: 'phosphor', method, params }),
-      // send_tx and tx wait on the chain at FINAL: the write budget, and its timeout means unknown.
-      signal: waits ? venueWriteTimeout() : readTimeout(),
+      signal: withTimeout(timeoutMs),
     });
   } catch (err) {
     return { kind: 'no_answer', why: isTimeout(err) ? 'timed out' : oneLine(err instanceof Error ? err.message : err, 160) };
@@ -354,10 +360,10 @@ async function exchange(method: string, params: unknown, deps: Deps, waits: bool
   }
   const error = body?.error;
   if (error !== undefined && error !== null) {
-    if (typeof error !== 'object') return { kind: 'error', cause: 'UNKNOWN', detail: oneLine(error, 200) };
+    if (typeof error !== 'object') return { kind: 'error', cause: 'UNKNOWN', detail: oneLine(error, 200), data: error };
     if (error.code === -429) return { kind: 'rate_limited' };
     const cause = typeof error.cause?.name === 'string' ? error.cause.name : typeof error.name === 'string' ? error.name : 'UNKNOWN';
-    return { kind: 'error', cause, detail: oneLine(error.data ?? error.message ?? '', 200) };
+    return { kind: 'error', cause, detail: oneLine(error.data ?? error.message ?? '', 200), data: error.data };
   }
   if (!res.ok || body === null || typeof body !== 'object' || !('result' in body)) return { kind: 'no_answer', why: `http ${res.status} with no result` };
   return { kind: 'result', result: body.result };
@@ -365,10 +371,10 @@ async function exchange(method: string, params: unknown, deps: Deps, waits: bool
 
 // A read asks up to three times, a second and then two apart, while the RPC rate-limits or does not answer.
 async function read(method: string, params: unknown, deps: Deps): Promise<Reply> {
-  let reply = await exchange(method, params, deps, false);
+  let reply = await exchange(method, params, deps, READ_TIMEOUT_MS);
   for (let attempt = 1; attempt < 3 && (reply.kind === 'rate_limited' || reply.kind === 'no_answer'); attempt += 1) {
     await deps.sleep(1000 * attempt);
-    reply = await exchange(method, params, deps, false);
+    reply = await exchange(method, params, deps, READ_TIMEOUT_MS);
   }
   return reply;
 }
@@ -496,7 +502,9 @@ export type ExecuteOutcome = {
 };
 
 /* Signs one execute_intents call with the gas account and sends it at FINAL. Throws NearTxError
-   only before anything is signed; once signed it always answers an ExecuteOutcome. */
+   only before anything is signed; once signed it always answers an ExecuteOutcome. `failed` is about
+   this transaction, not the signed intents inside it: they left this Mac in its bytes, anyone holding
+   them can still submit them until their own deadline, so nothing replaces them before that. */
 export async function submitExecuteIntents(
   request: { gasSeed: Uint8Array; signed: readonly MultiPayload[] },
   deps: SubmitDeps = {},
@@ -584,7 +592,7 @@ async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8
     throw new NearTxError(
       'gas_low',
       `the gas account holds ${nearText(account.amount)} NEAR and a submit needs ${nearText(need)} NEAR: ` +
-        `${EXECUTE_INTENTS_GAS / TGAS} TGas bought upfront (NEP-642), and 0.01 NEAR for storage and fees`,
+        `${(EXECUTE_INTENTS_GAS + FEE_GAS) / TGAS} TGas bought upfront (NEP-642), and its own storage`,
     );
   }
   const signed = signWith(
@@ -601,21 +609,56 @@ async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8
   return deliver(signed, gas.accountId, d);
 }
 
-/* The node refused the transaction itself: it was not taken, so it can never run. Every other error
-   (TIMEOUT_ERROR, an internal error, a request routed elsewhere) may hide a copy on its way. */
-const REFUSED = new Set(['INVALID_TRANSACTION', 'PARSE_ERROR', 'REQUEST_VALIDATION_ERROR']);
+/* Refusals the bytes themselves decide: no block will ever take this transaction, wherever a copy
+   went. Every other refusal can lift, and nearcore says it even about a copy it already took: send_tx
+   forwards the transaction, then re-checks it against newer state while waiting and answers
+   INVALID_TRANSACTION for a congested shard or a gas price that rose, with the forwarded copy still
+   able to run (chain/jsonrpc/src/lib.rs, tx_status_fetch, nearcore 2.13.4). InvalidNonce is left out
+   too: nearcore's own check that the nonce went to this very transaction can miss a copy its view
+   has not indexed yet. */
+const NEVER_VALID = new Set([
+  'InvalidSignature',
+  'InvalidSignerId',
+  'InvalidReceiverId',
+  'SignerDoesNotExist',
+  'InvalidChain',
+  'Expired',
+  'InvalidAccessKeyError',
+  'TransactionSizeExceeded',
+  'ActionsValidation',
+  'InvalidTransactionVersion',
+]);
+
+function neverValid(reply: { cause: string; data: unknown }): boolean {
+  if (reply.cause === 'PARSE_ERROR' || reply.cause === 'REQUEST_VALIDATION_ERROR') return true;
+  if (reply.cause !== 'INVALID_TRANSACTION') return false;
+  // data is {"TxExecutionError":{"InvalidTxError":<variant>}}: a unit variant is a string, any other
+  // an object with one key. NotEnoughAllowance is a balance, so it stays out like NotEnoughBalance.
+  const variant = record(record(reply.data).TxExecutionError).InvalidTxError;
+  const name = typeof variant === 'string' ? variant : Object.keys(record(variant))[0];
+  if (name === undefined || !NEVER_VALID.has(name)) return false;
+  const inner = record(variant)[name];
+  return name !== 'InvalidAccessKeyError' || (typeof inner === 'string' ? inner : Object.keys(record(inner))[0]) !== 'NotEnoughAllowance';
+}
 
 async function deliver(signed: SignedNearTransaction, sender: string, d: Deps): Promise<ExecuteOutcome> {
   const started = d.now();
-  // Whether any copy sent so far may have been taken. Until one may, a refusal is final.
+  const left = () => d.budgetMs - (d.now() - started);
+  // Whether any copy sent so far may have been taken. Until one may, a refusal of the bytes is final.
   let mayHaveLanded = false;
   let ask: 'send' | 'poll' = 'send';
   let last = '';
   for (let round = 0; ; round += 1) {
-    const reply =
-      ask === 'send'
-        ? await exchange('send_tx', { signed_tx_base64: signed.base64, wait_until: 'FINAL' }, d, true)
-        : await exchange('tx', { tx_hash: signed.hash, sender_account_id: sender, wait_until: 'FINAL' }, d, true);
+    if (round > 0 && left() <= 0) return settled('unknown', signed.hash, last);
+    const timeoutMs = Math.min(VENUE_WRITE_TIMEOUT_MS, left());
+    const sent: boolean = ask === 'send';
+    const reply = sent
+      ? await exchange('send_tx', { signed_tx_base64: signed.base64, wait_until: 'FINAL' }, d, timeoutMs)
+      : await exchange('tx', { tx_hash: signed.hash, sender_account_id: sender, wait_until: 'FINAL' }, d, timeoutMs);
+    // Unless an answer says otherwise, the identical bytes go again: send_tx takes a copy it already
+    // has as the same transaction and waits for its outcome, and takes a dropped one afresh. A tx poll
+    // at FINAL on a hash the node never saw only times out, so it cannot tell a dropped copy apart.
+    ask = 'send';
     if (reply.kind === 'result') {
       const outcome = outcomeOf(reply.result, signed.hash);
       if (outcome !== null) return outcome;
@@ -623,24 +666,21 @@ async function deliver(signed: SignedNearTransaction, sender: string, d: Deps): 
       ask = 'poll';
       last = 'the RPC answered without a final outcome for it';
     } else if (reply.kind === 'rate_limited') {
-      // Not taken. The same request again after a pause.
+      // Not taken: the same request again.
+      ask = sent ? 'send' : 'poll';
       last = 'the RPC rate-limited the request';
-    } else if (reply.kind === 'error' && reply.cause === 'UNKNOWN_TRANSACTION') {
-      // No copy is known: the identical bytes again.
-      ask = 'send';
-      last = 'the chain had no record of it';
-    } else if (reply.kind === 'error' && REFUSED.has(reply.cause)) {
+    } else if (reply.kind === 'error' && neverValid(reply)) {
       if (!mayHaveLanded) return settled('failed', signed.hash, `the chain refused the transaction: ${reply.cause} ${reply.detail}`);
-      // A copy sent earlier may be what used the nonce (InvalidNonce): ask for it by hash.
+      // An earlier copy may have run before these bytes became unacceptable: ask for it by hash.
       ask = 'poll';
       last = `${reply.cause} ${reply.detail}`;
     } else {
-      if (ask === 'send') mayHaveLanded = true;
-      ask = 'poll';
+      // TIMEOUT_ERROR, a refusal that can lift, an internal error, a routed request, a lost reply.
+      if (sent) mayHaveLanded = true;
       last = reply.kind === 'no_answer' ? reply.why : `${reply.cause} ${reply.detail}`;
     }
-    if (d.now() - started >= d.budgetMs) return settled('unknown', signed.hash, last);
-    await d.sleep(Math.min(1000 * 2 ** round, 8000));
+    if (left() <= 0) return settled('unknown', signed.hash, last);
+    await d.sleep(Math.min(1000 * 2 ** round, 8000, left()));
   }
 }
 
