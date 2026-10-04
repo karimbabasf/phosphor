@@ -15,6 +15,7 @@ import type {
   Verdict,
   WriteDraft,
 } from '../types.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { evaluate } from '../policy/engine.ts';
 import { loadPolicy } from '../policy/file.ts';
 import { renderSentences } from '../policy/render.ts';
@@ -161,8 +162,17 @@ export function ourEvmAddress(ctx: PCtx, problems: string[]): string {
 // Who owns a balance held inside intents.near: the same EVM address. A SOL balance in there
 // is owned by the EVM account, not by any Solana address, and the callers lowercase it the
 // way the verifier does.
+// The account a move SPENDS from, which is what every draft names as `from`: once the vault has
+// moved to the chip that is the allowance (src/intents-sign.ts railAccounts, PHASE2-PLAN.md C6),
+// and the vault itself moves only behind a touch. The Hyperliquid account stays ourEvmAddress.
 export function ourIntentsAddress(ctx: PCtx, problems: string[]): string {
-  return ourEvmAddress(ctx, problems);
+  const accounts = railAccounts(ctx.cfg.keysPath);
+  if (accounts.kind === 'key') return ourEvmAddress(ctx, problems);
+  if (accounts.spend === null) {
+    problems.push('Unlock the wallet first: the app names your allowance account only once it has opened your wallet.');
+    return '';
+  }
+  return accounts.spend;
 }
 
 /* Who is proposing: the idempotency key they chose and the seat they hold. Every propose door

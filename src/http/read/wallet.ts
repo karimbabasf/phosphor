@@ -167,6 +167,44 @@ export function agentWallet<R extends WalletRow, V extends { rows: R[]; unpriced
   return { ...view, rows, unpriced: view.unpriced.map((s) => tags.get(s) ?? s) };
 }
 
+/* WHAT MOVES WITHOUT A TOUCH, AND WHAT DOES NOT (PHASE2-PLAN.md C6). Once the vault has moved to
+   the chip, every move the agent proposes spends the allowance, and the vault moves only through a
+   top-up the person confirms with Touch ID. So the wallet read says which coins are which:
+   `spendable` is the allowance and `savings` is the vault, each with its own rows and total, and
+   each intents row in `rows` carries its pocket. Nothing changes under kind key, where every coin
+   in the balance is spendable and the answer is what it always was. */
+export const SAVINGS_NOTE =
+  'Your vault. Moves spend your allowance; a move bigger than the allowance first takes the shortfall from the vault, ' +
+  'a top-up the person confirms with Touch ID.';
+export const SPENDABLE_LOCKED = 'Unlock the wallet once so the app can read your allowance.';
+
+type PocketRow = { symbol: string; quantity: number; quantityExact: string | null; valueUsd: number };
+type Pocket = { totalUsd: number | null; rows: PocketRow[]; note?: string };
+
+function pockets<R extends WalletRow & { quantityExact: string | null }>(ctx: Ctx, rows: R[]): { rows: R[]; spendable: Pocket; savings: Pocket } | null {
+  const reads = ctx.ledger.reads?.();
+  const vault = reads?.vault?.account ?? null;
+  const spend = reads?.spend?.account ?? null;
+  if (vault === null || spend === vault) return null;
+  const of = (account: string | null): Pocket => {
+    const mine = rows.filter((r) => r.kind === 'intents' && account !== null && r.intents?.accountId.toLowerCase() === account);
+    return {
+      totalUsd: Math.round(mine.reduce((sum, r) => sum + r.valueUsd, 0) * 100) / 100,
+      rows: mine.map((r) => ({ symbol: r.symbol, quantity: r.quantity, quantityExact: r.quantityExact, valueUsd: r.valueUsd })),
+    };
+  };
+  const tagged = rows.map((r) => {
+    const account = r.kind === 'intents' ? r.intents?.accountId.toLowerCase() : undefined;
+    if (account === spend) return { ...r, pocket: 'spendable' as const };
+    return account === vault ? { ...r, pocket: 'savings' as const } : r;
+  });
+  return {
+    rows: tagged,
+    spendable: spend === null ? { totalUsd: null, rows: [], note: SPENDABLE_LOCKED } : of(spend),
+    savings: { ...of(vault), note: SAVINGS_NOTE },
+  };
+}
+
 // Every coin this app knows looks like this; anything else in a symbol is the agent's own string.
 const TICKER = /^[A-Za-z0-9]{2,8}$/;
 
@@ -292,8 +330,12 @@ export const walletReads: ReadTable = {
     const vault = vaultStatus(ctx);
     const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
     // Exact quantities first, by the real ids; then the ids no list vouches for are made opaque.
+    const view = agentWallet({ ...wallet, rows: withExactQuantities(wallet.rows, ctx.ledger.intents()) });
+    // Then, once the vault has moved, which of it the agent's moves can spend.
+    const split = pockets(ctx, view.rows);
     sendJson(res, 200, {
-      ...agentWallet({ ...wallet, rows: withExactQuantities(wallet.rows, ctx.ledger.intents()) }),
+      ...view,
+      ...(split ?? {}),
       custody: vault.custody,
       backedUp: vault.backedUp,
     });

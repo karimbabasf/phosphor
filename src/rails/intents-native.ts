@@ -102,8 +102,8 @@ export const INTENTS_NATIVE_COUNTERPARTY = INTENTS_VERIFIER;
 // so the relay rail can share them without importing this rail; they are re-exported here
 // under their old names for the rails and tests that read them from this module.
 export const INTENTS_SIGNING_STANDARD = ERC191_STANDARD;
-export { duplicateJsonKey, erc191SignatureField, liveIntentsSigner } from '../intents-sign.ts';
-export type { IntentsSignerPort } from '../intents-sign.ts';
+export { duplicateJsonKey, erc191SignatureField, liveIntentsSigner, railAccounts } from '../intents-sign.ts';
+export type { IntentsSignerPort, RailAccounts } from '../intents-sign.ts';
 
 // Environment variable carrying the partner API key. Read here rather than in the registry
 // so the name lives next to the message that tells a human to set it.

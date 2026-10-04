@@ -20,6 +20,8 @@ import {
   minReceivedForSend,
 } from '../../src/rails/intents-send.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { liveIntentsSigner } from '../../src/intents-sign.ts';
+import { KINDS, signerOf, useKind } from './helpers/rail-kinds.ts';
 
 const OWNER = getAddress('0x1111111111111111111111111111111111111111');
 const ACCOUNT = OWNER.toLowerCase();
@@ -123,6 +125,8 @@ type Overrides = {
   receiver?: Array<bigint | null>;
   // The token list as 1Click answers it at each read: a list that changes between the card and the click.
   tokens?: (list: OneClickToken[]) => OneClickToken[];
+  // The signer itself: the both-kinds tests hand in the live one.
+  signer?: IntentsSignerPort;
 };
 
 function apiOf(over: Overrides = {}): { api: IntentsApiPort; calls: ApiCalls } {
@@ -171,7 +175,7 @@ function railOf(over: Overrides = {}) {
   const rail = intentsSendRail({
     keysPath: '/nonexistent/keys.json',
     api,
-    signer,
+    signer: over.signer ?? signer,
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
@@ -371,3 +375,28 @@ test('a send approved before its coin was pinned is not run', async () => {
   await assert.rejects(() => rail.execute(unpinned), /approved before Phosphor pinned the coins it moves, so it was not run and nothing was signed/);
   assert.equal(calls.quotes.length, 0);
 });
+
+// ---------- both kinds of wallet (PHASE2-PLAN.md C6) ----------
+
+// A throwaway key: the live signer needs a real one, and the fixtures' 0x1111... account has none.
+const KIND_KEY = `0x${'44'.repeat(32)}` as const;
+
+for (const kind of KINDS) {
+  test(`kind ${kind}: the live signer signs the send once, for the account it spends, and the refund goes back to that account`, async () => {
+    const run = useKind(kind, KIND_KEY);
+    try {
+      const account = run.spend.toLowerCase();
+      const { rail, calls } = railOf({ signer: liveIntentsSigner, echo: { refundTo: account }, payload: payloadOf({ signer_id: account }) });
+      const result = await rail.execute(draftOf({ from: account }));
+      assert.equal(result.ok, true, result.detail);
+      assert.equal(calls.quotes[0]?.account, account, 'quoted for the account the move spends: 1Click refunds to it');
+      assert.deepEqual(calls.generated, [{ signerId: account, depositAddress: HANDLE }]);
+      assert.equal(calls.submitted.length, 1);
+      const { payload, signature } = calls.submitted[0]!;
+      assert.equal(await signerOf(payload, signature), run.spend);
+      assert.deepEqual(run.asks, kind === 'key' ? { owner: 1, allowance: 0 } : { owner: 0, allowance: 1 }, 'one key, the one its kind uses, once');
+    } finally {
+      run.restore();
+    }
+  });
+}

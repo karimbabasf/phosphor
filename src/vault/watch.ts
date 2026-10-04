@@ -291,7 +291,9 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     if (token === null) return null;
     const read = deps.ledger.intents();
     if (read === undefined || !read.ok) return null;
-    const row = read.holdings.find((h) => h.assetId === token!.assetId);
+    // This account's row: once the vault has moved, the read also carries the allowance's.
+    const account = deps.account()?.toLowerCase() ?? null;
+    const row = read.holdings.find((h) => h.assetId === token!.assetId && (account === null || h.accountId.toLowerCase() === account));
     if (row === undefined) return 0n;
     if (row.amountBase !== undefined && /^\d+$/.test(row.amountBase)) return BigInt(row.amountBase);
     return BigInt(Math.round(row.amount * 10 ** row.decimals));

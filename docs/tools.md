@@ -16,7 +16,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | Tool | Does |
 |---|---|
 | `start` | Where you are and what you can do: the live state, the click threshold, which tab you are looking at, and the index of every capability with the tool that performs it |
-| `wallet` | Everything held: one row per balance inside NEAR Intents and one for the Hyperliquid account, with quantity, price, value and share |
+| `wallet` | Everything held: one row per balance inside NEAR Intents and one for the Hyperliquid account, with quantity, price, value and share. Once your vault has moved to Touch ID it also shows `spendable`, the allowance a move spends from, and `savings`, the vault, which moves only through a top-up you confirm with Touch ID, see [Money](money.md#once-your-vault-moves-to-touch-id) |
 | `deposit` | Opens the deposit card in the chat for one asset on one network and starts watching for the money. The agent gets the first six and last four characters of the address, never the whole. Lead only |
 | `composition` | Stablecoin composition by issuer and chain: shares, freezable share, unclassified holdings |
 | `policy_show` | The current policy as plain-English sentences |
@@ -25,7 +25,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `proposals` | Recent money moves, newest first, each the same object `proposal_status` returns; a kind filter and a limit up to 50. For "show me my last deposit" without asking anyone for an id. Lead only |
 | `diagnose` | Everything about one money move in one call, for "why is it not there yet": the view, the row's own audit lines, and what the router and the venue say about it. Lead only |
 | `swap_assets` | What can be swapped inside your balance, the coins you hold first: name, network, price, what you hold of it, and whether anyone offers a price now. Files nothing |
-| `swap_quote` | What a swap would get right now: the amount in, the amount out expected, the least you would get, the fee and the time it takes, or a sentence saying why there is no quote. Files nothing |
+| `swap_quote` | What a swap would get right now: the amount in, the amount out expected, the least you would get, the fee and the time it takes, or a sentence saying why there is no quote. Once your vault has moved, a swap bigger than the allowance comes back with `topUp`, the shortfall that moves from the vault first, behind your Touch ID. Files nothing |
 | `swap_check` | One swap read again now: what the swap service says, whether the coin left your balance or came back, and what you hold. For a swap that failed, stalled or looks wrong. Lead only |
 | `chart_read` | The chart as it stands: product, timeframe, price, indicators, levels, drawings, and what is stale |
 | `chart_scan` | Several timeframes at once without moving the chart: price, change, range, ATR, trend |
@@ -35,7 +35,7 @@ agent in the chat does not get ten of them: `start`, `composition`, `log_tail`, 
 | `chain_address` | What an address holds and has done on one network, with an explorer link. This read leaves the machine |
 | `chain_transactions` | The most recent transactions of an address on one network, at most 25 |
 | `chain_transaction` | One transaction by hash: fields, fee, block, confirmations, explorer link |
-| `intents_activity` | What an account has moved inside NEAR Intents: deposits, withdrawals, swap legs and sends |
+| `intents_activity` | What an account has moved inside NEAR Intents: deposits, withdrawals, swap legs and sends. With no account named it reads the one your moves spend from: the allowance once your vault has moved |
 | `web_read` | One web page as quoted text, read by the app, only at an address a web search in this chat returned or you gave. This read leaves the machine |
 | `chart_batch` | Many chart questions and drawings in one call: candles, pivots, levels, regime, ATR and more |
 | `trade_read` | The whole trading situation: account health, positions with liquidation distance, orders, fills, plans |

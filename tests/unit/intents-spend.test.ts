@@ -8,6 +8,8 @@ import type { IntentsSpendOutcome, IntentsSpendRequest } from '../../src/rails/i
 import type { RailEvidence } from '../../src/types.ts';
 import { ReasonError } from '../../src/rails/reasons.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { liveIntentsSigner } from '../../src/intents-sign.ts';
+import { KINDS, MOVED_VAULT, signerOf, useKind } from './helpers/rail-kinds.ts';
 
 // The step every rail that spends the intents balance shares: quote, check the echo, ask
 // 1Click for the intent, check it, sign it, submit it, watch it. The tests here pin the one
@@ -538,3 +540,31 @@ test("the executor's last check runs after the route read and right before the k
   assert.equal(out.intentHash, 'HASH1');
   assert.deepEqual(open.calls.order.slice(0, 2), ['check', 'sign']);
 });
+
+// ---------- both kinds of wallet (PHASE2-PLAN.md C6) ----------
+
+// A throwaway key: the live signer needs a real one, and the fixtures' 0x1111... account has none.
+const KIND_KEY = `0x${'55'.repeat(32)}` as const;
+
+for (const kind of KINDS) {
+  test(`kind ${kind}: the shared spend path signs once for the account the move spends; a Hyperliquid deposit refunds there and credits the vault (spike2 R7)`, async () => {
+    const run = useKind(kind, KIND_KEY);
+    try {
+      const owner = run.spend.toLowerCase();
+      const vault = kind === 'key' ? owner : MOVED_VAULT;
+      const h = harness({ echo: { refundTo: owner, recipient: vault }, payload: payloadOf({ signer_id: owner }) });
+      const asked = requestOf();
+      const out = submittedOf(
+        await spendFromIntents({ ...depsOf(h), signer: liveIntentsSigner }, requestOf({ owner, recipient: vault, echo: { ...asked.echo, recipient: vault, refundTo: owner } })),
+      );
+      assert.equal(out.intentHash, 'HASH1');
+      assert.equal(h.calls.quotes[0]?.account, owner, 'quoted for the account the move spends: 1Click refunds to it');
+      assert.equal(h.calls.quotes[0]?.recipient, vault, 'and credits the vault, the Hyperliquid account in every kind');
+      const { payload, signature } = h.calls.submitted[0] as { payload: string; signature: string };
+      assert.equal(await signerOf(payload, signature), run.spend);
+      assert.deepEqual(run.asks, kind === 'key' ? { owner: 1, allowance: 0 } : { owner: 0, allowance: 1 }, 'one key, the one its kind uses, once');
+    } finally {
+      run.restore();
+    }
+  });
+}

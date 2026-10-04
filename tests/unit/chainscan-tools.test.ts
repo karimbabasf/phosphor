@@ -11,6 +11,9 @@ import { chainReadsWith } from '../../src/http/read/chain.ts';
 import { createChainFetchState } from '../../src/chainscan/index.ts';
 import type { ChainDeps } from '../../src/chainscan/index.ts';
 import type { Ctx } from '../../src/http/context.ts';
+import { useRailAccounts } from '../../src/intents-sign.ts';
+import { useKeystore } from '../../src/keystore/index.ts';
+import type { Keystore } from '../../src/keystore/index.ts';
 
 function captured(): { res: http.ServerResponse; status: () => number; body: () => Record<string, unknown> } {
   let text = '';
@@ -145,4 +148,27 @@ test('intents_activity reads this app\'s own account when none is given, lowerca
   await reads.intents_activity(ctx({ addresses: {} }), {}, {}, c.res);
   assert.equal(c.status(), 400);
   assert.match(String(c.body().error), /no account/);
+});
+
+test('once the vault has moved, intents_activity reads the allowance by default, and both accounts are the app\'s own (PHASE2-PLAN.md C6)', async () => {
+  const vault = '0x2c7536e3605d9c16a7a3d7b1898e529396a65c23';
+  const allowance = '0xf6beee2877dc58331cfa06c66cc47b5f2535a379';
+  useKeystore({ addresses: () => ({ evm: vault, solana: null, near: null, nearPublicKey: null }) } as unknown as Keystore);
+  useRailAccounts(() => ({ kind: 'chip', vault, spend: allowance }));
+  try {
+    const reads = chainReadsWith(deps({ 'api.nearblocks.io': () => json({ data: [] }) }));
+    const a = captured();
+    await reads.intents_activity(ctx(), {}, {}, a.res);
+    assert.equal(a.body().account, allowance, 'where the moves are');
+    assert.equal(a.body().own, true);
+    const b = captured();
+    await reads.intents_activity(ctx(), {}, { account: vault }, b.res);
+    assert.equal(b.body().own, true, 'the vault is ours too');
+    const c = captured();
+    await reads.intents_activity(ctx(), {}, { account: VITALIK }, c.res);
+    assert.equal(c.body().own, false);
+  } finally {
+    useKeystore(null);
+    useRailAccounts(null);
+  }
 });

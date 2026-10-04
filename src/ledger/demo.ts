@@ -13,7 +13,8 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import type { LedgerSnapshot } from '../types.ts';
 import type { IntentsActivity, IntentsRow } from '../chainscan/index.ts';
-import type { IntentsRead } from './intents.ts';
+import type { RailAccounts } from '../intents-sign.ts';
+import type { AccountRead, IntentsRead } from './intents.ts';
 import type { HlRead } from './hyperliquid.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -26,6 +27,10 @@ type DemoStateFile = {
   account: string;
   intents: DemoHolding[];
   hyperliquid: { collateralUsdc: number; availableUsdc: number };
+  /* A vault that moved to the chip (PHASE2-PLAN.md C6): the allowance account the rails spend
+     from and what it holds, while `intents` above stays the vault's. Absent is a wallet whose
+     vault has not moved. The demo's own moves still change the vault's rows only. */
+  allowance?: { account: string; intents: DemoHolding[] };
 };
 
 function readFixture(): DemoStateFile {
@@ -36,6 +41,15 @@ function readFixture(): DemoStateFile {
 // the verifier names it.
 export function demoAccount(): string {
   return readFixture().account.toLowerCase();
+}
+
+/* The demo's accounts, as src/intents-sign.ts names them; src/main.ts installs this in demo
+   mode. `owner` stands in for the vault the way it does in loadDemoReads. */
+export function demoAccounts(owner?: string | null): RailAccounts {
+  const raw = readFixture();
+  const vault = (owner ?? raw.account).toLowerCase();
+  const allowance = raw.allowance?.account.toLowerCase();
+  return allowance === undefined ? { kind: 'key', vault, spend: vault } : { kind: 'chip', vault, spend: allowance };
 }
 
 export function loadDemoLedger(): LedgerSnapshot {
@@ -171,27 +185,30 @@ export function demoAvailableUsdc(): number {
    account, the read named the fixture's, they did not match, and a row that had been credited
    sat in `crediting` until its deadline flipped it to `stalled`. Absent (no wallet yet, or a
    test calling this bare) keeps the file's own account. */
-export function loadDemoReads(owner?: string | null): { intents: IntentsRead; hyperliquid: HlRead } {
+export function loadDemoReads(owner?: string | null): { intents: IntentsRead; hyperliquid: HlRead; split: { vault: AccountRead; spend: AccountRead } } {
   const raw = readFixture();
   const fetchedAt = new Date().toISOString();
   const account = (owner ?? raw.account).toLowerCase();
   const assetIds = new Set([...raw.intents.map((h) => h.assetId), ...movedIntents.keys()]);
+  const row = (accountId: string, h: DemoHolding) => ({
+    accountId,
+    assetId: h.assetId,
+    symbol: h.symbol,
+    originChain: h.originChain,
+    amount: h.amount,
+    amountBase: BigInt(Math.round(h.amount * 10 ** h.decimals)).toString(),
+    decimals: h.decimals,
+  });
+  const vault: IntentsRead = { ok: true, fetchedAt, holdings: [...assetIds].map((assetId) => row(account, demoHolding(assetId) as DemoHolding)) };
+  // A moved vault's allowance, read apart and carried in intents() beside the vault, as live.
+  const moved = raw.allowance;
+  const allowance: IntentsRead | null =
+    moved === undefined ? null : { ok: true, fetchedAt, holdings: moved.intents.filter((h) => h.amount > 0).map((h) => row(moved.account.toLowerCase(), h)) };
   return {
-    intents: {
-      ok: true,
-      fetchedAt,
-      holdings: [...assetIds].map((assetId) => {
-        const h = demoHolding(assetId) as DemoHolding;
-        return {
-          accountId: account,
-          assetId: h.assetId,
-          symbol: h.symbol,
-          originChain: h.originChain,
-          amount: h.amount,
-          amountBase: BigInt(Math.round(h.amount * 10 ** h.decimals)).toString(),
-          decimals: h.decimals,
-        };
-      }),
+    intents: allowance === null ? vault : { ...vault, holdings: [...vault.holdings, ...allowance.holdings] },
+    split: {
+      vault: { account, read: vault },
+      spend: moved === undefined || allowance === null ? { account, read: vault } : { account: moved.account.toLowerCase(), read: allowance },
     },
     hyperliquid: {
       ok: true,

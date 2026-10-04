@@ -57,6 +57,9 @@ import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { ownerKeyGate } from './vault/chip.ts';
 import { liveVerifier } from './relay/verifier.ts';
+import { createAccounts } from './vault/accounts.ts';
+import { useRailAccounts } from './intents-sign.ts';
+import { demoAccounts } from './ledger/demo.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -272,6 +275,11 @@ const vaultPrefs = createVaultPrefs(cfg.dataDir);
    whether the owner key is out asks this same gate. */
 const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier());
 keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
+/* Which account the rails sign for, and with which key (src/intents-sign.ts): VAULT until the
+   vault moves, then ALLOWANCE. No chip service answer is wired in yet, so a moved vault reads
+   `broken` until one is, and the rails spend ALLOWANCE either way. The demo names its own. */
+const accounts = createAccounts({ keystore, prefs: vaultPrefs });
+useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,

@@ -13,7 +13,9 @@
 //   - The account id comes from the KEY, never from config. For an erc191 signer it is the
 //     EVM address lowercased, which is exactly the id src/rails/intents-deposit.ts credits
 //     and src/rails/intents-native.ts spends. A stale config could otherwise point this at
-//     an account this app cannot spend and report a stranger's balance as ours.
+//     an account this app cannot spend and report a stranger's balance as ours. Once the vault
+//     has moved to the chip the rails spend the allowance instead, a second account the ledger
+//     reads beside the vault, by the same rule (src/ledger/index.ts).
 //   - Holdings are DISCOVERED with mt_tokens_for_owner rather than probed against a fixed
 //     list, so an asset that arrived as the output of a swap shows up without anyone
 //     registering it first. Probing all 186 listed assets every 30s would be the same
@@ -70,6 +72,26 @@ export type IntentsRead = {
   // the ledger always writes it. See intentsUnreadWhy for what the count buys.
   failures?: number;
 };
+
+// One account's read, named (PHASE2-PLAN.md C6: the ledger keeps one IntentsRead per account).
+export type AccountRead = { account: string; read: IntentsRead | undefined };
+
+/* The vault's read and the allowance's as one, for every reader that asks what the wallet holds
+   inside the verifier: every holding, each still naming its account; good only when both reads
+   are; as old as the older one (a stamp nobody can parse counts as the oldest); and the longer
+   run of misses, so a pocket nobody can read is never hidden behind one that answered. */
+export function mergeIntentsReads(reads: IntentsRead[]): IntentsRead {
+  const age = (r: IntentsRead): number => Date.parse(r.fetchedAt) || 0;
+  const oldest = reads.reduce((a, b) => (age(b) < age(a) ? b : a));
+  const failed = reads.find((r) => !r.ok && r.error !== undefined);
+  return {
+    holdings: reads.flatMap((r) => r.holdings),
+    ok: reads.every((r) => r.ok),
+    fetchedAt: oldest.fetchedAt,
+    ...(failed === undefined ? {} : { error: failed.error }),
+    failures: Math.max(...reads.map((r) => r.failures ?? (r.ok ? 0 : 1))),
+  };
+}
 
 /* Why the wallet report should say the verifier could not be checked, or null while there is
    nothing worth saying. One miss is a miss: the ledger is read every few seconds, a public RPC

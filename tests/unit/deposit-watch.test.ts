@@ -292,6 +292,19 @@ test('the baseline comes from the ledger when it has read the account, and from 
   fresh.watch.stop();
 });
 
+test('once the vault has moved, the baseline is the vault row, never the allowance row the same read carries (PHASE2-PLAN.md C6)', async () => {
+  const allowance = '0xf6beee2877dc58331cfa06c66cc47b5f2535a379';
+  const row = (accountId: string, amountBase: string) => ({ accountId, assetId: USDC_ETH, symbol: 'USDC', originChain: 'eth', amount: Number(amountBase) / 1e6, amountBase, decimals: 6 });
+  // The vault holds no USDC yet and the allowance 5: a watch matching by asset alone would start
+  // from 5, and a 3 USDC deposit landing in the vault would never read as credited.
+  const h = build({ intents: { ...READ_OK, holdings: [row(allowance, '5000000')] } });
+  assert.equal(h.watch.show('eth', 'USDC', null, TOKEN).baseline, 0);
+  h.world.balance = '3000000';
+  const credited = await until(h, 'credited');
+  assert.equal(credited.amount, 3);
+  h.watch.stop();
+});
+
 test('no wallet yet means nothing is asked, and the watch picks up when the wallet appears', async () => {
   let account = null as string | null;
   const world = fakeWorld();
