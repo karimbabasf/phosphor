@@ -11,8 +11,8 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
 
 - Move your vault to this Mac's Touch ID key. On a Touch ID wallet, Your vault in the Vault tab
   takes you through four steps: back up your key, add NEAR to the gas account, write a 24-word paper
-  key by hand and type all 24 words back, then two Touch IDs whose sentences the window shows before
-  they come. The paper key has no Print and no Copy, and pasting is off while you type it back. One
+  key by hand and type three of its words back, then two Touch IDs whose sentences the window shows
+  before they come. The paper key has no Print and no Copy, and pasting is off while you type. One
   call on NEAR then adds the Touch ID key and the paper key, takes your wallet's key off the vault
   and shuts the NEAR door (auth by predecessor id), so those two keys alone open the vault. A move a
   crash cuts short finishes on the next start, or asks only for the paper again.
@@ -57,6 +57,8 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   tests run on the new build. For people who build Phosphor: `node scripts/verifier-check.ts` says
   the same, and `--simulate` also replays the vault's first proof and its move through
   `simulate_intents` with keys made for the run.
+- Backing up a private key works the way every wallet does: Touch ID, the key behind dots with Show
+  and Copy, then I saved it somewhere safe. Nothing is typed back.
 - Your wallet, your keys and your settings stay as they were until you move your vault.
 
 ## 0.10.15

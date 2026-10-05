@@ -15,7 +15,8 @@
    code). `sentence` puts it on screen only when it reads as one: a code, a
    status number or an OS phrase is never shown, whatever sent it.
 
-   The paper key the vault moves to (ui/screens/chip.js) is typed back the
+   The paper key the vault moves to (ui/screens/chip.js), where it has to be
+   typed whole (after a restart, and the old paper of a restore), is read the
    same careful way: 24 words, one to a field, and a slip is said by its
    number, never by the word. */
 (function () {

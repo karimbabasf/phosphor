@@ -1,8 +1,9 @@
 // What "backed up" is proven against for a recovery phrase: three of the words the last reveal or a
 // new wallet showed, kept as one slow hash for as long as it takes to write the phrase down and type
 // three of them back. One proof is held at a time. A phrase carries a checksum, so three words show a
-// copy that reads; a wallet with no phrase backs up a raw private key, which has none, and is proven
-// by the whole copy typed back instead (src/http/vault.ts, key-proven), which needs nothing kept here.
+// copy that reads; a wallet with no phrase backs up a raw private key, which has no words to ask
+// for, and is proven by "I saved it somewhere safe" straight after its reveal (keyShown, at the
+// foot of this file; src/http/vault.ts, key-proven).
 //
 // The proof used to read the phrase off the open wallet, so a reveal had to leave the wallet open,
 // for signing as much as for reading, until the idle lock. A reveal opens nothing now
@@ -110,4 +111,20 @@ export function forgetPhrase(): void {
   expiry = null;
   if (held !== null) held.hash.then((hash) => hash.fill(0), () => undefined);
   held = null;
+}
+
+/* A private key's backup is the person's word, given in the window just after the key was shown:
+   I saved it somewhere safe. So a reveal of the key leaves the wallet it opens here for half an
+   hour, nothing of the key itself, and the proof spends it. A proof with no reveal before it, for
+   another wallet, or after the half hour proves nothing. */
+let keyShown: { wallet: string; until: number } | null = null;
+
+export function rememberKeyShown(wallet: string, now: number = Date.now()): void {
+  keyShown = { wallet: wallet.toLowerCase(), until: now + PHRASE_PROOF_MS };
+}
+
+export function takeKeyShown(wallet: string | null, now: number = Date.now()): boolean {
+  const shown = keyShown;
+  keyShown = null;
+  return shown !== null && wallet !== null && shown.wallet === wallet.toLowerCase() && now <= shown.until;
 }

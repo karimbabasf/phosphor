@@ -761,14 +761,15 @@ test('revealing the private keys hands back the EVM key and nothing else', async
     assert.deepEqual(Object.keys(out.json.keys), ['evm'], 'the Solana and NEAR keys the file seals sign nothing here and are not shown');
     assert.equal(out.json.keys.password, undefined);
     assert.equal(out.json.groups.join(''), out.json.keys.evm.slice(2));
-    assert.equal(out.json.prove, undefined, 'a key reveal asks nothing back: a phrase backs up its phrase, and a key is proven by its whole copy');
+    assert.equal(out.json.prove, undefined, 'a key reveal asks nothing back: a phrase backs up its phrase, and a key is proven by I saved it somewhere safe');
   } finally {
     await b.close();
   }
 });
 
 /* A password wallet brought in as a key has no phrase either, so it is proven the way an enclave
-   one is (src/http/vault.ts, key-proven): the whole copy, typed back under the window token. */
+   one is (src/http/vault.ts, key-proven): I saved it somewhere safe, under the window token, just
+   after the GET that showed the key. */
 test('a password wallet with no phrase proves its key the way an enclave one does', async () => {
   const b = await boot();
   try {
@@ -779,13 +780,11 @@ test('a password wallet with no phrase proves its key the way an enclave one doe
     assert.equal(out.json.keys.evm, key);
     const groups: string[] = out.json.groups;
     assert.equal(groups.length, 16);
-    assert.equal(out.json.prove, undefined, 'a key is proven by its whole copy, so the reveal names no three');
-    const slipped = groups.map((g, i) => (i === 7 ? `${g.slice(0, 3)}${g[3] === 'a' ? 'b' : 'a'}` : g)).join(' ');
-    const wrong = await b.post('/api/vault/key-proven', { token: b.token, key: slipped });
-    assert.equal(wrong.json.code, 'wrong_copy');
-    const right = await b.post('/api/vault/key-proven', { token: b.token, key: groups.join(' ') });
+    assert.equal(out.json.prove, undefined, 'a key is proven by I saved it somewhere safe, so the reveal names no three');
+    const right = await b.post('/api/vault/key-proven', { token: b.token });
     assert.equal(right.json.ok, true, JSON.stringify(right.json));
     assert.equal((await b.get('/api/vault')).json.backedUp, true);
+    assert.equal((await b.post('/api/vault/key-proven', { token: b.token })).json.code, 'reveal_again', 'one reveal proved twice');
   } finally {
     await b.close();
   }

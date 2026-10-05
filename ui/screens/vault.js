@@ -566,10 +566,10 @@
      goes into the conversation.
 
      A wallet brought in as a key has no phrase, so the same row backs up its
-     private key: the key in sixteen groups of four, then the whole copy typed
-     back once. A phrase has a checksum and three words show a copy that
-     reads; a key has none, and one wrong character is simply another wallet,
-     so nothing short of the whole copy proves it. */
+     private key the way every wallet does: behind the same Touch ID, masked
+     until Show, with Copy, then I saved it somewhere safe. A key has no words
+     to ask three of, so that click, on the window's own route and only just
+     after the key was shown, is the proof. */
   function buildBackup(host) {
     var r = row('Recovery phrase', 'backup');
     refs.backupRow = r.node;
@@ -593,7 +593,7 @@
     refs.checkCopy = button('Check my copy', 'btn-quiet btn-sm');
     refs.checkCopy.hidden = true;
     r.act.appendChild(refs.checkCopy);
-    dom.on(refs.checkCopy, 'click', function () { startCheck(false); });
+    dom.on(refs.checkCopy, 'click', startCheck);
     refs.phraseFlow = dom.el('div', 'vault-flow');
     refs.phraseFlow.hidden = true;
     r.body.appendChild(refs.phraseFlow);
@@ -611,7 +611,7 @@
       ? 'There is nothing to back up until a wallet exists.'
       : backed
         ? (noWords
-          ? 'Backed up' + (when ? ' on ' + when : '') + '. Your whole copy matched.'
+          ? 'Backed up' + (when ? ' on ' + when : '') + '. You saved your key.'
           : 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.')
         : noWords
           ? 'Not backed up yet. This wallet has no recovery phrase, so its key is the only way back if this Mac is lost.'
@@ -875,10 +875,13 @@
       : 'Your vault moved to a Touch ID key, so these words no longer open it.');
   }
 
-  // The lock line beside the words or the key: what whoever reads them can take.
+  /* The lock line beside the words or the key: what whoever has them can
+     take. The words stay on this screen; the key can go to a password
+     manager, so its line says who it is for instead. */
   function takes(what) {
-    var reads = what === 'key' ? 'reads this key' : 'reads these words';
-    return 'On this screen only. Anyone who ' + reads + ' can take ' + (vaultMoved() ? 'what your allowance, the gas account and Hyperliquid hold.' : 'your money.');
+    var take = vaultMoved() ? 'what your allowance, the gas account and Hyperliquid hold.' : 'your money.';
+    if (what === 'key') return 'Anyone who has this key can take ' + take + ' Keep it where only you can reach it.';
+    return 'On this screen only. Anyone who reads these words can take ' + take;
   }
 
   function drawWords(note) {
@@ -1005,12 +1008,17 @@
       input.autocomplete = 'off';
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('autocorrect', 'off');
       input.dataset.index = String(at);
       field.appendChild(input);
       fields.appendChild(field);
       inputs.push(input);
     });
     flow.appendChild(fields);
+    var hint = text('vault-sub');
+    hint.hidden = true;
+    flow.appendChild(hint);
+    noPaste(inputs, hint);
 
     var error = problem();
     flow.appendChild(error);
@@ -1053,7 +1061,8 @@
                 showWords('Two tries did not match. Check your copy, then try again.');
                 return;
               }
-              say(error, 'Those words do not match. Look at your copy again.');
+              var slip = wordSlip(words);
+              say(error, slip ? 'Word ' + slip + ' does not match. Check it on your copy, then try again.' : 'Those words do not match. Look at your copy again.');
               return;
             }
             say(error, refusalWords(answer));
@@ -1067,12 +1076,41 @@
     if (inputs[0] && inputs[0].focus) inputs[0].focus();
   }
 
+  /* A field that proves a copy takes typing only: a paste or a drop is a
+     copy of the screen, not of the paper, so it is refused and the line
+     under the fields says why. */
+  function noPaste(inputs, hint) {
+    inputs.forEach(function (input) {
+      dom.on(input, 'paste', function (event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        dom.setText(hint, 'Type each word from your copy. Pasting is off here.');
+        hint.hidden = false;
+      });
+      dom.on(input, 'drop', function (event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      });
+    });
+  }
+
+  // The first answer that differs from the words still in this row, by its number, or 0.
+  function wordSlip(answers) {
+    if (!phrase || !Array.isArray(phrase.words)) return 0;
+    for (var i = 0; i < answers.length; i += 1) {
+      if (answers[i].word !== phrase.words[answers[i].index]) return answers[i].index + 1;
+    }
+    return 0;
+  }
+
   /* ---------- safety: the private key, for a wallet with no phrase ----------
 
-     The phrase's flow, with the proof a key needs: the key once, numbered in
-     groups of four so it can be copied by hand or printed, then the whole
-     copy typed back once and checked against this wallet by the app
-     (POST /api/vault/key-proven). Print, never Copy. */
+     The key once, behind the Touch ID that showed it, masked until Show: the
+     panel holds no character of it until then, and Hide takes them out again.
+     Copy puts the whole key on the clipboard, for a password manager. I saved
+     it somewhere safe is the proof (POST /api/vault/key-proven), and it
+     carries nothing of the key. */
+
+  // The key's place while it is masked: sixteen groups of four, none of them its own.
+  var KEY_MASK = new Array(KEY_GROUPS + 1).join('\u2022\u2022\u2022\u2022 ').trim();
 
   function showKey(note) {
     if (!shownKey) return;
@@ -1084,6 +1122,10 @@
     if (shownKey && shownKey.address) return shownKey.address;
     var lock = (store.get() || {}).lock || {};
     return lock.addresses && typeof lock.addresses.evm === 'string' ? lock.addresses.evm : null;
+  }
+
+  function setLabel(node, words) {
+    dom.setText(node.querySelector('.btn-label'), words);
   }
 
   function drawKey(note) {
@@ -1106,74 +1148,106 @@
       say(again, note);
     }
 
-    var grid = dom.el('ol', 'words vault-words vault-key');
-    grid.setAttribute('aria-label', 'Your private key, in sixteen groups of four');
-    for (var i = 0; i < shownKey.groups.length; i += 1) {
-      var item = dom.el('li', 'word');
-      item.appendChild(dom.el('span', 'meta num', String(i + 1)));
-      item.appendChild(dom.el('span', 'body word-text key-text', shownKey.groups[i]));
-      grid.appendChild(item);
-    }
-    flow.appendChild(grid);
+    var secret = dom.el('div', 'vault-secret');
+    var box = dom.el('p', 'vault-mono vault-secret-text');
+    secret.appendChild(box);
+    var side = dom.el('div', 'vault-secret-tools');
+    var show = button('Show', 'btn-ghost btn-sm');
+    var copy = button('Copy', 'btn-ghost btn-sm');
+    side.appendChild(show);
+    side.appendChild(copy);
+    secret.appendChild(side);
+    flow.appendChild(secret);
+
+    var open = false;
+    var paintSecret = function () {
+      dom.setText(box, open && shownKey ? shownKey.groups.join(' ') : KEY_MASK);
+      dom.setAttr(box, 'data-masked', open ? null : 'true');
+      setLabel(show, open ? 'Hide' : 'Show');
+      dom.setAttr(show, 'aria-pressed', open ? 'true' : 'false');
+    };
+    paintSecret();
 
     var wallet = keyWallet();
     if (wallet) flow.appendChild(text('vault-sub', 'It opens the wallet ' + shortWallet(wallet) + '.'));
 
+    var error = problem();
+    flow.appendChild(error);
+
+    var backed = ((store.get() || {}).vault || {}).backedUp === true;
     var tools = dom.el('div', 'vault-actions');
-    var wrote = button('I wrote it down', 'btn-sm');
-    var print = button('Print', 'btn-ghost btn-sm');
-    var done = button('Hide key', 'btn-quiet btn-sm');
-    tools.appendChild(wrote);
-    tools.appendChild(print);
-    tools.appendChild(done);
+    var saved = backed ? null : button('I saved it somewhere safe', 'btn-sm', 'Saving');
+    var close = button(backed ? 'Done' : 'Close', 'btn-quiet btn-sm');
+    if (saved) tools.appendChild(saved);
+    tools.appendChild(close);
     flow.appendChild(tools);
 
-    dom.on(print, 'click', function () { printKey(shownKey ? shownKey.groups : [], keyWallet()); });
-    dom.on(wrote, 'click', function () { startCheck(true); });
-    dom.on(done, 'click', wipePhrase);
-    if (wrote.focus) wrote.focus();
+    dom.on(show, 'click', function () {
+      open = !open;
+      paintSecret();
+    });
+    dom.on(copy, 'click', function () { copyKey(copy, error); });
+    if (saved) dom.on(saved, 'click', function () { keySaved(saved, error); });
+    dom.on(close, 'click', wipePhrase);
+    var first = saved || show;
+    if (first.focus) first.focus();
   }
 
-  /* The phrase's sheet, for the key: the numbered groups, the wallet they
-     open, and nothing else from the window. */
-  function printKey(groups, wallet) {
-    if (!groups || groups.length !== KEY_GROUPS) return;
-    var sheet = dom.el('div', 'print-sheet');
-    sheet.appendChild(dom.el('h1', '', 'Phosphor private key'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has ' + (vaultMoved() ? 'your allowance, the gas account and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
-    var list = dom.el('ol', 'print-key');
-    for (var i = 0; i < groups.length; i += 1) list.appendChild(dom.el('li', '', groups[i]));
-    sheet.appendChild(list);
-    if (wallet) sheet.appendChild(dom.el('p', '', 'It opens the wallet ' + wallet + '.'));
-    sheetFoot(sheet, 'the sixteen groups');
-    document.body.appendChild(sheet);
-    try {
-      window.print();
-    } finally {
-      if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+  /* The whole key, as a wallet imports it, onto the clipboard. The button
+     says Copied for a moment; nothing else on screen repeats the key. */
+  function copyKey(copy, error) {
+    if (!shownKey) return;
+    say(error, '');
+    var clip = window.navigator ? window.navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') {
+      say(error, 'This window cannot reach the clipboard. Show the key and write it down instead.');
+      return;
     }
+    clip.writeText('0x' + shownKey.groups.join(''))
+      .then(function () {
+        setLabel(copy, 'Copied');
+        window.setTimeout(function () { setLabel(copy, 'Copy'); }, 1600);
+      })
+      .catch(function () { say(error, 'The key did not reach the clipboard. Try Copy again, or show it and write it down.'); });
   }
 
-  /* Check your copy: the whole key, typed from the copy, against this wallet,
-     with no Touch ID. Straight after the key was shown (`proving`) a match is
-     the proof and marks the key backed up; on a key already proven it is
-     Check my copy, which writes nothing. Never through Restore, which would
-     replace this wallet with whatever a slip makes. */
-  function startCheck(proving) {
-    grow(refs.backupRow, function () { drawCheck(proving === true && !!shownKey); }, refs.phraseFlow);
+  /* The proof: the person's word, just after the key was shown. A proof the
+     app can no longer tie to that reveal (half an hour on, or a restart)
+     closes the key and asks for it to be shown again. */
+  function keySaved(saved, error) {
+    say(error, '');
+    window.PhosphorShell.setPending(saved, true);
+    api.vaultKeyProven()
+      .then(function (answer) {
+        if (answer && answer.ok === true) return proven();
+        if (answer && answer.code === 'reveal_again') {
+          shownKey = null;
+          flowProblem(answer.error || 'Show your key once more with Back it up, then save it.');
+          return null;
+        }
+        say(error, refusalWords(answer));
+        return null;
+      })
+      .catch(function (err) { say(error, net.readable(err)); })
+      .finally(function () { window.PhosphorShell.setPending(saved, false); });
   }
 
-  function drawCheck(proving) {
+  /* Check my copy: the whole key, typed or pasted from a copy kept later,
+     against this wallet, with no Touch ID and nothing written. Never through
+     Restore, which would replace this wallet with whatever a slip makes. */
+  function startCheck() {
+    grow(refs.backupRow, drawCheck, refs.phraseFlow);
+  }
+
+  function drawCheck() {
     var flow = refs.phraseFlow;
     dom.clear(flow);
     flow.hidden = false;
-    flow.dataset.step = proving ? 'prove' : 'check';
+    flow.dataset.step = 'check';
     render();
 
     flow.appendChild(dom.el('p', 'vault-flow-title', 'Check your copy'));
-    flow.appendChild(text('vault-sub', proving
-      ? 'Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'
-      : 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+    flow.appendChild(text('vault-sub', 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
 
     var field = dom.el('div', 'field');
     field.appendChild(dom.el('label', 'label', 'Private key'));
@@ -1199,23 +1273,18 @@
 
     var tools = dom.el('div', 'vault-actions');
     var check = button('Check', 'btn-sm', 'Checking');
-    var other = proving ? button('Show the key again', 'btn-quiet btn-sm') : button('Done', 'btn-quiet btn-sm');
+    var other = button('Done', 'btn-quiet btn-sm');
     tools.appendChild(check);
     tools.appendChild(other);
     flow.appendChild(tools);
 
-    var misses = 0;
-    dom.on(other, 'click', function () {
-      if (proving) showKey();
-      else wipePhrase();
-    });
+    dom.on(other, 'click', wipePhrase);
     dom.on(input, 'input', function () {
       say(error, '');
       right.hidden = true;
     });
     dom.on(check, 'click', function () {
       var read = window.PhosphorCustody.readKey(input.value);
-      var hex = read.hex;
       right.hidden = true;
       /* Said here so a slip of the keyboard is caught before anything is
          sent, and named by its group (ui/core/custody.js). */
@@ -1225,46 +1294,23 @@
       }
       say(error, '');
       window.PhosphorShell.setPending(check, true);
-      (proving ? api.vaultKeyProven('0x' + hex) : api.vaultKeyCheck('0x' + hex))
+      api.vaultKeyCheck('0x' + read.hex)
         .then(function (answer) {
-          if (answer && answer.ok === false && answer.code !== 'wrong_copy') {
+          if (answer && answer.ok === false) {
             say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : refusalWords(answer));
             return;
           }
-          if (answer && (answer.ok === true && (proving || answer.matches === true))) {
+          if (answer && answer.ok === true && answer.matches === true) {
             input.value = '';
-            if (proving) return proven();
             right.hidden = false;
             return;
           }
-          /* Another wallet. Straight after the key was shown, the app still
-             holds it here, so the line can name the group to look at; two
-             misses show the key again. */
-          misses += 1;
-          if (proving && misses >= 2) {
-            showKey('Two tries did not match. Check your copy group by group, then try again.');
-            return;
-          }
-          var off = proving ? firstSlip(hex) : -1;
-          say(error, off >= 0
-            ? 'Group ' + (off + 1) + ' does not match the key Phosphor showed you. Check it on your copy, then try again.'
-            : 'That copy opens a different wallet. Show your key and check it group by group.');
+          say(error, 'That copy opens a different wallet. Show your key and check it group by group.');
         })
         .catch(function (err) { say(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(check, false); });
     });
     if (input.focus) input.focus();
-  }
-
-  /* The first group of what was typed that differs from the key on screen a
-     moment ago, or -1. Compared here, in the window that already holds the
-     key; nothing about it is sent. */
-  function firstSlip(hex) {
-    if (!shownKey || !Array.isArray(shownKey.groups)) return -1;
-    for (var i = 0; i < shownKey.groups.length; i += 1) {
-      if (hex.slice(i * 4, i * 4 + 4) !== shownKey.groups[i]) return i;
-    }
-    return -1;
   }
 
   /* ---------- safety: your limits ---------- */

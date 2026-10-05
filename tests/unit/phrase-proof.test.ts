@@ -6,7 +6,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { defaultParams } from '../../src/keystore/kdf.ts';
-import { checkPhrase, forgetPhrase, PHRASE_PROOF_MISSES, PHRASE_PROOF_MS, PHRASE_PROOF_WORDS, rememberPhrase } from '../../src/vault/phrase-proof.ts';
+import { checkPhrase, forgetPhrase, PHRASE_PROOF_MISSES, PHRASE_PROOF_MS, PHRASE_PROOF_WORDS, rememberKeyShown, rememberPhrase, takeKeyShown } from '../../src/vault/phrase-proof.ts';
 
 const WORDS = 'abandon ability able about above absent absorb abstract absurd abuse access accident'.split(' ');
 const WALLET = '0x9858EfFD232B4033E47d90003D41EC34EcaEda94';
@@ -94,4 +94,19 @@ test('the proof leaves memory when its half hour is up, with no check to notice,
   assert.equal(await checkPhrase(right(asked), WALLET, 2000), 'match', 'the first reveal\'s timer wiped the second');
   t.mock.timers.tick(15 * 60_000);
   assert.equal(await checkPhrase(right(asked), WALLET, 2000), 'none');
+});
+
+test('a key shown proves only its own wallet, once, inside the half hour', () => {
+  const wallet = '0x7d4e1f0a2c9b8e6d3f5a1c7b9e0d2f4a6c8b0e1d';
+  assert.equal(takeKeyShown(wallet, 0), false, 'a proof with nothing shown');
+  rememberKeyShown(wallet.toUpperCase().replace('0X', '0x'), 0);
+  assert.equal(takeKeyShown(wallet, PHRASE_PROOF_MS), true, 'the same wallet, in time, any case');
+  assert.equal(takeKeyShown(wallet, PHRASE_PROOF_MS), false, 'one reveal proved twice');
+  rememberKeyShown(wallet, 0);
+  assert.equal(takeKeyShown(wallet, PHRASE_PROOF_MS + 1), false, 'a proof after the half hour');
+  rememberKeyShown(wallet, 0);
+  assert.equal(takeKeyShown('0x' + '1'.repeat(40), 10), false, 'a proof for another wallet');
+  assert.equal(takeKeyShown(wallet, 10), false, 'a refused proof left the reveal standing');
+  rememberKeyShown(wallet, 0);
+  assert.equal(takeKeyShown(null, 10), false, 'a proof with no wallet open');
 });

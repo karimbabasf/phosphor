@@ -12,12 +12,16 @@
 
    THE PAPER KEY. Its words come from the backend once (POST
    /api/vault/chip/phrase), are drawn in this row only, and are held in this
-   file's memory, never the store, a log or a frame, until they are typed back
-   whole, the window locks or the tab is left. Hide words takes them off the
-   screen and keeps them, so the paper being written stays the one to type
-   back. There is no Print and no Copy: a printer and a clipboard both keep a
-   copy. They are typed back by hand, one word to a field, with pasting off,
-   so what is proven is the paper and not a copy of the screen.
+   file's memory, never the store, a log or a frame, until the paper is
+   checked, the window locks or the tab is left. Hide words takes them off the
+   screen and keeps them, so the paper being written stays the one checked.
+   There is no Print and no Copy: a printer and a clipboard both keep a copy.
+   The check is three words at random places, typed from the paper with
+   pasting off and compared here, a slip named by its number and never by the
+   word; then the 24 this row holds go back (phrase-proven), and the backend
+   holds the paper's key until the move signs with it. All 24 are typed only
+   where this row no longer holds them: after a lock, the tab left or a
+   restart, and for the old paper of a restore.
 
    ONE NAME FOR EACH THING, the one the docs, the refusals and the Touch ID
    sentences use: your vault, your allowance, the gas account, your paper key,
@@ -42,6 +46,8 @@
   };
 
   var PAPER = 24;
+  // The words of the paper the check asks for, at random places.
+  var CHECK = 3;
   // A move this process runs, from its first frame to its last (src/vault/rekey.ts RunStatus).
   var ACTIVE = ['creating', 'touch_old', 'touch_chip', 'simulating', 'submitting', 'checking'];
   var ORDER = ACTIVE.concat(['done', 'failed']);
@@ -54,7 +60,7 @@
   var slice = null;
   var current = {};
 
-  /* The paper key while it is on screen or being typed back: here only. */
+  /* The paper key while it is on screen or being checked: here only. */
   var paper = null;
   var stage = null;
   var misses = 0;
@@ -292,11 +298,13 @@
     return 'ask';
   }
 
-  // Where the paper step is: on screen here, hidden, waiting to be typed back, typed again after a restart, void, or none.
+  /* Where the paper step is: on screen here, hidden, its three words asked
+     for, typed whole where this row no longer holds it (a lock, the tab
+     left, a restart), void, or none. */
   function paperStage() {
     if (paper && stage === 'words') return 'words';
     if (paper && stage === 'hidden') return 'hidden';
-    if (paper && stage === 'typeback') return 'typeback';
+    if (paper && stage === 'confirm') return 'confirm';
     if (slice.paper === 'shown' || slice.paper === 'retype') return 'typeback';
     if (slice.paper === 'void') return 'void';
     return 'none';
@@ -424,7 +432,7 @@
     if (state !== 'done') return '';
     if (step === 'backup') return 'Backed up.';
     if (step === 'gas') return slice.gas && slice.gas.near ? slice.gas.near + ' NEAR, enough for the move.' : 'Ready.';
-    if (step === 'paper') return 'Typed back whole.';
+    if (step === 'paper') return 'Checked.';
     return '';
   }
 
@@ -454,7 +462,7 @@
 
   function drawBackupStep(body) {
     var vault = current.vault || {};
-    body.appendChild(kit.text('vault-text', 'After the move your ' + backupName(vault) + ' still opens your allowance, the gas account and Hyperliquid, so prove your copy first.'));
+    body.appendChild(kit.text('vault-text', 'After the move your ' + backupName(vault) + ' still opens your allowance, the gas account and Hyperliquid, so back it up first.'));
     var tools = dom.el('div', 'vault-actions');
     var go = button('Back it up first', 'btn-sm');
     dom.on(go, 'click', function () { kit.focusRecovery(); });
@@ -490,6 +498,7 @@
     var at = paperStage();
     if (at === 'words') drawWords(body);
     else if (at === 'hidden') drawHidden(body);
+    else if (at === 'confirm') drawConfirm(body);
     else if (at === 'typeback') drawTypeBack(body, screen);
     else drawPaperOffer(body, screen, at === 'void');
   }
@@ -529,7 +538,7 @@
           if (refs.paperError) kit.say(refs.paperError, 'No paper key came back. Try again.');
           return null;
         }
-        paper = { words: words.slice(), screen: screen };
+        paper = { words: words.slice(), screen: screen, ask: pickPlaces() };
         stage = 'words';
         misses = 0;
         refused = null;
@@ -575,7 +584,7 @@
       where.appendChild(dom.el('p', 'vault-mono', address));
       body.appendChild(where);
     }
-    body.appendChild(kit.text('vault-sub', 'By hand, on paper: a printer, a screenshot or a copy keeps one more key to your vault.'));
+    body.appendChild(kit.text('vault-sub', 'Check each word as you write it.'));
     var tools = dom.el('div', 'vault-actions');
     var wrote = button('I wrote it down', 'btn-sm');
     var hide = button('Hide words', 'btn-quiet btn-sm');
@@ -583,7 +592,7 @@
     tools.appendChild(hide);
     body.appendChild(tools);
     dom.on(wrote, 'click', function () {
-      stage = 'typeback';
+      stage = 'confirm';
       paint();
     });
     dom.on(hide, 'click', function () {
@@ -595,7 +604,7 @@
     kit.bringIntoView(warn);
   }
 
-  // Hide words: off the screen, still this paper, until it is typed back, a lock or the tab left.
+  // Hide words: off the screen, still this paper, until it is checked, a lock or the tab left.
   function drawHidden(body) {
     body.appendChild(kit.text('vault-text', 'Your paper key is hidden. Show it again to finish writing it down.'));
     var tools = dom.el('div', 'vault-actions');
@@ -609,37 +618,32 @@
       paint();
     });
     dom.on(wrote, 'click', function () {
-      stage = 'typeback';
+      stage = 'confirm';
       paint();
     });
     if (again.focus) again.focus();
   }
 
-  /* All 24 words typed back from the paper, one to a field. A space or Enter
-     goes on to the next field, so the words can be typed in one run. */
-  function paperFields(body, name) {
-    var grid = dom.el('div', 'vault-paper-fields');
-    var inputs = [];
-    for (var i = 0; i < PAPER; i += 1) {
-      var field = dom.el('label', 'vault-paper-field');
-      field.appendChild(dom.el('span', 'meta num', String(i + 1)));
-      var input = dom.el('input', 'input vault-paper-input');
-      input.type = 'text';
-      input.name = name + '-' + (i + 1);
-      input.autocomplete = 'off';
-      input.spellcheck = false;
-      input.setAttribute('autocapitalize', 'off');
-      input.setAttribute('autocorrect', 'off');
-      input.setAttribute('aria-label', 'Word ' + (i + 1));
-      field.appendChild(input);
-      grid.appendChild(field);
-      inputs.push(input);
-    }
-    body.appendChild(grid);
-    var hint = kit.text('vault-sub');
-    hint.hidden = true;
-    body.appendChild(hint);
-    inputs.forEach(function (input, i) {
+  /* Fields a word is typed into from the paper: no paste and no drop, since
+     either is a copy of the screen and the check is of the paper; the line
+     under them says why. */
+  function wordField(at, name) {
+    var field = dom.el('label', 'vault-paper-field');
+    field.appendChild(dom.el('span', 'meta num', String(at + 1)));
+    var input = dom.el('input', 'input vault-paper-input');
+    input.type = 'text';
+    input.name = name + '-' + (at + 1);
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.setAttribute('autocapitalize', 'off');
+    input.setAttribute('autocorrect', 'off');
+    input.setAttribute('aria-label', 'Word ' + (at + 1));
+    field.appendChild(input);
+    return { field: field, input: input };
+  }
+
+  function typingOnly(inputs, hint) {
+    inputs.forEach(function (input) {
       dom.on(input, 'paste', function (event) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
         dom.setText(hint, 'Type each word from your paper. Pasting is off here, so the check is of your paper.');
@@ -648,6 +652,26 @@
       dom.on(input, 'drop', function (event) {
         if (event && typeof event.preventDefault === 'function') event.preventDefault();
       });
+    });
+  }
+
+  /* All 24 words from the paper, one to a field, where this row no longer
+     holds them. A space or Enter goes on to the next field, so the words can
+     be typed in one run. */
+  function paperFields(body, name) {
+    var grid = dom.el('div', 'vault-paper-fields');
+    var inputs = [];
+    for (var i = 0; i < PAPER; i += 1) {
+      var made = wordField(i, name);
+      grid.appendChild(made.field);
+      inputs.push(made.input);
+    }
+    body.appendChild(grid);
+    var hint = kit.text('vault-sub');
+    hint.hidden = true;
+    body.appendChild(hint);
+    typingOnly(inputs, hint);
+    inputs.forEach(function (input, i) {
       dom.on(input, 'input', function () {
         var value = String(input.value || '');
         if (!/\s/.test(value)) return;
@@ -678,31 +702,129 @@
     for (var i = 0; i < inputs.length; i += 1) inputs[i].value = '';
   }
 
+  // Three places of the 24, drawn when the paper is shown and kept through a miss.
+  function pickPlaces() {
+    var out = [];
+    var c = window.crypto;
+    while (out.length < CHECK) {
+      var at;
+      if (c && typeof c.getRandomValues === 'function') {
+        var one = new Uint32Array(1);
+        c.getRandomValues(one);
+        at = one[0] % PAPER;
+      } else at = Math.floor(Math.random() * PAPER);
+      if (out.indexOf(at) < 0) out.push(at);
+    }
+    return out.sort(function (a, b) { return a - b; });
+  }
+
+  /* The check: three words of the paper, by their number. Compared here with
+     the words this row still holds, so a slip is named by its number and
+     never by the word, and nothing is sent until all three match; then the
+     24 go to the backend, which checks them against the paper it showed and
+     holds its key for the move. */
+  function drawConfirm(body) {
+    body.appendChild(dom.el('p', 'vault-flow-title', 'Check three words'));
+    body.appendChild(kit.text('vault-sub', 'Type these words from your paper.'));
+    var grid = dom.el('div', 'vault-paper-fields vault-paper-check');
+    var inputs = paper.ask.map(function (at) {
+      var made = wordField(at, 'check');
+      grid.appendChild(made.field);
+      return made.input;
+    });
+    body.appendChild(grid);
+    var hint = kit.text('vault-sub');
+    hint.hidden = true;
+    body.appendChild(hint);
+    typingOnly(inputs, hint);
+    refs.paperError = kit.problem();
+    body.appendChild(refs.paperError);
+    var tools = dom.el('div', 'vault-actions');
+    var check = button('Check', 'btn-sm', 'Checking');
+    var again = button('Show the words again', 'btn-quiet btn-sm');
+    tools.appendChild(check);
+    tools.appendChild(again);
+    body.appendChild(tools);
+    dom.on(again, 'click', function () {
+      clearFields(inputs);
+      stage = 'words';
+      paint();
+    });
+    dom.on(check, 'click', function () { confirmPaper(inputs, check); });
+    inputs.forEach(function (input, i) {
+      dom.on(input, 'input', function () { kit.say(refs.paperError, ''); });
+      dom.on(input, 'keydown', function (event) {
+        if (!event || event.key !== 'Enter') return;
+        if (typeof event.preventDefault === 'function') event.preventDefault();
+        if (i < inputs.length - 1) {
+          if (inputs[i + 1].focus) inputs[i + 1].focus();
+        } else confirmPaper(inputs, check);
+      });
+    });
+    if (inputs[0] && inputs[0].focus) inputs[0].focus();
+  }
+
+  // The numbers of the words that do not match, said as a person would.
+  function slipLine(slips) {
+    if (slips.length === 1) return 'Word ' + slips[0] + ' does not match your paper key. Check it on your paper, then try again.';
+    return 'Words ' + slips.slice(0, -1).join(', ') + ' and ' + slips[slips.length - 1] + ' do not match your paper key. Check them on your paper, then try again.';
+  }
+
+  function confirmPaper(inputs, check) {
+    if (!paper || check.disabled) return;
+    var typed = valuesOf(inputs).map(function (w) { return String(w || '').trim().toLowerCase(); });
+    if (typed.some(function (w) { return !w; })) {
+      kit.say(refs.paperError, 'Type all three words.');
+      return;
+    }
+    var slips = [];
+    paper.ask.forEach(function (at, k) { if (typed[k] !== paper.words[at]) slips.push(at + 1); });
+    if (slips.length) {
+      misses += 1;
+      if (misses >= 2) {
+        clearFields(inputs);
+        misses = 0;
+        showWordsAgain('Two tries did not match. Check your paper word by word, then try again.');
+        return;
+      }
+      kit.say(refs.paperError, slipLine(slips));
+      return;
+    }
+    kit.say(refs.paperError, '');
+    setPending(check, true);
+    net.postJson('/api/vault/chip/phrase-proven', { words: paper.words.slice() })
+      .then(function (answer) {
+        if (answer && answer.ok === true) {
+          clearFields(inputs);
+          paper = null;
+          stage = null;
+          misses = 0;
+          return refresh();
+        }
+        kit.say(refs.paperError, said(answer));
+        return null;
+      })
+      .catch(function (err) { kit.say(refs.paperError, net.readable(err)); })
+      .finally(function () { setPending(check, false); });
+  }
+
+  /* The paper typed whole: after a restart against the paper checked before
+     it, or after a lock or the tab left against the paper still waiting. */
   function drawTypeBack(body, screen) {
-    var retype = !paper && slice.paper === 'retype';
-    body.appendChild(dom.el('p', 'vault-flow-title', 'Type your paper key back'));
+    var retype = slice.paper === 'retype';
+    body.appendChild(dom.el('p', 'vault-flow-title', retype ? 'Type your paper key again' : 'Type your paper key'));
     body.appendChild(kit.text('vault-sub', retype
-      ? 'Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'
-      : 'All 24 words, from your paper, in order. It proves the paper is right before your vault depends on it.'));
+      ? 'Phosphor forgets a checked paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'
+      : 'The words left this screen before you checked them. Type all 24 from your paper, or show a new paper key.'));
     var inputs = paperFields(body, 'paper');
     refs.paperError = kit.problem();
     body.appendChild(refs.paperError);
     var tools = dom.el('div', 'vault-actions');
     var check = button('Check my paper', 'btn-sm', 'Checking');
     tools.appendChild(check);
-    if (paper) {
-      var again = button('Show the words again', 'btn-quiet btn-sm');
-      dom.on(again, 'click', function () {
-        clearFields(inputs);
-        stage = 'words';
-        paint();
-      });
-      tools.appendChild(again);
-    } else {
-      var fresh = button('Show a new paper key', 'btn-quiet btn-sm', 'Opening');
-      dom.on(fresh, 'click', function () { showPaper(fresh, screen); });
-      tools.appendChild(fresh);
-    }
+    var fresh = button('Show a new paper key', 'btn-quiet btn-sm', 'Opening');
+    dom.on(fresh, 'click', function () { showPaper(fresh, screen); });
+    tools.appendChild(fresh);
     body.appendChild(tools);
     dom.on(check, 'click', function () { provePaper(inputs, check); });
     dom.on(inputs[inputs.length - 1], 'keydown', function (event) {
@@ -711,13 +833,6 @@
       provePaper(inputs, check);
     });
     if (inputs[0] && inputs[0].focus) inputs[0].focus();
-  }
-
-  // The first word typed that differs from the paper key on screen a moment ago, by its number, or 0.
-  function firstSlip(words) {
-    if (!paper) return 0;
-    for (var i = 0; i < PAPER; i += 1) if (words[i] !== paper.words[i]) return i + 1;
-    return 0;
   }
 
   function provePaper(inputs, check) {
@@ -732,27 +847,9 @@
       .then(function (answer) {
         if (answer && answer.ok === true) {
           clearFields(inputs);
-          paper = null;
-          stage = null;
-          misses = 0;
           return refresh();
         }
-        var code = answer && answer.code;
-        if (code === 'wrong_words' || code === 'bad_paper') {
-          misses += 1;
-          if (paper && misses >= 2) {
-            clearFields(inputs);
-            misses = 0;
-            showWordsAgain('Two tries did not match. Check your paper word by word, then type it again.');
-            return null;
-          }
-          var slip = firstSlip(read.words);
-          kit.say(refs.paperError, slip
-            ? 'Word ' + slip + ' does not match the paper key Phosphor showed you. Check it on your paper, then try again.'
-            : said(answer, 'Those words do not match your paper key. Check each word against your paper.'));
-          return null;
-        }
-        kit.say(refs.paperError, said(answer));
+        kit.say(refs.paperError, said(answer, 'Those words do not match your paper key. Check each word against your paper.'));
         return null;
       })
       .catch(function (err) { kit.say(refs.paperError, net.readable(err)); })
@@ -861,7 +958,7 @@
     net.postJson('/api/vault/chip/phrase', {})
       .then(function (answer) {
         if (answer && answer.ok === true && Array.isArray(answer.words) && answer.words.length === PAPER) {
-          paper = { words: answer.words.slice(), screen: slice.state === 'broken' ? 'restore' : 'offer' };
+          paper = { words: answer.words.slice(), screen: slice.state === 'broken' ? 'restore' : 'offer', ask: pickPlaces() };
           stage = 'words';
         } else if (refs.goError) kit.say(refs.goError, said(answer));
         return refresh();
