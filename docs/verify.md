@@ -75,22 +75,30 @@ $ node scripts/run-tests.ts tests/unit/chip-service.test.ts tests/unit/enclave-s
 ✔ the enclave key demands the owner every time, and the two wrap halves share their constants
 ```
 
-### 3. The chip key signs only what its grammar allows, never a key change
+### 3. The chip key signs only what its grammar allows: no key change, money only to your allowance
 
-The grammar takes a move of known tokens out of the vault, the removal of a key other than the
-signing chip key, and the empty proof a move asks of a new chip key. Every other kind is refused by
-name before the key is touched, `add_public_key` and `set_auth_by_predecessor_id` first, so a
-refusal raises no dialog. It reads only JSON that every parser reads one way.
+The grammar takes a move of known tokens out of the vault to your allowance, the removal of a key
+other than the signing chip key, and the empty proof a move asks of a new chip key. The allowance is
+the account the chip key's marker pinned before the vault moved, so the chip names no receiver but
+your own allowance: a transfer to any other account is refused, a name made to read like yours
+(`your-allowance.near`) among them. Every other kind is refused by name before the key is touched,
+`add_public_key` and `set_auth_by_predecessor_id` first, so a refusal raises no dialog. It reads
+only JSON that every parser reads one way. The backend runs the same rules first
+(`src/vault/chip-grammar.ts`), so a payload they refuse never reaches the service.
 
-Enforced by `IntentGrammar.swift` (`refusedKinds`, `IntentGrammar.parse`, `StrictJSONParser`),
-which `ChipOps.swift` `signIntent` calls before the key. Proved by
-`tests/unit/intent-grammar.test.ts` and attack `31-chip-hostile-payloads` (claim 6).
+Enforced by `IntentGrammar.swift` (`refusedKinds`, `IntentGrammar.parse`, `StrictJSONParser`, and
+the `receiver` rule in `IntentGrammar.sentence`), which `ChipOps.swift` `signIntent` calls before
+the key. Proved by `tests/unit/intent-grammar.test.ts`,
+`tests/unit/audit2-grammar-named-receiver.test.ts` and attack `31-chip-hostile-payloads` (claim 6).
+The `ℹ` line is the count the test prints for its corpus of payloads.
 
 ```
-$ node scripts/run-tests.ts tests/unit/intent-grammar.test.ts
+$ node scripts/run-tests.ts tests/unit/intent-grammar.test.ts tests/unit/audit2-grammar-named-receiver.test.ts
 ✔ every corpus case is accepted with its sentence byte for byte, or refused by its rule
+ℹ 148 corpus cases: 21 accepted, 127 refused, 28 rules
 ✔ the chip key never signs add_public_key or set_auth_by_predecessor_id, however the payload dresses it
 ✔ 10 000 mutated payloads: every one the grammar accepts reads the same in JSON.parse, and none crashes it
+✔ AU2-01: a receiver the marker does not pin never gets a Touch ID sentence, and Node refuses it first
 ```
 
 ### 4. Agents cannot move vault money
@@ -121,7 +129,9 @@ Agents spend the allowance with no Touch ID ($100 unless you pick another size).
 at most the room under the size plus 10 percent ($110), or the size alone while the allowance's
 balance cannot be read. A sweep sends everything over that line back to the vault, USDC first,
 after every settled move, at every unlock and every ten minutes; until then, money sent to the
-allowance's address can hold it over.
+allowance's address can hold it over. While moves are approved, waiting on a Touch ID or running,
+the sweep keeps the larger of the size and what they will spend, and sends home what is over that
+plus 10 percent.
 
 Enforced by `src/vault/allowance.ts` (`sweepPlan`) and `src/proposals/execute.ts`
 (`proposeVaultTopUp`). Proved by `tests/unit/allowance.test.ts`.
@@ -211,7 +221,7 @@ The Vault tab's "Who opens your vault" reads your vault from NEAR through Phosph
 node scripts/vault-check.ts <your vault's 0x address>
 ```
 
-It asks two NEAR RPC providers run by different organizations, FastNear and dRPC, at one final
+It asks two NEAR RPC providers run by different organizations, FastNEAR and dRPC, at one final
 block: which public keys intents.near holds for the vault, and whether auth by predecessor id is
 on. It prints the block, and an answer only when both agree. When they disagree it exits 1, when
 one gives no answer it exits 2, and both times it names each provider's answer. A moved vault holds
@@ -235,8 +245,10 @@ node scripts/vault-check.ts <your vault's 0x address> --key <old> --key <chip.pu
 | The NEAR door: Shut | `predecessor auth: off` |
 | A warning that the vault holds a key Phosphor did not add | a third key in the list |
 
-The Vault tab reads all but the first row from NEAR, at most once a minute; this check reads all
-five. If the two disagree, trust neither until you know why.
+The Vault tab reads all five rows from NEAR through one provider, and reads again once its last
+read is a minute old; right after a move, a row says Checking... until a read begun after the move
+answers. This check reads all five from two providers at one block. If the two disagree, trust
+neither until you know why.
 [What stays open](security-model.md#what-stays-open) says who can switch predecessor auth back on.
 
 ## What you cannot check yet
@@ -249,7 +261,7 @@ five. If the two disagree, trust neither until you know why.
   stand-in keychain. Attacks 12 and 30 reach a signed app's real service with `--app`, but no
   command shows you the real Touch ID dialog: read each sentence before you touch.
 - **An outside audit.** There is none yet: an audit by a third party is planned and not done.
-- **The RPC.** The app reads NEAR through FastNear alone. `vault-check.ts` asks two providers, and
+- **The RPC.** The app reads NEAR through FastNEAR alone. `vault-check.ts` asks two providers, and
   two that tell the same lie at the same block would pass it. Only a NEAR node of your own needs
   no trust.
 - **The verifier.** Its owners can upgrade it, and its admins can switch predecessor auth back on
