@@ -13,10 +13,11 @@
    THE PAPER KEY. Its words come from the backend once (POST
    /api/vault/chip/phrase), are drawn in this row only, and are held in this
    file's memory, never the store, a log or a frame, until they are typed back
-   whole, the window locks, the tab is left or the person hides them. There is
-   no Print and no Copy: a printer and a clipboard both keep a copy. They are
-   typed back by hand, one word to a field, with pasting off, so what is
-   proven is the paper and not a copy of the screen.
+   whole, the window locks or the tab is left. Hide words takes them off the
+   screen and keeps them, so the paper being written stays the one to type
+   back. There is no Print and no Copy: a printer and a clipboard both keep a
+   copy. They are typed back by hand, one word to a field, with pasting off,
+   so what is proven is the paper and not a copy of the screen.
 
    ONE NAME FOR EACH THING, the one the docs, the refusals and the Touch ID
    sentences use: your vault, your allowance, the gas account, your paper key,
@@ -287,9 +288,10 @@
     return 'ask';
   }
 
-  // Where the paper step is: on screen here, waiting to be typed back, typed again after a restart, void, or none.
+  // Where the paper step is: on screen here, hidden, waiting to be typed back, typed again after a restart, void, or none.
   function paperStage() {
     if (paper && stage === 'words') return 'words';
+    if (paper && stage === 'hidden') return 'hidden';
     if (paper && stage === 'typeback') return 'typeback';
     if (slice.paper === 'shown' || slice.paper === 'retype') return 'typeback';
     if (slice.paper === 'void') return 'void';
@@ -483,6 +485,7 @@
   function drawPaperStep(body, screen) {
     var at = paperStage();
     if (at === 'words') drawWords(body);
+    else if (at === 'hidden') drawHidden(body);
     else if (at === 'typeback') drawTypeBack(body, screen);
     else drawPaperOffer(body, screen, at === 'void');
   }
@@ -579,10 +582,33 @@
       stage = 'typeback';
       paint();
     });
-    dom.on(hide, 'click', wipe);
+    dom.on(hide, 'click', function () {
+      stage = 'hidden';
+      paint();
+    });
     // The step opens at its warning, so the lock line and both plain sentences are read first.
     if (wrote.focus) wrote.focus({ preventScroll: true });
     kit.bringIntoView(warn);
+  }
+
+  // Hide words: off the screen, still this paper, until it is typed back, a lock or the tab left.
+  function drawHidden(body) {
+    body.appendChild(kit.text('vault-text', 'Your paper key is hidden. Show it again to finish writing it down.'));
+    var tools = dom.el('div', 'vault-actions');
+    var again = button('Show the words again', 'btn-sm');
+    var wrote = button('I wrote it down', 'btn-quiet btn-sm');
+    tools.appendChild(again);
+    tools.appendChild(wrote);
+    body.appendChild(tools);
+    dom.on(again, 'click', function () {
+      stage = 'words';
+      paint();
+    });
+    dom.on(wrote, 'click', function () {
+      stage = 'typeback';
+      paint();
+    });
+    if (again.focus) again.focus();
   }
 
   /* All 24 words typed back from the paper, one to a field. A space or Enter

@@ -718,6 +718,34 @@ test('a lock, the tab left and Hide words each take the paper off the screen and
   screenHoldsNoWord(w, 'typed, then the tab left');
 });
 
+test('Hide words takes the words off the screen and keeps the paper: Show the words again brings the same 24, and a lock still takes them', async () => {
+  const w = build();
+  await showPaper(w);
+  const row = keyRow(w);
+  press(row, 'Hide words');
+  await flush();
+  screenHoldsNoWord(w, 'hidden');
+  holdsNoWord(w, 'hidden');
+  assert.ok(said(row).includes('Your paper key is hidden. Show it again to finish writing it down.'));
+  assert.deepEqual(shownButtons(row).map((b: Any) => [b.textContent, b.className]), [['Show the words again', 'btn btn-sm'], ['I wrote it down', 'btn btn-quiet btn-sm']]);
+  assert.equal(said(row).includes('Show a new paper key'), false, 'Hide words threw the paper away');
+  press(row, 'Show the words again');
+  assert.deepEqual(find(find(row, '.vault-paper')[0], '.word-text').map((n: Any) => n.textContent), PAPER_WORDS, 'different words after Hide words');
+  assert.equal(w.calls.filter((c) => c.route === '/api/vault/chip/phrase').length, 1, 'a second paper key was asked for');
+  // Hidden again, I wrote it down goes on to the type-back of this same paper.
+  press(row, 'Hide words');
+  press(row, 'I wrote it down');
+  assert.equal(fields(w).length, 24);
+  assert.ok(shownButtons(row).some((b: Any) => b.textContent === 'Show the words again'));
+  // A lock takes the words for good.
+  press(row, 'Show the words again');
+  press(row, 'Hide words');
+  w.lock();
+  await flush();
+  screenHoldsNoWord(w, 'locked while hidden');
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Show the words again'), false, 'the words outlived a lock');
+});
+
 test('after a restart the paper is typed again against the one proven before, and a paper shown before it is void', () => {
   const retype = build({ vault: { chip: chipSlice({ paper: 'retype' }) } });
   assert.ok(said(keyRow(retype)).includes('Phosphor restarted or locked, so type the paper you wrote for this move again, all 24 words.'));
