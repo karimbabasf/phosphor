@@ -228,6 +228,9 @@ type RunState = { id: string; kind: RekeyKind; status: RunStatus; reason?: strin
 type ChipView = {
   vault: string | null;
   at: number;
+  // has_public_key for the chip key vault.json names for this vault (this Mac's), and that key.
+  chip: boolean | null;
+  chipKey: string | null;
   recovery: boolean | null;
   old: boolean | null;
   predecessor: boolean | null;
@@ -276,7 +279,7 @@ function boxOf(host: RekeyHost): Box {
 }
 
 function emptyView(): ChipView {
-  return { vault: null, at: 0, recovery: null, old: null, predecessor: null, others: null, gas: null };
+  return { vault: null, at: 0, chip: null, chipKey: null, recovery: null, old: null, predecessor: null, others: null, gas: null };
 }
 
 function wipePaper(box: Box): void {
@@ -953,6 +956,10 @@ export type ChipSlice = {
   // `checking`: this Mac moved the vault, or pinned a chip to it, and vault.json names no chip for
   // it, so NEAR is being asked before the tab says anything else.
   state: 'none' | 'ready' | 'moving' | 'done' | 'broken' | 'checking';
+  // Whether NEAR reads this Mac's Touch ID key (the chip vault.json names) on the vault, as
+  // scripts/vault-check.ts --key reads it: null until it answered. False after a restore on
+  // another Mac, and the tab then offers the restore here (state broken).
+  chipOnChain: boolean | null;
   recoveryOnChain: boolean | null;
   oldOnChain: boolean | null;
   predecessorAuth: boolean | null;
@@ -987,7 +994,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   const box = boxOf(host);
   const moving = vaultMoveUnderWay(host.keystore);
   if (chain === null || vault === null) {
-    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
+    return { state: moved ? 'done' : 'none', chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
   }
   const record = readRecord(host.dataDir, vault);
   /* A vault this Mac moved (its run record says done), or one a chip of this Mac's is pinned to,
@@ -1006,6 +1013,8 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
       });
   }
   const view = box.view.vault === vault ? box.view : emptyView();
+  // A read of another chip than the one vault.json names now says nothing about this one.
+  const chipOnChain = view.chipKey !== null && view.chipKey === prefs.chip?.publicKey ? view.chip : null;
   const accounts = chain.accounts.accounts();
   const needs: string[] = [];
   if (!host.keystore.isUnlocked()) needs.push('open');
@@ -1014,7 +1023,9 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   if (!host.backedUp()) needs.push('backup');
   if (view.gas === null || view.gas.low !== false) needs.push('gas');
   let state: ChipSlice['state'];
-  if (accounts.kind === 'chip') state = 'done';
+  // A vault on this Mac's chip, unless NEAR reads that key off it: then it answers to keys this Mac
+  // does not hold, and the tab offers the restore.
+  if (accounts.kind === 'chip') state = chipOnChain === false ? 'broken' : 'done';
   else if (accounts.kind === 'broken') state = 'broken';
   else if (active(box.run) || record?.status === 'moving') state = 'moving';
   else if (unsure) state = 'checking';
@@ -1034,6 +1045,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
             : 'none';
   return {
     state,
+    chipOnChain,
     recoveryOnChain: view.recovery,
     oldOnChain: view.old,
     predecessorAuth: view.predecessor,
@@ -1062,13 +1074,17 @@ async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string
   const pinned = prefs.chip === null ? null : (host.relay.chipMarkers(vault).find((m) => m.publicKey === prefs.chip?.publicKey)?.recovery ?? null);
   const recovery = pinned ?? (record?.status === 'done' ? record.recovery : null);
   const old = knownOld(host, box, vault);
-  const keys = [...(recovery === null ? [] : [recovery]), ...(old === null ? [] : [old])];
+  // This Mac's chip, as vault.json names it for this vault: read like the other keys (VD-1).
+  const chip = prefs.chip !== null && prefs.chip.account === vault && isChipPublicKey(prefs.chip.publicKey) ? prefs.chip.publicKey : null;
+  const keys = [...(chip === null ? [] : [chip]), ...(recovery === null ? [] : [recovery]), ...(old === null ? [] : [old])];
   const read = await readVault(chain.verifier, vault, keys);
   const gasAccount = gasAccountOf(host.keystore);
   const gas = gasAccount === null ? null : { account: gasAccount, ...(await readGas(gasAccount, chain.near)) };
   const next: ChipView = {
     vault,
     at: clock(),
+    chip: chip === null || read === null ? null : (read.has.get(chip) ?? null),
+    chipKey: chip,
     recovery: recovery === null || read === null ? null : (read.has.get(recovery) ?? null),
     old: old === null || read === null ? null : (read.has.get(old) ?? null),
     predecessor: read === null ? null : read.predecessorAuth,

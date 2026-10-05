@@ -9,6 +9,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
@@ -22,7 +23,7 @@ import { AGENTS_WAIT_SAID, VAULT_ELSEWHERE_SAID } from '../../src/proposals/life
 import { buildApproveAgentPayload } from '../../src/rails/hl-user-signed.ts';
 import type { Proposal } from '../../src/types.ts';
 import { buildVaultPayload } from '../../src/vault/payload.ts';
-import { verifierKeyOf } from '../../src/vault/phrase24.ts';
+import { paperKeyOf, verifierKeyOf } from '../../src/vault/phrase24.ts';
 import { MOVE_VAULT_REASON } from '../../src/vault/reason.ts';
 import { RESUME_POLL_MS, VIEW_FRESH_MS, erc191Signed } from '../../src/vault/rekey.ts';
 import { VAULT_SETTLE_FLOOR_MS, fileJournal, journalPathFor } from '../../src/vault/submit.ts';
@@ -312,6 +313,65 @@ test('after the move the reveal still returns the wallet\'s words behind its Tou
     const chip = (await w.get('/api/state')).json.vault.chip;
     assert.deepEqual([derived.allowance.toLowerCase(), derived.gas], [chip.allowance.account, chip.gas.account], 'they derive the allowance and the gas account the Vault tab shows');
     assert.equal(chip.oldOnChain, false, 'and NEAR reads their key off the vault');
+  } finally {
+    await w.close();
+  }
+});
+
+/* VD-1: the Vault tab's "This Mac's Touch ID key" reads NEAR, as scripts/vault-check.ts --key does.
+   A restore on another Mac takes this Mac's chip key off the vault: the paper signs it there. */
+test('after a restore on another Mac, the Vault tab reads this Mac\'s Touch ID key off the vault and offers the restore here; unread, it says so', { skip, timeout: 120_000 }, async () => {
+  const w = await wave3World({ papers: [PAPER] });
+  try {
+    const { vault } = await moved(w);
+    const chipKey = w.prefs.get().chip?.publicKey ?? '';
+    const read = async (want: (chip: any) => boolean): Promise<any> => {
+      w.chain.advance(VIEW_FRESH_MS + 1_000);
+      for (let i = 0; i < 300; i += 1) {
+        const chip = (await w.get('/api/state')).json.vault.chip;
+        if (want(chip)) return chip;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error('the Vault tab never read it');
+    };
+    const on = await read((c) => c.chipOnChain !== null);
+    assert.deepEqual([on.state, on.chipOnChain], ['done', true], 'NEAR reads this Mac\'s key on the vault');
+    assert.equal(await w.chain.verifier.hasPublicKey!(vault, chipKey), true);
+
+    // The restore on another Mac: the paper adds that Mac's chip and takes this one off.
+    const paper = paperKeyOf(PAPER);
+    const salt = await w.chain.verifier.currentSalt();
+    assert.ok(salt !== null);
+    const payload = buildVaultPayload({
+      signerId: vault,
+      intents: [
+        { intent: 'add_public_key', public_key: `p256:${base58Encode(Buffer.alloc(64, 0x35))}` },
+        { intent: 'remove_public_key', public_key: chipKey },
+      ],
+      deadlineMs: w.chain.now() + 60_000,
+      salt,
+    });
+    const ran = await w.chain.runAsStranger([await erc191Signed(paper.key, payload)]);
+    paper.key.fill(0);
+    assert.equal(ran.ok, true, ran.panic ?? 'ran');
+    assert.equal(await w.chain.verifier.hasPublicKey!(vault, chipKey), false, 'vault-check would print no for this key');
+
+    const off = await read((c) => c.chipOnChain === false);
+    assert.deepEqual([off.state, off.chipOnChain], ['broken', false], 'the tab offers the restore');
+
+    // vault.json names another chip of this Mac's now (a restore here wrote it): a read of the old
+    // one says nothing about it until NEAR is asked again.
+    const { publicKey } = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' });
+    const fresh = `p256:${base58Encode(Buffer.from(publicKey.export({ format: 'der', type: 'spki' }).subarray(-64)))}`;
+    w.prefs.setChip({ keyRef: `chip:com.karimbabasf.phosphor.chip.${crypto.randomUUID().toUpperCase()}`, publicKey: fresh, account: vault });
+    await new Promise((r) => setTimeout(r, STATE_CACHE_MAX_MS + 50));
+    assert.equal((await w.get('/api/state')).json.vault.chip.chipOnChain, null, 'a read of another chip is not this one\'s');
+
+    // No answer from NEAR is never a yes or a no.
+    w.chain.faults.reads = true;
+    const unread = await read((c) => c.chipOnChain === null);
+    assert.equal(unread.chipOnChain, null);
+    w.chain.faults.reads = false;
   } finally {
     await w.close();
   }
