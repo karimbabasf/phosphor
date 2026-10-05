@@ -39,11 +39,13 @@ as long as the vault is open. Above it, nothing happens until you click. The Vau
 row says it as Asks you above $100: "Anything above this waits for your click."
 
 This convenience applies only to money that stays in your own custody: a swap inside NEAR
-Intents, funding the Hyperliquid account, arming a trade. Three moves wait for a click at any
+Intents, funding the Hyperliquid account, arming a trade. Four moves wait for a click at any
 size, and the policy engine never executes them on its own:
 
 - A send, because the money leaves for somebody else. See [Money](money.md#send).
 - A withdrawal from Hyperliquid. See [Money](money.md#withdraw-from-hyperliquid).
+- A top-up from your vault, once it is on Touch ID. See
+  [Money](money.md#top-ups-and-the-sweep).
 - A policy change, because a rule the human did not click is how every other guarantee gets
   removed.
 
@@ -52,7 +54,8 @@ spends a coin the app cannot price, one whose listed price nothing in the quote 
 coin 1Click puts no dollar figure on, or a price from the solver relay it could not check against
 a quote 1Click signed (see
 [Money](money.md#swap)); a swap while an earlier swap of the same coin may still go through; and
-every move an agent proposes after it read text from outside Phosphor (see below).
+every move an agent proposes after it read text from outside Phosphor (see below). Once your
+vault is on Touch ID, a move that spends more than your allowance holds waits for a click too.
 
 A move that waits is one card in the chat that says Needs your OK. It shows what leaves and what
 arrives at least, its Details say why it asks, and it has two buttons: Cancel and Approve. On a

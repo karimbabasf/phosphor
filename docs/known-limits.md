@@ -174,9 +174,7 @@ anything. A bridge that holds a failed deposit refunds it on its own timetable, 
 support, and the app can only keep asking and show you the state honestly. A venue outage means
 the app shows unknown, never zero, and signs nothing against a number it could not read. The NEAR
 Intents verifier can be upgraded by its owners, and an invite claim that goes through 1Click rests
-on 1Click delivering it. The verifier's admins can also turn auth by predecessor id back on for any
-account, which would let the owner key reach a moved vault again through the account's NEAR wallet
-contract; the Vault tab shows that flag as the chain reads it.
+on 1Click delivering it.
 
 What it means: a move whose card says Taking longer, or that reads Not confirmed, is money in
 the venue's hands, not lost and not the app's to recover by itself. Do not send it again.
@@ -205,6 +203,27 @@ and Hyperliquid, even after the vault has moved.
 What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the two
 keys is what keeps one backup instead of three.
 
+## After the move, your wallet's words still open the allowance, the gas account and Hyperliquid
+
+The move takes your wallet's key off the vault, not out of use. The Vault tab still shows your
+recovery phrase, or your private key, after the move, behind the same Touch ID. Those words no
+longer open the vault, but the allowance key and the gas key are derived from them, and they still
+own your Hyperliquid account.
+
+What it means: whoever reads those words can spend the allowance, the gas account's NEAR and your
+Hyperliquid collateral, though never the vault. Show them only to write your backup. What closes
+it: nothing planned.
+
+## NEAR Intents' admins can switch predecessor auth back on
+
+The move turns auth by predecessor id off for your vault: the NEAR door in the Vault tab, a way for
+your wallet's key to act for the vault through its NEAR account. The verifier's admins can turn it
+back on for any account, which would let that key reach a moved vault again.
+
+What it means: the Vault tab reads the flag from the chain and says when the door is open. If it
+does, keep your key backup like cash, and move your money to a fresh wallet if anyone else may have
+that key. What closes it: nothing Phosphor controls; the switch is the verifier's.
+
 ## A program running as you during the move
 
 The owner key and the paper sign the call that changes the vault's keys inside the app, not in the
@@ -214,8 +233,16 @@ to add a key, and the paper's key is gone from memory once it signs.
 
 What it means: move the vault on a Mac you trust, with nothing else running that you did not start.
 The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault tab
-reads the vault's keys from the chain. What closes it: the outside audit planned for Phase 3, and a
-signer that builds that call itself.
+reads the vault's keys from the chain. What closes it: an audit by a third party, which is planned
+and not done, and a signer that builds that call itself.
+
+## A Touch ID sentence names a coin by its ticker
+
+The vault's Touch ID says "move 5.00 USDC from your vault to your allowance", not which USDC: USDC
+on NEAR and USDC bridged from Ethereum share the ticker, and a payload names each ticker once.
+
+What it means: the value is the same either way, inside NEAR Intents. What closes it: nothing
+planned.
 
 ## Hyperliquid, and what a withdrawal needs
 

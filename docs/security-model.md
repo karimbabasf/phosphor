@@ -43,6 +43,8 @@ The agent cannot:
 
 - approve or refuse a move, run one your rules do not allow, or change a rule;
 - send money out, or withdraw from Hyperliquid, without your click, at any size;
+- move money out of your vault once it is on Touch ID: only you ask for a top-up, and it needs
+  your click and your Touch ID;
 - see or use the wallet key;
 - read a page at an address it wrote itself;
 - see an invite code you put in the invite field.
@@ -52,7 +54,8 @@ session (a page, the news, a chain read, a venue's words the app does not know, 
 agent wrote), when its agent was started outside Phosphor and you have not allowed it, when the
 agent asked for it on its own after a move failed, when it spends a coin the app cannot price, or
 when it is a swap the app cannot measure by dollar figures 1Click signed: a coin 1Click puts no
-price on, or a relay price with no signed 1Click quote beside it.
+price on, or a relay price with no signed 1Click quote beside it. Once your vault is on Touch ID, a
+move that spends more than your allowance holds waits for your click too.
 
 ### What it defends against, and the test that proves it
 
@@ -61,8 +64,9 @@ prove. `npm test` runs the unit tests in `tests/unit/`, the injection suite and 
 suite. `cargo test` in `src-tauri` runs the shell's own tests, after `npm run bundle` has built
 the payload they check. `npm run attack` boots the app this checkout builds
 (`npm run app:build`) on a throwaway data folder and home, plays a hostile program in each case of
-`tests/attack/cases/`, and exits with an error when a defence does not hold. Two cases have a half
-that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
+`tests/attack/cases/`, and exits with an error when a defence does not hold. Three cases
+(`04-update-signature`, `12-xpc-vault`, `30-xpc-sign-intent`) have a half that needs a Developer ID
+build; add `-- --app <Phosphor.app>` to run it.
 
 - **The agent approves its own move.** No tool and no route in the agent's process decides. A
   decision needs the window token, which no route serves and no agent's environment holds.
@@ -111,9 +115,11 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   not that a forged one fails it. Proof: attack `04-update-signature` (the Developer ID
   requirement); the `update.rs` tests under `cargo test` (the download, the version inside, the
   archive, and a bundle that passes minisign without the Developer ID refused).
-- **Another program asks the Secure Enclave service to open the wallet.** On a signed release
-  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`;
-  `vault-peer-check.test.ts` (a foreign app refused, the app answered).
+- **Another program asks the Secure Enclave service to open the wallet, or to sign with the vault's
+  Touch ID key.** On a signed release the service answers only the signed Phosphor app, for the
+  chip's operations too, and a build with no Team ID refuses every chip operation. Proof: attacks
+  `12-xpc-vault`, `30-xpc-sign-intent`; `vault-peer-check.test.ts` (a foreign app refused, the app
+  answered).
 - **A wallet file swapped on disk for one wrapped to your enclave key.** Anyone can wrap to that
   key: its public half is in the file. On a Developer ID build that carries the keychain
   entitlement, a bound wallet's file is checked against a pin only the vault service can write,
@@ -138,14 +144,15 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   for a bind and a restore; a wallet made after a start-up probe that could not read the markers
   is committed all the same; Phosphor-only only for a file the service confirmed).
 - **The backend asks the chip key to sign something its Touch ID dialog does not say.** The vault
-  service reads every payload itself, against a grammar that takes a move of known tokens out of
-  the vault, the removal of a key, or the empty rekey proof, and refuses everything else before
-  the key is touched, so a refusal never raises a dialog. The dialog's sentence is the service's,
-  written from what it read; the backend never sends one. Adding a key and switching predecessor
-  auth back on are refused by name, whatever the payload wraps them in. Proof:
-  `chip-service.test.ts` (every refusal before the key with no signature asked for, each signed
-  payload's sentence byte for byte, each signature verified in Node); `intent-grammar.test.ts`
-  (every accept and refusal, 10 000 mutated payloads read the same as Node reads them).
+  service reads every payload itself, against a grammar that takes a move of known tokens out of the
+  vault, the removal of a key, or the empty rekey proof, and refuses everything else before the key
+  is touched, so a refusal never raises a dialog. The dialog's sentence is the service's, written
+  from what it read; the backend never sends one. Adding a key and switching predecessor auth back
+  on are refused by name, whatever the payload wraps them in. Proof: attack
+  `31-chip-hostile-payloads`; `chip-service.test.ts` (every refusal before the key with no signature
+  asked for, each signed payload's sentence byte for byte, each signature verified in Node);
+  `intent-grammar.test.ts` (every accept and refusal, 10 000 mutated payloads read the same as Node
+  reads them).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -190,6 +197,15 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   check before the key, and a click on one waits until the move is over. A move bundle written down
   before a restart keeps agents waiting until NEAR can no longer run it. The account the rails sign
   for changes in that call, and so does every key on the vault. Proof: `wave3-wiring.test.ts`.
+- **An agent reaches for the vault.** No agent is offered a chip tool, every `/api/vault` write
+  refuses what an agent holds, and only the shell, with its relay secret, takes or answers the
+  vault service's requests. Proof: attacks `32-mcp-chip-reach`, `33-relay-ops`.
+- **An agent takes money out of the vault.** An agent cannot ask for a top-up or approve one: the
+  vault's Touch ID key signs only after your click, and a move nobody clicked that finds the
+  allowance short signs nothing. Proof: attack `34-agent-top-up`.
+- **A program rewrites `state/vault.json`.** It cannot point the vault at another Touch ID key or
+  bring the owner key back into the session: the service's pin and the chain decide. Proof: attack
+  `35-vault-json-keyref-swap`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other
@@ -252,13 +268,19 @@ your money.
   the owner key, so whoever holds the key backup holds the allowance (at most its size plus 10
   percent, $110 at the default), the gas account (about 0.5 NEAR) and Hyperliquid. Keep it like
   cash. What closes it: nothing planned; deriving them is what keeps one backup instead of three.
+- **After the move, your wallet's words still open the allowance, the gas account and
+  Hyperliquid.** The move takes your wallet's key off the vault, not out of use: the recovery
+  phrase or private key the Vault tab still shows after the move no longer opens the vault, but the
+  allowance key and the gas key are derived from it, and it still owns your Hyperliquid account.
+  Whoever reads those words can spend the allowance, the gas account's NEAR and your Hyperliquid
+  collateral. What closes it: nothing planned; show the words only to write your backup.
 - **A program running as you during the move sees what the move sees.** The owner key and the paper
   sign the call that changes the vault's keys in the app, not in the chip, so such a program could
   read the paper's words as you type them, pin a wrong allowance, or add a key of its own in the same
   call. The chip refuses to add a key at all, so after the move a program can no longer do that.
   The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault
-  tab reads the vault's keys from the chain. What closes it: the outside audit planned for Phase 3,
-  and a signer that builds that call itself.
+  tab reads the vault's keys from the chain. What closes it: an audit by a third party, which is
+  planned and not done, and a signer that builds that call itself.
 - **A bound wallet's key is one keychain item.** After the bind, and for every wallet a signed
   release makes, the key lives in one item in the vault's keychain group and in no file, so no copy
   of the wallet file opens without it. If the item is gone (the Mac erased or replaced, its
@@ -349,11 +371,14 @@ your money.
   shows. A program running as you can rewrite the whole file, and nothing on chain records that a
   Touch ID happened.
 - **The venues are not Phosphor's.** The NEAR Intents verifier can be upgraded by its owners, and
-  an invite claim on the 1Click route rests on 1Click delivering. Its admins (the DAO and the roles
-  UnrestrictedAccountUnlocker and UnrestrictedAccountManager) can also turn auth by predecessor id
-  back on for any account (`force_enable_auth_by_predecessor_ids`), which would let the owner key
-  reach a moved vault again through the account's NEAR wallet contract. The move turns it off, and
-  the Vault tab shows the flag as the chain reads it, so a forced flip is visible.
+  an invite claim on the 1Click route rests on 1Click delivering.
+- **NEAR Intents' admins can switch predecessor auth back on.** The move turns auth by predecessor
+  id off for the vault (the NEAR door, in the Vault tab), so your wallet's key cannot act for it
+  through the account's NEAR wallet contract. The verifier's admins (the DAO and the roles
+  UnrestrictedAccountUnlocker and UnrestrictedAccountManager) can turn it back on for any account
+  (`force_enable_auth_by_predecessor_ids`), which would let that key reach a moved vault again. The
+  Vault tab reads the flag from the chain and says when the door is open, with what to do, so a
+  forced flip is visible. What closes it: nothing Phosphor controls; the switch is the verifier's.
 - **The web gate lets a little through.** Which pages the agent chooses to read can tell those
   sites a few bits each, at most 12 pages a session and 3 a site.
 - **Grok has no web search.** With Grok in the chat, the agent cannot search the web. Give it a
@@ -511,7 +536,10 @@ The chain stops at the first refusal, in this order:
    (`never_asks`), refused when it drops an allowed destination, a forbidden issuer or an issuer
    cap (`allowlist_shortened`, `forbidden_issuers_shortened`, `issuer_caps_dropped`), and
    refused when its sentence does not name every figure it moves (`sentence_mismatch`); a
-   valid patch always returns `needs_approval`, with before and after on every limit it touches
+   valid patch always returns `needs_approval`, with before and after on every limit it touches.
+   A vault top-up branches off here too: it must be priced (`invalid_amount`) and move between two
+   of the wallet's own accounts (`destination_not_allowed`), and it always returns
+   `needs_approval`, whatever its size
 4. The draft is a rail this app runs (a swap inside NEAR Intents, a Hyperliquid deposit or
    withdrawal, a send to another intents account, a payout to an address on a chain, a trade);
    any other kind is refused by name (`unknown_kind`)
@@ -1087,16 +1115,18 @@ regression introduced by a future code path nobody thought to write a targeted t
 
 ## What signs, and with what
 
-One key moves money: the EVM key in the keystore. It signs ERC-191 intents for the NEAR
-Intents rails (`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/rails/intents-spend.ts`)
-and EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Orders on Hyperliquid are
-signed by a second key, a Hyperliquid API wallet kept in the same file (`src/hl/sign.ts`), which
-the venue lets trade and forbids from withdrawing, transferring or approving another agent. Nothing signs a chain
-transaction: the chain signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts`
-went with the chain wallets (2026-09-16), and those two files now hold only the readers, the
-explorer prefixes, the NEAR RPC and the address rules. Since 0.10.5 a new wallet holds the EVM
-key alone, and importing a Solana or NEAR key is refused. A file made before 0.10.5 still seals
-the Solana and NEAR keys its mnemonic derived, and nothing reads them.
+Until the vault moves to the chip ([below](#the-move-to-the-chip-and-the-restore)), one key moves
+money: the EVM key in the keystore. It signs ERC-191 intents for the NEAR Intents rails
+(`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/rails/intents-spend.ts`) and
+EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Orders on Hyperliquid are signed by
+a second key, a Hyperliquid API wallet kept in the same file (`src/hl/sign.ts`), which the venue
+lets trade and forbids from withdrawing, transferring or approving another agent. No wallet key
+signs a chain transaction (only GAS does, the vault's `execute_intents` calls below): the chain
+signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets
+(2026-09-16), and those two files now hold only the readers, the explorer prefixes, the NEAR RPC and
+the address rules. Since 0.10.5 a new wallet holds the EVM key alone, and importing a Solana or NEAR
+key is refused. A file made before 0.10.5 still seals the Solana and NEAR keys its mnemonic derived,
+and nothing reads them.
 
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
@@ -1160,7 +1190,7 @@ prefix and a slip, another separator or groups of one or two; a character short 
 its end; its digits typed as O, I or L; or a code split over two messages. Each costs that one
 code.
 
-**Two keys derived from the owner key, never stored.** The chip vault (Phase 2) adds ALLOWANCE, a
+**Two keys derived from the owner key, never stored.** The chip vault adds ALLOWANCE, a
 0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account
 that pays for the vault's `execute_intents` calls. Both come from the EVM key at every open and are
 written nowhere (`src/keystore/derived.ts`): HKDF-SHA256 (RFC 5869) over the key's 32 bytes, salt

@@ -86,7 +86,7 @@ custom SMA, EMA, RSI or ATR equals the built-in to the last digit.
 | `chain_transactions` | The most recent transactions of an address on one network, newest first, at most 25: hash, time, from, to, value, status, method name. Raw inputs never come back. Only on the networks read through an indexer or a history call (ethereum, base, arbitrum, solana, fogo, near, bitcoin, litecoin) |
 | `chain_transaction` | One transaction by hash: the same fields plus fee, block and confirmations |
 | `web_read` | One web page, read by the APP (`src/web-page.ts`) and only at an address that arrived from outside the model: a hit a web search returned this chat (its `url` field, never the query or commentary the answer's text repeats), or the person's own message, word for word, or a folder above one (`src/web-gate.ts`). The card's Try again line names a coin only by a ticker-shaped symbol (`ui/screens/decision.js`), and the propose door refuses a symbol with a space or `://` in it. https, the standard port, a public name whose every address is public at connect, no address or figure of this wallet in it, 12 pages a session and 3 a site. The text comes back stripped and quoted; `look_for` keeps the lines that name it. Marks the session |
-| `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means this app's own, and `own` says which. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
+| `intents_activity` | What an account has moved inside NEAR Intents, from NearBlocks: `MINT` rows are deposits in, `BURN` rows withdrawals out, `TRANSFER` rows swap legs and sends, each with token, signed amount and hash. No account means the one moves spend from (the allowance once the vault has moved), and `own` says whether the account is one of this app's own. When NearBlocks is down it falls back to the verifier's own views and answers balances only, marked `partial: true` |
 | `swap_assets` | What can be swapped inside the balance, coins held first: symbol, name, network, `assetId`, decimals, price, the exact amount held, and `liquidity` (yes, no or unknown: whether anyone offers a price now). `query` narrows it. Files nothing (`src/http/read/swap.ts`) |
 | `swap_quote` | What a swap would get right now: amount in, expected amount out, the minimum, the fee in dollars and the time it takes. `chain` and `toChain` only when a network was named; otherwise the app picks each coin, the one held first. `sentence` says why when there is no quote, and `candidates` means a name fits several coins. Files nothing |
 | `swap_check` | One swap's truth read again: what the swap service says, whether the coin left the balance, whether it came back, and what is held now; `moved` is yes, no or unknown and `summary` is one plain line. Moves nothing. Lead only |
@@ -579,13 +579,17 @@ ships `sha3-256`, which is NIST FIPS 202: the same permutation with a different 
 returns a different digest and an address nobody holds the key to. Nothing about the wrong address
 looks wrong, and funds sent there are gone.
 
-One key signs, and it signs no chain transaction. The EVM key signs ERC-191 intents for the
-NEAR Intents rails (`src/rails/intents-native.ts`, `intents-send.ts`, `intents-spend.ts`) and
-EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). The chain signers that used to
-live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets on 2026-09-16;
-those files now hold the EVM readers and explorer prefixes, the NEAR RPC, base58 and the account
-id rules. Wallets made before 0.10.5 still seal a Solana and a NEAR key, and nothing here reads them; a
-wallet made since holds the EVM key alone.
+Until the vault moves to the chip, one key signs, and it signs no chain transaction. The EVM key
+signs ERC-191 intents for the NEAR Intents rails (`src/rails/intents-native.ts`, `intents-send.ts`,
+`intents-spend.ts`) and EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). After the
+move (below), the rails sign with the allowance key for the allowance alone, the chip key and the
+paper key sign for the vault, the EVM key signs only a Hyperliquid owner action behind its own
+Touch ID, the derived trading key places orders once allowed, and the gas account's key signs the
+one NEAR transaction the app sends, `execute_intents` (`src/chain/near-tx.ts`). The chain signers
+that used to live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets on
+2026-09-16; those files now hold the EVM readers and explorer prefixes, the NEAR RPC, base58 and
+the account id rules. Wallets made before 0.10.5 still seal a Solana and a NEAR key, and nothing
+here reads them; a wallet made since holds the EVM key alone.
 
 `keygen` checks itself before it generates anything, on every run: the canonical Ethereum test
 key `0x4c0883a6...362318` must derive `0x2c7536E3605D9C16a7a3D7b1898e529396a65c23`. A mismatch
@@ -669,8 +673,9 @@ refused (`pin_mismatch`); while any marker exists a device-bound key file is ref
 minutes (`not_committed`); `sweep` deletes keys no marker names after those ten minutes and never a
 marked one; `status` reads all of this with no dialog. With no Team ID (ad hoc, and the stdin
 development helper whoever signs it) the service keeps the device key path. The shell's relay
-carries these seven ops and no other (`src-tauri/src/enclave.rs`). `vault-service.test.ts` runs the
-rules against a stand-in keychain compiled into the test alone.
+carries these seven ops, the chip's five (`chipCreate`, `chipCommit`, `chipStatus`, `chipSweep`,
+`signIntent`) and no other, twelve in all (`src-tauri/src/enclave.rs`). `vault-service.test.ts` runs
+the rules against a stand-in keychain compiled into the test alone.
 
 **Every new key file, and the bind** (`src/http/custody.ts`). Create, restore, the move from a
 password and `POST /api/vault/bind` all write the new file to `keys.enc.json.bind` beside the live
@@ -793,11 +798,13 @@ The read sits behind the read gate; the write carries the window token through `
 trading approves the next key the open derived from the owner key with one Touch ID, and the
 runner trades with it from that moment (`keystore.apiWallet()`).
 
-**What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
-the answer to that is a separate signing process or a hardware device, neither of which ships
-here. Treat the balance behind these keys as the amount you are willing to lose to something that
-gets code execution as you while the app is unlocked. [Known limits](known-limits.md) lists this
-beside the others.
+**What is still open.** The key is in this process's memory whenever the wallet is unlocked. For the
+vault, the answer is the move to the chip: after it the vault answers only to the chip key in the
+Secure Enclave and the paper key, and the open session holds the allowance key, the gas key and the
+trading key, never the owner key. Treat the balance behind the keys in memory (the whole wallet
+before the move; the allowance, the gas account and Hyperliquid after it) as the amount you are
+willing to lose to something that gets code execution as you while the app is unlocked.
+[Known limits](known-limits.md) lists this beside the others.
 
 Execution routes through NEAR Intents. One rail, no bridges, 1 basis point, 25+ chains, 125+
 assets. The alternative was per-chain bridges, which multiplies the number of things that can steal
@@ -845,11 +852,13 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/proposals.ts   a thin door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
     src/rails/         the rail registry: intents, hyperliquid, the vault top-up, the allowance sweep
-    src/vault/         the vault's chip key, its relay, payloads, submitter, and the allowance
-                       (allowance.ts: top-up, sweep plan, shortfall)
+    src/vault/         the vault's chip key, its relay, payloads, submitter, the move and the
+                       restore (rekey.ts), the gas account, and the allowance (allowance.ts:
+                       top-up, sweep plan, shortfall)
     src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface
     src/runner/        the host (registry, watcher, fills watch) and the child that signs
-    src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules
+    src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules, and
+                       the gas account's one NEAR transaction (near-tx.ts)
     src/ledger/        the NEAR Intents verifier read + demo fixtures
     src/invite/        invite codes: the code, its payload, its signer, the claim and its record
     src/transactions.ts  the transaction history, derived from the store and the log
@@ -882,7 +891,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
                        invite spec's Proof step 0
     ui/                one window, four screens, no framework, no build
     ui/chart/          the chart engine: two canvases, one pointer surface
-    ui/screens/        one file per screen: basic, pro, trade, vault, lock, first run, decision
+    ui/screens/        one file per screen: basic, pro, trade, vault (its Your vault rows in chip.js
+                       and allowance.js), lock, first run, decision
     ui/core/           the DOM helpers, the keyed reconciler, the API client, the store
     ui/design/         the tokens, the type scale and the motion the screens are built from
     ui/fonts/          Geist and Geist Mono, self-hosted, with their OFL beside them

@@ -244,7 +244,9 @@ when it ends. Allow a new one before then: without a trading key, Freeze cannot 
 On a new Mac, restore the wallet first, with I already have a wallet and your recovery phrase or
 private key. The Vault tab then says your vault waits for your paper key. Restore your vault, beside
 the wallet's own restore, has you write a new paper key, then type the old paper's 24 words, and one
-Touch ID brings the vault here. The restore retires the old paper. See
+Touch ID, "confirm this Mac's Touch ID key for your vault", brings the vault here. A Mac that must
+first read your wallet's own key asks one more before it: "Restore your vault to this Mac's Touch ID
+key from your paper key". The restore retires the old paper. See
 [Troubleshooting](troubleshooting.md#moving-the-vault-to-touch-id).
 
 ## The five minute lock

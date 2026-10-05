@@ -19,7 +19,9 @@ on its own line that opens the Trade tab, where everything about Hyperliquid liv
   trading account to back positions. It comes from the intents balance and goes back to it.
 
 Nothing else holds money. The app signs no transaction on any chain: every move is an intent or
-a venue action signed by the one key in your wallet, and the bridge does the chain work.
+a venue action signed by the one key in your wallet, and the bridge does the chain work. Once your
+vault moves to Touch ID (below), other keys sign, and the gas account holds and spends a little
+NEAR.
 
 ### Once your vault moves to Touch ID
 

@@ -174,7 +174,7 @@ The rule chain and the fail-closed positions in it are described in
 
 ## Where money lives
 
-Two pockets, and nothing on a chain:
+Two pockets, and nothing on a chain but the gas account's NEAR (the last item):
 
 - **The NEAR Intents balance.** Entries on the `intents.near` verifier's own ledger, credited to
   the account the EVM key derives (the address, lowercased). Money arrives through the POA bridge
@@ -184,13 +184,18 @@ Two pockets, and nothing on a chain:
 - **The Hyperliquid collateral.** USDC on the venue's own books, in the account the same EVM
   address signs for, funded from the intents balance (`src/rails/hypercore-deposit.ts`) and
   returned to it (`src/rails/hypercore-withdraw.ts`).
+- **The vault on Touch ID.** Once the vault moves, the intents balance is two accounts: the vault
+  (the same address, moved only by the chip key and the paper key) and the allowance every rail
+  spends from (`src/vault/accounts.ts`, `src/vault/allowance.ts`). The gas account, a NEAR account
+  derived from the same key (`src/vault/gas-account.ts`), holds the NEAR you add to it and signs
+  the vault's `execute_intents` calls on NEAR (`src/chain/near-tx.ts`).
 
-`ChainId` (`eth`, `base`, `arb`, `sol`, `near`) survives as the home chain of an asset, which is
-how the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. It is never
-a place this app holds funds or signs a transaction. The chain wallets, the per-chain balance
-reads, the gas floors and the chain signers all went on 2026-09-16; rows they wrote still render
-as history. Every RPC endpoint and contract account in the repo names the live network, and no
-config field, environment variable or type points them anywhere else.
+`ChainId` (`eth`, `base`, `arb`, `sol`, `near`) survives as the home chain of an asset, which is how
+the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. Apart from the gas
+account on NEAR, it is never a place this app holds funds or signs a transaction. The chain wallets,
+the per-chain balance reads, the gas floors and the chain signers all went on 2026-09-16; rows they
+wrote still render as history. Every RPC endpoint and contract account in the repo names the live
+network, and no config field, environment variable or type points them anywhere else.
 
 ## Why NEAR Intents is the only rail
 

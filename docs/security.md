@@ -133,6 +133,13 @@ one and ask for your Touch ID, until the wallet moves to new keys. Delete the co
 Phosphor-only is also one rule for the whole Mac: [Known limits](known-limits.md) says what that
 means before you make a second wallet.
 
+The Vault tab can also move your vault to this Mac's Touch ID key and a paper key you write by
+hand. After that the wallet key no longer opens the vault and stays out of the open app's memory,
+every move out of the vault asks for a Touch ID that names it, a top-up always waits for your
+click, and your assistant spends from a small allowance. That closes the first limit above for the
+vault, not for the allowance, the gas account or Hyperliquid, whose keys are in memory while the
+wallet is open. See [Getting started](getting-started.md#move-your-vault-to-touch-id).
+
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
 click alone, with no biometric: Approve runs the move with no Touch ID after it. That is the
@@ -229,6 +236,9 @@ packages:
 ```
 node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed
 ```
+
+With `--stage signed` it also asks NEAR which intents.near is deployed (see below), so it can fail
+for that alone, with your copy as it should be.
 
 The defences in this document are checked by an attack suite the repository ships: `npm run attack`
 runs the app this checkout builds (`npm run app:build` makes the ad-hoc bundle it boots), plays the

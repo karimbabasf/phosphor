@@ -157,8 +157,9 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
 
 - **Type your paper key back first.** The 24 words are typed back whole before anything moves. A
   lock wipes words already typed, so after a lock type them again.
-- **Those words do not match.** One word differs from your paper or from the screen. The answer
-  never says which, so check each word.
+- **Those words do not match.** One word differs from your paper or from the screen. While the
+  words are still in the window, it names the first slip by its number, never the word; after a
+  lock or a restart it cannot, so check each word.
 - **The gas account has no NEAR yet, or needs more.** The move is paid from the gas account, a NEAR
   account derived from your key. Add 0.1 to 1 NEAR from the Vault tab: it is a payout you click
   and confirm with Touch ID, and the dialog names the gas account. Nothing is made or signed until
