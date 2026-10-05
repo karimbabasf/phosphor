@@ -618,6 +618,7 @@
       asked.gas = null;
       kit.grow(refs.gas, function () {
         direct = true;
+        dom.setHidden(refs.gasAdd, true);
         paintGas();
         if (refs.gasCopy.focus && !refs.gasCopy.hidden) refs.gasCopy.focus();
       }, refs.gasElsewhere);
