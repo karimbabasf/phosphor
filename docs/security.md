@@ -256,9 +256,11 @@ of its code) and prints `spiked: yes` only for the build the Touch ID vault was 
 0.4.4. Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
 `simulate_intents`, signed by keys made for that run, and check that the verifier reports exactly
 the events the app expects. Neither sends anything. A release asks the same question: once the app
-is signed, `scripts/release-check.ts` reads the deployed verifier and stops the release on any other
-build, or when the NEAR RPC gives no answer, until someone reruns the spike on it and pins the new
-pair in `scripts/verifier-gate.ts` and `src/relay/verifier.ts`.
+is signed, `scripts/release-check.ts` reads the deployed verifier from two keyless NEAR RPCs run by
+different companies, FastNEAR and dRPC, and stops the release on any other build, when either gives
+no answer, or when the two name different builds, until someone reruns the spike on it and pins the
+new pair in `scripts/verifier-gate.ts` and `src/relay/verifier.ts`. One RPC's answer carries no
+proof, so one provider alone cannot pass a release.
 
 ## The lock
 

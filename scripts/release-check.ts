@@ -31,9 +31,9 @@
 //   5. signed only: the NEAR Intents verifier the release's chip vault signs for is the build it was
 //      spiked on (scripts/verifier-gate.ts, the check scripts/verifier-check.ts prints). Its owners
 //      can upgrade it, and every payload shape, event and view the vault relies on was run live on
-//      one build. Another build, or no answer from the NEAR RPC, stops the release until someone
-//      reruns the spike on it and pins the new pair in scripts/verifier-gate.ts and
-//      src/relay/verifier.ts.
+//      one build. Two NEAR RPCs run by different companies must name the same build. Another build,
+//      no answer from either, or two answers that differ stops the release until someone reruns
+//      the spike on it and pins the new pair in scripts/verifier-gate.ts and src/relay/verifier.ts.
 //
 // What it cannot see: node_modules is installed by the build job from the lockfile and nothing
 // here rebuilds it, so (2) says the shell and the payload agree, not that the build job was
@@ -50,7 +50,7 @@ import path from 'node:path';
 
 import { PAYLOAD, SKIPPED, payloadDigest } from './payload-digest.ts';
 import { type Entitlements, entitlementProblem, machOFiles, readPlist, signatureOf, signingGate } from './signing-gate.ts';
-import { type DeployedVerifier, readDeployedVerifier, verifierProblems } from './verifier-gate.ts';
+import { type ProviderAnswer, agreedVerifier, readDeployedVerifiers, verifierProblems } from './verifier-gate.ts';
 
 export { entitlementProblem, type Entitlements };
 export type Stage = 'built' | 'signed';
@@ -248,8 +248,8 @@ export function checkApp(app: string, checkout: string, stage: Stage, options: C
 }
 
 export type CliDeps = {
-  // Which intents.near is deployed (scripts/verifier-gate.ts); the signed stage asks it once.
-  readVerifier?: () => Promise<DeployedVerifier | null>;
+  // Which intents.near each NEAR RPC says is deployed (scripts/verifier-gate.ts); the signed stage asks once.
+  readVerifier?: () => Promise<ProviderAnswer[]>;
   out?: (line: string) => void;
   err?: (line: string) => void;
 };
@@ -270,8 +270,9 @@ export async function releaseCheck(argv: string[], deps: CliDeps = {}): Promise<
     return 2;
   }
   const problems = checkApp(path.resolve(app), path.resolve(checkout), stage, { team: process.env.APPLE_TEAM_ID });
-  const deployed = stage === 'signed' ? await (deps.readVerifier ?? readDeployedVerifier)() : null;
-  if (stage === 'signed') problems.push(...verifierProblems(deployed));
+  const answers = stage === 'signed' ? await (deps.readVerifier ?? readDeployedVerifiers)() : [];
+  if (stage === 'signed') problems.push(...verifierProblems(answers));
+  const deployed = agreedVerifier(answers);
   if (problems.length > 0) {
     err(`release-check: ${app} (${stage}) FAILS:\n  ${problems.join('\n  ')}`);
     return 1;
@@ -279,7 +280,7 @@ export async function releaseCheck(argv: string[], deps: CliDeps = {}): Promise<
   const floor = versionText(supportedMacOS(path.resolve(checkout)));
   out(
     stage === 'signed'
-      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team, every binary runs on macOS ${floor}, and intents.near is ${deployed?.version}, the verifier the chip vault was spiked on`
+      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team, every binary runs on macOS ${floor}, and ${answers.map((a) => a.name).join(' and ')} both read intents.near as ${deployed?.version}, the verifier the chip vault was spiked on`
       : `release-check: ${app} (built) is the checkout, carries the committed entitlements, and every binary runs on macOS ${floor}`,
   );
   return 0;

@@ -1,7 +1,8 @@
 // Which NEAR Intents verifier is deployed, held against the one the chip vault was spiked on: its
-// version (contract_source_metadata) and the hash of its code (view_account), and `spiked: yes`
-// only for that exact pair. Exit 0 when spiked, 1 when the verifier is another build or a check
-// failed, 2 when the NEAR RPC did not answer.
+// version (contract_source_metadata) and the hash of its code (view_account), as each of the gate's
+// two NEAR RPCs reads it, and `spiked: yes` only when both name that exact pair. Exit 0 when
+// spiked, 1 when the verifier is another build, the two disagree or a check failed, 2 when a NEAR
+// RPC did not answer.
 //
 // `--simulate` also runs two bundles through simulate_intents, signed by keys made for this run:
 // a secp256k1 key as a throwaway vault's own key (erc191) and a software P-256 key in the chip's
@@ -13,7 +14,7 @@
 // src/vault/payload.ts expects. simulate_intents is a view: nothing is sent, the throwaway account
 // holds nothing, and the keys never leave this process.
 //
-// The first line is the release gate's own check (scripts/verifier-gate.ts): once the app is
+// The first lines are the release gate's own check (scripts/verifier-gate.ts): once the app is
 // signed, scripts/release-check.ts refuses a release on any verifier but the spiked one.
 //
 // Run: node scripts/verifier-check.ts [--simulate]
@@ -22,7 +23,7 @@ import crypto from 'node:crypto';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
 
-import { SPIKED, isSpiked, readDeployedVerifier } from './verifier-gate.ts';
+import { SPIKED, agreedVerifier, isSpiked, readDeployedVerifiers } from './verifier-gate.ts';
 import { base58Encode } from '../src/chain/near.ts';
 import { ERC191_STANDARD, erc191SignatureField } from '../src/intents-sign.ts';
 import { liveVerifier } from '../src/relay/verifier.ts';
@@ -49,8 +50,15 @@ function noAnswer(what: string): never {
   process.exit(2);
 }
 
-const source = await readDeployedVerifier();
-if (source === null) noAnswer('intents.near');
+// The gate's two providers, each on its own line, then the build they agree on.
+const answers = await readDeployedVerifiers();
+for (const a of answers) console.log(`${a.name}: ${a.deployed === null ? 'no answer' : `intents.near ${a.deployed.version} ${short(a.deployed.codeHash)}`}`);
+if (answers.some((a) => a.deployed === null)) noAnswer('intents.near');
+const source = agreedVerifier(answers);
+if (source === null) {
+  console.log('intents.near: the NEAR RPCs disagree, so this build cannot be named');
+  process.exit(1);
+}
 const spiked = isSpiked(source);
 console.log(`intents.near ${source.version} ${short(source.codeHash)} spiked: ${spiked ? 'yes' : 'no'}`);
 if (!spiked) console.log(`spiked on ${SPIKED.version} ${short(SPIKED.codeHash)}: this build has not been tested`);
