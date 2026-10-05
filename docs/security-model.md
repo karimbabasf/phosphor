@@ -1,6 +1,7 @@
 # Security model
 
 What this app defends against, how, and where the v1 boundary honestly sits.
+[Check it yourself](verify.md) gives each wallet claim with its code, its test and a command.
 
 ## Threat model
 

@@ -141,6 +141,8 @@ npm run sweep    # the secret sweep CI runs over the tree and the history a push
 npm run attack   # plays a hostile program on this Mac against the app npm run app:build made
 ```
 
+To check the wallet's security claims yourself, test by test, see [docs/verify.md](docs/verify.md).
+
 ## Docs
 
 Read them at [phosphor.money/docs](https://phosphor.money/docs), or in
