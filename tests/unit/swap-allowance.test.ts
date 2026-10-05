@@ -100,14 +100,14 @@ test('more than the allowance and the vault together is short, and a vault nobod
   assert.equal(unread.topUp, undefined);
 });
 
-test('"all" is what the allowance holds; with none there, the answer says the vault moves only through a top-up', async () => {
+test('"all" is what the allowance holds; with none there, the answer names the vault\'s amount to swap instead', async () => {
   const all = await chipCtx(100_000_000n, 1_850_000_000n).svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: 'all' });
   assert.equal(all.amountIn, '100');
   assert.equal(all.topUp, undefined);
   const none = await chipCtx(0n, 1_850_000_000n).svc.swapQuote!({ fromSymbol: 'USDC', toSymbol: 'NEAR', amountIn: 'all' });
   assert.equal(none.ok, false);
   assert.equal(none.reason, 'insufficient_balance');
-  assert.match(none.sentence ?? '', /^Your allowance holds no USDC; what your vault holds moves only through a top-up you confirm with Touch ID/);
+  assert.equal(none.sentence, 'Your allowance holds no USDC, and your vault holds 1850 USDC. Swap 1850 USDC instead of "all": Approve then moves it from your vault with one more Touch ID.');
 });
 
 test('kind key: the same 150 over a 100 balance is short, exactly as before', async () => {
