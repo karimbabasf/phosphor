@@ -272,8 +272,9 @@ your money.
   Hyperliquid.** The move takes your wallet's key off the vault, not out of use: the recovery
   phrase or private key the Vault tab still shows after the move no longer opens the vault, but the
   allowance key and the gas key are derived from it, and it still owns your Hyperliquid account.
-  Whoever reads those words can spend the allowance, the gas account's NEAR and your Hyperliquid
-  collateral. What closes it: nothing planned; show the words only to write your backup.
+  The reveal says so beside the words. Whoever reads those words can spend the allowance, the gas
+  account's NEAR and your Hyperliquid collateral. What closes it: nothing planned; show the words
+  only to write your backup.
 - **A program running as you during the move sees what the move sees.** The owner key and the paper
   sign the call that changes the vault's keys in the app, not in the chip, so such a program could
   read the paper's words as you type them, pin a wrong allowance, or add a key of its own in the same

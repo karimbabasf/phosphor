@@ -856,6 +856,21 @@
     grow(refs.backupRow, function () { drawWords(note); }, refs.phraseFlow);
   }
 
+  /* Once the vault has moved to a Touch ID key, what this row shows no longer
+     opens the vault, and the allowance, the gas account and Hyperliquid are
+     still its own (docs/known-limits.md says the same), so the reveal says so
+     beside it. NEAR's reading of the wallet's key decides; with none in, a
+     vault this Mac moved does. */
+  function movedLine(what) {
+    var vault = (store.get() || {}).vault || {};
+    var chip = vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
+    var moved = !!chip && (chip.oldOnChain === false || (chip.oldOnChain !== true && chip.state === 'done'));
+    if (!moved) return null;
+    return text('vault-text', what === 'key'
+      ? 'Your vault moved to a Touch ID key, so this key no longer opens it. It still opens your allowance, the gas account and Hyperliquid, so keep it like cash.'
+      : 'Your vault moved to a Touch ID key, so these words no longer open it. They still open your allowance, the gas account and Hyperliquid, so keep them like cash.');
+  }
+
   function drawWords(note) {
     var flow = refs.phraseFlow;
     dom.clear(flow);
@@ -867,6 +882,8 @@
     append(warn, icon('lock', 'icon-16'));
     warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads these words can take your money.'));
     flow.appendChild(warn);
+    var movedWords = movedLine('words');
+    if (movedWords) flow.appendChild(movedWords);
 
     if (note) {
       var again = problem();
@@ -1070,6 +1087,8 @@
     append(warn, icon('lock', 'icon-16'));
     warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads this key can take your money.'));
     flow.appendChild(warn);
+    var movedKey = movedLine('key');
+    if (movedKey) flow.appendChild(movedKey);
 
     if (note) {
       var again = problem();

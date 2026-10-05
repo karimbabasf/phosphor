@@ -861,6 +861,30 @@ test('a cancelled Touch ID on the reveal shows nothing and says nothing', async 
 
 const keyText = (world: World): string[] => find(flow(world), '.word').map((w: Any) => w.childNodes[1].textContent);
 
+test('after the vault moved, the reveal still shows the words and says they open the allowance, the gas account and Hyperliquid, and no longer the vault', async () => {
+  const WORDS_LINE = 'Your vault moved to a Touch ID key, so these words no longer open it. They still open your allowance, the gas account and Hyperliquid, so keep them like cash.';
+  const KEY_LINE = 'Your vault moved to a Touch ID key, so this key no longer opens it. It still opens your allowance, the gas account and Hyperliquid, so keep it like cash.';
+  const revealed = async (vault: Any): Promise<string[]> => {
+    const world = build({ vault });
+    buttonNamed(row(world, 'backup'), 'Back it up').click();
+    await flush();
+    return textOf(flow(world));
+  };
+  // Not moved: no such line.
+  assert.equal((await revealed({ chip: { state: 'ready', oldOnChain: true } })).includes(WORDS_LINE), false);
+  assert.equal((await revealed({})).includes(WORDS_LINE), false, 'a build with no vault slice says nothing of a move');
+  // Moved, by NEAR's reading of the wallet's key, by this Mac's move while NEAR is unread, or to another Mac.
+  for (const chip of [{ state: 'done', oldOnChain: false }, { state: 'done', oldOnChain: null }, { state: 'broken', oldOnChain: false }]) {
+    const text = await revealed({ chip });
+    assert.ok(text.includes(WORDS_LINE), JSON.stringify(chip));
+    assert.ok(text.includes('On this screen only. Anyone who reads these words can take your money.'), 'the words still open money');
+  }
+  // NEAR still reads the wallet's key on the vault: the words still open it, whatever the state says.
+  assert.equal((await revealed({ chip: { state: 'done', oldOnChain: true } })).includes(WORDS_LINE), false);
+  // A wallet with no phrase: its key, said the same way.
+  assert.ok((await revealed({ hasMnemonic: false, chip: { state: 'done', oldOnChain: false } })).includes(KEY_LINE));
+});
+
 test('a wallet with no phrase backs up its key in the same row: one line says why Touch ID, and Back it up posts the key reveal', async () => {
   const world = build({ vault: { hasMnemonic: false } });
   const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent === 'Showing it takes Touch ID, so only you can see it.') as Any;

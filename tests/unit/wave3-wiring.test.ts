@@ -13,10 +13,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { recoverTypedDataAddress } from 'viem';
-import { english } from 'viem/accounts';
+import { english, mnemonicToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../../src/chain/near.ts';
 import { STATE_CACHE_MAX_MS } from '../../src/http/state.ts';
+import { accountsOf, deriveKeys } from '../../src/keystore/derived.ts';
 import { AGENTS_WAIT_SAID, VAULT_ELSEWHERE_SAID } from '../../src/proposals/lifecycle.ts';
 import { buildApproveAgentPayload } from '../../src/rails/hl-user-signed.ts';
 import type { Proposal } from '../../src/types.ts';
@@ -280,6 +281,25 @@ test('a vault moved here whose vault.json lost its chip entry reads checking, ne
   const late = await afterChipEntryDeleted({ alsoRecord: true, late: true, firstStatus: { kind: 'answer', answer: { ok: false, error: 'keychain_unavailable', message: 'the keychain did not answer' } } });
   assert.deepEqual(late.states, ['checking', 'done']);
   assert.equal(late.named, late.keyRef);
+});
+
+test('after the move the reveal still returns the wallet\'s words behind its Touch ID: they derive the allowance and the gas account, and open the vault no more', { skip, timeout: 120_000 }, async () => {
+  const w = await wave3World({ papers: [PAPER] });
+  try {
+    const { vault } = await moved(w);
+    const shown = await w.post('/api/vault/reveal');
+    assert.equal(shown.json.ok, true, JSON.stringify(shown.json));
+    const account = mnemonicToAccount((shown.json.words as string[]).join(' '));
+    assert.equal(account.address.toLowerCase(), vault, 'the words are the wallet\'s own');
+    const old = Buffer.from(account.getHdKey().privateKey!);
+    const derived = accountsOf(deriveKeys(old));
+    old.fill(0);
+    const chip = (await w.get('/api/state')).json.vault.chip;
+    assert.deepEqual([derived.allowance.toLowerCase(), derived.gas], [chip.allowance.account, chip.gas.account], 'they derive the allowance and the gas account the Vault tab shows');
+    assert.equal(chip.oldOnChain, false, 'and NEAR reads their key off the vault');
+  } finally {
+    await w.close();
+  }
 });
 
 /* Another Mac moved this vault: the wallet's own key signed the move there, adding keys this Mac

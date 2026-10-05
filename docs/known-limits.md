@@ -206,9 +206,9 @@ keys is what keeps one backup instead of three.
 ## After the move, your wallet's words still open the allowance, the gas account and Hyperliquid
 
 The move takes your wallet's key off the vault, not out of use. The Vault tab still shows your
-recovery phrase, or your private key, after the move, behind the same Touch ID. Those words no
-longer open the vault, but the allowance key and the gas key are derived from them, and they still
-own your Hyperliquid account.
+recovery phrase, or your private key, after the move, behind the same Touch ID, and says beside
+them what follows. Those words no longer open the vault, but the allowance key and the gas key are
+derived from them, and they still own your Hyperliquid account.
 
 What it means: whoever reads those words can spend the allowance, the gas account's NEAR and your
 Hyperliquid collateral, though never the vault. Show them only to write your backup. What closes
