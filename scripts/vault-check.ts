@@ -24,9 +24,10 @@ export const VERIFIER_ACCOUNT = 'intents.near';
 
 export type Provider = { name: string; url: string };
 
-// Two organizations, two node fleets: FastNear runs the RPC the app reads, dRPC its own.
+// Two organizations, two node fleets: FastNEAR runs the RPC the app reads, dRPC its own. The
+// release gate asks the same two (scripts/verifier-gate.ts), and a test holds them equal.
 export const PROVIDERS: readonly Provider[] = [
-  { name: 'FastNear', url: 'https://free.rpc.fastnear.com' },
+  { name: 'FastNEAR', url: 'https://free.rpc.fastnear.com' },
   { name: 'dRPC', url: 'https://near.drpc.org' },
 ];
 

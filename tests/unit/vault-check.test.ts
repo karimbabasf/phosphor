@@ -1,7 +1,7 @@
 // scripts/vault-check.ts, the read-only check docs/verify.md gives anyone: who can move a vault,
 // asked of two NEAR RPC providers at one final block. It prints an answer only when the two agree,
 // and fails closed, naming both answers, when they disagree or one gives none. Every RPC here is a
-// fake that answers the way FastNear and dRPC answered live on 2026-10-05.
+// fake that answers the way FastNEAR and dRPC answered live on 2026-10-05.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { PROVIDERS, VERIFIER_ACCOUNT, accountIdOf, argsOf, checkVault, exitCodeOf, isPublicKey, report } from '../../scripts/vault-check.ts';
 import type { Provider } from '../../scripts/vault-check.ts';
 import { nearChainSpec } from '../../src/chain/near.ts';
+import { NEAR_RPCS } from '../../scripts/verifier-gate.ts';
 
 const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.url))));
 
@@ -181,6 +182,7 @@ test('it only reads: one block and views of intents.near, from two organizations
   }
   assert.equal(new Set(PROVIDERS.map((p) => new URL(p.url).hostname.split('.').slice(-2).join('.'))).size, 2, 'two organizations, not two names for one');
   assert.ok(PROVIDERS.some((p) => p.url === nearChainSpec().rpcUrl), 'one of them is the RPC the app reads');
+  assert.deepEqual(PROVIDERS.map((p) => [p.name, p.url]), NEAR_RPCS.map((r) => [r.name, r.url]), 'the two providers the release gate asks, spelled the same');
   const source = fs.readFileSync(path.join(ROOT, 'scripts', 'vault-check.ts'), 'utf8');
   const imports = [...source.matchAll(/^import .* from '([^']+)';$/gm)].map((m) => m[1]);
   assert.ok(imports.length > 0 && imports.every((m) => m!.startsWith('node:')), 'a clone runs it with no npm install');
