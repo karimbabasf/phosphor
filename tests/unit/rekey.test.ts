@@ -704,6 +704,46 @@ test('NEAR answering nothing after the send: the move reads checking, then done 
   }
 });
 
+test('a key someone adds to the vault while the move is being signed is caught after it: the vault moved, and the window is told it holds a key the move did not add', { skip, timeout: 120_000 }, async () => {
+  const chain = createIntentsDouble({ start: T0 * 1000 });
+  let vault = '';
+  let stranger = '';
+  let plant = false;
+  const app = await chipApp(chain, {
+    papers: [PAPER_A],
+    hook: (r) => {
+      // The owner key is still a key of the vault until the call runs: it adds one of its own
+      // while the chip's Touch ID is up, after the last read before the signatures.
+      if (plant && r.op === 'signIntent') {
+        plant = false;
+        chain.addKey(vault, stranger);
+      }
+      return undefined;
+    },
+  });
+  try {
+    vault = await wallet(app, chain);
+    stranger = paperKeyOf(PAPER_B).publicKey;
+    const shown = await app.post('/api/vault/chip/phrase');
+    assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
+    plant = true;
+    const moved = await app.post('/api/vault/chip/move');
+    assert.equal(await settled(app, moved.json.run), 'failed vault_other_keys');
+    // The vault did move: the owner key is out, and vault.json says so.
+    assert.equal(app.prefs.get().chip?.account, vault);
+    assert.equal(chain.hasKey(vault, stranger), true);
+    let facts = await chipState(app);
+    for (let i = 0; i < 100 && facts.otherKeys === null; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+      facts = await chipState(app);
+    }
+    assert.deepEqual(facts.otherKeys, [stranger]);
+    assert.match(app.frames(), /holds a key Phosphor did not add/);
+  } finally {
+    await app.close();
+  }
+});
+
 test('two windows at once: one move runs, the other is told the vault is already moving', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const app = await chipApp(chain, { papers: [PAPER_A] });

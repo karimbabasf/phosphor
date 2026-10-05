@@ -175,6 +175,10 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
   paper key, then type the old paper's 24 words.
 - **A paper shown before Phosphor restarted opens nothing.** It was never added to the vault. Show a
   new one and write that down; destroy the old one.
+- **Your vault moved, and it also holds a key Phosphor did not add.** Someone with your owner key
+  added a key while the move was being signed, and that key can still move the vault's money. The
+  Vault tab names it. Treat the owner key and its backup as seen by someone else: send the money in
+  the vault, and in the allowance, to a wallet whose key was made fresh, then stop using this one.
 
 If the Mac is gone, the paper and the key backup together bring the vault back on a new one. If the
 paper is gone and this Mac still opens the vault, move the money out with Touch ID while you can:

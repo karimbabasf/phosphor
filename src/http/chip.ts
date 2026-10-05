@@ -39,6 +39,7 @@ const CHIP_WORDS: Record<string, string> = {
   rekey_slow: 'Touch ID took longer than the move can wait, so nothing was sent. Try again.',
   vault_changed: "Your vault's keys changed while it was moving, so nothing was sent. Look at the Vault tab, then try again.",
   vault_json: 'Your vault moved, and Phosphor could not note it on this Mac yet. It tries again on its own while the app is open.',
+  vault_other_keys: 'Your vault moved, and it also holds a key Phosphor did not add. Look at the Vault tab before you move anything else.',
   fund_amount: `Add between ${GAS_FUND_MIN_NEAR} and ${GAS_FUND_MAX_NEAR} NEAR to the gas account.`,
 };
 

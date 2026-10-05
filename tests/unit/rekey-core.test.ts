@@ -52,7 +52,7 @@ function vaultWorld() {
 
 function signersOf(w: ReturnType<typeof vaultWorld>, opts: { oldSigner?: `0x${string}`; chipSign?: (p: string) => MultiPayload; onChip?: () => void } = {}): RekeySigners {
   return {
-    old: (payload) => erc191Signed(keyOf(opts.oldSigner ?? w.old), payload),
+    old: (make) => erc191Signed(keyOf(opts.oldSigner ?? w.old), make()),
     chip: async (payload) => {
       opts.onChip?.();
       return (opts.chipSign ?? w.chip.sign)(payload);
@@ -150,8 +150,8 @@ test('a signer that signs anything but the planned payload is caught before the 
   // An old signer that drops the predecessor intent: the payload it signed is not the plan's.
   const short: RekeySigners = {
     ...signersOf(w),
-    old: async (payload) => {
-      const body = JSON.parse(payload) as { intents: unknown[] };
+    old: async (make) => {
+      const body = JSON.parse(make()) as { intents: unknown[] };
       const edited = JSON.stringify({ ...body, intents: body.intents.slice(0, 3) });
       return erc191Signed(keyOf(w.old), edited);
     },
@@ -168,6 +168,21 @@ test('a Touch ID slower than the payload can wait sends nothing: rekey_slow, wit
   assert.ok(!slow.ok && slow.code === 'rekey_slow', JSON.stringify(slow));
   const fresh = await signRekey(plan, signersOf(w, { onChip: () => w.chain.advance(110_000 - SUBMIT_MARGIN_MS - 1_000) }), { salt: SALT, now: w.chain.now });
   assert.ok(fresh.ok, 'a touch inside the margin still sends');
+});
+
+test('a slow first Touch ID does not eat P_a\'s life: P_a is built once the owner key\'s touch is over', async () => {
+  const w = vaultWorld();
+  const plan: RekeyPlan = { vault: w.vault, chip: w.chip.publicKey, recovery: w.paperKey, remove: [w.oldKey], predecessorAuth: true };
+  const slowTouch: RekeySigners = {
+    ...signersOf(w),
+    old: async (make) => {
+      w.chain.advance(100_000);
+      return erc191Signed(keyOf(w.old), make());
+    },
+  };
+  const signed = await signRekey(plan, slowTouch, { salt: SALT, now: w.chain.now });
+  assert.ok(signed.ok, JSON.stringify(signed));
+  assert.ok(Date.parse(readVaultPayload(signed.bundle[0]!.payload).deadline) >= w.chain.now() + 100_000, 'P_a\'s deadline runs from the end of the touch');
 });
 
 test('a refusal from a signer stops the bundle where it is: the chip is never asked after the owner key says no', async () => {
@@ -202,7 +217,7 @@ test('a restore: the paper brought signs P_a, takes off the old chip and itself,
   assert.equal(plan.predecessorAuth, false);
   const signed = await signRekey(
     plan,
-    { old: (payload) => erc191Signed(keyOf(w.paper), payload), chip: async (payload) => chip2.sign(payload), paper: (payload) => erc191Signed(keyOf(paper2), payload) },
+    { old: (make) => erc191Signed(keyOf(w.paper), make()), chip: async (payload) => chip2.sign(payload), paper: (payload) => erc191Signed(keyOf(paper2), payload) },
     { salt: SALT, now: w.chain.now, oldTouches: false },
   );
   assert.ok(signed.ok, JSON.stringify(signed));

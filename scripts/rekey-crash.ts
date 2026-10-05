@@ -704,7 +704,7 @@ async function live(): Promise<number> {
   const signed = await signRekey(
     plan,
     {
-      old: (payload) => erc191Signed(oldKey, payload),
+      old: (make) => erc191Signed(oldKey, make()),
       chip: async (payload): Promise<MultiPayload> => webauthnSigned(payload, xy, crypto.sign('sha256', webauthnMessage(payload), { key: pair.privateKey, dsaEncoding: 'ieee-p1363' })),
       paper: (payload) => erc191Signed(paper.key, payload),
     },

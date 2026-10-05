@@ -1266,7 +1266,10 @@ the plan, every one on P_a's hash: the chip key added, the paper key added, each
 predecessor auth set off (only when it read on, since a second off reports nothing), then the three
 payloads executed. For a migration that is five events. One event more, less or different and
 nothing is sent. The move is done only when the chain reads, at one final block, the chip key and
-the paper key on the vault, the owner key and every removed key off it, and predecessor auth off.
+the paper key on the vault, the owner key and every removed key off it, and predecessor auth off,
+and then only if the chip key and the paper key are the vault's only stored keys: the owner key can
+add a key until the call runs, so a key added after the last read before the signatures is caught
+there, and the window says the vault holds a key Phosphor did not add (the Vault tab names it).
 Then `state/vault.json` names the chip, the session lets go of the owner key at once, and the rails
 spend the allowance. Every check that can stop a move runs before the first Touch ID: the wallet
 open, a Touch ID wallet with a proven backup, the paper typed back, the vault still answering to
