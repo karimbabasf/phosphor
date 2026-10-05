@@ -24,8 +24,10 @@ import type { ChipPrefs } from './prefs.ts';
 import type { ChipStatus } from './accounts.ts';
 import { ownerKeyOut } from './accounts.ts';
 import { readVaultPayload } from './payload.ts';
+import { isVerifierPublicKey } from '../relay/verifier.ts';
 import type { VerifierPort } from '../relay/verifier.ts';
-import type { ChipMarkerSeen, VaultRelay } from './relay.ts';
+import { isChipKeyRef } from './relay.ts';
+import type { ChipMarkerSeen, VaultRelay, VaultResult } from './relay.ts';
 import { webauthnMultiPayload } from './webauthn.ts';
 import type { WebauthnSigned } from './webauthn.ts';
 
@@ -45,6 +47,15 @@ export type ChipSigned = { ok: true; sentence: string; signed: WebauthnSigned };
 function refused(code: string, detail: string): ChipRefused {
   return { ok: false, code, detail };
 }
+
+/* The service's refusal as the caller gets it. Every chip request this module sends is checked here
+   first, so `bad_input` can only mean the other side does not know the op: a service built without
+   the chip ops (no -D PHOSPHOR_CHIP) or a shell that relays only the wallet key's ops. */
+function serviceRefused(answer: Extract<VaultResult, { ok: false }>): ChipRefused {
+  return answer.error === 'bad_input' ? refused('chip_unsupported', answer.message) : refused(answer.error, answer.message);
+}
+
+const LABEL = /^[a-z0-9-]{1,40}$/;
 
 /* "p256:" and base58 of 64 bytes that make a point on P-256, the only key a chip answers with. */
 export function isChipPublicKey(value: unknown): value is string {
@@ -72,7 +83,7 @@ export function isChipPublicKey(value: unknown): value is string {
    service can sign a payload that is not this one, p2-grammar finding 1), the public key vault.json
    pins, and a webauthn signature that verifies over this app's wrapper with S low. */
 export async function chipSign(relay: Pick<VaultRelay, 'ask'>, pin: ChipPin, payload: string): Promise<ChipSigned | ChipRefused> {
-  if (!isChipPublicKey(pin.publicKey) || pin.keyRef === '' || !/^0x[0-9a-fA-F]{40}$/.test(pin.account)) {
+  if (!isChipPublicKey(pin.publicKey) || !isChipKeyRef(pin.keyRef) || !/^0x[0-9a-fA-F]{40}$/.test(pin.account)) {
     return refused('chip_missing', 'vault.json pins no chip this process can ask for');
   }
   let signer: string;
@@ -84,7 +95,7 @@ export async function chipSign(relay: Pick<VaultRelay, 'ask'>, pin: ChipPin, pay
   if (signer !== pin.account.toLowerCase()) return refused('chip_payload', 'the payload signs for another account than the vault the chip holds');
 
   const answer = await relay.ask({ op: 'signIntent', keyRef: pin.keyRef, payload });
-  if (!answer.ok) return refused(answer.error, answer.message);
+  if (!answer.ok) return serviceRefused(answer);
   if (answer.op !== 'signIntent') return refused('garbled', `the relay answered a signature request with ${answer.op}`);
   const { signed } = answer;
   if (signed.payload !== payload) return refused('chip_answer', 'the signed payload is not the one asked for, byte for byte');
@@ -98,36 +109,57 @@ export async function chipSign(relay: Pick<VaultRelay, 'ask'>, pin: ChipPin, pay
   return { ok: true, sentence: answer.sentence, signed: checked };
 }
 
+// A chip read that gave no status; `code` has a sentence in REFUSALS.
+export class ChipStatusRefused extends Error {
+  readonly code: string;
+  constructor(code: string, message: string) {
+    super(message);
+    this.name = 'ChipStatusRefused';
+    this.code = code;
+  }
+}
+
 /* chipStatus for src/vault/accounts.ts (createAccounts): resolves only with what a service with a
-   keychain home read, and rejects on a refusal, a garbled answer or a dead transport, so the last
-   answer stands there. */
+   keychain home read, and rejects (ChipStatusRefused) on a refusal, a garbled answer or a dead
+   transport, so the last answer stands there. A build with no chip ops rejects `chip_unsupported`. */
 export function chipStatusReader(relay: Pick<VaultRelay, 'ask'>): (keyRef: string) => Promise<ChipStatus> {
   return async (keyRef) => {
+    if (!isChipKeyRef(keyRef)) throw new ChipStatusRefused('chip_missing', 'not a chip key ref');
     const answer = await relay.ask({ op: 'chipStatus', keyRef });
-    if (!answer.ok) throw new Error(`chip status refused: ${answer.error}`);
-    if (answer.op !== 'chipStatus') throw new Error(`the relay answered a chip status with ${answer.op}`);
-    if (!answer.status.keychainHome) throw new Error('the service read no keychain home');
+    if (!answer.ok) {
+      const why = serviceRefused(answer);
+      throw new ChipStatusRefused(why.code, `chip status refused: ${answer.error}`);
+    }
+    if (answer.op !== 'chipStatus') throw new ChipStatusRefused('garbled', `the relay answered a chip status with ${answer.op}`);
+    if (!answer.status.keychainHome) throw new ChipStatusRefused('keychain_unavailable', 'the service read no keychain home');
     return answer.status;
   };
 }
 
 /* A new chip key for a rekey. The public key must be a P-256 point before anything pins it. */
 export async function createChip(relay: Pick<VaultRelay, 'ask'>, label?: string): Promise<{ ok: true; keyRef: string; publicKey: string } | ChipRefused> {
+  if (label !== undefined && !LABEL.test(label)) return refused('invalid_request', 'a chip label is 1 to 40 of a-z, 0-9 and -');
   const answer = await relay.ask({ op: 'chipCreate', ...(label === undefined ? {} : { label }) });
-  if (!answer.ok) return refused(answer.error, answer.message);
+  if (!answer.ok) return serviceRefused(answer);
   if (answer.op !== 'chipCreate') return refused('garbled', `the relay answered a chip create with ${answer.op}`);
   if (!isChipPublicKey(answer.publicKey)) return refused('garbled', 'the new chip key is not a point on P-256');
   return { ok: true, keyRef: answer.keyRef, publicKey: answer.publicKey };
 }
 
 /* Pins the vault, its allowance and its paper key in the chip's marker, once per key and inside its
-   first ten minutes. */
+   first ten minutes. The pins are checked here as the service checks them: two different 0x
+   accounts and a secp256k1 paper key. */
 export async function commitChip(
   relay: Pick<VaultRelay, 'ask'>,
   pins: { keyRef: string; account: string; allowance: string; recovery: string },
 ): Promise<{ ok: true; keyRef: string; at: string | null } | ChipRefused> {
-  const answer = await relay.ask({ op: 'chipCommit', ...pins });
-  if (!answer.ok) return refused(answer.error, answer.message);
+  const account = /^0x[0-9a-fA-F]{40}$/;
+  if (!isChipKeyRef(pins.keyRef) || !account.test(pins.account) || !account.test(pins.allowance) || pins.account.toLowerCase() === pins.allowance.toLowerCase()) {
+    return refused('invalid_request', 'a chip pins a chip key, the vault and a different allowance account');
+  }
+  if (!pins.recovery.startsWith('secp256k1:') || !isVerifierPublicKey(pins.recovery)) return refused('invalid_request', 'the paper key is a secp256k1 key');
+  const answer = await relay.ask({ op: 'chipCommit', keyRef: pins.keyRef, account: pins.account.toLowerCase(), allowance: pins.allowance.toLowerCase(), recovery: pins.recovery });
+  if (!answer.ok) return serviceRefused(answer);
   if (answer.op !== 'chipCommit') return refused('garbled', `the relay answered a chip commit with ${answer.op}`);
   return { ok: true, keyRef: answer.keyRef, at: answer.at };
 }
@@ -135,8 +167,9 @@ export async function commitChip(
 /* Deletes chip keys no marker names that are past their first ten minutes: a rekey that stopped
    between create and commit leaves one. */
 export async function sweepChips(relay: Pick<VaultRelay, 'ask'>, label?: string): Promise<{ ok: true; deleted: number; kept: number } | ChipRefused> {
+  if (label !== undefined && !LABEL.test(label)) return refused('invalid_request', 'a chip label is 1 to 40 of a-z, 0-9 and -');
   const answer = await relay.ask({ op: 'chipSweep', ...(label === undefined ? {} : { label }) });
-  if (!answer.ok) return refused(answer.error, answer.message);
+  if (!answer.ok) return serviceRefused(answer);
   if (answer.op !== 'chipSweep') return refused('garbled', `the relay answered a chip sweep with ${answer.op}`);
   return { ok: true, deleted: answer.deleted, kept: answer.kept };
 }

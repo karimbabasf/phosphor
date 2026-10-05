@@ -215,6 +215,8 @@ const REFUSALS: Record<string, string> = {
   grammar: "Your vault's Touch ID key does not sign this kind of move, so nothing was signed.",
   wrong_signer: "This move is for another vault than the one this Mac's Touch ID key holds, so nothing was signed.",
   chip_missing: 'Your vault has no Touch ID key on this Mac that Phosphor can ask, so nothing was signed.',
+  // A service built without the chip's ops, or a shell that does not relay them.
+  chip_unsupported: "This copy of Phosphor cannot use the vault's Touch ID key, so nothing changed. Open the Phosphor app you downloaded.",
   chip_payload: 'Phosphor stopped this move before Touch ID because it was not built for your vault, so nothing was signed.',
   chip_answer: 'Touch ID came back with a signature for something Phosphor did not ask for, so it was not sent. Nothing moved.',
   // Sending a vault move (src/vault/submit.ts), and the gas account that pays for it (src/chain/near-tx.ts).
