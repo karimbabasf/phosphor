@@ -15,8 +15,10 @@ import { intentsReceiveReport } from '../../src/http/wallet.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
 import { walletReads } from '../../src/http/read/wallet.ts';
 import { RECEIVE_NETWORKS, receiveNetworkByBridge } from '../../src/rails/intents-address.ts';
-import { ADDRESS_WAIT_MS, STATUS_DATA_LABEL, STATUS_LINK, combine, parsePosts, statusReasons } from '../../src/preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_DATA_LABEL, STATUS_LINK, combine, createRouteHealth, parsePosts, statusReasons } from '../../src/preflight/route-health.ts';
 import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
+import { handleDepositRoute } from '../../src/http/vault.ts';
+import type { OneClickToken } from '../../src/intents.ts';
 import { base58Encode } from '../../src/chain/near.ts';
 import type { Ctx } from '../../src/http/context.ts';
 import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
@@ -365,17 +367,19 @@ test('a network the bridge lists that the registry does not know is a row under 
 
 // ---------- the agent's deposit tool on top of the report ----------
 
-function captured(): { res: http.ServerResponse; body: () => Any } {
+function captured(): { res: http.ServerResponse; body: () => Any; status: () => number } {
   let text = '';
+  let code = 0;
   const res = {
-    writeHead() {
+    writeHead(status: number) {
+      code = status;
       return res;
     },
     end(chunk?: unknown) {
       text = String(chunk ?? '');
     },
   } as unknown as http.ServerResponse;
-  return { res, body: () => JSON.parse(text) as Any };
+  return { res, body: () => JSON.parse(text) as Any, status: () => code };
 }
 
 function toolCtx(report: Any, extra: Partial<Ctx> = {}): { ctx: Ctx; shown: Any[]; audited: string[] } {
@@ -560,12 +564,135 @@ test('the deposit tool asks about the exact asset: a closed asset on an open net
   assert.equal(slow.shown.length, 1);
 });
 
+// ---------- an address needs 1Click's own yes ----------
+
+const UNCONFIRMED_TON = 'Phosphor cannot confirm NEAR Intents is taking TON deposits right now, so no address is shown. Try again in a minute.';
+
+/* The status page as it read on 2026-10-05: "1Click API Incident", a partial outage of 1Click
+   Swap, live since 2026-10-01, which warns every chain. */
+const INCIDENT_POST = { id: 'PJGVU7Z', post_type: 'incident', title: '1Click API Incident', starts_at: null, ends_at: null, latest_update: { status_id: 'PP34365', impacts: [{ service_id: 'PTEURIB', severity_id: 'PCIGMKW' }] } };
+const TON_TOKENS: OneClickToken[] = [
+  { assetId: TON_ROW.intents_token_id, blockchain: 'ton', symbol: 'GRAM', decimals: 9, price: 1.55 },
+  { assetId: TON_USDT_ROW.intents_token_id, blockchain: 'ton', symbol: 'USDT', decimals: 6, contractAddress: TON_USDT_ROW.origin_chain_address, price: 1 },
+];
+
+/* The live checker over that day's 1Click: every TON quote refused with the 400, except while
+   `slow` is on, when a quote runs past the probe's deadline (one took 7.2 s against 4 s). */
+function incidentRoutes(clock: { t: number }): { routes: RouteHealth; slow: { on: boolean } } {
+  const slow = { on: true };
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/api/posts')) return new Response(JSON.stringify({ posts: [INCIDENT_POST] }), { status: 200 });
+    if (url.endsWith('/api/services')) return new Response(JSON.stringify({ services: [] }), { status: 200 });
+    if (!slow.on) return new Response(JSON.stringify({ message: 'Quoting for this pair is not available' }), { status: 400 });
+    return new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('timed out')));
+    });
+  }) as typeof fetch;
+  return { routes: createRouteHealth({ tokens: async () => TON_TOKENS, fetchImpl, now: () => clock.t, timeoutMs: 30, log: () => undefined }), slow };
+}
+
+/* Karim, 2026-10-05: "the agent showed me the deposit adress and I almopst made a deposit up until
+   I opened the manual deposit thing and then the agent updated that it is paused". TON was paused
+   by 1Click, the status page warned every chain, and a probe that ran past its deadline said
+   unknown, which the page's warning outranked: the verdict read degraded and the address went
+   out. Twenty seconds later the probe was asked again and answered closed. */
+test('Karim, 2026-10-05: a TON probe that ran past its deadline under the status page\'s warning opens no card at either door, and both say Paused once 1Click answers', async () => {
+  const clock = { t: Date.parse('2026-10-05T20:05:00Z') };
+  const { routes, slow } = incidentRoutes(clock);
+  const b = bridge({ tokens: [USDC_ROW, ETH_ROW, TON_ROW, TON_USDT_ROW] });
+  let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;
+  try {
+    report = await intentsReceiveReport(ctxFor(account(), 'live', { routeHealth: routes }));
+  } finally {
+    b.restore();
+  }
+  assert.equal(net(report, 'ton').route, 'degraded', 'the row: the page warns and 1Click said nothing in time');
+
+  // The agent's door: no card, no fingerprint, the plain sentence.
+  const agent = toolCtx(report, { routeHealth: routes });
+  const a = captured();
+  await walletReads.deposit(agent.ctx, {}, { chain: 'ton', asset: 'TON' }, a.res);
+  assert.equal(a.body().ok, false, `the agent was handed an address 1Click never confirmed: ${JSON.stringify(a.body())}`);
+  assert.equal(a.body().reason, UNCONFIRMED_TON);
+  assert.equal(a.body().addressFingerprint, undefined);
+  assert.deepEqual(agent.shown, []);
+  assert.deepEqual(agent.audited, []);
+
+  // The window's door at the same moment: the same sentence and no `route: 'closed'`, so the
+  // window draws it with Try again rather than as a pause.
+  const route = (): Promise<{ status: number; body: Any }> => {
+    const w = captured();
+    return handleDepositRoute(agent.ctx, new URL('http://127.0.0.1/api/deposit/route?chain=ton&symbol=GRAM'), w.res).then(() => ({ status: w.status(), body: w.body() }));
+  };
+  const now = await route();
+  assert.equal(now.status, 409);
+  assert.equal(now.body.error, UNCONFIRMED_TON);
+  assert.equal(now.body.route, undefined);
+
+  // A minute later 1Click answers with its refusal, and both doors say Paused.
+  slow.on = false;
+  clock.t += 60_000;
+  const later = await route();
+  assert.equal(later.status, 409);
+  assert.equal(later.body.route, 'closed');
+  assert.match(String(later.body.error), /^NEAR Intents has paused TON deposits right now, so no address is shown\./);
+  const p = captured();
+  await walletReads.deposit(agent.ctx, {}, { chain: 'ton', asset: 'TON' }, p.res);
+  assert.match(String(p.body().reason), /^NEAR Intents has paused TON deposits right now/);
+  assert.deepEqual(agent.shown, []);
+});
+
+test('a check nobody answered opens nothing either, and 1Click\'s yes still opens the card, with the page\'s warning when there is one', async () => {
+  const b = bridge({ tokens: [USDC_ROW, ETH_ROW, TON_ROW, TON_USDT_ROW] });
+  let report!: Awaited<ReturnType<typeof intentsReceiveReport>>;
+  try {
+    report = await intentsReceiveReport(ctxFor(account()));
+  } finally {
+    b.restore();
+  }
+  const verdict = (reasons: RouteVerdict['reasons']): RouteHealth => ({
+    check: async (ask) => ({ network: ask.network, direction: ask.direction, state: combine(reasons), reasons, checkedAt: 0 }),
+  });
+  const silent = verdict([
+    { source: 'oneclick', state: 'unknown', text: '1Click did not answer about TON in time' },
+    { source: 'status', state: 'unknown', text: 'the NEAR Intents status page did not answer in time' },
+  ]);
+  const refused = toolCtx(report, { routeHealth: silent });
+  const a = captured();
+  await walletReads.deposit(refused.ctx, {}, { chain: 'ton', asset: 'USDT' }, a.res);
+  assert.deepEqual({ ok: a.body().ok, reason: a.body().reason }, { ok: false, reason: UNCONFIRMED_TON });
+  assert.deepEqual(refused.shown, []);
+  const w = captured();
+  await handleDepositRoute(refused.ctx, new URL('http://127.0.0.1/api/deposit/route?chain=ton&symbol=USDT'), w.res);
+  assert.deepEqual({ status: w.status(), error: w.body().error, route: w.body().route }, { status: 409, error: UNCONFIRMED_TON, route: undefined });
+
+  const warned = verdict([
+    { source: 'oneclick', state: 'open', text: '1Click takes USDT in from TON' },
+    { source: 'status', state: 'degraded', text: 'The NEAR Intents status page says: "1Click API Incident".', link: STATUS_LINK, said: '1Click API Incident' },
+  ]);
+  const opened = toolCtx(report, { routeHealth: warned });
+  const d = captured();
+  await walletReads.deposit(opened.ctx, {}, { chain: 'ton', asset: 'USDT' }, d.res);
+  assert.equal(d.body().ok, true, JSON.stringify(d.body()));
+  assert.match(String(d.body().notice), /^NEAR Intents reports trouble that may slow TON deposits right now/);
+  assert.deepEqual(opened.shown.map((s) => s.symbol), ['USDT']);
+  const ok = captured();
+  await handleDepositRoute(opened.ctx, new URL('http://127.0.0.1/api/deposit/route?chain=ton&symbol=USDT'), ok.res);
+  assert.equal(ok.status(), 200);
+  assert.match(String(ok.body().notice), /^NEAR Intents reports trouble that may slow TON deposits right now/);
+});
+
 /* A checker that answers from real status posts, so each reason carries the page's own title the
-   way the live one does. The title here is the one an attacker holding the page would write. */
+   way the live one does. The title here is the one an attacker holding the page would write. 1Click
+   takes every coin in, so the page alone decides. */
 function routesFromPosts(posts: Record<string, unknown>[]): RouteHealth {
   return {
     check: async (ask) => {
-      const reasons = statusReasons(parsePosts({ posts }), new Map(), ask.network, Date.parse('2026-09-26T18:00:00Z'));
+      const reasons = [
+        { source: 'oneclick' as const, state: 'open' as const, text: '' },
+        ...statusReasons(parsePosts({ posts }), new Map(), ask.network, Date.parse('2026-09-26T18:00:00Z')),
+      ];
       return { network: ask.network, direction: ask.direction, state: combine(reasons), reasons, checkedAt: 0 };
     },
   };

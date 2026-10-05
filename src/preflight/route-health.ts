@@ -26,6 +26,12 @@
 // "closed" is a person who cannot deposit on a chain that works, and every move still carries
 // every check it had before this.
 //
+// AN ADDRESS IS THE EXCEPTION. Money sent to a deposit address cannot be called back, so one is
+// shown only when 1Click itself said it takes the coin in (depositConfirmed). A silence refuses
+// the address, and so does a status page warning that 1Click did not back: on 2026-10-05 the page
+// had warned every chain of a "1Click API Incident" for four days, a TON probe ran past its
+// deadline, and the address went out as degraded twenty seconds before 1Click's answer closed it.
+//
 // LIKE GAS. Nothing here polls and nothing runs on a timer. A check runs when an address is about
 // to be shown or a move is proposed or executed; askers at the same moment share one request; an
 // open answer is kept a minute and anything else twenty seconds, so a recovery shows fast; every
@@ -61,8 +67,9 @@ export const STATUS_DATA_LABEL = "The NEAR Intents status page's own title, quot
 // then unknown.
 export const ROUTE_TIMEOUT_MS = 4_000;
 /* How long an ask waits when an address is about to be shown on its answer. Right after the app
-   starts, the token list and the first probe run past four seconds, and unknown shows the address:
-   the agent opened a paused TON card that way after every restart (2026-09-27). */
+   starts, the token list and the first probe run past four seconds, and an address needs the
+   probe's answer: the agent opened a paused TON card on that silence after every restart
+   (2026-09-27). */
 export const ADDRESS_WAIT_MS = 15_000;
 export const OPEN_TTL_MS = 60_000;
 export const SHAKY_TTL_MS = 20_000;
@@ -129,8 +136,9 @@ const CLOSED_WORDS = /not available|disabled|paused|suspend|maintenance/i;
 const MEMO_WORDS = /incorrect depositmode/i;
 /* A coin 1Click cannot take in as itself, which says nothing about the chain. Live on 2026-09-26:
    HyperCore's USDC "supports only DESTINATION_CHAIN recipientType" and its HyperEVM USDC "is not
-   supported as origin asset", while its wNEAR quotes 201. */
-const UNFIT_WORDS = /supports only .*recipienttype|not supported as origin/i;
+   supported as origin asset", while its wNEAR quotes 201. On 2026-10-05 Solana's sUSDC, which
+   1Click lists: "Asset belongs to unknown blockchain", while SOL quotes 201. */
+const UNFIT_WORDS = /supports only .*recipienttype|not supported as origin|belongs to unknown blockchain/i;
 // How many coins one probe may try before it settles for unknown.
 const PROBE_TRIES = 4;
 // How long a coin 1Click would not take in as itself is skipped before it is asked again.
@@ -523,6 +531,11 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow, audience: 
   return null;
 }
 
+// The sentence for a deposit route 1Click did not confirm, the same for the window and the agent.
+export function unconfirmedSentence(network: string): string {
+  return `Phosphor cannot confirm NEAR Intents is taking ${networkName(network)} deposits right now, so no address is shown. Try again in a minute.`;
+}
+
 /* 1Click's own refusal of a pair, as the sentence for that flow, or null for anything else.
    "Quoting for this pair is not available" is what it said for TON on 2026-09-26, and passed
    through raw it read as a fault in the app rather than a route NEAR Intents shut. Only the quote
@@ -578,6 +591,13 @@ export async function routeGate(routes: RouteHealth | undefined, ask: RouteAsk, 
   const verdict = await routes.check(ask);
   const sentence = routeSentence(verdict, flow, audience);
   return verdict.state === 'closed' ? { closed: sentence, notice: null } : { closed: null, notice: sentence };
+}
+
+/* Whether a deposit address may be shown on this verdict: 1Click itself said it takes the coin in,
+   and no voice closes the route. Open always has that yes; degraded has it only when the warning
+   came beside it, never in its place. */
+export function depositConfirmed(verdict: RouteVerdict): boolean {
+  return verdict.state !== 'closed' && verdict.reasons.some((r) => r.source === 'oneclick' && r.state === 'open');
 }
 
 type Cached<T> = { at: number; ttl: number; value: T };

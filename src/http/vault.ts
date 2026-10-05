@@ -654,6 +654,8 @@ async function resolveDeposit(ctx: Ctx, chainRaw: unknown, symbolRaw: unknown): 
   // The route for this exact asset, the same question the agent's deposit tool asks first.
   const route = await depositRoute(ctx, chain, report.account, accepted.assetId);
   if (route.closed !== null) return { ok: false, status: 409, error: route.closed, extra: { route: 'closed', statusLink: route.link } };
+  // Not a pause: the window draws this sentence with Try again.
+  if (route.unconfirmed !== null) return { ok: false, status: 409, error: route.unconfirmed };
   const notice = route.notice ?? network.notice;
   return { ok: true, chain, want, address: network.address, accepted, notice, statusLink: notice === null ? null : (route.link ?? network.statusLink) };
 }
