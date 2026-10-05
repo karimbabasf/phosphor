@@ -71,6 +71,9 @@ export type IntentsRead = {
   // Failed reads in a row, 0 after a good one. Optional only for hand-built reads in tests;
   // the ledger always writes it. See intentsUnreadWhy for what the count buys.
   failures?: number;
+  // Set on a failed read with no good read before it: no holdings were kept because none were
+  // ever known, so the empty list is not a balance.
+  unknown?: true;
 };
 
 // One account's read, named (PHASE2-PLAN.md C6: the ledger keeps one IntentsRead per account).
@@ -90,6 +93,7 @@ export function mergeIntentsReads(reads: IntentsRead[]): IntentsRead {
     fetchedAt: oldest.fetchedAt,
     ...(failed === undefined ? {} : { error: failed.error }),
     failures: Math.max(...reads.map((r) => r.failures ?? (r.ok ? 0 : 1))),
+    ...(reads.some((r) => r.unknown === true) ? { unknown: true as const } : {}),
   };
 }
 
@@ -103,6 +107,8 @@ export function mergeIntentsReads(reads: IntentsRead[]): IntentsRead {
 export function intentsUnreadWhy(read: IntentsRead, now: number = Date.now()): string | null {
   const failures = read.failures ?? (read.ok ? 0 : 1);
   if (failures >= 2) return read.error ?? 'the verifier did not answer twice in a row';
+  // The rule above spares a balance on screen a flicker. With none ever read, the miss is all there is.
+  if (read.unknown === true) return read.error ?? 'the verifier has not answered yet';
   const at = Date.parse(read.fetchedAt);
   if (Number.isFinite(at) && now - at > INTENTS_UNREAD_AFTER_MS) return `last read ${Math.round((now - at) / 1000)} s ago`;
   return null;

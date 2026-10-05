@@ -343,7 +343,8 @@ export function buildBasic(input: BasicInput): BasicView {
   const totalLine = nothingRead || nothingPriced ? '' : money(wallet.totalUsd);
 
   let caption: string;
-  if (staleChains.length > 0) caption = totalLine === '' ? 'Still checking your balance.' : 'still checking';
+  if (wallet.pending === true) caption = 'Reading your balance.';
+  else if (staleChains.length > 0) caption = totalLine === '' ? 'Still checking your balance.' : 'still checking';
   else if (staleAfterWrite) caption = totalLine === '' ? 'Checking your new balance.' : 'checking your new balance';
   else if (nothingPriced) caption = `No price for ${namesOf(unpriced)} right now, so there is no total yet.`;
   else if (unpriced.length > 0) caption = `in your balance, not counting ${namesOf(unpriced)}`;
@@ -361,8 +362,9 @@ export function buildBasic(input: BasicInput): BasicView {
      under "Nothing here yet"). */
   const held = buildHoldings(wallet, staleChains.length > 0);
 
+  // Nothing read yet is not a place that could not be read: the caption says it is being read.
   let emptyLine: string | null = null;
-  if (held.list.length === 0 && held.small === 0) {
+  if (held.list.length === 0 && held.small === 0 && wallet.pending !== true) {
     emptyLine = staleChains.length > 0
       ? 'Part of your balance could not be read just now. It shows here as soon as it can be.'
       : 'Nothing here yet. Money you add shows up here as it lands.';

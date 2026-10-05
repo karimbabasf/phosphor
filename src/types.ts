@@ -63,6 +63,8 @@ export type LedgerSnapshot = {
      no map at all carries a static table rather than a reading, and there is no fetch time to be
      old. See PRICE_STALENESS_MS in src/proposals/draft.ts for the bound. */
   priceAsOf?: Record<string, number>;
+  // Set on a live ledger until its first pass lands: nothing has been read, which is not zero.
+  pending?: true;
 };
 
 // ---------- Composition ----------
@@ -156,6 +158,9 @@ export type WalletView = {
   // The trading account, when it was read: funded or not. Unfunded is where a new account
   // starts, so it is never counted as an empty holding.
   hyperliquid?: { funded: boolean };
+  // Nothing read yet (LedgerSnapshot.pending): every place is in `stale`, and the window says
+  // the balance is being read rather than that it could not be.
+  pending?: true;
 };
 
 // ---------- Policy ----------
