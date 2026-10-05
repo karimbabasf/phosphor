@@ -750,7 +750,10 @@ before the signature, the gas account is checked before the Touch ID (`gas_low`,
 and the rest stop it with no dialog), the vault chip key signs one transfer to the allowance through
 `signIntent` (the service writes the sentence, "move 5.00 USDC from your vault to your allowance"),
 and the submitter (`src/vault/submit.ts`) simulates it, checks the events, sends it with the gas
-account and reads both balances at the block that shows it ran. A send with no final answer is
+account and reads both balances at the block that shows it ran. The events it checks are the
+simulation's: exactly `transfer`, then `intents_executed`. The call's receipt on chain adds a NEP-245
+`mt_transfer` line after them; the submitter confirms a move by views, never by its receipt, so a
+check of receipt events added later must expect that line. A send with no final answer is
 waited on by the submitter's settle rule, never signed again: it ran, or NEAR proves it never can
 (the row closes as nothing moved), or the row waits on the allowance's balance. The size is kept in
 `vault.json` (0 to 1,000,000, cents) and a change is logged and asks for a sweep at once.
