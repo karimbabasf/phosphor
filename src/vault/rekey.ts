@@ -351,8 +351,11 @@ function openVault(host: RekeyHost): string | null {
 }
 
 /* The owner key's verifier name for this vault, from the open session when it holds the key (kind
-   key), else from what this process or the run record learned before. Null when neither knows. */
-function knownOld(host: RekeyHost, box: Box, vault: string): string | null {
+   key), else from what this process or the run record learned before. Null when neither knows.
+   `opened`: also the public half an open of this process read (Keystore.ownerPublicKey), for
+   resumeChip's verdict alone. It is never kept in the box, so a move or a restore reads the owner
+   key's half as before (a restore with the key out of the session asks its own Touch ID for it). */
+function knownOld(host: RekeyHost, box: Box, vault: string, opened = false): string | null {
   const known = box.olds.get(vault);
   if (known !== undefined) return known;
   try {
@@ -368,14 +371,14 @@ function knownOld(host: RekeyHost, box: Box, vault: string): string | null {
   } catch {
     // Locked, or the owner key is out of the session.
   }
-  // The public half any open of this process read, or the run record's: a file, so its key counts
-  // only when it is the key whose address is the vault.
-  for (const name of [host.keystore.ownerPublicKey?.() ?? null, readRecord(host.dataDir, vault)?.old ?? null]) {
-    if (name === null || addressOfKey(name) !== vault) continue;
-    box.olds.set(vault, name);
-    return name;
+  // The run record is a file: its key counts only when it is the key whose address is the vault.
+  const fromRecord = readRecord(host.dataDir, vault)?.old ?? null;
+  if (fromRecord !== null && addressOfKey(fromRecord) === vault) {
+    box.olds.set(vault, fromRecord);
+    return fromRecord;
   }
-  return null;
+  const fromOpen = opened ? (host.keystore.ownerPublicKey?.() ?? null) : null;
+  return fromOpen !== null && addressOfKey(fromOpen) === vault ? fromOpen : null;
 }
 
 // The 0x address a verifier secp256k1 key signs for, or null for a name that is not one.
@@ -812,7 +815,7 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
   }
   const status = await chipStatusAll(host.relay);
   if ('code' in status) return named ? 'done' : record?.status === 'moving' ? 'moving' : 'none';
-  const old = knownOld(host, box, vault);
+  const old = knownOld(host, box, vault, true);
   let unread = false;
   let mismatch = false;
   for (const c of status.chips) {
