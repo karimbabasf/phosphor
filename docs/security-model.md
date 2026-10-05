@@ -201,8 +201,10 @@ build; add `-- --app <Phosphor.app>` to run it.
   until NEAR says how it ended, nothing an agent asks for is proposed or signed: the door refuses a
   propose with nothing drafted, a row an agent filed is refused when it lands and again at its last
   check before the key, and a click on one waits until the move is over. A move bundle written down
-  before a restart keeps agents waiting until NEAR can no longer run it. The account the rails sign
-  for changes in that call, and so does every key on the vault. Proof: `wave3-wiring.test.ts`.
+  before a restart keeps agents waiting until NEAR can no longer run it; one whose deadline lies
+  further ahead than any bundle the app signs (two minutes) is not the app's, and holds nothing
+  back. The account the rails sign for changes in that call, and so does every key on the vault.
+  Proof: `wave3-wiring.test.ts`, `audit2-rekey-forged-journal.test.ts`.
 - **An agent reaches for the vault.** No agent is offered a chip tool, every `/api/vault` write
   refuses what an agent holds, and only the shell, with its relay secret, takes or answers the
   vault service's requests. Proof: attacks `32-mcp-chip-reach`, `33-relay-ops`.

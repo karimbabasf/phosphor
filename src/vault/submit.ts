@@ -49,6 +49,7 @@ import { FATE_AHEAD_MAX_MS } from '../relay/fate.ts';
 import { decodeNonce } from '../relay/payload.ts';
 import type { FinalBlock, VerifierPort } from '../relay/verifier.ts';
 import { oneLine } from '../venue-words.ts';
+import { CHIP_PAYLOAD_LIFE_MS } from './chip.ts';
 import { eventsMismatch, expectedEvents, readVaultPayload } from './payload.ts';
 import type { BundleBefore } from './payload.ts';
 
@@ -56,6 +57,22 @@ import type { BundleBefore } from './payload.ts';
    an unspent nonce counts as never ran (C7: deadline + 2 min). The final block trails real time by
    about 2.6 s; the rest keeps a node a little behind, or a clock a little fast, on the safe side. */
 export const VAULT_SETTLE_FLOOR_MS = 2 * 60_000;
+
+/* The furthest past this Mac's clock a deadline of a bundle this app wrote can lie: every vault
+   payload is signed to live CHIP_PAYLOAD_LIFE_MS from its own build, and a minute covers a clock
+   that moved since. A bundle with a later deadline is not the app's (a journal file someone else
+   wrote): its fate is never waited on, so it holds no move and no agent back (audit2 AU2-07). */
+export const FOREIGN_DEADLINE_MS = CHIP_PAYLOAD_LIFE_MS + 60_000;
+
+export function foreignBundle(entry: Pick<JournalEntry, 'signed'>, nowMs: number): boolean {
+  return entry.signed.some((s) => {
+    try {
+      return Date.parse(String((JSON.parse(s.payload) as { deadline?: unknown }).deadline)) > nowMs + FOREIGN_DEADLINE_MS;
+    } catch {
+      return false;
+    }
+  });
+}
 
 // After an executed call, how often and how long the views are read before the window is told to
 // keep checking: a load-balanced RPC can answer from a node a block or two behind.
@@ -312,6 +329,7 @@ export async function settleEntry(entry: JournalEntry, deps: SettleDeps): Promis
   const parts = partsOf(entry);
   // Not a bundle this app wrote down: nothing to wait for.
   if (parts === null) return { verdict: 'unknown', why: 'the bundle written down does not read as vault payloads' };
+  if (foreignBundle(entry, (deps.now ?? Date.now)())) return { verdict: 'unknown', why: 'a deadline lies further ahead than any bundle this app writes, so the bundle is not the app\'s' };
   let lookupUnknown = false;
   for (const hash of entry.txHashes) {
     const fate = await deps.lookup(hash, entry.gas).catch((): TxFate => 'unknown');

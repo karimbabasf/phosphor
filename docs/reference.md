@@ -308,7 +308,9 @@ that row, top-ups it already made counted: a move that needs more signs nothing 
 
 While the vault moves to the chip (a move or a restore, from its start until NEAR says how it
 ended, or while a move bundle written down before a restart can still run: `vaultMoveUnderWay` in
-`src/vault/rekey.ts`), an agent's moves wait (`agentsWait` in `src/proposals/lifecycle.ts`). The
+`src/vault/rekey.ts`; a bundle whose deadline lies more than `FOREIGN_DEADLINE_MS`, 170 seconds,
+past this Mac's clock is not one the app wrote, settles `unknown` and never counts), an agent's
+moves wait (`agentsWait` in `src/proposals/lifecycle.ts`). The
 `propose` op answers 409 `{error, paused: 'vault_moving'}` with nothing drafted; a row an agent
 filed is refused at `land()` (rule `vault_moving`) and at its rail's last check before the key
 (reason `vault_moving`, nothing signed); a click on one throws and leaves it pending. Asked again

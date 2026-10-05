@@ -58,7 +58,7 @@ import { isPaperPhrase, newPaperPhrase, paperKeyOf, phraseDigest, phraseOf, veri
 import type { VaultPrefs } from './prefs.ts';
 import { MOVE_VAULT_REASON, RESTORE_VAULT_REASON } from './reason.ts';
 import type { VaultRelay } from './relay.ts';
-import { VAULT_SETTLE_FLOOR_MS, gasReady, rekeyViews } from './submit.ts';
+import { VAULT_SETTLE_FLOOR_MS, foreignBundle, gasReady, rekeyViews } from './submit.ts';
 import type { VaultResult, VaultSubmitter, ViewCheck } from './submit.ts';
 
 // How long the window may take to have the 24 words written down and typed back. What is held
@@ -893,11 +893,13 @@ function deadlineOf(payload: string): number {
 
 /* Whether a bundle written down for the vault can still run: one not known to have run, before its
    last deadline and the two minutes the submitter waits past it. After that the chain's answer is
-   final, and the next move settles what is left. `only` narrows it to some ids. */
+   final, and the next move settles what is left. A bundle with a deadline no bundle of this app's
+   could carry is not the app's, and never counts (submit.ts foreignBundle). `only` narrows it to
+   some ids. */
 function mayStillRun(chain: ChipVaultChain, vault: string, only: (id: string) => boolean = () => true): boolean {
   const deadlines = chain.submitter
     .pending(vault)
-    .filter((e) => (e.state === 'released' || e.state === 'sent') && only(e.id))
+    .filter((e) => (e.state === 'released' || e.state === 'sent') && only(e.id) && !foreignBundle(e, clock()))
     .flatMap((e) => e.signed.map((s) => deadlineOf(s.payload)))
     .filter((d) => Number.isFinite(d));
   return deadlines.length > 0 && clock() <= Math.max(...deadlines) + VAULT_SETTLE_FLOOR_MS + RESUME_POLL_MS;
