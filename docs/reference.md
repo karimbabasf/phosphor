@@ -762,20 +762,21 @@ coins a sweep, sent by the gas account through the same submitter. Its prices ar
 before. Every vault and allowance nonce is `buildNonce` at the payload deadline plus seven days, and
 both payloads live 110 seconds, so an unanswered send settles within about four minutes.
 
-**The vault's move to the chip** (`src/http/chip.ts`, `src/vault/rekey.ts`; window only behind
-`guarded()`, none on `/api/mcp`):
-
-    POST /api/vault/chip/phrase          ->  {ok, words[24]}, once
-    POST /api/vault/chip/phrase-proven   {words[24]}  ->  {ok, recovery}
-    POST /api/vault/chip/move            ->  202 {ok, run}
-    POST /api/vault/chip/restore         {words[24]}  ->  202 {ok, run}
-    POST /api/vault/gas/fund             {near}  ->  {ok, proposal: {id, status}}
-
-A run reports on the frame `{type: 'chip', kind: 'chip', run, status, reason?, said?}`, its status
-one of creating, touch_old, touch_chip, simulating, checking, done and failed. No answer and no
-audit line carries a word of a paper. The rekey writes vault.json, lets the owner key go and asks
-the accounts again, in that order, once NEAR says the move is done; the top-up asks the accounts
-again right before its own signature.
+**The move to the chip** (`src/http/chip.ts`, `src/vault/rekey.ts`). Window routes with the token,
+none on `/api/mcp`. `POST /api/vault/chip/phrase` answers `{ok, words}` once: a new 24-word paper
+key, written nowhere. `POST /api/vault/chip/phrase-proven {words}` takes all 24 back and answers
+`{ok, recovery}`, the paper's `secp256k1:` key, or a refusal that never names a word.
+`POST /api/vault/chip/move` answers 202 `{ok, run}` and moves the vault: the owner key signs behind
+its own Touch ID, the chip key signs its proof behind another, the paper signs in the app, and one
+execute_intents call adds the chip and the paper, removes the owner key and every listed key, and
+turns predecessor auth off. `POST /api/vault/chip/restore {words}` answers 202 `{ok, run}`: the same
+call on a new Mac, signed by the paper brought (the old one), with a new paper proven first.
+Progress comes as `{type:'chip', kind:'chip', run, status, reason?, said?}` frames and in
+`/api/state` `vault.chip`. `POST /api/vault/gas/fund {near}` files a NEAR payout of 0.1 to 1 NEAR
+(four places at most) to the gas account, whose id is derived from the owner key and never read
+from the body, and answers `{ok, proposal}`. Once NEAR says a move or a restore is done, the rekey
+writes vault.json, lets the owner key go and asks the accounts again, in that order; a top-up asks
+the accounts again right before its own signature.
 
 **The trading key of a vault on the chip** (`src/http/hl-agent.ts`, `src/hl/agent-key.ts`; window
 only, none on `/api/mcp`):
