@@ -277,8 +277,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   async function refreshHyperliquid(account: string | null): Promise<HlRead | undefined> {
     if (account === null) return undefined;
     const read = await fetchHyperliquidRead({ keysPath: cfg.keysPath, fetchImpl }, account);
-    if (!read.ok && liveHl !== undefined) return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
-    return read;
+    if (read.ok) return read;
+    if (liveHl === undefined || liveHl.unknown === true) return { ...read, unknown: true };
+    return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
   }
 
   async function refresh(): Promise<LedgerSnapshot> {

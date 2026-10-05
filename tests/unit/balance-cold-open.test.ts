@@ -13,6 +13,7 @@ import path from 'node:path';
 
 import type { AppConfig } from '../../src/types.ts';
 import { createLedger, type Ledger } from '../../src/ledger/index.ts';
+import { mergeIntentsReads } from '../../src/ledger/intents.ts';
 import { buildWallet } from '../../src/wallet.ts';
 import { buildBasic } from '../../src/view/basic.ts';
 import { createKeystore, useKeystore } from '../../src/keystore/index.ts';
@@ -27,14 +28,15 @@ function liveConfig(keysPath: string): AppConfig {
   return { mode: 'live', keysPath, port: 4177, addresses: {}, candleProducts: ['BTC-USD'], dataDir: path.dirname(keysPath) };
 }
 
-type World = { fetchImpl: typeof fetch; verifier: 'ok' | 'down'; oneClick: 'ok' | 'hang' };
+type World = { fetchImpl: typeof fetch; verifier: 'ok' | 'down'; oneClick: 'ok' | 'hang'; hl: 'ok' | 'down' };
 
-// Every venue the live ledger reads, answered from memory: the account holds 5 USDC in the verifier.
-function fakeWorld(): World {
+// Every venue the live ledger reads, answered from memory: the account holds 5 USDC in the verifier
+// and, when `hl` is 'ok' with `hlUsdc` set, that much USDC in the trading account.
+function fakeWorld(hlUsdc = 0): World {
   const json = (payload: unknown, status = 200): Response =>
     new Response(JSON.stringify(payload), { status, headers: { 'content-type': 'application/json' } });
   const nearView = (value: unknown): Response => json({ jsonrpc: '2.0', id: 1, result: { result: [...Buffer.from(JSON.stringify(value), 'utf8')] } });
-  const world: World = { verifier: 'ok', oneClick: 'ok', fetchImpl: fetch };
+  const world: World = { verifier: 'ok', oneClick: 'ok', hl: 'ok', fetchImpl: fetch };
   world.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
@@ -45,9 +47,10 @@ function fakeWorld(): World {
       return json([{ assetId: NEAR_USDC, decimals: 6, blockchain: 'near', symbol: 'USDC' }]);
     }
     if (url.includes('hyperliquid.xyz')) {
+      if (world.hl === 'down') return json({ error: 'busy' }, 429);
       const type = String(body?.type);
       if (type === 'clearinghouseState') return json({ marginSummary: { accountValue: '0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] });
-      if (type === 'spotClearinghouseState') return json({ balances: [] });
+      if (type === 'spotClearinghouseState') return json({ balances: hlUsdc > 0 ? [{ coin: 'USDC', total: String(hlUsdc) }] : [] });
       return json('standard');
     }
     if (world.verifier === 'down') return json({ error: 'service unavailable' }, 503);
@@ -146,4 +149,42 @@ test('a cold open reads the balance off the last token list and never waits on 1
   assert.equal(held?.symbol, 'USDC', 'labelled off the list the last run kept');
   assert.equal(held?.amount, 5, 'in its own decimals, not as a raw integer');
   assert.equal(panel(ledger).basic.totalLine, '$5.00');
+});
+
+test('one missed Hyperliquid read keeps every row and names the part it is still checking', async () => {
+  const keysPath = path.join(tempDir('phosphor-cold-open-'), 'keys.json');
+  await walletAt(keysPath);
+  const world = fakeWorld(10);
+  const ledger = createLedger(liveConfig(keysPath), { fetchImpl: world.fetchImpl, log: () => undefined });
+  await ledger.refresh();
+  assert.equal(panel(ledger).basic.totalLine, '$15.00');
+
+  world.hl = 'down';
+  await ledger.refresh();
+  const missed = panel(ledger);
+  assert.deepEqual(missed.wallet.stale, ['hyperliquid'], 'only the source that missed');
+  assert.equal(missed.wallet.unread, undefined, 'it was read before, so its last figures stand');
+  assert.equal(missed.wallet.rows.find((r) => r.kind === 'hyperliquid')?.quantity, 10, 'the trading account keeps its last good row');
+  assert.deepEqual(missed.basic.holdings.map((h) => h.symbol), ['USDC'], 'the list stays');
+  assert.equal(missed.basic.emptyLine, null);
+  assert.equal(missed.basic.totalLine, '$15.00');
+  assert.equal(missed.basic.caption, 'still checking the trading account');
+
+  world.hl = 'ok';
+  await ledger.refresh();
+  assert.equal(panel(ledger).basic.caption, 'in your balance');
+});
+
+test('once a read has landed, a pocket that has not answered yet never puts the wallet back to unread', () => {
+  // Under a Touch ID vault the verifier read is the vault's and the allowance's together. A vault
+  // read that landed and an allowance whose first read failed made the whole of it unread, and
+  // Pro went back to "Still reading your coins." over the vault's coins.
+  const at = new Date().toISOString();
+  const vault = { holdings: [{ accountId: '0xa', assetId: NEAR_USDC, symbol: 'USDC', originChain: 'near', amount: 5, decimals: 6 }], ok: true, fetchedAt: at, failures: 0 };
+  const spend = { holdings: [], ok: false, fetchedAt: at, failures: 1, error: 'intents mt_tokens_for_owner http 503', unknown: true as const };
+  const wallet = buildWallet({ mode: 'live', fetchedAt: at, prices: {} }, mergeIntentsReads([vault, spend]), undefined);
+  assert.equal(wallet.unread, undefined, 'the vault was read, so the coins stay on screen');
+  assert.ok(wallet.stale.includes('intents'), 'and the pocket that did not answer is said');
+  assert.equal(wallet.rows.find((r) => r.kind === 'intents')?.quantity, 5);
+  assert.deepEqual(buildWallet({ mode: 'live', fetchedAt: at, prices: {} }, mergeIntentsReads([spend, spend]), undefined).unread, ['intents'], 'nothing answered at all is unread');
 });

@@ -320,6 +320,12 @@ test('a refresh that misses keeps the last good coins on screen and says it is s
   assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins, still checking');
   const rows = withClass(one(rig.host, 'l-rows'), 'l-row').filter((r) => !r.hidden);
   assert.deepEqual(rows.map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR', 'SOL']);
+
+  // The trading account the same way: its last good figure stays, said to be still checking.
+  rig.put(state({ wallet: { ...state().wallet, stale: ['hyperliquid'] } }));
+  assert.equal(one(rig.host, 'stmt-trade-figure').textContent, '$1,046.82 · 2 positions · still checking');
+  rig.put(state({ wallet: { ...state().wallet, rows: state().wallet.rows.filter((r: Any) => r.kind !== 'hyperliquid'), stale: ['hyperliquid'], unread: ['hyperliquid'] } }));
+  assert.equal(one(rig.host, 'stmt-trade-figure').textContent, 'not answering right now');
 });
 
 test('each coin: its price, the amount under its name and in its own column, and its value', () => {

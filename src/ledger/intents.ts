@@ -87,13 +87,19 @@ export function mergeIntentsReads(reads: IntentsRead[]): IntentsRead {
   const age = (r: IntentsRead): number => Date.parse(r.fetchedAt) || 0;
   const oldest = reads.reduce((a, b) => (age(b) < age(a) ? b : a));
   const failed = reads.find((r) => !r.ok && r.error !== undefined);
+  /* Unread only when no pocket has answered: a vault read that landed keeps its coins on screen
+     while the allowance's first read is still failing. That pocket is unread now, whatever the
+     count, so the merged read counts as two misses and the place goes out stale. */
+  const none = reads.every((r) => r.unknown === true);
+  const some = reads.some((r) => r.unknown === true);
+  const failures = Math.max(...reads.map((r) => r.failures ?? (r.ok ? 0 : 1)));
   return {
     holdings: reads.flatMap((r) => r.holdings),
     ok: reads.every((r) => r.ok),
     fetchedAt: oldest.fetchedAt,
     ...(failed === undefined ? {} : { error: failed.error }),
-    failures: Math.max(...reads.map((r) => r.failures ?? (r.ok ? 0 : 1))),
-    ...(reads.some((r) => r.unknown === true) ? { unknown: true as const } : {}),
+    failures: some && !none ? Math.max(failures, 2) : failures,
+    ...(none ? { unknown: true as const } : {}),
   };
 }
 

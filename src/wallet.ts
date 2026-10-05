@@ -76,9 +76,12 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   });
 
   // The trading account. USDC is the only collateral HyperCore holds, and it is a dollar, so
-  // the row prices itself: a venue read never has to wait for the price table.
+  // the row prices itself: a venue read never has to wait for the price table. A read that missed
+  // carries the last good figures (src/ledger/index.ts), and they stay as the row, marked stale
+  // below: one miss used to drop the row and empty the whole list.
+  const hlKnown = hyperliquid !== undefined && hyperliquid.unknown !== true;
   const hlRows: WalletRow[] =
-    hyperliquid !== undefined && hyperliquid.ok
+    hlKnown
       ? [
           {
             kind: 'hyperliquid',
@@ -156,10 +159,12 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   }
   // Funded is more than dust: the venue left 0.000002 USDC on a trading account that was never
   // funded, and "funded" over it hid the one line an empty account needs (src/trade/funding.ts).
-  const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc >= DUST_USD } : undefined;
+  const hl = hlKnown ? { funded: hyperliquid.collateralUsdc >= DUST_USD } : undefined;
 
   const unpriced = rows.filter(r => r.priced === false).map(r => r.symbol);
-  const unread: WalletPlace[] = pending ? ['intents', 'hyperliquid'] : intents?.unknown === true ? ['intents'] : [];
+  const unread: WalletPlace[] = pending
+    ? ['intents', 'hyperliquid']
+    : [...(intents?.unknown === true ? ['intents' as const] : []), ...(hyperliquid?.unknown === true ? ['hyperliquid' as const] : [])];
 
   return {
     rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, unpriced, hyperliquid: hl,
