@@ -663,7 +663,8 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   let base: bigint;
   if (ask.all) {
     if (heldBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
-    if (heldBase === 0n && savedBase !== 0n && vault !== null) return { ...none, from, to, reason: 'insufficient_balance', sentence: OVER_ALLOWANCE.allNone(baseUnitsToDecimal(savedBase, from.decimals), coinWord(from)) };
+    if (heldBase === 0n && vault !== null && savedBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
+    if (heldBase === 0n && savedBase !== null && savedBase !== 0n && vault !== null) return { ...none, from, to, reason: 'insufficient_balance', sentence: OVER_ALLOWANCE.allNone(baseUnitsToDecimal(savedBase, from.decimals), coinWord(from)) };
     if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)), details: NOT_HELD.allNext };
     base = heldBase;
   } else {
