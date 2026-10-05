@@ -901,7 +901,8 @@ test('money in through the bridge reads Received, on its way while the bridge is
   const at = new Date(Date.now() - 60_000).toISOString();
   const rig = boot({ receipts: [
     { id: 'received:eth:8453:usdc:0xb', kind: 'received', at, status: 'arriving', headline: 'Received 5 USDC on Base', summary: '', amount: null, symbol: null, received: null },
-    { id: 'received:btc:mainnet:native:ab', kind: 'received', at, status: 'executed', headline: 'Received 0.01 BTC on Bitcoin', summary: '', amount: null, symbol: null, received: { symbol: 'BTC', amount: 0.01 } },
+    // From before the app first looked: no time (src/received.ts).
+    { id: 'received:btc:mainnet:native:ab', kind: 'received', at: '', status: 'executed', headline: 'Received 0.01 BTC on Bitcoin', summary: '', amount: null, symbol: null, received: { symbol: 'BTC', amount: 0.01 } },
   ] });
   rig.put(state());
   rig.view('pro');
@@ -910,4 +911,5 @@ test('money in through the bridge reads Received, on its way while the bridge is
   assert.deepEqual(rows.map((m) => one(m, 'move-title').textContent), ['Received 5 USDC on Base', 'Received 0.01 BTC on Bitcoin']);
   assert.deepEqual(rows.map((m) => words(one(m, 'move-state')).join('')), ['On its way', 'Done']);
   assert.deepEqual(rows.map((m) => one(m, 'move-state').getAttribute('data-dir')), ['going', 'done']);
+  assert.equal(one(rows[1], 'move-meta').textContent, 'Earlier');
 });
