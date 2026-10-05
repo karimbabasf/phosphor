@@ -397,8 +397,8 @@ your money.
   forced flip is visible. What closes it: nothing Phosphor controls; the switch is the verifier's.
 - **A backend compromised after the move writes every Touch ID dialog but the chip's.** The owner
   key's unwrap and the presence ask carry sentences the backend writes, and such a backend can ask
-  for the paper on a screen of its own: Phosphor asks for the 24 words only in a move or a restore
-  you started. Only a chip dialog moves money out of the vault, and the vault service writes that
+  for the paper on a screen of its own: Phosphor asks for words of the paper only in a move or a
+  restore you started. Only a chip dialog moves money out of the vault, and the vault service writes that
   one from the payload it read. What closes it: nothing in this build.
 - **This Mac's login password answers the chip's dialog.** The chip key asks for you on every use,
   by Touch ID or the login password, so a stolen Mac and its password move the vault. What closes

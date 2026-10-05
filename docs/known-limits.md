@@ -233,8 +233,8 @@ broke into after the move can word those dialogs as it likes, and can ask for yo
 screen of its own.
 
 What it means: only a chip dialog moves money out of the vault, and the vault service writes that
-sentence from the payload it read, never the backend. Phosphor asks for the 24 words only in a move
-or a restore you started: type them nowhere else. What closes it: nothing in this build.
+sentence from the payload it read, never the backend. Phosphor asks for words of your paper only in
+a move or a restore you started: type them nowhere else. What closes it: nothing in this build.
 
 ## This Mac's login password answers the chip's dialog
 
