@@ -4,8 +4,8 @@
    seat with agent.secret, which any program running as this user can read.
    So until the person allows it here, every move it asks for waits for their
    click (src/agents.ts, src/web-read.ts OUTSIDE_REASON). This card is where
-   they allow it: who is asking, in its own words, what it can do now and
-   after an Allow, and two answers.
+   they allow it: which assistant wants to use Phosphor and when it connected,
+   what it can do until an Allow and after one, and two answers.
 
    It sits in the conversation, under the roster it is about, in the slot
    ui/screens/agent.js keeps there (.agent-asks), and takes its place in the
@@ -14,10 +14,14 @@
    from the person: focus stays where it was, so a key pressed in the composer
    never answers it, and its buttons hold for a beat after it lands, so a
    click already on its way cannot either. One card at a time, oldest first,
-   and it says how many more wait. The name is the agent's own word, drawn as
-   text in quotes and never with a brand's mark: a mark would vouch for a name
-   nobody checked. Ask each time keeps every move it asks for waiting, and the
-   agent's roster row keeps a Change that brings this card back (reopen). */
+   and it says how many more wait. The name is the agent's own word. The few
+   names agents' own MCP clients send (KNOWN) are said plainly, with the
+   agent's logo; any other name is drawn as its own text beside the icon set's
+   link, never in a title and never with a brand's mark. Either way the card
+   says Phosphor can't check the name, so a logo helps the person know their
+   own agent and vouches for nothing. Ask each time keeps every move it asks
+   for waiting, and the agent's roster row keeps a Change that brings this
+   card back (reopen). */
 (function () {
   'use strict';
 
@@ -33,8 +37,16 @@
   var CLOSE_MS = 200;
   var EASE = 'cubic-bezier(0.23, 1, 0.32, 1)';
   var EXIT_EASE = 'cubic-bezier(0.4, 0, 0.6, 1)';
-  // What a screen reader hears when an agent asks: the card never takes the focus to say it.
-  var ASKS = 'An agent started outside Phosphor asks to be allowed.';
+  /* The names agents' own MCP clients give in the handshake (clientInfo, src/mcp.ts), and the
+     agent each one is, keyed by the catalog's id for its logo (ui/design/marks.js AGENT_LOGOS). */
+  var KNOWN = {
+    'claude-code': { mark: 'claude', name: 'Claude Code' },
+    'claude-ai': { mark: 'desktop', name: 'Claude Desktop' },
+    'codex-mcp-client': { mark: 'codex', name: 'Codex' }
+  };
+  // The proxy's own name, which stands until a client's lands and for a client that sends none.
+  var NO_NAME = 'phosphor-mcp';
+  var SOMEONE = 'An AI assistant on this Mac';
 
   var slot = null;
   var host = null;
@@ -82,14 +94,31 @@
     return list.length ? list[0] : null;
   }
 
-  function limitWords(state) {
+  /* What an Allow changes, with the person's own amount: its first sentence is the one to read.
+     An Allow changes what it asks for next, never a move already waiting (src/agents.ts allow).
+     At $0 the rules ask before every move whoever proposes it (src/policy/engine.ts), so then an
+     Allow lets nothing run on its own, and the card says so. */
+  function allowWords(state) {
     var policy = state && state.policy ? state.policy : null;
     var out = policy && policy.outbound ? policy.outbound : null;
-    var ask = out && typeof out.humanClickAboveUsd === 'number' ? out.humanClickAboveUsd : null;
-    // An Allow changes what it asks for next, never a move already waiting (src/agents.ts allow).
-    var after = ' Moves it already asked for still wait for your OK.';
-    if (ask === null || !isFinite(ask) || ask <= 0) return 'Small moves run without asking you, the same as from Phosphor\'s own chat.' + after;
-    return 'Moves up to ' + dom.usd(ask, ask % 1 === 0 ? 0 : 2) + ' run without asking you, the same as from Phosphor\'s own chat.' + after;
+    var ask = out && typeof out.humanClickAboveUsd === 'number' && isFinite(out.humanClickAboveUsd) ? out.humanClickAboveUsd : null;
+    var rest = ' Phosphor\'s own chat works the same way. Moves it already asked for still wait for your OK.';
+    if (ask === 0) return { key: 'Every move still waits for your OK.', rest: ' Your rules ask you before every move, from any agent.' };
+    if (ask === null || ask < 0) return { key: 'Small moves run without asking you.', rest: rest };
+    return { key: 'Moves up to ' + dom.usd(ask, ask % 1 === 0 ? 0 : 2) + ' run without asking you.', rest: rest };
+  }
+
+  /* Who is asking, as the card says it: a name it knows with that agent's logo; any other name
+     as the agent's own word, beside the link; or no name at all. */
+  function whoIs(member) {
+    var said = String(member.client || member.label || '').trim();
+    var key = said.toLowerCase();
+    if (own(KNOWN, key)) return { mark: KNOWN[key].mark, name: KNOWN[key].name, said: '' };
+    return { mark: 'mcp', name: '', said: key === NO_NAME ? '' : said };
+  }
+
+  function titleOf(who) {
+    return (who.name || SOMEONE) + ' wants to use Phosphor';
   }
 
   function slotOf() {
@@ -102,49 +131,64 @@
     host.setAttribute('role', 'dialog');
     host.setAttribute('aria-modal', 'false');
     host.setAttribute('aria-labelledby', 'agent-ask-title');
-    host.setAttribute('aria-describedby', 'agent-ask-now');
+    host.setAttribute('aria-describedby', 'agent-ask-line agent-ask-now');
     host.setAttribute('data-motion', 'pop');
     host.hidden = true;
 
+    /* The head says what is happening in one line: the agent's logo or the link, then
+       "Claude Code wants to use Phosphor", and under it what it is and when it connected. */
     var head = dom.el('div', 'agent-ask-head');
-    // The icon set's link, which the window draws for any agent it did not start (marks.js).
-    var glyph = dom.el('span', 'agent-ask-glyph');
-    glyph.setAttribute('aria-hidden', 'true');
-    var icons = window.PhosphorIcons;
-    if (icons && typeof icons.svg === 'function') glyph.appendChild(icons.svg('link'));
+    var mark = dom.el('span', 'agent-ask-mark');
+    mark.setAttribute('aria-hidden', 'true');
     var who = dom.el('div', 'agent-ask-who');
-    var title = dom.el('h2', 'agent-ask-title', 'Allow this agent?');
+    var title = dom.el('h2', 'agent-ask-title');
     title.id = 'agent-ask-title';
-    var name = dom.el('p', 'agent-ask-name');
-    var more = dom.el('p', 'agent-ask-more');
-    more.hidden = true;
+    var line = dom.el('p', 'agent-ask-line');
+    line.id = 'agent-ask-line';
+    var lead = dom.el('span', '');
+    var said = dom.el('span', 'agent-ask-said');
+    var when = dom.el('span', '');
+    line.appendChild(lead);
+    line.appendChild(said);
+    line.appendChild(when);
     who.appendChild(title);
-    who.appendChild(name);
-    who.appendChild(more);
-    head.appendChild(glyph);
+    who.appendChild(line);
+    head.appendChild(mark);
     head.appendChild(who);
 
+    // What each answer means, label over its words; the sentence to read first is the brighter one.
+    var body = dom.el('div', 'agent-ask-body');
     var facts = dom.el('dl', 'agent-ask-facts');
     var nowRow = dom.el('div', 'agent-ask-fact');
     nowRow.appendChild(dom.el('dt', '', 'Until you allow it'));
-    var now = dom.el('dd', '', 'It can read your wallet. Every move it asks for waits for your OK.');
+    var now = dom.el('dd', '');
     now.id = 'agent-ask-now';
+    now.appendChild(dom.el('span', 'agent-ask-key', 'Every move it asks for waits for your OK.'));
+    now.appendChild(dom.el('span', '', ' It can read your wallet.'));
     nowRow.appendChild(now);
     var thenRow = dom.el('div', 'agent-ask-fact');
     thenRow.appendChild(dom.el('dt', '', 'If you allow it'));
     var then = dom.el('dd', '');
+    var thenKey = dom.el('span', 'agent-ask-key');
+    var thenRest = dom.el('span', '');
+    then.appendChild(thenKey);
+    then.appendChild(thenRest);
     thenRow.appendChild(then);
     facts.appendChild(nowRow);
     facts.appendChild(thenRow);
 
-    var note = dom.el('p', 'agent-ask-note', 'Allow only an agent you started yourself. Phosphor can\'t see what it reads elsewhere.');
+    var note = dom.el('p', 'agent-ask-note', 'Only allow an agent you started yourself. Phosphor can\'t check its name or see what it reads elsewhere.');
     var error = dom.el('p', 'agent-ask-error');
     error.setAttribute('role', 'alert');
     error.hidden = true;
 
+    // How many more wait at the left, the answers at the right edge, as on a move card.
+    var bar = dom.el('div', 'agent-ask-bar');
+    var more = dom.el('p', 'agent-ask-more');
+    more.hidden = true;
     var actions = dom.el('div', 'agent-ask-actions');
     // The harmless answer, named for what it does: every move this agent asks for waits.
-    var later = dom.el('button', 'btn btn-quiet');
+    var later = dom.el('button', 'btn btn-ghost');
     later.type = 'button';
     later.appendChild(dom.el('span', 'btn-label', 'Ask each time'));
     dom.setAttr(later, 'data-pending-label', 'Ask each time');
@@ -154,12 +198,15 @@
     dom.setAttr(allow, 'data-pending-label', 'Allowing');
     actions.appendChild(later);
     actions.appendChild(allow);
+    bar.appendChild(more);
+    bar.appendChild(actions);
 
+    body.appendChild(facts);
+    body.appendChild(note);
+    body.appendChild(error);
+    body.appendChild(bar);
     host.appendChild(head);
-    host.appendChild(facts);
-    host.appendChild(note);
-    host.appendChild(error);
-    host.appendChild(actions);
+    host.appendChild(body);
     slot.appendChild(host);
 
     /* The card never takes the focus, so a polite line outside it says that an agent asks. */
@@ -175,36 +222,65 @@
       if (event && event.key === 'Escape') answer(false, later);
     });
 
-    refs = { name: name, more: more, then: then, error: error, later: later, allow: allow };
+    refs = { mark: mark, title: title, lead: lead, said: said, when: when, thenKey: thenKey, thenRest: thenRest, more: more, error: error, later: later, allow: allow };
+  }
+
+  /* The logo, drawn again only when the agent it shows changes: the proxy's own name stands for
+     a beat before the client's lands (src/mcp.ts clientName), and then the card turns into it. */
+  function paintMark(id) {
+    if (refs.mark.__agent === id) return;
+    dom.clear(refs.mark);
+    var marks = window.PhosphorMarks;
+    var icons = window.PhosphorIcons;
+    if (id !== 'mcp' && marks && typeof marks.agent === 'function') {
+      refs.mark.appendChild(marks.agent(id, 40));
+    } else if (icons && typeof icons.svg === 'function') {
+      refs.mark.appendChild(icons.svg('link'));
+    }
+    dom.setAttr(refs.mark, 'data-agent', id);
+    refs.mark.__agent = id;
   }
 
   function paint(member) {
     var state = store.get() || {};
-    var called = String(member.client || member.label || 'an agent');
+    var who = whoIs(member);
     var at = dom.clock(member.since);
-    dom.setText(refs.name, '"' + called + '", started outside Phosphor' + (at ? ' at ' + at : ''));
-    dom.setText(refs.then, limitWords(state));
+    paintMark(who.mark);
+    dom.setText(refs.title, titleOf(who));
+    dom.setText(refs.lead, who.name ? SOMEONE : (who.said ? 'It calls itself ' : 'It gave no name'));
+    dom.setText(refs.said, who.said);
+    dom.setHidden(refs.said, !who.said);
+    // No-break spaces: a narrow line breaks after the dot, never before it or inside "connected at 07:43".
+    dom.setText(refs.when, at ? ' · connected at ' + at : '');
+    var words = allowWords(state);
+    dom.setText(refs.thenKey, words.key);
+    dom.setText(refs.thenRest, words.rest);
     var others = waiting(state).filter(function (m) { return String(m.session) !== String(member.session); }).length;
     dom.setText(refs.more, others === 1 ? '1 more agent is waiting' : others + ' more agents are waiting');
     dom.setHidden(refs.more, others === 0);
   }
 
+  /* The answers are held for a beat after the card lands, at full strength: a hollow key that
+     filled in a moment later read as a flicker on a card that had only just arrived. */
   function arm() {
     var mine = (armed += 1);
     refs.allow.disabled = true;
     refs.later.disabled = true;
+    dom.setAttr(host, 'data-arming', 'true');
     window.setTimeout(function () {
       if (!showing || mine !== armed) return;
       refs.allow.disabled = false;
       refs.later.disabled = false;
+      dom.setAttr(host, 'data-arming', null);
     }, ARM_MS);
   }
 
-  /* Said again for every agent that asks: emptied first, so the same sentence is news again. */
+  /* Said again for every agent that asks, in the card's own head line: emptied first, so the
+     same sentence is news again. */
   function announce() {
     dom.setText(live, '');
     window.setTimeout(function () {
-      if (showing) dom.setText(live, ASKS);
+      if (showing) dom.setText(live, titleOf(whoIs(showing)) + '.');
     }, 80);
   }
 

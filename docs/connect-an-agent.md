@@ -137,8 +137,11 @@ The full list is in [Tools](tools.md).
 
 An agent you start in your terminal or in another app is one Phosphor did not start, and it
 attaches with a secret any program running as you could read. So when it first attaches, the
-conversation shows a card under its list of agents: "Allow this agent?", with the name the agent
-gave itself, the time it arrived, and how many more agents wait behind it. The card takes its
+conversation shows a card under its list of agents that says which assistant wants to use
+Phosphor ("Claude Code wants to use Phosphor"), when it connected, and how many more agents wait
+behind it. A name the card knows (Claude Code, Claude Desktop, Codex) is said plainly with that
+agent's logo; any other is shown as the name the agent gave itself. Phosphor can't check either
+name, and the card says so. The card takes its
 place in the conversation, so it covers neither your balances nor the freeze key, and a screen
 reader hears that an agent asks. Until you allow it, it can read your wallet and every move it
 asks for waits for your OK, whatever the size, and that move's card says why. Allow lets its next
