@@ -11,6 +11,7 @@ import {
   POA_NETWORK,
   RECEIVE_NETWORKS,
   bridgeKeyOf,
+  bridgeTimeOf,
   humanAmount,
   intentsDepositAddress,
   parsePoaToken,
@@ -349,4 +350,17 @@ test('the bridge still lists Toncoin as TON; the coin reads GRAM, and TON typed 
   assert.equal(currentSymbol('ton', 'TON'), 'GRAM');
   assert.equal(currentSymbol('ton', 'USDT'), 'USDT');
   assert.equal(currentSymbol('eth', 'TON'), 'TON');
+});
+
+test('a deposit row\'s created_at is read as a time in any shape it may come in, and never a made-up one', () => {
+  const now = Date.parse('2026-10-05T20:00:00Z');
+  const iso = '2026-10-05T19:20:00.000Z';
+  assert.equal(bridgeTimeOf(iso, now), iso);
+  assert.equal(bridgeTimeOf('2026-10-05T19:20:00.000+00:00', now), iso);
+  // No zone is UTC, never this Mac's local time.
+  assert.equal(bridgeTimeOf('2026-10-05 19:20:00', now), iso);
+  assert.equal(bridgeTimeOf(Date.parse(iso) / 1000, now), iso, 'epoch seconds');
+  assert.equal(bridgeTimeOf(Date.parse(iso), now), iso, 'epoch milliseconds');
+  assert.equal(bridgeTimeOf(String(Date.parse(iso) / 1000), now), iso, 'epoch seconds as text');
+  for (const no of [undefined, null, '', 'yesterday', 0, '1999-01-01T00:00:00Z', '2026-10-07T00:00:00Z']) assert.equal(bridgeTimeOf(no, now), null, String(no));
 });

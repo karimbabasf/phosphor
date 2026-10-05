@@ -734,20 +734,23 @@ function bridge(rows: unknown[]): { fetchImpl: typeof fetch; down: boolean; aske
   return world;
 }
 
-const baseDeposit = (status: string): unknown => ({
+const baseDeposit = (status: string, createdAt?: string): unknown => ({
   tx_hash: DEPOSIT_TX, chain: 'eth:8453', defuse_asset_identifier: BASE_USDC, decimals: 6, amount: '5000000', account_id: SELF.toLowerCase(), status,
+  ...(createdAt === undefined ? {} : { created_at: createdAt }),
 });
 
-test('money sent in through the bridge is a Received row with its amount, coin and network, among the moves', async () => {
-  const world = bridge([baseDeposit('COMPLETED')]);
+test('money sent in through the bridge is a Received row with its amount, coin and network, in time among the moves', async () => {
+  const sent = ago(2);
+  const world = bridge([baseDeposit('COMPLETED', sent)]);
   const received = createReceived({ dataDir: tempDir('phosphor-received-'), account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
   await received.read();
   assert.deepEqual(world.asked, ['recent_deposits', 'supported_tokens'], 'one read for every network, no chain named');
-  const h = await boot([settled('a', 'executed', { createdAt: ago(1), decidedAt: ago(1) })], { received });
+  const h = await boot([settled('a', 'executed', { createdAt: ago(1), decidedAt: ago(1) }), settled('b', 'executed', { createdAt: ago(3), decidedAt: ago(3) })], { received });
   try {
     const list = await receipts(h.url, '?kind=swap,move');
-    assert.deepEqual(list.map((r) => r.kind), ['received', 'intents_deposit'], 'the deposit is not a row, or not the newest');
-    const row = list[0];
+    assert.deepEqual(list.map((r) => r.id.split(':')[0]), ['a', 'received', 'b'], 'the deposit is not a row, or not at the bridge\'s time');
+    const row = list[1];
+    assert.equal(row.at, sent, 'the row is not at the bridge\'s created_at');
     assert.equal(row.headline, 'Received 5 USDC on Base');
     assert.equal(row.status, 'executed');
     assert.deepEqual(row.received, { symbol: 'USDC', amount: 5 });

@@ -6,10 +6,10 @@
 // 2026-10-05: "our activity doesnt show any received transactions"). So the bridge is asked
 // (recent_deposits, every network in one call) and what it said is kept in <dataDir>/received.json.
 //
-// WHAT IS KEPT. Each deposit as the bridge last described it, plus the one fact its rows do not
-// carry: a time. A row's time is the first time this app saw it, written down so that it does not
-// move at the next boot. Rows stay after the bridge's page has moved past them (it answers the
-// newest 100), so a deposit seen once stays in Activity.
+// WHAT IS KEPT. Each deposit as the bridge last described it, with its time: the row's own
+// created_at, or, for a row that carries none that reads, the first time this app saw it, written
+// down so that it does not move at the next boot. Rows stay after the bridge's page has moved past
+// them (it answers the newest 100), so a deposit seen once stays in Activity.
 //
 // WHEN IT IS READ. When the window reads its activity (src/http/receipts.ts), at most once a
 // minute, and never in demo mode. The read runs behind the answer: the list served is the one
@@ -44,8 +44,8 @@ export type ReceivedDeposit = {
   symbol: string | null;
   // The bridge's word: COMPLETED is credited, FAILED did not arrive, anything else is on its way.
   status: string;
-  // ISO, the first time this app saw it.
-  seenAt: string;
+  // ISO: the bridge's created_at, or the first time this app saw it when the row gave none.
+  at: string;
 };
 
 export type Received = {
@@ -79,7 +79,7 @@ function isDeposit(value: unknown): value is ReceivedDeposit {
     (r.decimals === null || typeof r.decimals === 'number') &&
     (r.symbol === null || typeof r.symbol === 'string') &&
     typeof r.status === 'string' &&
-    typeof r.seenAt === 'string'
+    typeof r.at === 'string'
   );
 }
 
@@ -144,15 +144,16 @@ export function createReceived(deps: ReceivedDeps): Received {
         decimals: d.decimals ?? token?.decimals ?? prior?.decimals ?? null,
         symbol: token?.symbol ?? prior?.symbol ?? null,
         status: d.status,
-        // The bridge's page is newest first, so rows first seen together keep its order a millisecond apart.
-        seenAt: prior?.seenAt ?? new Date(at - i).toISOString(),
+        // With no created_at, the first time seen; the bridge's page is newest first, so rows first
+        // seen together keep its order a millisecond apart.
+        at: d.at ?? prior?.at ?? new Date(at - i).toISOString(),
       };
       if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(next)) return;
       held.set(keyOf(next), next);
       changed = true;
     });
     if (!changed) return;
-    const next = [...held.values()].sort((a, b) => (a.seenAt < b.seenAt ? 1 : a.seenAt > b.seenAt ? -1 : 0)).slice(0, RECEIVED_KEPT);
+    const next = [...held.values()].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, RECEIVED_KEPT);
     atomicWriteJson(file, { version: 1, deposits: next });
     rows = next;
   }
