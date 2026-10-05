@@ -371,6 +371,8 @@ export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buil
     events: ctx.audit.tail(LOG_LIMIT_MAX),
     selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
     invites: ctx.invites.landed(),
+    // What the bridge said came in, as last read (src/received.ts): no chain is read here either.
+    received: ctx.received?.list() ?? [],
   });
   return { entries };
 }

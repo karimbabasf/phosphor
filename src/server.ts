@@ -36,6 +36,7 @@ import { createVaultPrefs } from './vault/prefs.ts';
 import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createInviteService } from './invite/claim.ts';
+import { createReceived } from './received.ts';
 import { demoInviteNet } from './invite/demo.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
@@ -303,6 +304,14 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     hold: (assetId) => deposits.holdForClaim(assetId),
     ...(deps.invite ?? demoInvite ?? {}),
   });
+  // Money in through the bridge, for Activity: the same account the deposit watch asks about.
+  const received =
+    deps.received ??
+    createReceived({
+      dataDir: cfg.dataDir,
+      account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
+      enabled: cfg.mode === 'live',
+    });
   const session =
     deps.session ??
     createSession({
@@ -353,6 +362,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     terms,
     deposits,
     invites,
+    received,
     releaseQueued: () => deps.proposals.releaseQueued(),
     theme: { get: getTheme, set: setTheme },
     setView,

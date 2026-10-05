@@ -14,8 +14,11 @@
 
 import type { ChainId, DecidedBy, LogEvent, Proposal, RailEvidence, WriteDraft } from './types.ts';
 import type { ClaimRecord } from './invite/store.ts';
+import type { ReceivedDeposit } from './received.ts';
 import { chainSpec } from './chain/evm.ts';
 import { HYPERLIQUID_EXPLORER_ADDRESS, HYPERLIQUID_EXPLORER_TX } from './explorers.ts';
+import { humanAmount, receiveNetworkByBridge } from './rails/intents-address.ts';
+import { explorerTxUrl as scanTxUrl, scanNetworkOf } from './chainscan/networks.ts';
 
 // ---------- explorers ----------
 
@@ -93,7 +96,7 @@ export type TxEntry = {
   // The draft kind, except on the venue: an armed plan and the retired standing mandate both
   // read as 'bot' (a thing that acts on its own once armed), and a close, a cancel or a moved
   // stop keeps 'trade'. Activity filters on these two words (src/http/receipts.ts).
-  kind: WriteDraft['kind'] | 'bot' | 'invite';
+  kind: WriteDraft['kind'] | 'bot' | 'invite' | 'received';
   // 'needs_reconciliation' is a row the app cannot say moved money or did not. It belongs in
   // the history precisely because of that: dropping it would hide the one transaction a person
   // most needs to look at.
@@ -574,6 +577,8 @@ export type BuildParams = {
   selfAddresses: string[];
   // Invite claims that landed (src/invite/store.ts). Money in with no proposal behind it.
   invites?: ClaimRecord[];
+  // Deposits the bridge reported (src/received.ts). Money in from outside the app.
+  received?: ReceivedDeposit[];
 };
 
 /* An invite claim as a row: money in, signed by the code's key and not the wallet's, from the
@@ -609,6 +614,43 @@ function inviteEntry(r: ClaimRecord, selfAddresses: Set<string>): TxEntry | null
     detail:
       `An invite code paid ${amount} USDC into ${r.receiver} inside intents.near${viaOneClick ? ', through 1Click' : ''}` +
       `${r.intentHash === undefined ? '' : `; intent ${r.intentHash}`}.`,
+    reasons: [],
+  };
+}
+
+/* A deposit the bridge credited, or is crediting, as a row: money in from an exchange or another
+   wallet, with no proposal and no signature of ours behind it. Its time is the bridge's, or the
+   first time this app saw it (src/received.ts). The bridge's word is the status: COMPLETED is in
+   the wallet, FAILED never arrived, anything else is on its way. The place it came from is the
+   receive registry's id ('base', 'tron'), which names networks the five-chain place type does not;
+   the window prints a place by its id. */
+function receivedEntry(d: ReceivedDeposit, selfAddresses: Set<string>): TxEntry {
+  const net = receiveNetworkByBridge(d.network);
+  const place = (net?.id ?? d.network) as TxPlace;
+  const human = d.decimals === null ? '' : humanAmount(d.amountBase, d.decimals);
+  const amount = /^\d+(\.\d+)?$/.test(human) ? Number(human) : null;
+  const scan = scanNetworkOf(net?.id ?? '');
+  const status = d.status === 'COMPLETED' ? 'executed' : d.status === 'FAILED' ? 'failed' : 'executing';
+  return {
+    id: `received:${d.asset}:${d.txHash}`,
+    ts: d.at,
+    action: 'deposit',
+    kind: 'received',
+    status,
+    venue: null,
+    place,
+    toPlace: 'intents',
+    sent: null,
+    received: amount === null || d.symbol === null ? null : { symbol: d.symbol, amount },
+    note: null,
+    valueUsd: 0,
+    from: null,
+    to: party('to', d.account, 'intents', selfAddresses),
+    counterparty: null,
+    decidedBy: null,
+    hashes: [{ hash: d.txHash, place, kind: 'chain', url: scan === null ? null : scanTxUrl(scan, d.txHash) }],
+    venueFeeUsd: null,
+    detail: `The bridge reported ${human === '' ? d.amountBase + ' base units' : human} ${d.symbol ?? d.asset} sent to ${d.account} on ${net?.name ?? d.network}, ${d.status}; tx ${d.txHash}.`,
     reasons: [],
   };
 }
@@ -667,6 +709,13 @@ export function buildTransactions(params: BuildParams): TxEntry[] {
   for (const record of params.invites ?? []) {
     const entry = inviteEntry(record, selfAddresses);
     if (entry !== null) entries.push(entry);
+  }
+
+  // A deposit whose hash a row above already carries is that row's money, an invite claim or a
+  // move of the app's own, and never a second row.
+  const hashed = new Set(entries.flatMap((e) => e.hashes.map((h) => h.hash.toLowerCase())));
+  for (const deposit of params.received ?? []) {
+    if (!hashed.has(deposit.txHash.toLowerCase())) entries.push(receivedEntry(deposit, selfAddresses));
   }
 
   // Newest first: a history is read from the top.

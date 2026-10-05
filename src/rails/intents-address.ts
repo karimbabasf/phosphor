@@ -379,8 +379,9 @@ export async function poaSupportedTokens(fetchImpl: typeof fetch = fetch): Promi
   }
 }
 
-// `amount` is in base units; `decimals` is the row's own scale when the bridge sent one.
-export type PoaDeposit = { txHash: string; amount: string; status: string; asset: string; decimals?: number };
+// `amount` is in base units; `decimals` is the row's own scale when the bridge sent one, and `at`
+// its created_at as ISO when that reads as a time.
+export type PoaDeposit = { txHash: string; amount: string; status: string; asset: string; decimals?: number; at?: string };
 
 /* What the bridge has SEEN, which is not the same question as what the verifier has CREDITED.
    The settled truth is mt_batch_balance_of in src/ledger/intents.ts, and that is what the wallet
@@ -421,14 +422,60 @@ export async function poaRecentDepositsOrThrow(
   if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
   const rows = body.result?.deposits;
   if (!Array.isArray(rows)) return [];
+  return rows.map(depositOf);
+}
+
+function depositOf(row: unknown): PoaDeposit {
+  const r = (row ?? {}) as Record<string, unknown>;
+  const at = bridgeTimeOf(r.created_at);
+  return {
+    txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
+    amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
+    status: typeof r.status === 'string' ? r.status : 'unknown',
+    asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
+    ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
+    ...(at === null ? {} : { at }),
+  };
+}
+
+/* A deposit row's created_at as ISO, or null. The field is there on live rows (2026-10-05) but its
+   shape was not looked at, so an ISO string and an epoch in seconds or milliseconds are all read.
+   A date and time with no zone is UTC, the way a server keeps it: Date.parse alone would read it
+   as this Mac's local time. A time before 2020 or more than a day ahead is no time at all. */
+export function bridgeTimeOf(value: unknown, now: number = Date.now()): string | null {
+  let ms = Number.NaN;
+  const text = typeof value === 'string' ? value.trim() : '';
+  if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(text)) {
+    const n = Number(value);
+    ms = n < 1e11 ? n * 1000 : n;
+  } else if (text !== '') {
+    ms = Date.parse(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(text) ? `${text.replace(' ', 'T')}Z` : text);
+  }
+  if (!Number.isFinite(ms) || ms < Date.UTC(2020, 0, 1) || ms > now + 86_400_000) return null;
+  return new Date(ms).toISOString();
+}
+
+/* The same read with no chain: the account's newest deposits on every network in one call, for
+   Activity (src/received.ts). Live on 2026-10-05: no chain answered rows from four networks for
+   one account, while a chain the bridge does not know is "Network not supported", so the chain is
+   a filter and its absence is every network. The answer is paged (limit 20 unless asked, 100 at
+   most, offset 0); this reads the first page only. Each row's network is its asset id's first two
+   segments, which matched the row's own chain on every live row. Throws on any failed read, a
+   reply with no list included, so a caller keeps what it had. */
+export async function poaAccountDepositsOrThrow(
+  accountId: string,
+  fetchImpl: typeof fetch = fetch,
+  limit = 100,
+): Promise<Array<PoaDeposit & { network: string }>> {
+  const body = (await rpc('recent_deposits', [{ account_id: accountId.toLowerCase(), limit }], fetchImpl)) as {
+    result?: { deposits?: unknown };
+    error?: unknown;
+  };
+  if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
+  const rows = body.result?.deposits;
+  if (!Array.isArray(rows)) throw new Error('poa bridge recent_deposits answered without a list');
   return rows.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
-      amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
-      status: typeof r.status === 'string' ? r.status : 'unknown',
-      asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
-      ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
-    };
+    const d = depositOf(row);
+    return { ...d, network: d.asset.split(':').slice(0, 2).join(':') };
   });
 }

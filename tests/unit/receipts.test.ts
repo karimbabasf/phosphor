@@ -24,6 +24,8 @@ import { defaultPolicy } from '../../src/policy/file.ts';
 import { createMarketData } from '../../src/market/index.ts';
 import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipts.ts';
 import type { Receipt } from '../../src/http/receipts.ts';
+import { createReceived } from '../../src/received.ts';
+import type { Received } from '../../src/received.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
 import { tempDir } from './helpers/tmp.ts';
@@ -63,7 +65,7 @@ function settled(id: string, status: ProposalStatus, over: Partial<Proposal> = {
   };
 }
 
-async function boot(proposals: Proposal[], opts: { coinWord?: (ref: string) => string | null } = {}): Promise<{ url: string; close: () => Promise<void> }> {
+async function boot(proposals: Proposal[], opts: { coinWord?: (ref: string) => string | null; received?: Received } = {}): Promise<{ url: string; close: () => Promise<void> }> {
   const dataDir = tempDir('phosphor-receipts-');
   const store = createStore(dataDir);
   for (const p of proposals) store.put(p);
@@ -134,6 +136,7 @@ async function boot(proposals: Proposal[], opts: { coinWord?: (ref: string) => s
       onUpdate: () => {},
       stop: () => {},
     },
+    ...(opts.received === undefined ? {} : { received: opts.received }),
   });
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   const port = (server.address() as AddressInfo).port;
@@ -708,4 +711,79 @@ test('q finds a receipt by the words a person would type, every word, any case',
   } finally {
     await h.close();
   }
+});
+
+/* ---------- money in through the bridge (src/received.ts) ---------- */
+
+const BASE_USDC = 'eth:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const DEPOSIT_TX = '0x' + 'b'.repeat(64);
+
+// The POA bridge, answering recent_deposits with `rows` (or failing while `down`) and supported_tokens with Base USDC.
+function bridge(rows: unknown[]): { fetchImpl: typeof fetch; down: boolean; asked: string[] } {
+  const world = { down: false, asked: [] as string[], fetchImpl: (async () => new Response('', { status: 500 })) as unknown as typeof fetch };
+  world.fetchImpl = (async (_url: unknown, init?: RequestInit) => {
+    const call = JSON.parse(String(init?.body)) as { method: string; params: Array<Record<string, unknown>> };
+    world.asked.push(call.method + (call.params[0]?.chain === undefined ? '' : `:${String(call.params[0].chain)}`));
+    if (world.down) return new Response('bad gateway', { status: 502 });
+    const result =
+      call.method === 'recent_deposits'
+        ? { deposits: rows, total: rows.length, hasMore: false, limit: 100, offset: 0 }
+        : { tokens: [{ defuse_asset_identifier: BASE_USDC, asset_name: 'USDC', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near' }] };
+    return new Response(JSON.stringify({ id: 'phosphor', jsonrpc: '2.0', result }), { status: 200 });
+  }) as unknown as typeof fetch;
+  return world;
+}
+
+const baseDeposit = (status: string, createdAt?: string): unknown => ({
+  tx_hash: DEPOSIT_TX, chain: 'eth:8453', defuse_asset_identifier: BASE_USDC, decimals: 6, amount: '5000000', account_id: SELF.toLowerCase(), status,
+  ...(createdAt === undefined ? {} : { created_at: createdAt }),
+});
+
+test('money sent in through the bridge is a Received row with its amount, coin and network, in time among the moves', async () => {
+  const sent = ago(2);
+  const world = bridge([baseDeposit('COMPLETED', sent)]);
+  const received = createReceived({ dataDir: tempDir('phosphor-received-'), account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  await received.read();
+  assert.deepEqual(world.asked, ['recent_deposits', 'supported_tokens'], 'one read for every network, no chain named');
+  const h = await boot([settled('a', 'executed', { createdAt: ago(1), decidedAt: ago(1) }), settled('b', 'executed', { createdAt: ago(3), decidedAt: ago(3) })], { received });
+  try {
+    const list = await receipts(h.url, '?kind=swap,move');
+    assert.deepEqual(list.map((r) => r.id.split(':')[0]), ['a', 'received', 'b'], 'the deposit is not a row, or not at the bridge\'s time');
+    const row = list[1];
+    assert.equal(row.at, sent, 'the row is not at the bridge\'s created_at');
+    assert.equal(row.headline, 'Received 5 USDC on Base');
+    assert.equal(row.status, 'executed');
+    assert.deepEqual(row.received, { symbol: 'USDC', amount: 5 });
+    assert.equal(row.fromChain, 'base');
+    assert.deepEqual(row.txids, [{ chain: 'base', hash: DEPOSIT_TX, url: `https://basescan.org/tx/${DEPOSIT_TX}`, explorer: 'Basescan' }]);
+  } finally {
+    await h.close();
+  }
+});
+
+test('a failed bridge read never empties the list, and a row keeps the time it was first seen', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const world = bridge([baseDeposit('PENDING')]);
+  const received = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  await received.read();
+  const [first] = received.list();
+  assert.equal(first.status, 'PENDING');
+
+  world.down = true;
+  await assert.rejects(received.read());
+  received.refresh();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(received.list(), [first], 'a failed read changed the list');
+
+  const h = await boot([], { received });
+  try {
+    const [row] = await receipts(h.url);
+    assert.equal(row.headline, 'Received 5 USDC on Base');
+    assert.equal(row.status, 'arriving');
+  } finally {
+    await h.close();
+  }
+  // The next boot reads the same row, at the same time, before the bridge has said anything.
+  const again = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: false });
+  assert.deepEqual(again.list(), [first]);
 });

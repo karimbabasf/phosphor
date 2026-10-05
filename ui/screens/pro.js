@@ -1210,19 +1210,23 @@
     return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
+  /* `arriving` is money coming in through the bridge that it has not
+     credited yet (src/received.ts): the one receipt still under way. */
   function endWord(r) {
+    if (r.status === 'arriving') return 'On its way';
     if (r.status === 'failed') return 'Didn\'t go through';
     if (r.status === 'needs_reconciliation') return 'Not confirmed';
     return r.kind === 'intents_deposit' ? 'Arrived' : 'Done';
   }
 
   function endDir(r) {
+    if (r.status === 'arriving') return 'going';
     if (r.status === 'failed') return 'no';
     if (r.status === 'needs_reconciliation') return 'unsure';
     return 'done';
   }
 
-  var MOVE_ICONS = { swap: 'swap', intents_deposit: 'deposit', hl_deposit: 'send', hl_withdraw: 'deposit', intents_withdraw: 'withdraw', intents_send: 'send', intents_pay: 'send', transfer: 'send' };
+  var MOVE_ICONS = { swap: 'swap', intents_deposit: 'deposit', received: 'deposit', hl_deposit: 'send', hl_withdraw: 'deposit', intents_withdraw: 'withdraw', intents_send: 'send', intents_pay: 'send', transfer: 'send' };
 
   function makeMove(m) {
     var li = dom.el('li', 'move');
