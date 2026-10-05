@@ -18,6 +18,7 @@ import { guarded, knownRefusal, refusal } from './wallet.ts';
 import { backupProven } from './vault.ts';
 import { settleFor } from './custody.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
+import { allowanceState } from '../vault/allowance.ts';
 import { GAS_FUND_MAX_NEAR, GAS_FUND_MIN_NEAR, fundingNear, gasAccountOf } from '../vault/gas-account.ts';
 import { chipSlice, provePaper, showPaper, startRekey } from '../vault/rekey.ts';
 import type { ChipFrame, ChipSlice, Refused, RekeyHost } from '../vault/rekey.ts';
@@ -92,10 +93,10 @@ export function hostOf(ctx: Ctx): RekeyHost {
   };
 }
 
-/* The Vault tab's chip slice for /api/state. The allowance's balance is the allowance unit's to
-   read; until it says, the slice carries the account and the size. */
+/* The Vault tab's chip slice for /api/state. The allowance's account, size and balance are the
+   allowance unit's read (src/vault/allowance.ts): null while the wallet spends from its vault. */
 export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null } {
-  const slice = chipSlice(hostOf(ctx), ({ allowance }) => (allowance === null ? null : { account: allowance, sizeUsd: ctx.vaultPrefs.get().allowance.sizeUsd, balanceUsd: null }));
+  const slice = chipSlice(hostOf(ctx), () => allowanceState(ctx));
   return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) } };
 }
 

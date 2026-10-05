@@ -92,7 +92,7 @@ const COINS: { assetId: string; symbol: string; decimals: number }[] = [
 ];
 
 // 1Click's signed dry price, a dollar a coin and one out for one in: what the relay rail checks the relay's quote by.
-function signedPrice(): OneClickClient {
+export function signedPrice(): OneClickClient {
   const units = (base: string): string => (Number(base) / 1e6).toFixed(6);
   return {
     tokens: async () => LIST,
@@ -122,7 +122,7 @@ function signedPrice(): OneClickClient {
 /* The solver relay, faked: a quote of 0.980998 out for one in, and a publish that runs the signed
    token_diff on the chain double, both sides, but only when the erc191 signature recovers to the
    account the diff spends: a signature by anyone else moves nothing, as the verifier would refuse it. */
-function fakeRelay(chain: IntentsDouble, publishes: { payload: string; signer: string }[]): RelayClient {
+export function fakeRelay(chain: IntentsDouble, publishes: { payload: string; signer: string }[]): RelayClient {
   return {
     async quote(req) {
       const amountOut = (BigInt(req.exactAmountIn) * 980_998n) / 1_000_000n;
@@ -176,7 +176,7 @@ function spendRail(kind: 'intents_send' | 'intents_pay' | 'hl_deposit', chain: I
 
 /* The ledger the app reads, off the double: both accounts' coins with their exact base units, each
    read stamped later than the last, and its listeners told after every refresh. */
-function doubleLedger(chain: IntentsDouble, accounts: () => string[]): Ledger & { reread(): void } {
+export function doubleLedger(chain: IntentsDouble, accounts: () => string[]): Ledger & { reread(): void } {
   const snapshot: LedgerSnapshot = { ...loadDemoLedger(), mode: 'live' };
   const listeners = new Set<() => void>();
   let last = 0;
