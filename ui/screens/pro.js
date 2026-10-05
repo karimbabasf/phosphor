@@ -408,10 +408,12 @@
      summed by symbol, largest first, a coin with no price last, with the
      asset ids behind it, largest row first, for its day. Null while the
      intents balance has not been read, which is a different fact from
-     holding nothing. */
+     holding nothing. A read that missed is not that: its rows are the last
+     good ones, and they stay (2026-10-05, "still reading your coins" over
+     a balance read a minute before). */
   function coinsOf(wallet) {
     if (!wallet || !Array.isArray(wallet.rows)) return null;
-    if (Array.isArray(wallet.stale) && wallet.stale.indexOf('intents') >= 0) return null;
+    if (Array.isArray(wallet.unread) && wallet.unread.indexOf('intents') >= 0) return null;
     var by = {};
     var order = [];
     wallet.rows.forEach(function (row) {
@@ -467,7 +469,9 @@
     var priced = coins.some(function (c) { return c.priced; });
     dom.setNumber(refs.total, priced || !coins.length ? dom.usd(totalOf(coins)) : '');
     dom.setHidden(refs.total, !(priced || !coins.length));
-    dom.setText(refs.caption, unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins');
+    var words = unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins';
+    var checking = Array.isArray(state.wallet.stale) && state.wallet.stale.indexOf('intents') >= 0;
+    dom.setText(refs.caption, checking ? words + ', still checking' : words);
     // No "+$X today" beside the total: price moves times today's amounts reads as profit while it
     // ignores deposits and swaps. Each coin's own 24h change in the ledger is the true signal.
     dom.setHidden(refs.today, true);

@@ -293,7 +293,7 @@ test('the total is the NEAR money alone: the trading account is its own line, ne
 
 test('a balance that could not be read is words, never $0.00, and a coin with no price says so', () => {
   const rig = boot();
-  rig.put(state({ wallet: { rows: [intents('USDC', 5)], stale: ['intents'], hyperliquid: { funded: true } } }));
+  rig.put(state({ wallet: { rows: [], stale: ['intents'], unread: ['intents'], hyperliquid: { funded: true } } }));
   assert.equal(one(rig.host, 'stmt-total').hidden, true);
   assert.equal(one(rig.host, 'stmt-caption').textContent, 'Still reading your coins.');
   assert.ok(!words(rig.host).includes('$0.00'), JSON.stringify(words(rig.host)));
@@ -304,6 +304,22 @@ test('a balance that could not be read is words, never $0.00, and a coin with no
   assert.equal(one(wif, 'l-val').textContent, 'No price');
   assert.equal(one(wif, 'l-val').getAttribute('data-unpriced'), 'true');
   assert.equal(one(wif, 'l-price-figure').textContent, '', 'a price with no price behind it');
+});
+
+test('a refresh that misses keeps the last good coins on screen and says it is still checking', () => {
+  // Karim, 2026-10-05: "the wallet tends to go out and say still reading your coins". Two missed
+  // verifier reads in a row, or a last read older than two idle periods (a Mac back from sleep),
+  // mark the place stale while the ledger still holds its last good holdings in the rows, and Pro
+  // threw them away for the words meant for a balance nothing has read.
+  const rig = boot();
+  rig.put(state());
+  const total = one(rig.host, 'stmt-total').textContent;
+  rig.put(state({ wallet: { ...state().wallet, stale: ['intents'] } }));
+  assert.equal(one(rig.host, 'stmt-total').hidden, false, 'the figure stays');
+  assert.equal(one(rig.host, 'stmt-total').textContent, total);
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins, still checking');
+  const rows = withClass(one(rig.host, 'l-rows'), 'l-row').filter((r) => !r.hidden);
+  assert.deepEqual(rows.map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR', 'SOL']);
 });
 
 test('each coin: its price, the amount under its name and in its own column, and its value', () => {
