@@ -234,6 +234,7 @@ function chipSlice(over: Any = {}): Any {
       paper: 'none',
       run: null,
       pins: null,
+      moving: false,
     },
     over,
   );
@@ -1179,7 +1180,7 @@ test('while the vault moves, the agent\'s head says in one calm line that its mo
   w.emit({ kind: 'said', text: 'hello' });
   const who = (): Any => find(w.host, '.agent-who')[0];
   assert.equal(who().textContent, 'Claude Code is ready');
-  w.select.vault({ chip: chipSlice({ state: 'moving', run: { id: 'r1', kind: 'migrate', status: 'touch_old', reason: null, said: null } }) });
+  w.select.vault({ chip: chipSlice({ state: 'moving', moving: true, run: { id: 'r1', kind: 'migrate', status: 'touch_old', reason: null, said: null } }) });
   assert.equal(who().textContent, 'Your vault is moving. Claude Code\'s moves wait.');
   assert.equal(who().getAttribute('data-moving'), 'true');
   w.select.vault({ chip: MOVED({ run: { id: 'r1', kind: 'migrate', status: 'done', reason: null, said: null } }) });
@@ -1189,8 +1190,24 @@ test('while the vault moves, the agent\'s head says in one calm line that its mo
   w.select.vault({ chip: chipSlice({ state: 'moving', run: { id: 'r2', kind: 'migrate', status: 'failed', reason: 'user_cancel', said: null } }) });
   assert.equal(who().textContent, 'Claude Code is ready');
   w.select.policy({ killSwitch: true });
-  w.select.vault({ chip: chipSlice({ state: 'moving', run: { id: 'r3', kind: 'migrate', status: 'creating', reason: null, said: null } }) });
+  w.select.vault({ chip: chipSlice({ state: 'moving', moving: true, run: { id: 'r3', kind: 'migrate', status: 'creating', reason: null, said: null } }) });
   assert.equal(who().textContent, 'Everything is frozen. Claude Code can read, but no money moves.');
+});
+
+test('after a restart mid-move the agent\'s head reads the fact that holds its moves, not the run this process no longer has', async () => {
+  const w = agentWorld();
+  await flush();
+  w.emit({ kind: 'said', text: 'hello' });
+  const who = (): Any => find(w.host, '.agent-who')[0];
+  // A move bundle written down before the restart can still run: agents are held, and no run is in hand.
+  w.select.vault({ chip: chipSlice({ state: 'moving', paper: 'retype', run: null, moving: true }) });
+  assert.equal(who().textContent, 'Your vault is moving. Claude Code\'s moves wait.');
+  assert.equal(who().getAttribute('data-moving'), 'true');
+  // NEAR can no longer run it: the hold is gone, and so is the line, whatever the run says.
+  w.select.vault({ chip: chipSlice({ state: 'moving', paper: 'retype', run: null, moving: false }) });
+  assert.equal(who().textContent, 'Claude Code is ready');
+  w.select.vault({ chip: chipSlice({ state: 'moving', moving: false, run: { id: 'r4', kind: 'migrate', status: 'checking', reason: null, said: null } }) });
+  assert.equal(who().textContent, 'Claude Code is ready', 'the line never says more than the hold');
 });
 
 /* ---------- the docs ---------- */

@@ -247,7 +247,9 @@ test('while the vault moves, an agent proposes nothing and a click on its earlie
 
     const run = await w.startMove(PAPER);
     await held.reached;
-    assert.equal((await w.get('/api/state')).json.vault.chip.run.status, 'touch_old', 'the move is under way');
+    const chip = (await w.get('/api/state')).json.vault.chip;
+    assert.equal(chip.run.status, 'touch_old', 'the move is under way');
+    assert.equal(chip.moving, true, 'and the agent\'s line says so');
 
     const rows = w.svc.list().length;
     const asked = await w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } });
@@ -352,21 +354,29 @@ test('after a restart, a move to the chip written down and still able to run kee
     const entry = (id: string) => ({ id, account: vault, gas, signed: [{ standard: 'erc191', payload: JSON.stringify({ deadline: new Date(deadline).toISOString() }), signature: 'secp256k1:x' }], txHashes: ['tx'], state: 'sent' as const, at: w.chain.now() });
     const journal = fileJournal(journalPathFor(w.dataDir));
 
+    // The agent's line reads the state's `moving`, the same fact that holds the agents.
+    const line = async (): Promise<unknown> => (await w.get('/api/state')).json.vault.chip.moving;
+
     journal.put(entry('vault_top_up:p-1'));
     const topUp = await w.mcp(swap);
     assert.equal(topUp.status, 200, 'a top-up written down changes no key: agents go on');
     assert.equal((await w.svc.settled(String(topUp.json.id), 30_000)).status, 'executed');
+    assert.equal(await line(), false);
 
     journal.put(entry('rekey:chip:p2-test'));
     const waiting = await w.mcp(swap);
     assert.equal(waiting.status, 409);
     assert.equal(waiting.json.paused, 'vault_moving');
+    const state = (await w.get('/api/state')).json.vault.chip;
+    assert.equal(state.run, null, 'no run in this process after the restart');
+    assert.equal(state.moving, true, 'the line says the vault is moving while the hold stands');
 
     // Past its deadline and the two minutes the submitter waits beyond it, NEAR can no longer run it.
     w.chain.advance(60_000 + VAULT_SETTLE_FLOOR_MS + RESUME_POLL_MS + 1_000);
     const again = await w.mcp(swap);
     assert.equal(again.status, 200, JSON.stringify(again.json));
     assert.equal((await w.svc.settled(String(again.json.id), 30_000)).status, 'executed');
+    assert.equal(await line(), false, 'and stops saying it when the hold ends');
   } finally {
     await w.close();
   }

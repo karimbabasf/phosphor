@@ -877,6 +877,9 @@ export type ChipSlice = {
   run: { id: string; kind: RekeyKind; status: RunStatus; reason: string | null } | null;
   // What the vault's Touch ID key pins, for the done screen: all public.
   pins: { vault: string; allowance: string | null; recovery: string } | null;
+  // Whether agents wait for a move of this vault right now: vaultMoveUnderWay, the very fact that
+  // holds them, so the assistant's line says so after a restart mid-move too, when `run` is null.
+  moving: boolean;
 };
 
 /* The slice for /api/state (src/http/state.ts). Synchronous: it reads what was last read from the
@@ -887,8 +890,9 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   const prefs = host.prefs.get();
   const moved = vault !== null && prefs.chip !== null && (prefs.chip.account === '' || prefs.chip.account === vault);
   const box = boxOf(host);
+  const moving = vaultMoveUnderWay(host.keystore);
   if (chain === null || vault === null) {
-    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null };
+    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving };
   }
   if (chain.reads === true && box.refreshing === null && (box.view.vault !== vault || box.askedAt === 0 || clock() - box.askedAt > VIEW_FRESH_MS)) {
     box.askedAt = clock();
@@ -935,6 +939,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
     paper,
     run: box.run === null ? null : { id: box.run.id, kind: box.run.kind, status: box.run.status, reason: box.run.reason ?? null },
     pins: record !== null && record.status === 'done' && record.recovery !== null ? { vault, allowance: accounts.allowance, recovery: record.recovery } : null,
+    moving,
   };
 }
 

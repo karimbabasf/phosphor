@@ -288,15 +288,14 @@
   /* Whether the person froze everything (state.policy.killSwitch): the head says so. */
   var frozen = false;
 
-  /* Whether the vault is moving to this Mac's Touch ID key right now (state.vault.chip.run, from
-     its first step to its last): the agent's moves wait meanwhile (src/http/mcp.ts answers 409
-     paused:'vault_moving'), so the head says so in one calm line. */
+  /* Whether the vault is moving to this Mac's Touch ID key right now: the agent's moves wait
+     meanwhile (src/http/mcp.ts answers 409 paused:'vault_moving'), so the head says so in one calm
+     line. state.vault.chip.moving is the same fact that holds them (src/vault/rekey.ts
+     vaultMoveUnderWay), so the line also stands after a restart mid-move, when no run is in hand. */
   var moving = false;
-  var MOVING = ['creating', 'touch_old', 'touch_chip', 'simulating', 'submitting', 'checking'];
 
   function vaultMoving(vault) {
-    var run = vault && vault.chip && vault.chip.run;
-    return !!run && MOVING.indexOf(run.status) >= 0;
+    return !!(vault && vault.chip && vault.chip.moving === true);
   }
 
   /* THE PICK: the agent a new chat runs (GET /api/driver `agent`). One that runs outside this

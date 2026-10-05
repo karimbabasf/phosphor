@@ -309,7 +309,9 @@ ended, or while a move bundle written down before a restart can still run: `vaul
 `propose` op answers 409 `{error, paused: 'vault_moving'}` with nothing drafted; a row an agent
 filed is refused at `land()` (rule `vault_moving`) and at its rail's last check before the key
 (reason `vault_moving`, nothing signed); a click on one throws and leaves it pending. Asked again
-after the move, the same move runs.
+after the move, the same move runs. `/api/state` `vault.chip.moving` is that same fact, and the
+assistant's line ("Your vault is moving") reads it, so the line stands exactly as long as the hold,
+after a restart mid-move too.
 
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
