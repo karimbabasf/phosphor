@@ -636,6 +636,7 @@
   function wipePhrase() {
     phrase = null;
     shownKey = null;
+    clearClip();
     if (!refs.phraseFlow) return Promise.resolve();
     var closing = Promise.resolve();
     if (!refs.phraseFlow.hidden || refs.phraseFlow.childNodes.length) {
@@ -1205,10 +1206,38 @@
     }
     clip.writeText('0x' + shownKey.groups.join(''))
       .then(function () {
-        setLabel(copy, 'Copied');
-        window.setTimeout(function () { setLabel(copy, 'Copy'); }, 1600);
+        clipHeld = true;
+        setLabel(copy, 'Copied. Phosphor clears it in 30 seconds.');
+        if (clipTimer !== null) window.clearTimeout(clipTimer);
+        clipTimer = window.setTimeout(function () {
+          clipTimer = null;
+          clearClip();
+          setLabel(copy, 'Copy');
+        }, CLIP_CLEAR_MS);
       })
       .catch(function () { say(error, 'The key did not reach the clipboard. Try Copy again, or show it and write it down.'); });
+  }
+
+  /* The key leaves the clipboard 30 seconds after Copy, or at once when the
+     wallet locks or its panel closes, and never when Copy was not pressed.
+     Best effort: a clipboard that refuses the write keeps the key until
+     something else is copied (docs/known-limits.md). */
+  var CLIP_CLEAR_MS = 30000;
+  var clipTimer = null;
+  var clipHeld = false;
+
+  function clearClip() {
+    if (clipTimer !== null) window.clearTimeout(clipTimer);
+    clipTimer = null;
+    if (!clipHeld) return;
+    clipHeld = false;
+    var clip = window.navigator ? window.navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') return;
+    try {
+      clip.writeText('').catch(function () { /* best effort, as above */ });
+    } catch (err) {
+      // best effort, as above
+    }
   }
 
   /* The proof: the person's word, just after the key was shown. A proof the
@@ -1222,6 +1251,7 @@
         if (answer && answer.ok === true) return proven();
         if (answer && answer.code === 'reveal_again') {
           shownKey = null;
+          clearClip();
           flowProblem(answer.error || 'Show your key once more with Back it up, then save it.');
           return null;
         }

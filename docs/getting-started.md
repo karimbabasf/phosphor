@@ -138,7 +138,8 @@ A wallet brought in as a key has no recovery phrase, so its backup is the privat
 anyone who has it has your money. Under Safety its row is Private key: Back it up and a Touch ID
 (or your password, on a password wallet) show the key in that row only, hidden behind dots, with the
 wallet it opens under it. Show reveals it and Hide puts the dots back; Copy puts the whole key on
-the clipboard, for a password manager. Save it somewhere safe, then click I saved it somewhere
+the clipboard, for a password manager, and Phosphor clears it after 30 seconds, or at once when the
+wallet locks or the key's panel closes. Save it somewhere safe, then click I saved it somewhere
 safe: that turns the row to Backed up. Nothing is typed back. The line at the foot of the window
 says Private key not backed up until then, and Forget waits for it the same way.
 
