@@ -15,6 +15,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
@@ -42,6 +43,8 @@ import {
 import type { HlApproveAgentAction, HlSignature } from '../../src/rails/hl-user-signed.ts';
 import { readApiWallet } from '../../src/runner/keys.ts';
 import { ownerTouchVia } from '../../src/proposals/lifecycle.ts';
+import { base58Encode } from '../../src/chain/near.ts';
+import { ownerKeyGate } from '../../src/vault/chip.ts';
 import { ownerReason } from '../../src/vault/reason.ts';
 import { DERIVED_VECTORS } from '../fixtures/derived-keys.ts';
 import { HL_AGENT_VECTORS } from '../fixtures/hl-agent-keys.ts';
@@ -209,9 +212,10 @@ test('shut, a plan holding the trading key, or frozen: refused before any Touch 
   assert.equal(v.prefs.get().hlAgent, undefined);
 });
 
-test('a gate that closes on a session still holding the owner key, then opens again before the signature: the approval is never signed from memory', async () => {
+test('a gate that closes on a session still holding the owner key, then opens again before the signature: nothing is ever signed from memory, and the check at the signature finds the vault never moved', async () => {
   // Opened as kind key, so the session holds the owner key; then a marker counts as moved while its
-  // chain read is out, and the chain answers "not moved" just before the signature (the W6 window).
+  // chain read is out (src/vault/chip.ts ownerKeyGate), and the chain answers "not moved" right after
+  // the last check before the ask has read it as moved (the W6 window).
   const v = agentVault(V.old, { moved: false });
   let moved = false;
   v.store.keepOwnerKeyOutWhen(() => moved);
@@ -225,7 +229,7 @@ test('a gate that closes on a session still holding the owner key, then opens ag
     deps(v, net, {
       armed: () => {
         asks += 1;
-        if (asks === 2) moved = false; // the last check before the ask: the chain says it never moved
+        if (asks === 2) moved = false; // read in the last check before the ask, after it asked the gate
         return 0;
       },
     }),
@@ -233,13 +237,89 @@ test('a gate that closes on a session still holding the owner key, then opens ag
   if (DIALOG_SAYS_DAYS) await v.shell.answer();
   const out = await allowing;
   if (DIALOG_SAYS_DAYS) {
-    assert.equal(out.ok, true, 'signed behind its own Touch ID');
+    assert.equal(!out.ok && out.code, 'not_moved', 'the touch was asked, and the check at the signature found the vault never moved');
     assert.equal(v.shell.asked.length, 1);
   } else {
     assert.equal(!out.ok && out.code, 'unnamed', 'refused at the touch, not signed from the session');
-    assert.equal(net.posts.length, 0);
+    nothingAsked(v);
   }
+  assert.equal(net.posts.length, 0, 'nothing signed, so nothing posted');
+  assert.equal(v.prefs.get().hlAgent, undefined);
   assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'the owner key left the session before the signature, whatever the gate says now');
+});
+
+// ---------- the gate src/main.ts wires (src/vault/chip.ts ownerKeyGate) ----------
+
+const KEY_REF = 'chip:com.karimbabasf.phosphor.chip.p2-test.0F1E2D3C-4B5A-6978-8796-A5B4C3D2E1F0';
+const PAPER = `secp256k1:${base58Encode(Buffer.alloc(64, 0x5e))}`;
+
+/* A wallet whose vault.json names no chip, with the app's own gate: the service's status names a
+   marker for the vault, and the chain's answer about its keys is the test's to give. `opened`: the
+   wallet was open before the marker was known, so the session still holds the owner key. */
+async function onMarker(chainSays: (key: string, chip: string) => Promise<boolean>, opts: { opened?: boolean } = {}) {
+  const v = agentVault(V.old, { moved: false });
+  if (opts.opened === true) {
+    v.open();
+    assert.equal(v.store.evmPrivateKey(), `0x${V.old}`, 'opened before the marker was known: the session holds the owner key');
+  }
+  const jwk = crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }).publicKey.export({ format: 'jwk' }) as { x: string; y: string };
+  const chip = `p256:${base58Encode(Buffer.concat([Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]))}`;
+  const read = v.relay.ask({ op: 'chipStatus' });
+  const request = await v.relay.next(1_000);
+  assert.ok(request !== null && request.op === 'chipStatus');
+  const marker = { account: V.vault.toLowerCase(), allowance: V.allowance.toLowerCase(), recovery: PAPER, at: '2026-10-04T12:00:00.000Z' };
+  v.relay.answer({ id: request.id, ok: true, keychainHome: true, chips: [{ keyRef: KEY_REF, publicKey: chip, fresh: false, marker }] });
+  assert.ok((await read).ok);
+  const gate = ownerKeyGate(() => v.prefs.get(), v.relay, { hasPublicKey: async (_account, key) => chainSays(key, chip) });
+  v.store.keepOwnerKeyOutWhen(gate);
+  useOwnerTouch(ownerTouchVia({ vault: v.relay, keystore: v.store, ownerOut: gate }));
+  return { v, gate };
+}
+
+const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+test('the app\'s gate: a marker the chain shows on the vault keeps the owner key out of the open, and allowing trading goes to its own Touch ID', async () => {
+  const { v, gate } = await onMarker(async (key, chip) => key === chip);
+  assert.equal(gate(v.vault), true, 'out while the chain is asked');
+  await settle();
+  assert.equal(gate(v.vault), true, 'the chain shows the chip key on the vault: out for good');
+  v.open();
+  assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'the open holds no owner key');
+  assert.equal(v.store.hlAgentAccount(1), V1.address, 'and made the next trading key all the same');
+  const net = venue();
+  const allowing = allowTrading(deps(v, net));
+  if (DIALOG_SAYS_DAYS) assert.equal((await v.shell.answer()).reason, sentence(V1.address));
+  const out = await allowing;
+  if (DIALOG_SAYS_DAYS) {
+    assert.equal(out.ok, true);
+    assert.equal(net.posts.length, 1);
+    assert.deepEqual(v.store.apiWallet(), { key: `0x${V1.key}`, address: V1.address });
+  } else {
+    assert.equal(!out.ok && out.code, 'unnamed');
+    nothingAsked(v);
+  }
+});
+
+test('the app\'s gate: a marker the chain does not show counts as moved only until the chain answers, and then nothing is signed', async () => {
+  const answers: Array<(on: boolean) => void> = [];
+  const { v, gate } = await onMarker(() => new Promise<boolean>((resolve) => answers.push(resolve)), { opened: true });
+  assert.equal(gate(v.vault), true, 'a marker whose chain read is out keeps the key out');
+  const net = venue();
+  const allowing = allowTrading(deps(v, net));
+  // The chain answers while the dialog is up: neither the chip key nor the paper key is on the vault.
+  for (const answer of answers.splice(0)) answer(false);
+  await settle();
+  assert.equal(gate(v.vault), false, 'the chain says the vault never moved');
+  if (DIALOG_SAYS_DAYS) await v.shell.answer();
+  const out = await allowing;
+  assert.equal(!out.ok && out.code, DIALOG_SAYS_DAYS ? 'not_moved' : 'unnamed', 'the check at the signature asks the gate again');
+  assert.equal(net.posts.length, 0, 'nothing signed, nothing posted');
+  assert.equal(v.prefs.get().hlAgent, undefined);
+  assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'the owner key left the session before the touch, as approve() lets it go');
+
+  const again = await allowTrading(deps(v, net));
+  assert.equal(!again.ok && again.code, 'not_moved', 'from now on this wallet is the one that never moved');
+  assert.equal(v.shell.asked.length, DIALOG_SAYS_DAYS ? 1 : 0);
 });
 
 test('until src/vault/reason.ts says a trading key\'s days, allowing trading asks nothing and signs nothing', { skip: DIALOG_SAYS_DAYS }, async () => {

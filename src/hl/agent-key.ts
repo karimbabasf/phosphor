@@ -102,8 +102,8 @@ function no(code: string, detail: string, reason?: ReasonCode): AllowTradingResu
 
 // What the last check throws: before the ask, and again inside the touch before the owner key signs.
 class Stopped extends Error {
-  readonly code: 'frozen' | 'busy';
-  constructor(code: 'frozen' | 'busy', message: string) {
+  readonly code: 'not_moved' | 'frozen' | 'busy';
+  constructor(code: 'not_moved' | 'frozen' | 'busy', message: string) {
     super(message);
     this.code = code;
   }
@@ -144,8 +144,11 @@ async function allow(deps: AllowTradingDeps): Promise<AllowTradingResult> {
      back) lets go of it here, as approve() does before a withdrawal: this signature is the owner
      touch's or nothing, never one made from memory. A session on the chip holds none: no change. */
   deps.keystore.dropOwnerKey();
-  // Freeze, or a plan armed while the dialog was up (it took the key this approval replaces), stops it.
+  /* Asked again at the signature: the gate (a marker read as moved until the chain answers) saying
+     the vault never moved after all, Freeze, or a plan armed while the dialog was up (it took the key
+     this approval replaces) each stops it with nothing signed. */
   const lastCheck = (): void => {
+    if (!ownerTouchRequired()) throw new Stopped('not_moved', 'the chain says the vault never moved, so nothing was signed');
     if (deps.frozen()) throw new Stopped('frozen', 'Phosphor was frozen while Touch ID was up, so nothing was signed');
     if (deps.armed() > 0) throw new Stopped('busy', 'a plan took the trading key while Touch ID was up, so nothing was signed');
   };
