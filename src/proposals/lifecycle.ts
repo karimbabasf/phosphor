@@ -575,13 +575,8 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
      Touch ID is the vault's chip key at its signature, whose sentence the vault service writes
      from the payload ("move 5.00 USDC from your vault to your allowance"); an approval touch here
      would open the wallet for nothing and put a second dialog in front of the one that matters.
-     The gas account that sends it lives in the open session, so a shut wallet is opened first:
-     the row stays pending and the click can be made again. */
+     Nothing in the open session sends it: the NEAR Intents relay does, and pays NEAR's fee. */
   if (p.draft.kind === 'vault_top_up') {
-    if (isLocked()) {
-      ctx.audit.append('approve_attempt_rejected', `approve for top-up ${id} while the wallet is shut`, { id, action: 'approve', locked: true });
-      throw new Error('Open your wallet first: the gas account that sends a top-up opens with it. Nothing changed.');
-    }
     const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
     ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; the vault's Touch ID asks at its signature`, { id, totalUsd: totalUsdOf(p.draft), vaultTouch: true });
     return ctx.execute(approved);

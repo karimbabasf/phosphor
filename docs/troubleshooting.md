@@ -161,11 +161,11 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
 - **Those words do not match.** One word differs from your paper or from the screen. While the
   words are still in the window, it names the first slip by its number, never the word; after a
   lock or a restart it cannot, so check each word.
-- **The gas account has no NEAR yet, or needs more.** The move is paid from the gas account, a NEAR
-  account derived from your key. Add 0.1 to 1 NEAR from the Vault tab: it is a payout you click
-  and confirm with Touch ID, and the dialog names the gas account. Nothing is made or signed until
-  it can pay. Once your vault is on Touch ID, the NEAR comes from your allowance; when the allowance
-  holds too little, Phosphor first moves the difference from your vault, behind one more Touch ID.
+- **The NEAR in the old fee account did not come back.** A 0.10.16 wallet paid NEAR into a small
+  account of its own to pay for vault moves; Phosphor sends each move through the NEAR Intents
+  relay now, which pays NEAR's fee, and the Vault tab offers to send that NEAR back to your vault.
+  It goes to your vault's NEAR deposit address, the one Receive shows, in one transfer. If the
+  Vault tab still shows it a minute later, try again; nothing else waits on it.
 - **Touch ID took longer than the move can wait.** Each signature lives about two minutes. Start the
   move again and answer both dialogs when they come.
 - **Your last vault move can still land on NEAR.** A call that left this Mac can run until its own
@@ -179,8 +179,7 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
 - **Your vault opens with another Mac's Touch ID key now.** NEAR shows your wallet's own key off
   the vault, and this Mac holds no Touch ID key for it, so this Mac signs no swap, send, payout or
   Hyperliquid deposit from the vault: each one says so before anything is signed. Restore the vault
-  on this Mac to spend from it here. The gas account still takes NEAR: Add NEAR shows its account
-  whole, to send 0.1 to 1 NEAR to it from any NEAR wallet.
+  on this Mac to spend from it here.
 - **A paper shown earlier opens nothing.** It was never added to the vault. Show a new one and write
   that down; destroy the old one.
 - **Your vault moved, and it also holds a key Phosphor did not add.** Someone with your owner key

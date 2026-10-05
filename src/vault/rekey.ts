@@ -1,8 +1,8 @@
 // Moving the vault to this Mac's Touch ID key and a paper key, and restoring it on a new Mac
 // (PHASE2-PLAN.md P2.7, contract C7, section 7's crash matrix).
 //
-// ONE REKEY CORE, TWO OLD SIGNERS. A migration and a restore build the same bundle, one
-// execute_intents call that lands whole or not at all:
+// ONE REKEY CORE, TWO OLD SIGNERS. A migration and a restore build the same bundle, which the
+// relay puts on chain in one call, in order (src/vault/submit.ts):
 //   P_a, the old signer: add CHIP, add RECOVERY, remove every old key, set_auth_by_predecessor_id
 //        {enabled:false};
 //   P_c, the new paper key (RECOVERY): no intents, the proof the paper signs;
@@ -32,7 +32,9 @@
 //   a chip made, never committed: a new chip, and the orphan is swept after ten minutes;
 //   a chip committed, nothing sent: the same chip, the paper typed again must match its pin;
 //   a bundle written down: nothing is signed again until it is settled, and it runs or dies;
-//   a call that ran: the views say done, and vault.json is written at the next start.
+//   a call that ran: the views say done, and vault.json is written at the next start;
+//   a bundle that ran only in part, leaving the chip and the paper on beside the old key: the
+//     paper typed again goes on from there, adding neither and taking the old keys off.
 // Every signature still goes through the vault move journal, so a bundle that left this Mac is
 // never signed twice and a move is never signed again while an earlier bundle may still run.
 
@@ -42,23 +44,24 @@ import path from 'node:path';
 
 import { privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
 
-import type { MultiPayload, NearRpcDeps } from '../chain/near-tx.ts';
+import type { NearRpcDeps } from '../chain/near-tx.ts';
 import { base58Decode } from '../chain/near.ts';
 import { atomicWrite } from '../fsatomic.ts';
 import { ERC191_STANDARD, erc191SignatureField } from '../intents-sign.ts';
 import type { Keystore } from '../keystore/index.ts';
+import type { MultiPayload } from '../relay/client.ts';
 import type { VerifierEvent, VerifierPort } from '../relay/verifier.ts';
 import { oneLine } from '../venue-words.ts';
 import type { AccountsPort, ChipStatus } from './accounts.ts';
 import { CHIP_PAYLOAD_LIFE_MS, chipSign, commitChip, createChip, isChipPublicKey, sweepChips } from './chip.ts';
-import { gasAccountOf, nearText, readGas } from './gas-account.ts';
+import { gasAccountOf, readOldGas } from './gas-account.ts';
 import { buildVaultPayload, eventsMismatch, expectedEvents, readVaultPayload, signedIntentHash } from './payload.ts';
 import type { VaultIntent } from './payload.ts';
 import { isPaperPhrase, newPaperPhrase, paperKeyOf, phraseDigest, phraseOf, verifierKeyOf, wipeKey } from './phrase24.ts';
 import type { VaultPrefs } from './prefs.ts';
 import { MOVE_VAULT_REASON, RESTORE_VAULT_REASON } from './reason.ts';
 import type { VaultRelay } from './relay.ts';
-import { VAULT_SETTLE_FLOOR_MS, foreignBundle, gasReady, rekeyViews } from './submit.ts';
+import { VAULT_SETTLE_FLOOR_MS, foreignBundle, rekeyViews } from './submit.ts';
 import type { VaultResult, VaultSubmitter, ViewCheck } from './submit.ts';
 
 // How long the window may take to have the 24 words written down and typed back. What is held
@@ -92,8 +95,8 @@ function refused(code: string, detail: string): Refused {
 
 /* The chain side, installed once by src/main.ts (a test installs its doubles): the verifier, the
    one vault move submitter the app shares with the allowance, the accounts the rails read, NEAR's
-   RPC for the gas account, the clock. `newPhrase` is a test's fixed paper; the app draws one.
-   `reads` lets a state read ask the chain for the Vault tab's facts. */
+   RPC for the old fee account (src/vault/gas-account.ts), the clock. `newPhrase` is a test's fixed
+   paper; the app draws one. `reads` lets a state read ask the chain for the Vault tab's facts. */
 export type ChipVaultChain = {
   verifier: VerifierPort;
   submitter: VaultSubmitter;
@@ -135,13 +138,13 @@ export type RekeyHost = {
 // ---------- the bundle, as a plan ----------
 
 /* What one rekey signs: the vault, the new chip key and paper key, the keys it takes off, and the
-   predecessor flag as read before signing. */
-export type RekeyPlan = { vault: string; chip: string; recovery: string; remove: string[]; predecessorAuth: boolean };
+   predecessor flag as read before signing. `present`: the chip and the paper are on the vault
+   already (an earlier send of this move that ran only in part), so the bundle adds neither. */
+export type RekeyPlan = { vault: string; chip: string; recovery: string; remove: string[]; predecessorAuth: boolean; present?: boolean };
 
 export function rekeyIntents(plan: RekeyPlan): VaultIntent[] {
   return [
-    { intent: 'add_public_key', public_key: plan.chip },
-    { intent: 'add_public_key', public_key: plan.recovery },
+    ...(plan.present === true ? [] : [{ intent: 'add_public_key', public_key: plan.chip } as const, { intent: 'add_public_key', public_key: plan.recovery } as const]),
     ...plan.remove.map((k): VaultIntent => ({ intent: 'remove_public_key', public_key: k })),
     { intent: 'set_auth_by_predecessor_id', enabled: false },
   ];
@@ -157,8 +160,7 @@ export function rekeyEvents(plan: RekeyPlan, bundle: readonly MultiPayload[]): V
   const account_id = plan.vault;
   const key = (event: 'public_key_added' | 'public_key_removed', public_key: string): VerifierEvent => ({ event, data: { intent_hash: hashes[0]!, account_id, public_key } });
   return [
-    key('public_key_added', plan.chip),
-    key('public_key_added', plan.recovery),
+    ...(plan.present === true ? [] : [key('public_key_added', plan.chip), key('public_key_added', plan.recovery)]),
     ...plan.remove.map((k) => key('public_key_removed', k)),
     ...(plan.predecessorAuth ? [{ event: 'set_auth_by_predecessor_id' as const, data: { intent_hash: hashes[0]!, account_id, enabled: false } }] : []),
     { event: 'intents_executed', data: bundle.map((s, i) => ({ intent_hash: hashes[i]!, account_id, nonce: readVaultPayload(s.payload).nonce })) },
@@ -236,7 +238,8 @@ type ChipView = {
   predecessor: boolean | null;
   // Stored keys on a moved vault beside its chip and its paper; null when not moved or not read.
   others: string[] | null;
-  gas: { account: string; amount: bigint | null; low: boolean | null } | null;
+  // What the old fee account would bring back to the vault (src/vault/gas-account.ts), or null.
+  oldGas: { near: string } | null;
 };
 
 type Box = {
@@ -282,7 +285,7 @@ function boxOf(host: RekeyHost): Box {
 }
 
 function emptyView(): ChipView {
-  return { vault: null, at: 0, moves: 0, chip: null, recovery: null, old: null, predecessor: null, others: null, gas: null };
+  return { vault: null, at: 0, moves: 0, chip: null, recovery: null, old: null, predecessor: null, others: null, oldGas: null };
 }
 
 function wipePaper(box: Box): void {
@@ -510,7 +513,6 @@ type Plan = {
   run: string;
   vault: string;
   allowance: string;
-  gas: string;
   old: string | null;
   recovery: string;
   // A restore's old signer: the paper the person brought, typed in.
@@ -531,7 +533,7 @@ export function startRekey(host: RekeyHost, kind: RekeyKind, oldWords?: unknown)
   if (!host.relay.enclaveReady()) return refused('enclave_unavailable', 'the shell reports no enclave to ask');
   if (!host.backedUp()) return refused('not_backed_up', 'the key backup is not proven');
   const derived = host.keystore.derivedAccounts();
-  if (derived === null) return refused('wallet_locked', 'the allowance and gas accounts are not derived yet');
+  if (derived === null) return refused('wallet_locked', 'the allowance account is not derived yet');
   const paper = heldPaper(box, vault);
   if (paper === null) return refused('paper_needed', 'no paper key typed back for this wallet');
   let oldPaper: Plan['oldPaper'] = null;
@@ -556,7 +558,7 @@ export function startRekey(host: RekeyHost, kind: RekeyKind, oldWords?: unknown)
   box.run = { id: run, kind, status: 'creating', at: clock() };
   host.frame({ type: 'chip', kind: 'chip', run, status: 'creating' });
   host.changed();
-  const plan: Plan = { kind, run, vault, allowance: derived.allowance.toLowerCase(), gas: derived.gas, old, recovery: paper.publicKey, oldPaper };
+  const plan: Plan = { kind, run, vault, allowance: derived.allowance.toLowerCase(), old, recovery: paper.publicKey, oldPaper };
   void moveVault(host, chain, plan).catch((err: unknown) => {
     host.audit.append('error', `the vault move stopped: ${oneLine(err instanceof Error ? err.message : err, 200)}`, { run });
     say(host, run, 'failed', 'vault_bundle');
@@ -602,20 +604,25 @@ async function moveVault(host: RekeyHost, chain: ChipVaultChain, plan: Plan): Pr
     const paperKey = plan.oldPaper === null ? null : plan.oldPaper.publicKey;
     const before = await readVault(chain.verifier, plan.vault, [owner, plan.recovery, ...(paperKey === null ? [] : [paperKey])]);
     if (before === null) return fail('rpc_unavailable', 'NEAR did not answer the reads of the vault');
-    if (before.has.get(plan.recovery) === true) return fail('vault_changed', 'the new paper key is already on the vault');
     if (plan.kind === 'migrate' && before.has.get(owner) !== true) return fail('vault_moved_elsewhere', 'the owner key is no longer a key of the vault');
     if (paperKey !== null && before.has.get(paperKey) !== true) return fail('not_your_paper', 'the paper brought to the restore is not a key of the vault');
 
-    // Before any key is made or any Touch ID asked: a gas account that cannot send would waste both.
-    const gas = await gasReady(plan.gas, chain.near);
-    if (gas !== null) return fail(gas.code, gas.detail);
-
-    const found = await chipFor(host, chain, plan);
+    /* This paper already on the vault is an earlier send of this very move that ran only in part:
+       the chip this Mac pinned to the paper must be on it too, and the move goes on from there,
+       adding neither and taking the old keys off. Any other way, it is a change nobody here made. */
+    const present = before.has.get(plan.recovery) === true;
+    const found = await chipFor(host, chain, plan, present);
     if (!('keyRef' in found)) return fail(found.code, found.detail);
+    if (present) {
+      const chipRead = await readVault(chain.verifier, plan.vault, [found.publicKey]);
+      if (chipRead === null) return fail('rpc_unavailable', 'NEAR did not answer the reads of the vault');
+      if (chipRead.has.get(found.publicKey) !== true) return fail('vault_changed', 'the new paper key is already on the vault, without the Touch ID key pinned to it');
+    }
 
-    // Every key the vault answers to now goes: the owner key while it is still on, and every key
-    // the verifier lists (an old chip, the paper a restore retires, a key nobody here added).
-    const remove = [...(before.has.get(owner) === true ? [owner] : []), ...before.listed.filter((k) => k !== owner)];
+    // Every key the vault answers to now goes but this move's chip and paper: the owner key while it
+    // is still on, and every key the verifier lists (an old chip, the paper a restore retires, a key
+    // nobody here added).
+    const remove = [...(before.has.get(owner) === true ? [owner] : []), ...before.listed.filter((k) => k !== owner && k !== found.publicKey && k !== plan.recovery)];
     if (paperKey !== null && !remove.includes(paperKey)) remove.push(paperKey);
     const planned = keysOf(before, owner, paperKey);
 
@@ -623,17 +630,18 @@ async function moveVault(host: RekeyHost, chain: ChipVaultChain, plan: Plan): Pr
     const submit = (chip: { keyRef: string; publicKey: string }): Promise<VaultResult> => {
       writeRecord(host, { vault: plan.vault, kind: plan.kind, phraseAt: readRecord(host.dataDir, plan.vault)?.phraseAt ?? null, recovery: plan.recovery, old: owner, chip, status: 'moving' });
       return chain.submitter.move({
-        id: `rekey:${chip.keyRef}`,
+        // A move going on from a part that ran is a bundle of its own: the part's entry never signs again.
+        id: present ? `rekey:${chip.keyRef}:${plan.run}` : `rekey:${chip.keyRef}`,
         account: plan.vault,
         sign: async () => {
           // The facts the bundle is built on, read again right before the signatures.
           const salt = await chain.verifier.currentSalt().catch(() => null);
           const now = await readVault(chain.verifier, plan.vault, [owner, chip.publicKey, plan.recovery, ...(paperKey === null ? [] : [paperKey])]);
           if (salt === null || now === null) return refused('rpc_unavailable', 'NEAR did not answer the reads before signing');
-          if (now.has.get(chip.publicKey) !== false || now.has.get(plan.recovery) !== false || keysOf(now, owner, paperKey) !== planned) {
+          if (now.has.get(chip.publicKey) !== present || now.has.get(plan.recovery) !== present || keysOf(now, owner, paperKey) !== planned) {
             return refused('vault_changed', 'the keys on the vault changed between the first read and the signatures');
           }
-          const rekey: RekeyPlan = { vault: plan.vault, chip: chip.publicKey, recovery: plan.recovery, remove, predecessorAuth: now.predecessorAuth };
+          const rekey: RekeyPlan = { vault: plan.vault, chip: chip.publicKey, recovery: plan.recovery, remove, predecessorAuth: now.predecessorAuth, present };
           const signed = await signRekey(rekey, signersFor(host, box, plan, chip, owner), {
             salt,
             now: clock,
@@ -678,8 +686,9 @@ async function learnOld(host: RekeyHost, plan: Plan): Promise<string | Refused> 
 }
 
 /* The chip for this move: one this Mac already committed for this vault, its allowance and this
-   paper (a move a crash stopped after the commit), or a new one. `reused` says which. */
-async function chipFor(host: RekeyHost, chain: ChipVaultChain, plan: Plan): Promise<{ keyRef: string; publicKey: string; reused: boolean } | Refused> {
+   paper (a move a crash stopped after the commit), or a new one. `reused` says which. `only`: no
+   new one, for a move whose paper is on the vault already. */
+async function chipFor(host: RekeyHost, chain: ChipVaultChain, plan: Plan, only = false): Promise<{ keyRef: string; publicKey: string; reused: boolean } | Refused> {
   const status = await chipStatusAll(host.relay);
   if ('code' in status) return status;
   // A chip whose bundle already settled as unknown is never asked to sign that move again.
@@ -694,6 +703,7 @@ async function chipFor(host: RekeyHost, chain: ChipVaultChain, plan: Plan): Prom
       c.marker.recovery === plan.recovery,
   );
   if (same !== undefined) return { keyRef: same.keyRef, publicKey: same.publicKey, reused: true };
+  if (only) return refused('vault_changed', 'the new paper key is already on the vault, and no Touch ID key of this Mac is pinned to it');
   const made = await newChip(host, plan);
   return 'keyRef' in made ? { ...made, reused: false } : made;
 }
@@ -802,14 +812,17 @@ async function finish(host: RekeyHost, chain: ChipVaultChain, vault: string, chi
 
 /* Finishes a move that ran while this process was not there to see it: a chip this Mac committed
    for the vault is on it on chain beside its pinned paper key, so vault.json names that chip. The
-   journal is settled first. Nothing is signed here. `report` tells a run in progress how it ended:
-   done when the chain also reads the owner key off and predecessor auth off. */
+   journal is settled first. Nothing is signed here. `report` tells the run in progress when this
+   began how it ended: done when the chain also reads the owner key off and predecessor auth off. A
+   run started after it began is its own to judge (a retry from a move that ran only in part). */
 export async function resumeChip(host: RekeyHost, report = true): Promise<'done' | 'moving' | 'none'> {
   const chain = installed;
   if (chain === null) return 'none';
   const vault = host.keystore.addresses().evm?.toLowerCase() ?? null;
   if (vault === null) return 'none';
   const box = boxOf(host);
+  const reportTo = report && box.run !== null && active(box.run) ? box.run.id : null;
+  const tell = (): string | null => (reportTo !== null && box.run !== null && box.run.id === reportTo && active(box.run) ? reportTo : null);
   const record = readRecord(host.dataDir, vault);
   const current = host.prefs.get().chip;
   const named = current !== null && current.account === vault;
@@ -848,16 +861,18 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
         oldOnChain: old === null ? null : (read.has.get(old) ?? null),
         predecessorAuth: read.predecessorAuth,
       });
-      if (report && box.run !== null && active(box.run)) say(host, box.run.id, 'failed', 'vault_mismatch');
+      const run = tell();
+      if (run !== null) say(host, run, 'failed', 'vault_mismatch');
       continue;
     }
     // This chip and its paper are on the vault, and the move ran: it is the vault's chip now.
     await finish(host, chain, vault, { keyRef: c.keyRef, publicKey: c.publicKey }, recovery, record?.kind ?? null);
     const others = read.listed.filter((k) => k !== c.publicKey && k !== recovery);
     const confirmed = read.predecessorAuth === false && (old === null || read.has.get(old) === false);
-    if (report && box.run !== null && active(box.run)) {
-      if (others.length > 0) say(host, box.run.id, 'failed', 'vault_other_keys');
-      else say(host, box.run.id, confirmed ? 'done' : 'failed', confirmed ? undefined : 'vault_mismatch');
+    const run = tell();
+    if (run !== null) {
+      if (others.length > 0) say(host, run, 'failed', 'vault_other_keys');
+      else say(host, run, confirmed ? 'done' : 'failed', confirmed ? undefined : 'vault_mismatch');
     }
     return 'done';
   }
@@ -974,9 +989,11 @@ export type ChipSlice = {
   // Keys on a moved vault that are neither its chip nor its paper: none should ever be there.
   otherKeys: string[] | null;
   allowance: { account: string; sizeUsd: number; balanceUsd: number | null } | null;
-  gas: { account: string; near: string | null; low: boolean | null } | null;
+  /* What the old fee account a 0.10.16 wallet paid NEAR into would bring back to the vault, at
+     least 0.01 NEAR, four places at most; null while unread, locked or empty. */
+  oldGas: { near: string } | null;
   // What the move still needs before it can start: an open wallet, Touch ID, Phosphor's keychain,
-  // a proven backup, NEAR in the gas account.
+  // a proven backup.
   needs: string[];
   // Where the paper step is: none, shown (waiting for the type-back), proven, retype (proven before
   // a restart: type it again), void (shown before a restart and never proven: it opens nothing).
@@ -987,8 +1004,7 @@ export type ChipSlice = {
   // Whether agents wait for a move of this vault right now: vaultMoveUnderWay, the very fact that
   // holds them, so the assistant's line says so after a restart mid-move too, when `run` is null.
   moving: boolean;
-  // Whether the vault answers to another Mac's keys (vaultMovedElsewhere): nothing here spends
-  // from it, and NEAR for the gas account is sent to it straight, not paid from the vault.
+  // Whether the vault answers to another Mac's keys (vaultMovedElsewhere): nothing here spends from it.
   elsewhere: boolean;
 };
 
@@ -1002,7 +1018,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   const box = boxOf(host);
   const moving = vaultMoveUnderWay(host.keystore);
   if (chain === null || vault === null) {
-    return { state: moved ? 'done' : 'none', chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
+    return { state: moved ? 'done' : 'none', chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, oldGas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
   }
   const record = readRecord(host.dataDir, vault);
   /* A vault this Mac moved (its run record says done), or one a chip of this Mac's is pinned to,
@@ -1028,7 +1044,6 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   if (host.keystore.custody() !== 'secure-enclave' || !host.relay.enclaveReady()) needs.push('touch_id');
   if (host.relay.capability()?.keychainHome !== true) needs.push('keychain');
   if (!host.backedUp()) needs.push('backup');
-  if (view.gas === null || view.gas.low !== false) needs.push('gas');
   let state: ChipSlice['state'];
   if (accounts.kind === 'chip') state = 'done';
   else if (accounts.kind === 'broken') state = 'broken';
@@ -1056,7 +1071,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
     predecessorAuth: fresh ? view.predecessor : null,
     otherKeys: fresh ? view.others : null,
     allowance: accounts.allowance === null ? null : allowance({ allowance: accounts.allowance }),
-    gas: view.gas === null ? null : { account: view.gas.account, near: view.gas.amount === null ? null : nearText(view.gas.amount), low: view.gas.low },
+    oldGas: host.keystore.isUnlocked() ? view.oldGas : null,
     needs,
     paper,
     run: box.run === null ? null : { id: box.run.id, kind: box.run.kind, status: box.run.status, reason: box.run.reason ?? null },
@@ -1066,7 +1081,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   };
 }
 
-// The chain facts the slice shows, read at one block, and the gas account's balance.
+// The chain facts the slice shows, read at one block, and what the old fee account would bring back.
 async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string): Promise<void> {
   const box = boxOf(host);
   const checked = box.checked;
@@ -1083,8 +1098,10 @@ async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string
   const keys = [...(recovery === null ? [] : [recovery]), ...(old === null ? [] : [old]), ...(chip === null ? [] : [chip])];
   const moves = box.moves;
   const read = await readVault(chain.verifier, vault, keys);
+  // Read with the chain facts, so as often as they are: once a minute, and again after an open or a move.
   const gasAccount = gasAccountOf(host.keystore);
-  const gas = gasAccount === null ? null : { account: gasAccount, ...(await readGas(gasAccount, chain.near)) };
+  const oldGasRead = gasAccount === null ? null : await readOldGas(gasAccount, chain.near);
+  const oldGas = oldGasRead === undefined ? (box.view.vault === vault ? box.view.oldGas : null) : oldGasRead;
   const next: ChipView = {
     vault,
     at: clock(),
@@ -1094,11 +1111,18 @@ async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string
     old: old === null || read === null ? null : (read.has.get(old) ?? null),
     predecessor: read === null ? null : read.predecessorAuth,
     others: read === null || prefs.chip === null || recovery === null ? null : read.listed.filter((k) => k !== prefs.chip?.publicKey && k !== recovery),
-    gas,
+    oldGas,
   };
   const before = JSON.stringify(box.view, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
   box.view = next;
   if (JSON.stringify(next, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) !== before || box.checked !== checked) host.changed();
+}
+
+/* The old fee account's NEAR went back to the vault (POST /api/vault/gas/return): the slice shows
+   none from now, and the next read says what the account holds. */
+export function oldGasReturned(keystore: object): void {
+  const box = boxes.get(keystore);
+  if (box !== undefined) box.view = { ...box.view, oldGas: null };
 }
 
 /* For a test: whether the paper key held right now is zeroed later, without handing the key out.

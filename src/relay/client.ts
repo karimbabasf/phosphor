@@ -1,8 +1,10 @@
-// The solver relay (NEAR Intents' Message Bus), as this app calls it: three JSON-RPC methods
+// The solver relay (NEAR Intents' Message Bus), as this app calls it: four JSON-RPC methods
 // over one POST endpoint. `quote` asks every connected solver for a price, `publish_intent`
-// hands the relay one signed intent with the quote it answers, `get_status` says where that
-// intent is. Checked live 2026-09-20 without a key: the docs say the endpoint wants a JWT and
-// it does not enforce one today, so the partner key is sent when present and never required.
+// hands the relay one signed intent with the quote it answers, `publish_intents` hands it
+// several signed intents with no quote (a vault move: the relay puts them on chain in one call,
+// in order, and pays NEAR's fee), `get_status` says where an intent is. Checked live 2026-09-20
+// without a key: the docs say the endpoint wants a JWT and it does not enforce one today, so the
+// partner key is sent when present and never required.
 //
 // Pure transport. Nothing here signs, builds a payload, chooses a quote or judges a status:
 // every field the relay returns is typed and bounded before a caller sees it, and a shape this
@@ -57,6 +59,13 @@ export type RelayPublishRequest = {
 
 export type RelayPublishResult = { status: 'OK'; intentHash: string } | { status: 'FAILED'; reason: string };
 
+/* One signed intent as the relay and the verifier take it. Fields beyond these three (a webauthn
+   intent's public_key, client_data_json and authenticator_data) go along exactly as given. */
+export type MultiPayload = { readonly standard: string; readonly payload: string; readonly signature: string; readonly [field: string]: string };
+
+// `intentHashes` is the relay's hash for each signed intent, one each, in the order sent.
+export type RelayPublishManyResult = { status: 'OK'; intentHashes: string[] } | { status: 'FAILED'; reason: string };
+
 /* The relay's status word, byte for byte, plus what rode beside it. `status` is deliberately a
    string and not the four words the docs list: a word this app does not know is passed up as
    itself, and the rail treats it as "not terminal" rather than as one of the four. */
@@ -72,6 +81,11 @@ export type RelayClient = {
   quote(req: RelayQuoteRequest): Promise<RelayQuote[]>;
   publishIntent(req: RelayPublishRequest): Promise<RelayPublishResult>;
   status(intentHash: string): Promise<RelayStatus>;
+};
+
+// The relay as a vault move uses it (src/vault/submit.ts): a bundle out, and the word on each intent.
+export type RelayBundleClient = Pick<RelayClient, 'status'> & {
+  publishIntents(signed: readonly MultiPayload[]): Promise<RelayPublishManyResult>;
 };
 
 export type RelayClientDeps = {
@@ -113,7 +127,7 @@ function readQuote(raw: unknown): RelayQuote | null {
   return { quoteHash, assetIn, assetOut, amountIn, amountOut, expirationTime };
 }
 
-export function relayClient(deps: RelayClientDeps = {}): RelayClient {
+export function relayClient(deps: RelayClientDeps = {}): RelayClient & RelayBundleClient {
   const fetchImpl = deps.fetchImpl ?? fetch;
   const url = deps.url ?? RELAY_URL;
   const apiKey = deps.apiKey ?? process.env[RELAY_API_KEY_ENV] ?? '';
@@ -199,6 +213,29 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     throw new Error(`relay publish_intent answered with status ${venueValue('The solver relay', status, 40)}, which this app does not know`);
   }
 
+  /* Several signed intents with no quote: the relay runs them in one call, in the order given, and
+     pays NEAR's fee. OK must carry exactly one intent hash per signed intent; anything else is an
+     error, never a guess at which hash is whose. */
+  async function publishIntents(signed: readonly MultiPayload[]): Promise<RelayPublishManyResult> {
+    const result = await call('publish_intents', { quote_hashes: [], signed_datas: signed }, venueWriteTimeout());
+    if (result === null || typeof result !== 'object') throw new Error(`relay publish_intents returned ${venueValue('The solver relay', result, 80)}`);
+    const r = result as Record<string, unknown>;
+    const status = r['status'];
+    if (status === 'OK') {
+      const raw = r['intent_hashes'];
+      const intentHashes = Array.isArray(raw) ? raw.map((h) => hash(h, 8, 120)) : [];
+      if (intentHashes.length !== signed.length || intentHashes.some((h) => h === null)) {
+        throw new Error(`relay publish_intents said OK without one intent hash for each of the ${signed.length} signed intents`);
+      }
+      return { status: 'OK', intentHashes: intentHashes as string[] };
+    }
+    if (status === 'FAILED') {
+      const why = text(r['reason'], 300);
+      return { status: 'FAILED', reason: why === null ? 'no reason given' : venueReason('The solver relay', why, 300) };
+    }
+    throw new Error(`relay publish_intents answered with status ${venueValue('The solver relay', status, 40)}, which this app does not know`);
+  }
+
   async function status(intentHash: string): Promise<RelayStatus> {
     const result = await call('get_status', { intent_hash: intentHash }, readTimeout());
     if (result === null || typeof result !== 'object') throw new Error(`relay get_status returned ${venueValue('The solver relay', result, 80)}`);
@@ -219,5 +256,5 @@ export function relayClient(deps: RelayClientDeps = {}): RelayClient {
     };
   }
 
-  return { quote, publishIntent, status };
+  return { quote, publishIntent, publishIntents, status };
 }

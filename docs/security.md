@@ -137,8 +137,7 @@ The Vault tab can also move your vault to this Mac's Touch ID key and a paper ke
 hand. After that the wallet key no longer opens the vault and stays out of the open app's memory,
 every move out of the vault asks for a Touch ID that names it, a top-up always waits for your
 click, and your assistant spends from a small allowance. That closes the first limit above for the
-vault, not for the allowance, the gas account or Hyperliquid, whose keys are in memory while the
-wallet is open. See [Getting started](getting-started.md#move-your-vault-to-touch-id).
+vault, not for the allowance or Hyperliquid, whose keys are in memory while the wallet is open. See [Getting started](getting-started.md#move-your-vault-to-touch-id).
 
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a

@@ -219,7 +219,7 @@ const REFUSALS: Record<string, string> = {
   chip_unsupported: "This copy of Phosphor cannot use the vault's Touch ID key, so nothing changed. Open the Phosphor app you downloaded.",
   chip_payload: 'Phosphor stopped this move before Touch ID because it was not built for your vault, so nothing was signed.',
   chip_answer: 'Touch ID came back with a signature for something Phosphor did not ask for, so it was not sent. Nothing moved.',
-  // Sending a vault move (src/vault/submit.ts), and the gas account that pays for it (src/chain/near-tx.ts).
+  // Sending a vault move (src/vault/submit.ts) through the NEAR Intents relay, which pays NEAR's fee.
   vault_bundle: 'Phosphor stopped this move before sending it because it was not built the way Phosphor builds a vault move. Nothing moved.',
   vault_journal: 'Phosphor could not note this move on this Mac before sending it, so nothing was sent. Check that the Mac has free space, then try again.',
   simulate_unavailable: 'Phosphor could not check this move with NEAR just now, so nothing was sent. Try again in a few minutes.',
@@ -230,9 +230,6 @@ const REFUSALS: Record<string, string> = {
   vault_checking: 'NEAR ran this move. Phosphor is reading your vault to confirm it.',
   vault_mismatch: 'NEAR ran this move, but your vault does not read the way it should afterwards. Phosphor stopped here; look at the Vault tab before you move anything else.',
   vault_unknown: 'This move can no longer run on NEAR, and Phosphor cannot tell whether it ran before that. Check your vault and allowance balances before you make it again.',
-  gas_low: 'The gas account needs more NEAR before it can send this move, so nothing was signed.',
-  gas_unfunded: 'The gas account has no NEAR yet, so nothing was signed. Add NEAR to it from the Vault tab first.',
-  gas_key_missing: "The gas account does not answer to this wallet's key, so nothing was signed.",
   rpc_unavailable: 'NEAR did not answer just now, so nothing was sent. Try again in a moment.',
   invalid_request: NOTHING_CHANGED,
 };

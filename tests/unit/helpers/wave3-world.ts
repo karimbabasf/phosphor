@@ -62,7 +62,6 @@ import type { Hook, Request as ShellRequest } from './vault-double.ts';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
 const riskRows = (JSON.parse(fs.readFileSync(path.join(ROOT, 'data', 'risk-table.json'), 'utf8')) as { rows: RiskRow[] }).rows;
-const HALF_NEAR = 500_000_000_000_000_000_000_000n;
 // The seat secret the app hands the agents it spawns: a seat that holds it is the app's own.
 export const SEAT = 'a'.repeat(64);
 
@@ -119,7 +118,7 @@ export type Wave3World = {
   get(route: string): Promise<{ status: number; json: any }>;
   // The agent door, as an agent this app spawned: its own seat secret and a session.
   mcp(body: Record<string, unknown>): Promise<{ status: number; json: any }>;
-  // A Touch ID wallet made by the window's own route, open, its backup proven, its gas account funded.
+  // A Touch ID wallet made by the window's own route, open, its backup proven. No NEAR anywhere.
   wallet(): Promise<{ vault: string; allowance: string; gas: string }>;
   // The paper shown, typed back, and the move started: the run's id.
   startMove(paper: string): Promise<string>;
@@ -157,10 +156,8 @@ export async function wave3World(
   useRailAccounts(accounts.accounts);
   const vaultMoves = createVaultSubmitter({
     verifier: chain.verifier,
-    gasSeed: () => keystore.gasSeed(),
-    gasAccount: () => keystore.derivedAccounts()?.gas ?? null,
+    relay: chain.relay,
     journal: fileJournal(journalPathFor(dataDir)),
-    near: chain.near,
     now: chain.now,
     sleep: chain.near.sleep,
   });
@@ -372,7 +369,6 @@ export async function wave3World(
       prefs.markBackedUp(Date.now, vault);
       const derived = keystore.derivedAccounts();
       assert.ok(derived !== null);
-      chain.fundGas(derived.gas, HALF_NEAR);
       return { vault, allowance: derived.allowance.toLowerCase(), gas: derived.gas };
     },
     async startMove(paper: string) {

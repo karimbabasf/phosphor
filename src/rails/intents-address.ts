@@ -14,9 +14,11 @@
 // month. That is what a person means by a deposit address.
 //
 // WHAT IT IS, precisely: an address the bridge controls, which forwards what it receives to the
-// verifier and credits it to our account id. Phosphor never holds it and never sends to it, so it
-// is deliberately NOT on the policy allowlist and does not belong there: the allowlist governs
-// what this app may send to, and this is an address other people send to. Reading it is a read.
+// verifier and credits it to our account id. Phosphor never holds it, and sends to it only for the
+// old fee account's one return of its NEAR to the vault (src/vault/gas-account.ts), which is no
+// proposal and no rail. So it is deliberately NOT on the policy allowlist and does not belong
+// there: the allowlist governs what this app may send to, and this is an address other people
+// send to. Reading it is a read.
 //
 // THE ACCOUNT ID IS THE EVM ADDRESS, lowercased, which is the same id the verifier keys balances
 // by and the same one src/ledger/intents.ts reads with. Probed against the live bridge: it is

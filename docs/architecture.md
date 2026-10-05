@@ -96,10 +96,10 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/rails/` | The rails: the swap inside `intents.near` (the solver relay, `intents-relay.ts`, and 1Click, `intents-native.ts`, for a pair the relay offers no price for; `src/proposals/swap-route.ts` picks before the card is priced), the send to another intents account (`intents-send.ts`), the Hyperliquid deposit and withdrawal (`hypercore-*.ts`), and the POA deposit address (`intents-address.ts`). Every rail reads its own account from the key, never from a caller. |
 | `src/chain/evm.ts` | The EVM chains this app can read and name: a public RPC per chain for read-only lookups and the explorer prefixes a receipt links to. Nothing here signs: the EVM key signs intents and Hyperliquid actions, never a chain transaction. |
 | `src/chain/near.ts` | The NEAR RPC the verifier is read through, base58 for the keystore and the 1Click quote signature, and the account id rules a send checks. Nothing here signs. |
-| `src/chain/near-tx.ts` | The one NEAR transaction the app can sign, for the chip vault: the gas account's call of `execute_intents` on `intents.near`, with 50 TGas and no deposit, sent at FINAL. Borsh and ed25519 by hand, pinned to near-api-js's published vectors. It refuses before signing when the gas account cannot pay (`gas_low` under 0.06 NEAR, NEP-642), and after sending it only asks by hash or resends the identical bytes, never re-signs. `src/vault/submit.ts` is its one caller. |
+| `src/chain/near-tx.ts` | The one NEAR transaction the app can sign: the old fee account's one Transfer of what it holds, less 0.003 NEAR, to the vault's NEAR deposit address, sent at FINAL. Borsh and ed25519 by hand, pinned to near-api-js's published vectors and its signed transfer. It refuses before signing when the account holds less than 0.01 NEAR to return (`gas_empty`), and after sending it only asks by hash or resends the identical bytes, never re-signs. `src/vault/gas-account.ts` is its one caller. |
 | `src/vault/relay.ts` | The backend's half of the vault service relay: a queue the desktop shell drains, one Touch ID at a time. It carries the wallet key's ops and the chip's five (`chipCreate`, `chipCommit`, `chipStatus`, `chipSweep`, `signIntent`), reads every answer strictly, and remembers the chip markers each vault account is named by. A demo relay answers every keychain write itself, the chip's three included. |
 | `src/vault/chip.ts` | The chip signer. It asks the service to sign one vault payload behind one Touch ID (the service writes the sentence from the payload) and holds the answer to the question: the payload byte for byte, the key vault.json pins, and the webauthn wrapper the verifier takes. What it can refuse itself it refuses before the dialog. Its gate keeps the owner key out of the session while vault.json says the vault moved, or while a chip marker names the vault and the chain shows the vault moved to it; the Hyperliquid owner touch reads the same gate. Its status reader tells `src/vault/accounts.ts` which chip key the service holds. |
-| `src/vault/submit.ts` | Sends a vault bundle and settles it. Nothing is sent until the verifier's simulation reports exactly the bundle's events; executed reads as done only once the views at one final block agree. A bundle is written to `state/vault-moves.json` before it leaves this Mac, and no new signature for that account is asked for until every bundle written there has run, is proved dead (its deadline two minutes gone by NEAR's block and this Mac's clock, GAS's own transaction not run, every nonce unspent at one block with its salt valid), or can never run again with its fate unprovable, which the person is told. One signature per move. |
+| `src/vault/submit.ts` | Sends a vault bundle and settles it. Nothing is sent until the verifier's simulation reports exactly the bundle's events; then the bundle goes to the NEAR Intents solver relay in one `publish_intents` call with no quote, which puts it on chain in one call, in order, and pays NEAR's fee. The relay can delay or drop a bundle and cannot change it: every payload is signed. Executed reads as done only once every nonce reads spent and the views at one final block agree; the relay's SETTLED is a hint for the row. A bundle is written to `state/vault-moves.json` before it leaves this Mac, and no new signature for that account is asked for until every bundle written there has run, is proved dead (its deadline two minutes gone by NEAR's block and this Mac's clock, every nonce unspent at one block with its salt valid), or can never run again with its fate unprovable, which the person is told. A dead bundle's move is signed again with new nonces. One signature per move. |
 | `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the one ATR the trade payload reads. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
@@ -174,7 +174,8 @@ The rule chain and the fail-closed positions in it are described in
 
 ## Where money lives
 
-Two pockets, and nothing on a chain but the gas account's NEAR (the last item):
+Two pockets, and nothing on a chain but whatever NEAR is left in the old fee account (the last
+item):
 
 - **The NEAR Intents balance.** Entries on the `intents.near` verifier's own ledger, credited to
   the account the EVM key derives (the address, lowercased). Money arrives through the POA bridge
@@ -186,13 +187,14 @@ Two pockets, and nothing on a chain but the gas account's NEAR (the last item):
   returned to it (`src/rails/hypercore-withdraw.ts`).
 - **The vault on Touch ID.** Once the vault moves, the intents balance is two accounts: the vault
   (the same address, moved only by the chip key and the paper key) and the allowance every rail
-  spends from (`src/vault/accounts.ts`, `src/vault/allowance.ts`). The gas account, a NEAR account
-  derived from the same key (`src/vault/gas-account.ts`), holds the NEAR you add to it and signs
-  the vault's `execute_intents` calls on NEAR (`src/chain/near-tx.ts`).
+  spends from (`src/vault/accounts.ts`, `src/vault/allowance.ts`). Every vault move goes through the
+  NEAR Intents relay, which pays NEAR's fee. The old fee account, a NEAR account derived from the
+  same key that paid that fee until 0.10.18 (`src/vault/gas-account.ts`), only sends what a 0.10.16
+  wallet paid into it back to the vault, in one transfer (`src/chain/near-tx.ts`).
 
 `ChainId` (`eth`, `base`, `arb`, `sol`, `near`) survives as the home chain of an asset, which is how
-the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. Apart from the gas
-account on NEAR, it is never a place this app holds funds or signs a transaction. The chain wallets,
+the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. Apart from the old
+fee account on NEAR, it is never a place this app holds funds or signs a transaction. The chain wallets,
 the per-chain balance reads, the gas floors and the chain signers all went on 2026-09-16; rows they
 wrote still render as history. Every RPC endpoint and contract account in the repo names the live
 network, and no config field, environment variable or type points them anywhere else.

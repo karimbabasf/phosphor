@@ -665,8 +665,8 @@ test('every code the chip signer and the submitter answer with has a calm senten
   const codes = new Set([
     ...[...sources.matchAll(/refused\('([a-z_]+)'/g)].map((m) => m[1]!),
     ...[...sources.matchAll(/code: '([a-z_]+)'/g)].map((m) => m[1]!),
-    // near-tx's refusals before signing (NearTxRefusal), carried through by submitVault.
-    'invalid_request', 'rpc_unavailable', 'gas_unfunded', 'gas_key_missing', 'gas_low',
+    // The NEAR RPC's refusals before signing (NearTxRefusal) that a vault move can still meet.
+    'invalid_request', 'rpc_unavailable',
     // The service's two new chip refusals (C1), and the relay's.
     'grammar', 'wrong_signer', 'not_committed', 'keychain_unavailable', 'garbled', 'no_keychain_home',
   ]);

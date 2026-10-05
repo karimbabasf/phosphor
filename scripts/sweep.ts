@@ -376,8 +376,9 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['6c06cb123fcf6903ddd78df2a8ab62b9b5a4cfb58bb031186751a07701b97eb1', 'read key test vector, src-tauri/src/backend.rs'],
   // The published vectors of the keys derived from the owner key (src/keystore/derived.ts), from
   // two owner keys already above: the canonical Ethereum test key and the hyperliquid-python-sdk
-  // fixture. Each is an ALLOWANCE key, a GAS seed or a GAS account derived from a public test key,
-  // so it holds nothing and anyone can derive it again (tests/fixtures/derived-keys.ts).
+  // fixture. Each is an ALLOWANCE key, a GAS seed or a GAS account (the old fee account,
+  // src/vault/gas-account.ts) derived from a public test key, so it holds nothing and anyone can
+  // derive it again (tests/fixtures/derived-keys.ts).
   ['c96e3431c7fe5789854eb223ffab755b902c08bb34fdf40bfcb9839589d3faa1', 'ALLOWANCE key derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
   ['f393907ec2ad1db656b6bd3d8e4804ad70d12ed136c76f46dac1549606a6c64d', 'GAS seed derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
   ['e4d620800228e29d21a180cc305b9541c170631df3b5b513b795947a27520108', 'GAS account derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],

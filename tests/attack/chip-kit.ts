@@ -6,8 +6,9 @@
 //   the shell is a relay loop this kit runs with the relay secret, the way src-tauri/src/enclave.rs
 //     drains POST /api/vault/pending;
 //   the chain is the intents double (tests/unit/helpers/intents-double.ts) served over HTTP as the
-//     NEAR RPC. A preload points the backend's NEAR RPC at it and refuses every other host: fetch,
-//     WebSocket and https alike, so a case holds offline and nothing reaches mainnet.
+//     NEAR RPC and the solver relay. A preload points the backend's NEAR RPC and its relay at it and
+//     refuses every other host: fetch, WebSocket and https alike, so a case holds offline and
+//     nothing reaches mainnet.
 // It also builds vault payloads by hand (not with the app's builder, so a case does not inherit a
 // bug it is meant to catch), lists an MCP seat's tools, and reads the router's vault routes.
 
@@ -21,6 +22,8 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import { base58Encode, nearChainSpec } from '../../src/chain/near.ts';
+import { RELAY_URL } from '../../src/relay/client.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import type { VerifierEvent } from '../../src/relay/verifier.ts';
 import { createIntentsDouble } from '../unit/helpers/intents-double.ts';
 import type { IntentsDouble } from '../unit/helpers/intents-double.ts';
@@ -32,7 +35,6 @@ import type { Backend, Json } from './harness.ts';
 export { swiftc } from '../unit/helpers/vault-double.ts';
 export type { Request } from '../unit/helpers/vault-double.ts';
 
-const HALF_NEAR = 500_000_000_000_000_000_000_000n;
 
 // The service ops that write the keychain or put a Touch ID in front of the owner. probe, status and
 // chipStatus only read.
@@ -80,6 +82,15 @@ function chainServer(chain: IntentsDouble) {
           return refusal(`MethodResolveError(MethodNotFound) ${String(params.method_name)}`);
       }
     }
+    if (method === 'publish_intents') {
+      const answer = await chain.relay.publishIntents((params as unknown as Json[])[0]!.signed_datas as MultiPayload[]).catch(() => null);
+      if (answer === null) return { error: { code: -32000, message: 'the relay lost the answer' } };
+      return { result: answer.status === 'OK' ? { status: 'OK', intent_hashes: answer.intentHashes } : { status: 'FAILED', reason: answer.reason, intent_hashes: [] } };
+    }
+    if (method === 'get_status') {
+      const s = await chain.relay.status(String((params as unknown as Json[])[0]!.intent_hash));
+      return { result: { status: s.status, intent_hash: s.intentHash, ...(s.nearTxHash === null ? {} : { data: { hash: s.nearTxHash } }) } };
+    }
     const res = await chain.near.fetchImpl(rpc, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 'phosphor', method, params }) } as RequestInit);
     return (await res.json()) as Json;
   }
@@ -122,7 +133,7 @@ function chainServer(chain: IntentsDouble) {
 }
 
 /* Loaded into the backend with --import. Every outside host is refused and written to a file the
-   case reads: the NEAR RPC goes to the chain double, 127.0.0.1 is let through. */
+   case reads: the NEAR RPC and the solver relay go to the chain double, 127.0.0.1 is let through. */
 function preload(nearRpc: string): string {
   return `// Written by tests/attack/chip-kit.ts into a case's scratch dir; never part of the app.
 import fs from 'node:fs';
@@ -134,7 +145,7 @@ const note = (what) => { try { fs.appendFileSync(record, what + '\\n'); } catch 
 const real = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  if (url.startsWith(${JSON.stringify(nearRpc)})) return real(target, init);
+  if (url.startsWith(${JSON.stringify(nearRpc)}) || url.startsWith(${JSON.stringify(RELAY_URL)})) return real(target, init);
   if (url.startsWith('http://127.0.0.1')) return real(input, init);
   note('fetch ' + url.slice(0, 120));
   throw new TypeError('fetch failed: an attack case reaches no outside host');
@@ -283,9 +294,9 @@ export async function chipState(c: ChipApp): Promise<Json> {
   return (await c.get('/api/state')).json?.vault?.chip ?? {};
 }
 
-/* A Touch ID wallet made by the window, opened, its backup proven by three words, its gas funded
-   (scripts/rekey-crash.ts newWallet). */
-export async function openWallet(c: ChipApp): Promise<{ vault: string; mnemonic: string; gas: string }> {
+/* A Touch ID wallet made by the window, opened, its backup proven by three words
+   (scripts/rekey-crash.ts newWallet). No NEAR: the relay pays NEAR's fee. */
+export async function openWallet(c: ChipApp): Promise<{ vault: string; mnemonic: string }> {
   for (let i = 0; i < 100; i += 1) {
     if ((await c.get('/api/vault')).json?.enclave?.ready === true) break;
     await sleep(50);
@@ -298,9 +309,7 @@ export async function openWallet(c: ChipApp): Promise<{ vault: string; mnemonic:
   const list = revealed.json.words as string[];
   const proven = await c.post('/api/vault/backup-proven', { words: (revealed.json.prove as number[]).map((index) => ({ index, word: list[index] })) });
   if (proven.json?.ok !== true) throw new Error(`backup: ${JSON.stringify(proven.json)}`);
-  const gas = (await until('the gas account', () => chipState(c), (s) => typeof s.gas?.account === 'string')).gas.account as string;
-  c.chain.fundGas(gas, HALF_NEAR);
-  return { vault: String(made.json.addresses.evm).toLowerCase(), mnemonic: list.join(' '), gas };
+  return { vault: String(made.json.addresses.evm).toLowerCase(), mnemonic: list.join(' ') };
 }
 
 export async function unlock(c: ChipApp): Promise<void> {

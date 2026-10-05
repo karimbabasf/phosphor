@@ -20,8 +20,8 @@ on its own line that opens the Trade tab, where everything about Hyperliquid liv
 
 Nothing else holds money. The app signs no transaction on any chain: every move is an intent or
 a venue action signed by the one key in your wallet, and the bridge does the chain work. Once your
-vault moves to Touch ID (below), other keys sign, and the gas account holds and spends a little
-NEAR.
+vault moves to Touch ID (below), other keys sign. Phosphor sends each vault move through the NEAR
+Intents relay, which pays NEAR's fee, as it does for swaps: you never need NEAR for fees.
 
 ### Once your vault moves to Touch ID
 
@@ -46,8 +46,8 @@ proposed.
 ### Top-ups and the sweep
 
 The allowance has a size, $100 until you pick another in the Vault tab. Two moves keep it near
-that size, both inside NEAR Intents, both sent by your gas account (a small NEAR account the app
-derives from your wallet key, about 0.0005 NEAR a move):
+that size, both inside NEAR Intents, both sent through the NEAR Intents relay, which pays NEAR's
+fee:
 
 - **A top-up** moves USDC from your vault to your allowance. You ask for it in the Vault tab, or
   the window offers one when the allowance falls under a quarter of its size. It always waits
@@ -77,7 +77,7 @@ derives from your wallet key, about 0.0005 NEAR a move):
 
 A size of $0 sends everything priced home at the next sweep. What a Mac running someone else's
 code could spend with no Touch ID is the allowance (its size plus 10 %, $110 at the default, more
-while a move is under way) and the gas account; the vault needs your finger.
+while a move is under way); the vault needs your finger.
 
 ## Deposit
 

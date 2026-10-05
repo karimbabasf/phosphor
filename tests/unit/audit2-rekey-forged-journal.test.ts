@@ -36,8 +36,8 @@ function planted(ahead: number) {
   const double = createIntentsDouble();
   const vault = privateKeyToAccount(generatePrivateKey()).address.toLowerCase();
   const gasSeed = Uint8Array.from(crypto.randomBytes(32));
+  // The gas account an entry 0.10.16 wrote names: it still loads.
   const gas = implicitAccountOf(gasSeed).accountId;
-  double.fundGas(gas, 500_000_000_000_000_000_000_000n);
   const file = journalPathFor(tempDir('audit2-forged-'));
   const deadlineMs = double.now() + ahead;
   const nonce = buildNonce({ salt: SALT, deadlineMs: deadlineMs + 7 * DAY, random: Uint8Array.from(crypto.randomBytes(15)) });
@@ -46,7 +46,7 @@ function planted(ahead: number) {
     file,
     JSON.stringify({ v: 1, entries: [{ id: 'rekey:forged', account: vault, gas, signed: [{ standard: 'erc191', payload, signature: 'secp256k1:x' }], txHashes: [], state: 'released', at: double.now() }] }),
   );
-  const submitter = createVaultSubmitter({ verifier: double.verifier, gasSeed: () => gasSeed, journal: fileJournal(file), near: double.near, now: double.now, sleep: double.near.sleep });
+  const submitter = createVaultSubmitter({ verifier: double.verifier, relay: double.relay, journal: fileJournal(file), now: double.now, sleep: double.near.sleep });
   useChipVault({ verifier: double.verifier, submitter, accounts: { accounts: () => ({}) as never, refresh: async () => ({}) as never }, near: double.near, now: double.now });
   const keystore = { addresses: () => ({ evm: vault }) } as never;
   // A vault move: whether it gets as far as its signature.
