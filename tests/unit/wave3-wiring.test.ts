@@ -2,8 +2,8 @@
 // Hyperliquid trading key (U8b) on one Mac wired the way src/main.ts wires them, against the vault
 // service's own rules (tests/unit/helpers/wave3-world.ts). Each test starts from a real move made
 // through the window's routes, so what it proves is the join: the chip the move made is the one a
-// top-up signs with, the allowance the move pinned is the one the sweep empties, and the vault move
-// submitter is one.
+// top-up signs with, the allowance the move pinned is the one the sweep empties, the vault move
+// submitter is one, and an agent waits while the vault moves.
 //
 // Run: node --test tests/unit/wave3-wiring.test.ts
 
@@ -13,11 +13,16 @@ import assert from 'node:assert/strict';
 import { recoverTypedDataAddress } from 'viem';
 import { english } from 'viem/accounts';
 
+import { AGENTS_WAIT_SAID } from '../../src/proposals/lifecycle.ts';
 import { buildApproveAgentPayload } from '../../src/rails/hl-user-signed.ts';
 import type { Proposal } from '../../src/types.ts';
+import { MOVE_VAULT_REASON } from '../../src/vault/reason.ts';
+import { RESUME_POLL_MS } from '../../src/vault/rekey.ts';
+import { VAULT_SETTLE_FLOOR_MS, fileJournal, journalPathFor } from '../../src/vault/submit.ts';
 import { USDC, USDT } from './helpers/allowance-world.ts';
 import { wave3World } from './helpers/wave3-world.ts';
 import type { Wave3World } from './helpers/wave3-world.ts';
+import type { Hook, Request } from './helpers/vault-double.ts';
 import { swiftc } from './helpers/vault-double.ts';
 
 const skip = swiftc ? false : 'needs macOS with swiftc';
@@ -171,6 +176,170 @@ test('after the move, Allow trading on Hyperliquid is one Touch ID whose sentenc
     assert.equal(w.prefs.get().hlAgent?.version, 1);
     assert.equal(w.keystore.apiWallet()?.address?.toLowerCase(), key.toLowerCase(), 'plans trade with the new key at once');
     assert.throws(() => w.keystore.evmPrivateKey(), /owner_touch_required|Touch ID/, 'and the owner key stays out of the session');
+  } finally {
+    await w.close();
+  }
+});
+
+/* The owner key's Touch ID for the move, held until the test lets it go: the move is under way and
+   waits at touch_old. */
+function heldMoveTouch(): { hook: (r: Request) => Hook | undefined; reached: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let reachedNow!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    reachedNow = resolve;
+  });
+  const hook = (r: Request): Hook | undefined =>
+    r.op === 'unwrap' && r.reason === MOVE_VAULT_REASON
+      ? {
+          kind: 'after',
+          edit: async (answer) => {
+            reachedNow();
+            await gate;
+            return answer;
+          },
+        }
+      : undefined;
+  return { hook, reached, release };
+}
+
+test('while the vault moves, an agent proposes nothing and a click on its earlier move waits; asked again after the move, it runs', { skip, timeout: 120_000 }, async () => {
+  const held = heldMoveTouch();
+  const w = await wave3World({ papers: [PAPER], hook: held.hook });
+  try {
+    const { vault, allowance } = await w.wallet();
+    w.chain.fund(vault, USDC, usdc(1850));
+    w.ledger.reread();
+    // Filed before the move: over the $100 click line, so it waits for the person.
+    const big = await w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '150' } });
+    assert.equal(big.status, 200, JSON.stringify(big.json));
+    assert.equal(w.svc.get(String(big.json.id))?.status, 'pending');
+
+    const run = await w.startMove(PAPER);
+    await held.reached;
+    assert.equal((await w.get('/api/state')).json.vault.chip.run.status, 'touch_old', 'the move is under way');
+
+    const rows = w.svc.list().length;
+    const asked = await w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } });
+    assert.equal(asked.status, 409);
+    assert.deepEqual(asked.json, { error: AGENTS_WAIT_SAID, paused: 'vault_moving' });
+    assert.equal(w.svc.list().length, rows, 'nothing was drafted or written');
+    assert.ok(w.audit.tail(20).some((e) => e.type === 'agent_rejected' && /the vault is moving/.test(e.msg)));
+
+    const click = await w.post('/api/approve', { id: String(big.json.id) });
+    assert.equal(click.status, 400);
+    assert.equal(click.json.error, "Your vault is moving to this Mac's Touch ID key right now. Approve this once the move is done. Nothing changed.");
+    assert.equal(w.svc.get(String(big.json.id))?.status, 'pending', 'the click can be made again');
+    assert.equal(w.publishes.length, 0, 'nothing was signed for an agent');
+
+    held.release();
+    assert.equal(await w.settled(run), 'done');
+    w.chain.fund(allowance, USDC, usdc(10));
+    w.ledger.reread();
+    const again = await w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } });
+    assert.equal(again.status, 200, JSON.stringify(again.json));
+    const ran = await w.svc.settled(String(again.json.id), 30_000);
+    assert.equal(ran.status, 'executed', JSON.stringify(ran.result));
+    assert.deepEqual(w.publishes.map((p) => p.signer), [allowance], 'after the move it runs, from the allowance');
+  } finally {
+    held.release();
+    await w.close();
+  }
+});
+
+test('an agent move already on its way when the vault starts moving reaches its signature and signs nothing', { skip, timeout: 120_000 }, async () => {
+  const held = heldMoveTouch();
+  const w = await wave3World({ papers: [PAPER], hook: held.hook });
+  try {
+    const { vault } = await w.wallet();
+    w.chain.fund(vault, USDC, usdc(1850));
+    w.ledger.reread();
+    const read = w.holdSwapRead();
+    const asked = await w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } });
+    assert.equal(asked.status, 200, JSON.stringify(asked.json));
+    const id = String(asked.json.id);
+    assert.equal(w.svc.get(id)?.status, 'executing', 'under the click line: the rail runs, and waits on its last read');
+
+    const run = await w.startMove(PAPER);
+    await held.reached;
+    await read.reached;
+    read.release();
+    const row = await w.svc.settled(id, 30_000);
+    assert.equal(row.status, 'failed', JSON.stringify(row.result));
+    assert.equal(row.result?.reason, 'vault_moving');
+    assert.equal(w.svc.view(row).reason?.sentence, "Your vault is moving to this Mac's Touch ID key right now, so nothing moved. Ask again once the move is done.");
+    assert.equal(w.publishes.length, 0, 'nothing was signed');
+    assert.equal(w.chain.balanceOf(vault, USDC), usdc(1850));
+
+    held.release();
+    assert.equal(await w.settled(run), 'done');
+  } finally {
+    held.release();
+    await w.close();
+  }
+});
+
+test('a swap still being proposed when the vault starts moving lands refused, with nothing signed', { skip, timeout: 120_000 }, async () => {
+  const held = heldMoveTouch();
+  const w = await wave3World({ papers: [PAPER], hook: held.hook });
+  try {
+    const { vault } = await w.wallet();
+    w.chain.fund(vault, USDC, usdc(1850));
+    w.ledger.reread();
+    const quote = w.holdQuote();
+    const asking = w.mcp({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } });
+    await quote.reached;
+
+    const run = await w.startMove(PAPER);
+    await held.reached;
+    quote.release();
+    const asked = await asking;
+    assert.equal(asked.status, 200, JSON.stringify(asked.json));
+    const row = w.svc.get(String(asked.json.id))!;
+    assert.equal(row.status, 'policy_refused');
+    assert.equal(row.verdict.outcome === 'refuse' && row.verdict.rule, 'vault_moving');
+    assert.equal(row.verdict.reasons.at(-1), AGENTS_WAIT_SAID);
+    assert.equal(w.svc.view(row).reason?.code, 'vault_moving');
+    assert.equal(w.publishes.length, 0, 'nothing was signed');
+
+    held.release();
+    assert.equal(await w.settled(run), 'done');
+  } finally {
+    held.release();
+    await w.close();
+  }
+});
+
+test('after a restart, a move to the chip written down and still able to run keeps agents waiting until NEAR can no longer run it; a top-up written down does not', { skip, timeout: 120_000 }, async () => {
+  const w = await wave3World();
+  try {
+    const { vault, gas } = await w.wallet();
+    w.chain.fund(vault, USDC, usdc(1850));
+    w.ledger.reread();
+    const swap = { op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } };
+    // What a crash leaves: no run in this process, and the journal holding a bundle that went out.
+    const deadline = w.chain.now() + 60_000;
+    const entry = (id: string) => ({ id, account: vault, gas, signed: [{ standard: 'erc191', payload: JSON.stringify({ deadline: new Date(deadline).toISOString() }), signature: 'secp256k1:x' }], txHashes: ['tx'], state: 'sent' as const, at: w.chain.now() });
+    const journal = fileJournal(journalPathFor(w.dataDir));
+
+    journal.put(entry('vault_top_up:p-1'));
+    const topUp = await w.mcp(swap);
+    assert.equal(topUp.status, 200, 'a top-up written down changes no key: agents go on');
+    assert.equal((await w.svc.settled(String(topUp.json.id), 30_000)).status, 'executed');
+
+    journal.put(entry('rekey:chip:p2-test'));
+    const waiting = await w.mcp(swap);
+    assert.equal(waiting.status, 409);
+    assert.equal(waiting.json.paused, 'vault_moving');
+
+    // Past its deadline and the two minutes the submitter waits beyond it, NEAR can no longer run it.
+    w.chain.advance(60_000 + VAULT_SETTLE_FLOOR_MS + RESUME_POLL_MS + 1_000);
+    const again = await w.mcp(swap);
+    assert.equal(again.status, 200, JSON.stringify(again.json));
+    assert.equal((await w.svc.settled(String(again.json.id), 30_000)).status, 'executed');
   } finally {
     await w.close();
   }

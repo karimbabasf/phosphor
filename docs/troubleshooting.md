@@ -179,6 +179,9 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
   added a key while the move was being signed, and that key can still move the vault's money. The
   Vault tab names it. Treat the owner key and its backup as seen by someone else: send the money in
   the vault, and in the allowance, to a wallet whose key was made fresh, then stop using this one.
+- **Your assistant says your vault is moving.** While the move or a restore runs, your assistant's
+  moves wait: it can ask for nothing new, a move it asked for earlier cannot be approved until the
+  move is done, and one already on its way stops with nothing sent. Ask again once the move is over.
 
 If the Mac is gone, the paper and the key backup together bring the vault back on a new one. If the
 paper is gone and this Mac still opens the vault, move the money out with Touch ID while you can:

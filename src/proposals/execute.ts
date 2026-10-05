@@ -15,7 +15,7 @@ import type { AllowanceSweep } from '../rails/allowance-sweep.ts';
 import { VAULT_TOP_UP_COUNTERPARTY } from '../rails/vault-topup.ts';
 import { SWEEP_MARGIN, amountWords, moveSpend, shortfallOf, shortfallSentence } from '../vault/allowance.ts';
 import type { CoinAmount } from '../vault/allowance.ts';
-import { buildCtx, errText, mergePatch, newProposal, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { AGENTS_WAIT_SAID, agentsWait, buildCtx, errText, mergePatch, newProposal, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
 import { priceOf } from './draft.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
@@ -79,6 +79,10 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
   // so nobody may be at the window to see what it files (src/app-turn.ts). The row's own stamp.
   if (p.verdict.outcome === 'allow' && p.appTurn === true) {
     p = { ...p, verdict: { outcome: 'needs_approval', reasons: [...p.verdict.reasons, APP_TURN_REASON] } };
+  }
+  // And nothing an agent asked for while the vault moves, whatever the verdict (lifecycle.ts agentsWait).
+  if (p.by !== undefined && p.verdict.outcome !== 'refuse' && agentsWait(ctx)) {
+    p = { ...p, verdict: { outcome: 'refuse', reasons: [...p.verdict.reasons, AGENTS_WAIT_SAID], rule: 'vault_moving', reasonCodes: ['vault_moving'] } };
   }
   /* AND FREEZE IS READ AGAIN FOR AN ALLOW, with nothing awaited between this and the executing
      write. The verdict a caller hands in was taken before its simulation, seconds of quotes and
@@ -381,7 +385,11 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
      the balance (judgeSettling below) and never by 1Click's word alone. */
   const hooks: RailHooks = {
     decidedBy: p.decidedBy,
-    lastCheck: () => refuseIfFrozen(ctx),
+    lastCheck: () => {
+      refuseIfFrozen(ctx);
+      // An agent's move signs nothing while the vault moves (lifecycle.ts agentsWait).
+      if (p.by !== undefined && agentsWait(ctx)) throw new ReasonError('vault_moving', AGENTS_WAIT_SAID);
+    },
     onEvidence: (e) => {
       const current = ctx.store.get(p.id) ?? executing;
       if (current.status !== 'executing') return;

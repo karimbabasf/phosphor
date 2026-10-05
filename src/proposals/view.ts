@@ -661,6 +661,7 @@ const RULE_REASON: Record<string, ReasonCode> = {
   simulation_required: 'simulation_failed',
   no_rail: 'not_available',
   unknown_kind: 'invalid_request',
+  vault_moving: 'vault_moving',
 };
 
 /* THE CAUSE, read off what decided the row: the verdict's code or rule for a refusal, the rail's
@@ -794,6 +795,8 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
       return `NEAR Intents isn't taking ${routeWords(draft)} right now, so nothing was signed and nothing moved. Try again later; the details say what it reported.`;
     case 'plan_exists':
       return `${sym} already has a live plan, so nothing new was placed. Change or cancel that plan first.`;
+    case 'vault_moving':
+      return "Your vault is moving to this Mac's Touch ID key right now, so nothing moved. Ask again once the move is done.";
     case 'declined':
       return 'You said no. Nothing moved.';
     case 'not_sent':
@@ -838,6 +841,7 @@ const RETRYABLE: ReadonlySet<ReasonCode> = new Set<ReasonCode>([
   'balance_unread',
   'unpriced',
   'route_closed',
+  'vault_moving',
   'not_sent',
   'venue_failed_nothing_moved',
   'refunded',

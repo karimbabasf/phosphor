@@ -818,14 +818,25 @@ function deadlineOf(payload: string): number {
 
 /* Whether a bundle written down for the vault can still run: one not known to have run, before its
    last deadline and the two minutes the submitter waits past it. After that the chain's answer is
-   final, and the next move settles what is left. */
-function mayStillRun(chain: ChipVaultChain, vault: string): boolean {
+   final, and the next move settles what is left. `only` narrows it to some ids. */
+function mayStillRun(chain: ChipVaultChain, vault: string, only: (id: string) => boolean = () => true): boolean {
   const deadlines = chain.submitter
     .pending(vault)
-    .filter((e) => e.state === 'released' || e.state === 'sent')
+    .filter((e) => (e.state === 'released' || e.state === 'sent') && only(e.id))
     .flatMap((e) => e.signed.map((s) => deadlineOf(s.payload)))
     .filter((d) => Number.isFinite(d));
   return deadlines.length > 0 && clock() <= Math.max(...deadlines) + VAULT_SETTLE_FLOOR_MS + RESUME_POLL_MS;
+}
+
+/* Whether a move of this wallet's vault to the chip, or a restore, is under way: a run this process
+   started that has not ended, or a rekey bundle written down before a restart that can still run.
+   Agents wait while it is (src/proposals/lifecycle.ts agentsWait). */
+export function vaultMoveUnderWay(keystore: Keystore): boolean {
+  const box = boxes.get(keystore);
+  if (box !== undefined && active(box.run)) return true;
+  const chain = installed;
+  const vault = keystore.addresses().evm?.toLowerCase() ?? null;
+  return chain !== null && vault !== null && mayStillRun(chain, vault, (id) => id.startsWith('rekey:'));
 }
 
 // A move whose call is out and unconfirmed is checked again, in the background, while it can still run.

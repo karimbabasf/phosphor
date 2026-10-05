@@ -184,6 +184,12 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   `runner-host.test.ts`, and the last check's tests in `intents-relay.test.ts`,
   `intents-native.test.ts`, `intents-spend.test.ts`, `hypercore-withdraw.test.ts` and
   `hypercore-deposit.test.ts`.
+- **An agent moves money while the vault moves to the chip.** From the start of a move or a restore
+  until NEAR says how it ended, nothing an agent asks for is proposed or signed: the door refuses a
+  propose with nothing drafted, a row an agent filed is refused when it lands and again at its last
+  check before the key, and a click on one waits until the move is over. A move bundle written down
+  before a restart keeps agents waiting until NEAR can no longer run it. The account the rails sign
+  for changes in that call, and so does every key on the vault. Proof: `wave3-wiring.test.ts`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other

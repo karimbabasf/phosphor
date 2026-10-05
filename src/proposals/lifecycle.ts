@@ -37,6 +37,7 @@ import type { AllowanceService } from '../vault/allowance.ts';
 import { railAccounts } from '../intents-sign.ts';
 import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
+import { vaultMoveUnderWay } from '../vault/rekey.ts';
 import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
 import type { OwnerTouch } from '../rails/hl-user-signed.ts';
 import { recordRecipient } from '../recipients.ts';
@@ -493,8 +494,25 @@ export function requireIntact(ctx: PCtx, id: string, action: string): void {
   throw new Error(`proposal ${id} was changed on disk by something other than this app since it was proposed, so it cannot be decided; propose it again`);
 }
 
+/* AGENTS WAIT WHILE THE VAULT MOVES (PHASE2-PLAN.md risk 7). From the moment a move to the chip or a
+   restore starts until NEAR says how it ended (src/vault/rekey.ts vaultMoveUnderWay), nothing an
+   agent asked for is proposed or signed: the account the rails sign for changes under it, and the
+   owner key it would sign with leaves the vault in the same call. The propose op is refused at the
+   door (src/http/mcp.ts); a row an agent filed is refused at land() and at its signature
+   (src/proposals/execute.ts), and a click on one waits here. Asked again after the move, it runs. */
+export const AGENTS_WAIT_SAID = "Your vault is moving to this Mac's Touch ID key right now, so moves wait until that is done. Nothing was sent. Ask again in a few minutes.";
+
+export function agentsWait(ctx: { keystore?: Keystore }): boolean {
+  return ctx.keystore !== undefined && vaultMoveUnderWay(ctx.keystore);
+}
+
 export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   const p = requirePending(ctx, id, 'approve');
+
+  if (p.by !== undefined && agentsWait(ctx)) {
+    ctx.audit.append('approve_attempt_rejected', `approve for ${id}, an agent's move, while the vault is moving`, { id, action: 'approve', vaultMoving: true });
+    throw new Error("Your vault is moving to this Mac's Touch ID key right now. Approve this once the move is done. Nothing changed.");
+  }
 
   // Re-run the engine at approval time: the policy file, the kill switch and the balances
   // can all have moved since the proposal was created, and the older verdict is only ever a

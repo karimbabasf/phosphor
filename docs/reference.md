@@ -303,6 +303,14 @@ send, payout or Hyperliquid deposit that spends more of a coin than the allowanc
 builder does the same off its live read), and its shortfall step tops up exactly the difference
 behind that Touch ID, only for a move a person approved, before the move's rail runs.
 
+While the vault moves to the chip (a move or a restore, from its start until NEAR says how it
+ended, or while a move bundle written down before a restart can still run: `vaultMoveUnderWay` in
+`src/vault/rekey.ts`), an agent's moves wait (`agentsWait` in `src/proposals/lifecycle.ts`). The
+`propose` op answers 409 `{error, paused: 'vault_moving'}` with nothing drafted; a row an agent
+filed is refused at `land()` (rule `vault_moving`) and at its rail's last check before the key
+(reason `vault_moving`, nothing signed); a click on one throws and leaves it pending. Asked again
+after the move, the same move runs.
+
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
 transaction, $10,000,000 per day or session), refused when it would leave the ask threshold at
