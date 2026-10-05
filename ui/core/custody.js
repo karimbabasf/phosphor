@@ -13,7 +13,11 @@
 
    A refusal's sentence is the backend's (src/http/wallet.ts REFUSALS, one per
    code). `sentence` puts it on screen only when it reads as one: a code, a
-   status number or an OS phrase is never shown, whatever sent it. */
+   status number or an OS phrase is never shown, whatever sent it.
+
+   The paper key the vault moves to (ui/screens/chip.js) is typed back the
+   same careful way: 24 words, one to a field, and a slip is said by its
+   number, never by the word. */
 (function () {
   'use strict';
 
@@ -89,10 +93,42 @@
     return text;
   }
 
+  /* A paper key typed back from paper: 24 fields, one word each, read the
+     way the backend reads them (src/vault/phrase24.ts phraseOf): folded,
+     lower case, trimmed. { words, problem }: the 24 words when `problem` is
+     null, else the one sentence that says which numbers to look at. Nothing
+     it says quotes a word: a sentence that did would put part of the paper
+     on screen, in an error. */
+  var PAPER_WORDS = 24;
+
+  function numbersWords(list) {
+    if (list.length === 1) return 'Word ' + list[0];
+    return 'Words ' + list.slice(0, -1).join(', ') + ' and ' + list[list.length - 1];
+  }
+
+  function readPaper(values) {
+    var list = Array.isArray(values) ? values : [];
+    var words = [];
+    var empty = [];
+    var odd = [];
+    for (var i = 0; i < PAPER_WORDS; i += 1) {
+      var word = fold(list[i]).trim().toLowerCase();
+      if (!word) empty.push(i + 1);
+      else if (!/^[a-z]+$/.test(word)) odd.push(i + 1);
+      words.push(word);
+    }
+    if (empty.length === PAPER_WORDS) return { words: null, problem: 'Type the 24 words from your paper.' };
+    if (empty.length) return { words: null, problem: numbersWords(empty) + (empty.length === 1 ? ' is' : ' are') + ' still empty. Your paper key is 24 words.' };
+    if (odd.length) return { words: null, problem: numbersWords(odd) + (odd.length === 1 ? ' is not one word' : ' are not one word each') + '. A paper key word is letters only, one to a field.' };
+    return { words: words, problem: null };
+  }
+
   window.PhosphorCustody = {
     CANCELLED: CANCELLED,
+    PAPER_WORDS: PAPER_WORDS,
     isKey: isKey,
     readKey: readKey,
+    readPaper: readPaper,
     sentence: sentence
   };
 })();

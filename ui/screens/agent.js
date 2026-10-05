@@ -288,6 +288,17 @@
   /* Whether the person froze everything (state.policy.killSwitch): the head says so. */
   var frozen = false;
 
+  /* Whether the vault is moving to this Mac's Touch ID key right now (state.vault.chip.run, from
+     its first step to its last): the agent's moves wait meanwhile (src/http/mcp.ts answers 409
+     paused:'vault_moving'), so the head says so in one calm line. */
+  var moving = false;
+  var MOVING = ['creating', 'touch_old', 'touch_chip', 'simulating', 'submitting', 'checking'];
+
+  function vaultMoving(vault) {
+    var run = vault && vault.chip && vault.chip.run;
+    return !!run && MOVING.indexOf(run.status) >= 0;
+  }
+
   /* THE PICK: the agent a new chat runs (GET /api/driver `agent`). One that runs outside this
      window (Codex in a terminal) has no Start here; its sentence says where it runs instead. */
   var pick = null;
@@ -1226,12 +1237,18 @@
     var on = shown && !!name;
     dom.setHidden(refs.who, !on);
     dom.setAttr(refs.who, 'data-frozen', on && frozen ? 'true' : null);
+    dom.setAttr(refs.who, 'data-moving', on && !frozen && moving ? 'true' : null);
     if (!on) return;
     paintNoteMark(refs.whoMark, pick.id);
     /* Frozen, the line says so first: the agent can still read and talk, and nothing moves. */
     if (frozen) {
       dom.setText(refs.whoName, 'Everything is frozen.');
       dom.setText(refs.whoState, ' ' + name + ' can read, but no money moves.');
+      return;
+    }
+    if (moving) {
+      dom.setText(refs.whoName, 'Your vault is moving.');
+      dom.setText(refs.whoState, ' ' + name + '\'s moves wait.');
       return;
     }
     dom.setText(refs.whoName, name);
@@ -2264,6 +2281,12 @@
         var next = !!(policy && policy.killSwitch);
         if (next === frozen) return;
         frozen = next;
+        renderAll();
+      });
+      store.select('vault', function (vault) {
+        var next = vaultMoving(vault);
+        if (next === moving) return;
+        moving = next;
         renderAll();
       });
     }
