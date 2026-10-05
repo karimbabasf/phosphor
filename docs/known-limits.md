@@ -317,7 +317,8 @@ your daily limit.
 
 Releases are built in a job that holds no secret, and signed in another job that installs and
 builds nothing. Before signing, the release checks that the payload's own files match the tagged
-source and that every program inside carries only the committed entitlements. Nothing checks
+source, that every program inside carries only the committed entitlements, and that the vault
+service carries the five chip ops and the grammar's newest rule. Nothing checks
 what else the build put on the disk image beside the app. It cannot vouch for the compiled
 programs (the shell, the bundled Node, the Secure Enclave service) or for the installed packages,
 and the release build does not repeat CI's check of each package's registry signature.

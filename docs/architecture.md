@@ -280,7 +280,9 @@ shell carries, and the entitlements of every binary: the file Tauri's ad hoc pas
 app's executables, and none anywhere else. It also holds every binary to the oldest macOS the app
 supports, `minimumSystemVersion` in `tauri.conf.json` (13.5): a compiler builds for the Mac it runs
 on unless told otherwise, and the Secure Enclave service, built that way, asked for macOS 15.0 in
-0.10.13 and 0.10.14. Then it runs `notarize-mac.sh`, which signs every
+0.10.13 and 0.10.14. And it holds the service to the chip vault: the five chip ops, which only
+`-D PHOSPHOR_CHIP` compiles in, and the message of the grammar's receiver rule, read from its bytes,
+so a service built without them, or from an older grammar, is never signed. Then it runs `notarize-mac.sh`, which signs every
 binary with the entitlements its path is given and none it arrived with: the shell
 `src-tauri/entitlements.plist` (no JIT), node `src-tauri/entitlements-node.plist` (`allow-jit`
 alone, which V8 needs), and the Secure Enclave service three made from its Developer ID

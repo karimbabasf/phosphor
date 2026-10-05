@@ -636,9 +636,10 @@ without those secrets fails before it signs anything. That job installs and buil
 build job, which holds no secret, does). Before it signs, it holds the unsigned app to its own
 checkout with `scripts/release-check.ts` (first-party payload files byte for byte, the digest the
 shell carries, the ad hoc pass's entitlements on the app's executables and none on any other
-binary, and no binary asking for a newer macOS than `minimumSystemVersion`, 13.5;
-`scripts/build-se-helper.sh` builds the service for that version, never for the Mac that builds
-it). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
+binary, no binary asking for a newer macOS than `minimumSystemVersion`, 13.5, and the service
+carrying the five chip ops and the grammar's receiver rule, `CHIP_OPS` and `GRAMMAR_RULE`, read
+from its bytes; `scripts/build-se-helper.sh` builds the service for that version, never for the
+Mac that builds it). After signing and before notarizing, `scripts/signing-gate.ts` checks the profile
 (this service's team and app id, Developer ID, more than a year left, listing the certificate
 that signed), each path's entitlements, that the service run by hand gets past AMFI (it aborts in
 `xpc_main` with 134; a refused one is killed with 137), and that the profile, the certificate and

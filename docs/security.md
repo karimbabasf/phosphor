@@ -228,8 +228,9 @@ into the digest, never dates or owners, so the same tag gives the same digest on
 
 In that clone, the check the release itself passed before and after signing compares the
 payload's own files in your copy with the tag, one by one, reads the entitlements of every binary
-in it, and checks the vault service: the provisioning profile inside it is the tag's, and run by
-hand it starts (it stops at once, because only the app may start it). It does not compare the
+in it, and checks the vault service: the provisioning profile inside it is the tag's, run by
+hand it starts (it stops at once, because only the app may start it), and it carries the five chip
+ops and the grammar's newest rule. It does not compare the
 compiled programs (the shell, the bundled Node, the Secure Enclave service) or the installed
 packages:
 

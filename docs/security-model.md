@@ -361,7 +361,10 @@ your money.
   it is.
 - **A release signs what its build job made.** Before signing, the release checks that the
   payload's own files match the tagged source and that every program carries only the committed
-  entitlements. Nothing checks the rest of the disk image beside the app. It cannot vouch for
+  entitlements, and that the vault service carries the five chip ops and the grammar's newest
+  rule (a service built without them, or from an older grammar, is never signed; that is a check
+  of a few strings, not of the whole program). Nothing checks the rest of the disk image beside
+  the app. It cannot vouch for
   the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
   installed packages, and the release build does not repeat CI's check of each package's registry
   signature. What closes it: a build anyone can reproduce byte for byte.

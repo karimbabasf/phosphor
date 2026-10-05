@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
 import {
+  CHIP_OPS,
+  GRAMMAR_RULE,
   checkApp,
   compareVersions,
   entitlementProblem,
@@ -160,11 +162,21 @@ function compile(out: string, digest: string, macos = FLOOR): void {
   fs.rmSync(source);
 }
 
+/* The vault service as the check reads it: a binary that carries the chip ops and the grammar's
+   receiver rule as strings, unless `without` names some (scripts/release-check.ts serviceProblems). */
+function compileService(out: string, without: readonly string[] = []): void {
+  const source = path.join(path.dirname(out), 'service.c');
+  const carried = [...CHIP_OPS, GRAMMAR_RULE].filter((s) => !without.includes(s));
+  fs.writeFileSync(source, `${carried.map((s, i) => `const char *carried${i} = "${s}";`).join('\n')}\nint main(void) { return 0; }\n`);
+  execFileSync('cc', ['-O0', `-mmacosx-version-min=${FLOOR}`, '-o', out, source]);
+  fs.rmSync(source);
+}
+
 function sign(file: string, entitlements?: string): void {
   execFileSync('codesign', ['-s', '-', '-f', '--options', 'runtime', ...(entitlements === undefined ? [] : ['--entitlements', entitlements]), file], { stdio: 'pipe' });
 }
 
-function fakeApp(checkout: string, opts: { digest?: string } = {}): string {
+function fakeApp(checkout: string, opts: { digest?: string; serviceWithout?: readonly string[] } = {}): string {
   const app = path.join(tempDir('release-check-app-'), 'Phosphor.app');
   const payload = path.join(app, 'Contents', 'Resources', 'phosphor');
   fs.mkdirSync(payload, { recursive: true });
@@ -185,7 +197,7 @@ function fakeApp(checkout: string, opts: { digest?: string } = {}): string {
     path.join(path.dirname(service), 'Info.plist'),
     '<?xml version="1.0" encoding="UTF-8"?>\n<plist version="1.0"><dict><key>CFBundleExecutable</key><string>se-helper</string></dict></plist>\n',
   );
-  fs.copyFileSync(path.join(macos, 'phosphor-desktop'), path.join(service, 'se-helper'));
+  compileService(path.join(service, 'se-helper'), opts.serviceWithout);
   sign(path.join(service, 'se-helper'));
   return app;
 }
@@ -234,6 +246,31 @@ test('a build that planted an entitlement, changed a first-party file or ships a
     fs.rmSync(scratch, { recursive: true, force: true });
     fs.rmSync(checkout, { recursive: true, force: true });
   }
+});
+
+test('a vault service built without the chip ops, or from an older grammar, fails both stages (audit2 AU2-11)', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {
+  const checkout = fakeCheckout();
+  const noChip = fakeApp(checkout, { serviceWithout: CHIP_OPS });
+  const oldGrammar = fakeApp(checkout, { serviceWithout: [GRAMMAR_RULE] });
+  try {
+    for (const stage of ['built', 'signed'] as const) {
+      const lacks = checkApp(noChip, checkout, stage).join('\n');
+      assert.match(lacks, /the vault service lacks chipCreate, chipCommit, chipStatus, chipSweep, signIntent: it was not built with the chip vault/, stage);
+      assert.match(checkApp(oldGrammar, checkout, stage).join('\n'), /the vault service lacks the grammar rule "the chip key moves money only to the allowance its marker pins"/, stage);
+    }
+    const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'release-check.ts'), '--app', noChip, '--checkout', checkout, '--stage', 'built'], { encoding: 'utf8' });
+    assert.equal(cli.status, 1);
+    assert.match(cli.stderr, /lacks chipCreate/);
+  } finally {
+    for (const app of [noChip, oldGrammar]) fs.rmSync(path.dirname(app), { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('the strings the gate requires are the service\'s own: the five ops ChipOps.swift defines and the receiver rule IntentGrammar.swift says', () => {
+  const ops = fs.readFileSync(path.join(ROOT, 'src-tauri', 'se-helper', 'ChipOps.swift'), 'utf8');
+  for (const op of CHIP_OPS) assert.match(ops, new RegExp(`func ${op}\\(`), op);
+  assert.ok(fs.readFileSync(path.join(ROOT, 'src-tauri', 'se-helper', 'IntentGrammar.swift'), 'utf8').includes(`"${GRAMMAR_RULE}"`));
 });
 
 test('after signing, an ad-hoc signature is not a release: every binary needs the hardened runtime, the team and the signing gate', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {

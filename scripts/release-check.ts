@@ -7,7 +7,7 @@
 // whatever runs during the build (a dependency's build script, a poisoned cache) never sees an
 // Apple key. But the sign job signs whatever the build job hands it. So a build that changed a
 // first-party file would come out signed, notarized and attested as this workflow at this
-// commit. Four things are checked, and all must hold, and a fifth once the app is signed:
+// commit. Five things are checked, and all must hold, and a sixth once the app is signed:
 //
 //   1. every first-party file in the payload (PAYLOAD in scripts/payload-digest.ts) is the
 //      checkout's, byte for byte, and the payload holds no first-party file the checkout lacks;
@@ -28,7 +28,11 @@
 //      asks for: the vault service, built that way, asked for macOS 15.0 inside 0.10.13. No GitHub
 //      runner has macOS 13, so this is what holds the floor; the release's smoke job starts the
 //      service on the versions that do have one;
-//   5. signed only: the NEAR Intents verifier the release's chip vault signs for is the build it was
+//   5. the vault service carries the chip vault: the five chip ops, which only -D PHOSPHOR_CHIP
+//      compiles in (their functions' names are in its symbols), and the message of the grammar's
+//      newest rule, the receiver pin (a string in it). A service built without them answers
+//      bad_input to every chip op, and one built from an older grammar signs what this one refuses;
+//   6. signed only: the NEAR Intents verifier the release's chip vault signs for is the build it was
 //      spiked on (scripts/verifier-gate.ts, the check scripts/verifier-check.ts prints). Its owners
 //      can upgrade it, and every payload shape, event and view the vault relies on was run live on
 //      one build. Two NEAR RPCs run by different companies must name the same build. Another build,
@@ -49,7 +53,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 import { PAYLOAD, SKIPPED, payloadDigest } from './payload-digest.ts';
-import { type Entitlements, entitlementProblem, machOFiles, readPlist, signatureOf, signingGate } from './signing-gate.ts';
+import { SERVICE, type Entitlements, bundleExecutable, entitlementProblem, machOFiles, readPlist, signatureOf, signingGate } from './signing-gate.ts';
 import { type ProviderAnswer, agreedVerifier, readDeployedVerifiers, verifierProblems } from './verifier-gate.ts';
 
 export { entitlementProblem, type Entitlements };
@@ -205,6 +209,21 @@ export function minimumProblems(app: string, checkout: string): string[] {
   return problems;
 }
 
+// The chip vault's five ops, and the message of IntentGrammar.swift's receiver rule (audit2 AU2-11).
+export const CHIP_OPS = ['chipCreate', 'chipCommit', 'chipStatus', 'chipSweep', 'signIntent'] as const;
+export const GRAMMAR_RULE = 'the chip key moves money only to the allowance its marker pins';
+
+/* What the shipped vault service lacks of the chip vault, read from its bytes, never by running it. */
+export function serviceProblems(app: string): string[] {
+  const service = path.join(app, SERVICE);
+  const executable = fs.existsSync(service) ? bundleExecutable(service) : null;
+  if (executable === null) return [`${app} has no vault service executable at ${SERVICE}`];
+  const bytes = fs.readFileSync(path.join(service, 'Contents', 'MacOS', executable));
+  const wanted: [text: string, said: string][] = [...CHIP_OPS.map((op): [string, string] => [op, op]), [GRAMMAR_RULE, `the grammar rule "${GRAMMAR_RULE}"`]];
+  const missing = wanted.filter(([text]) => !bytes.includes(Buffer.from(text, 'utf8'))).map(([, said]) => said);
+  return missing.length === 0 ? [] : [`the vault service lacks ${missing.join(', ')}: it was not built with the chip vault (-D PHOSPHOR_CHIP) from this checkout's grammar`];
+}
+
 export type CheckOptions = { team?: string };
 
 export function checkApp(app: string, checkout: string, stage: Stage, options: CheckOptions = {}): string[] {
@@ -219,6 +238,7 @@ export function checkApp(app: string, checkout: string, stage: Stage, options: C
   const shell = path.join(app, 'Contents', 'MacOS', main);
   if (!shellCarries(fs.readFileSync(shell), sealed.digest)) problems.push(`the shell was not built for the payload beside it (digest ${sealed.digest})`);
   problems.push(...minimumProblems(app, checkout));
+  problems.push(...serviceProblems(app));
 
   if (stage === 'built') {
     const tauri = tauriEntitlements(checkout);
@@ -280,8 +300,8 @@ export async function releaseCheck(argv: string[], deps: CliDeps = {}): Promise<
   const floor = versionText(supportedMacOS(path.resolve(checkout)));
   out(
     stage === 'signed'
-      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team, every binary runs on macOS ${floor}, and ${answers.map((a) => a.name).join(' and ')} both read intents.near as ${deployed?.version}, the verifier the chip vault was spiked on`
-      : `release-check: ${app} (built) is the checkout, carries the committed entitlements, and every binary runs on macOS ${floor}`,
+      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team and carries the chip ops and the grammar, every binary runs on macOS ${floor}, and ${answers.map((a) => a.name).join(' and ')} both read intents.near as ${deployed?.version}, the verifier the chip vault was spiked on`
+      : `release-check: ${app} (built) is the checkout, carries the committed entitlements, the vault service carries the chip ops and the grammar, and every binary runs on macOS ${floor}`,
   );
   return 0;
 }

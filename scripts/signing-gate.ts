@@ -88,7 +88,7 @@ export function readPlist(file: string): Entitlements {
   return plistToJson(fs.readFileSync(file));
 }
 
-function bundleExecutable(bundle: string): string | null {
+export function bundleExecutable(bundle: string): string | null {
   try {
     const name = execFileSync('plutil', ['-extract', 'CFBundleExecutable', 'raw', '-o', '-', path.join(bundle, 'Contents', 'Info.plist')], { stdio: ['ignore', 'pipe', 'ignore'] });
     return name.toString().trim() || null;
