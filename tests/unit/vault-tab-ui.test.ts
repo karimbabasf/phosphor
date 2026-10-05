@@ -374,7 +374,7 @@ test('no string reaches the DOM as markup, and no Copy is offered on the phrase'
   // empty string that clears it; the address rows' copy goes through the
   // deposit card's read-back.
   assert.equal((SOURCE.match(/\.writeText\(/g) ?? []).length, 2, 'another clipboard write in vault.js');
-  assert.match(SOURCE, /function copyKey\(copy, error\) \{[\s\S]*?clip\.writeText\('0x' \+ shownKey\.groups\.join\(''\)\)/);
+  assert.match(SOURCE, /function copyKey\(copy, error, nextClick\) \{[\s\S]*?clip\.writeText\('0x' \+ shownKey\.groups\.join\(''\)\)/);
   assert.match(SOURCE, /function clearClip\(\) \{[\s\S]*?clip\.writeText\(''\)/);
   // Nothing about a backup goes to the title or a notification.
   assert.equal(/document\.title|Notification/.test(SOURCE), false, 'vault.js writes the title or a notification');
@@ -1086,7 +1086,7 @@ function fakeClock(world: World): { tick: (ms: number) => void } {
   };
 }
 
-const COPIED = 'Copied. Phosphor clears it in 30 seconds.';
+const COPIED = 'Copied. Phosphor clears it when you click I saved it, or in 30 seconds.';
 
 test('Copy puts the whole key on the clipboard as a wallet imports it, says when Phosphor clears it, and repeats the key nowhere', async () => {
   const world = build({ vault: { hasMnemonic: false } });
@@ -1121,7 +1121,7 @@ test('Copy puts the whole key on the clipboard as a wallet imports it, says when
   keyOnlyInItsBox(refused, 'copy refused');
 });
 
-test('the copied key leaves the clipboard at once when the wallet locks, the tab is left or the panel closes, and never without a Copy', async () => {
+test('the copied key leaves the clipboard inside the panel\'s next click, at once on a lock or the tab left, and never without a Copy', async () => {
   const copied = async (): Promise<{ world: World; clock: { tick: (ms: number) => void } }> => {
     const world = build({ vault: { hasMnemonic: false } });
     const clock = fakeClock(world);
@@ -1142,14 +1142,37 @@ test('the copied key leaves the clipboard at once when the wallet locks, the tab
   left.world.leave();
   assert.deepEqual(left.world.clipboard, ['0x' + KEY_HEX, ''], 'leaving the tab left the key on the clipboard');
 
+  // The panel's clicks clear it inside the click itself, before anything is awaited: a write with a
+  // click behind it is one WebKit allows.
   const closed = await copied();
   buttonNamed(flow(closed.world), 'Close').click();
   assert.deepEqual(closed.world.clipboard, ['0x' + KEY_HEX, ''], 'Close left the key on the clipboard');
 
   const saved = await copied();
+  saved.world.answer.keyProven = new Promise(() => {});
   buttonNamed(flow(saved.world), 'I saved it somewhere safe').click();
+  assert.deepEqual(saved.world.clipboard, ['0x' + KEY_HEX, ''], 'the proof cleared the clipboard only after its answer, or not at all');
+  assert.ok(buttonNamed(flow(saved.world), 'Copy'), 'the button still says Copied after the clear');
+  saved.clock.tick(30_000);
+  assert.deepEqual(saved.world.clipboard, ['0x' + KEY_HEX, ''], 'the timer wrote the clipboard after the click had cleared it');
+
+  const hidden = await copied();
+  buttonNamed(flow(hidden.world), 'Show').click();
+  assert.deepEqual(hidden.world.clipboard, ['0x' + KEY_HEX], 'Show cleared the clipboard');
+  buttonNamed(flow(hidden.world), 'Hide').click();
+  assert.deepEqual(hidden.world.clipboard, ['0x' + KEY_HEX, ''], 'Hide left the key on the clipboard');
+  assert.ok(buttonNamed(flow(hidden.world), 'Copy'), 'the button still says Copied after Hide');
+
+  // A key already backed up ends in Done, so the button names Done, and Done clears it.
+  const proven = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  fakeClock(proven);
+  buttonNamed(row(proven, 'backup'), 'Show my key').click();
   await flush();
-  assert.deepEqual(saved.world.clipboard, ['0x' + KEY_HEX, ''], 'the proof left the key on the clipboard');
+  buttonNamed(flow(proven), 'Copy').click();
+  await flush();
+  assert.ok(buttonNamed(flow(proven), 'Copied. Phosphor clears it when you click Done, or in 30 seconds.'), 'the button names a click the panel does not offer');
+  buttonNamed(flow(proven), 'Done').click();
+  assert.deepEqual(proven.clipboard, ['0x' + KEY_HEX, ''], 'Done left the key on the clipboard');
 
   // A clear the clipboard refuses throws nothing into the window.
   const refusing = await copied();
