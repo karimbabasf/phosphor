@@ -768,7 +768,9 @@ export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; own
         if (!answer.ok) throw new OwnerTouchRefused(answer.error, touchSaid(answer.error));
         if (answer.op !== 'unwrap') throw new OwnerTouchRefused('garbled', 'Touch ID answered something else, so nothing was signed');
         const signed = keystore.withOwnerKey(answer.dek, (key) => {
-          if (evmAddressOf(key).toLowerCase() !== builtFor) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
+          // A header the decrypt proved edited (reaudit2 RA2-01): a move built before this touch
+          // read the forged address, whatever addresses() says now.
+          if (keystore.addressReport().tampered || evmAddressOf(key).toLowerCase() !== builtFor) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
           lastCheck?.();
           return signTypedWith(key, typed);
         });
