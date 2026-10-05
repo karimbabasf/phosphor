@@ -1287,4 +1287,7 @@ same paper is typed; a call written down in the vault move journal is never sign
 settled; a call that ran is finished at the next start from the chain's word alone. A chip whose call
 can no longer be proved dead or done (its nonce salt taken out) is never asked to sign that move
 again; a new chip carries it on. `tests/unit/rekey.test.ts` runs both directions through the
-window's routes against the vault service's own rules.
+window's routes against the vault service's own rules, and `node scripts/rekey-crash.ts` kills a
+real backend at each of the eight points of a migration and of a restore, starts it again on the same
+folder and the same stand-in keychain, and holds each of the 16 to those views (`--live` simulates
+the migration bundle on mainnet, read-only, for a throwaway account).
