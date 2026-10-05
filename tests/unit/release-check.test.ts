@@ -16,6 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { PAYLOAD, payloadDigest } from '../../scripts/payload-digest.ts';
 import {
+  CHIP_DISPATCH,
   CHIP_OPS,
   GRAMMAR_RULE,
   checkApp,
@@ -29,6 +30,7 @@ import {
   tauriEntitlements,
   versionText,
 } from '../../scripts/release-check.ts';
+import { SERVICE } from '../../scripts/signing-gate.ts';
 import { developerTools } from './helpers/no-dialog.ts';
 import { tempDir } from './helpers/tmp.ts';
 
@@ -162,11 +164,12 @@ function compile(out: string, digest: string, macos = FLOOR): void {
   fs.rmSync(source);
 }
 
-/* The vault service as the check reads it: a binary that carries the chip ops and the grammar's
-   receiver rule as strings, unless `without` names some (scripts/release-check.ts serviceProblems). */
+/* The vault service as the check reads it: a binary that carries the chip ops, the grammar's
+   receiver rule and the chip dispatch's marker as strings, unless `without` names some
+   (scripts/release-check.ts serviceProblems). */
 function compileService(out: string, without: readonly string[] = []): void {
   const source = path.join(path.dirname(out), 'service.c');
-  const carried = [...CHIP_OPS, GRAMMAR_RULE].filter((s) => !without.includes(s));
+  const carried = [...CHIP_OPS, GRAMMAR_RULE, CHIP_DISPATCH].filter((s) => !without.includes(s));
   fs.writeFileSync(source, `${carried.map((s, i) => `const char *carried${i} = "${s}";`).join('\n')}\nint main(void) { return 0; }\n`);
   execFileSync('cc', ['-O0', `-mmacosx-version-min=${FLOOR}`, '-o', out, source]);
   fs.rmSync(source);
@@ -267,10 +270,57 @@ test('a vault service built without the chip ops, or from an older grammar, fail
   }
 });
 
-test('the strings the gate requires are the service\'s own: the five ops ChipOps.swift defines and the receiver rule IntentGrammar.swift says', () => {
+/* The service as scripts/build-se-helper.sh compiles it: optimized, for the app's oldest macOS, the
+   four sources in one swiftc, with the chip flag or without it. */
+const SWIFT_SOURCES = ['main.swift', 'ChipOps.swift', 'IntentGrammar.swift', 'TokenTable.swift'].map((f) => path.join(ROOT, 'src-tauri', 'se-helper', f));
+const swiftWork = tempDir('release-check-swift-');
+const swiftc = tooling && spawnSync('swiftc', ['--version'], { env: { ...process.env, TMPDIR: swiftWork } }).status === 0;
+
+function buildService(out: string, chip: boolean): void {
+  const target = `${process.arch === 'arm64' ? 'arm64' : 'x86_64'}-apple-macos${FLOOR}`;
+  const flag = chip ? ['-D', 'PHOSPHOR_CHIP'] : [];
+  const run = spawnSync('swiftc', ['-O', ...flag, '-target', target, '-module-name', 'se_helper', '-module-cache-path', path.join(swiftWork, 'mc'), '-o', out, ...SWIFT_SOURCES], {
+    encoding: 'utf8',
+    env: { ...process.env, TMPDIR: swiftWork },
+  });
+  assert.equal(run.status, 0, `swiftc: ${run.stderr}`);
+  sign(out);
+}
+
+test('a vault service built without -D PHOSPHOR_CHIP fails, though it carries the five names and the grammar rule (reaudit2 RA2-02)', { skip: !swiftc && 'needs macOS, cc, codesign and swiftc' }, () => {
+  const checkout = fakeCheckout();
+  const flagged = fakeApp(checkout);
+  const flagless = fakeApp(checkout);
+  try {
+    buildService(path.join(flagged, SERVICE, 'Contents', 'MacOS', 'se-helper'), true);
+    const bare = path.join(flagless, SERVICE, 'Contents', 'MacOS', 'se-helper');
+    buildService(bare, false);
+    // What the check used to read is all there: ChipOps.swift and IntentGrammar.swift compile without the flag.
+    const bytes = fs.readFileSync(bare);
+    for (const text of [...CHIP_OPS, GRAMMAR_RULE]) assert.notEqual(bytes.indexOf(text), -1, `the flagless build carries ${text}`);
+    assert.equal(bytes.indexOf(CHIP_DISPATCH), -1);
+    assert.deepEqual(checkApp(flagged, checkout, 'built'), []);
+    const lacks = `the vault service lacks the chip dispatch's marker "${CHIP_DISPATCH}": it was not built with the chip vault (-D PHOSPHOR_CHIP) from this checkout's grammar`;
+    assert.deepEqual(checkApp(flagless, checkout, 'built'), [lacks]);
+    const cli = spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'release-check.ts'), '--app', flagless, '--checkout', checkout, '--stage', 'built'], { encoding: 'utf8' });
+    assert.equal(cli.status, 1);
+    assert.ok(cli.stderr.includes(lacks), cli.stderr);
+  } finally {
+    for (const app of [flagged, flagless]) fs.rmSync(path.dirname(app), { recursive: true, force: true });
+    fs.rmSync(checkout, { recursive: true, force: true });
+  }
+});
+
+test('the strings the gate requires are the service\'s own: the five ops ChipOps.swift defines, the receiver rule IntentGrammar.swift says, and the marker only the flagged dispatch holds', () => {
   const ops = fs.readFileSync(path.join(ROOT, 'src-tauri', 'se-helper', 'ChipOps.swift'), 'utf8');
   for (const op of CHIP_OPS) assert.match(ops, new RegExp(`func ${op}\\(`), op);
   assert.ok(fs.readFileSync(path.join(ROOT, 'src-tauri', 'se-helper', 'IntentGrammar.swift'), 'utf8').includes(`"${GRAMMAR_RULE}"`));
+  const [main, ...rest] = SWIFT_SOURCES.map((f) => fs.readFileSync(f, 'utf8'));
+  const from = main!.indexOf('#if PHOSPHOR_CHIP\n');
+  const gated = main!.slice(from, main!.indexOf('#endif', from));
+  assert.ok(from > 0 && gated.includes(`case "${CHIP_DISPATCH}": result = `));
+  assert.equal(main!.split(`"${CHIP_DISPATCH}"`).length, 2, 'once in main.swift');
+  for (const source of rest) assert.ok(!source.includes(CHIP_DISPATCH));
 });
 
 test('after signing, an ad-hoc signature is not a release: every binary needs the hardened runtime, the team and the signing gate', { skip: !tooling && 'needs macOS, cc and codesign' }, () => {

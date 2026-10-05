@@ -28,10 +28,13 @@
 //      asks for: the vault service, built that way, asked for macOS 15.0 inside 0.10.13. No GitHub
 //      runner has macOS 13, so this is what holds the floor; the release's smoke job starts the
 //      service on the versions that do have one;
-//   5. the vault service carries the chip vault: the five chip ops, which only -D PHOSPHOR_CHIP
-//      compiles in (their functions' names are in its symbols), and the message of the grammar's
-//      newest rule, the receiver pin (a string in it). A service built without them answers
-//      bad_input to every chip op, and one built from an older grammar signs what this one refuses;
+//   5. the vault service carries the chip vault: the five chip ops (their functions' names are in
+//      its symbols), the message of the grammar's newest rule, the receiver pin (a string in it),
+//      and the marker only main.swift's -D PHOSPHOR_CHIP dispatch holds. ChipOps.swift and
+//      IntentGrammar.swift compile without the flag, so the names and the rule are in a flagless
+//      build too, and only the marker tells (reaudit2 RA2-02). A service built without the flag
+//      answers bad_input to every chip op, and one built from an older grammar signs what this one
+//      refuses;
 //   6. signed only: the NEAR Intents verifier the release's chip vault signs for is the build it was
 //      spiked on (scripts/verifier-gate.ts, the check scripts/verifier-check.ts prints). Its owners
 //      can upgrade it, and every payload shape, event and view the vault relies on was run live on
@@ -212,6 +215,8 @@ export function minimumProblems(app: string, checkout: string): string[] {
 // The chip vault's five ops, and the message of IntentGrammar.swift's receiver rule (audit2 AU2-11).
 export const CHIP_OPS = ['chipCreate', 'chipCommit', 'chipStatus', 'chipSweep', 'signIntent'] as const;
 export const GRAMMAR_RULE = 'the chip key moves money only to the allowance its marker pins';
+// The string only main.swift's #if PHOSPHOR_CHIP dispatch holds (reaudit2 RA2-02).
+export const CHIP_DISPATCH = "the chip vault's dispatch is compiled in";
 
 /* What the shipped vault service lacks of the chip vault, read from its bytes, never by running it. */
 export function serviceProblems(app: string): string[] {
@@ -219,7 +224,11 @@ export function serviceProblems(app: string): string[] {
   const executable = fs.existsSync(service) ? bundleExecutable(service) : null;
   if (executable === null) return [`${app} has no vault service executable at ${SERVICE}`];
   const bytes = fs.readFileSync(path.join(service, 'Contents', 'MacOS', executable));
-  const wanted: [text: string, said: string][] = [...CHIP_OPS.map((op): [string, string] => [op, op]), [GRAMMAR_RULE, `the grammar rule "${GRAMMAR_RULE}"`]];
+  const wanted: [text: string, said: string][] = [
+    ...CHIP_OPS.map((op): [string, string] => [op, op]),
+    [GRAMMAR_RULE, `the grammar rule "${GRAMMAR_RULE}"`],
+    [CHIP_DISPATCH, `the chip dispatch's marker "${CHIP_DISPATCH}"`],
+  ];
   const missing = wanted.filter(([text]) => !bytes.includes(Buffer.from(text, 'utf8'))).map(([, said]) => said);
   return missing.length === 0 ? [] : [`the vault service lacks ${missing.join(', ')}: it was not built with the chip vault (-D PHOSPHOR_CHIP) from this checkout's grammar`];
 }
