@@ -247,7 +247,7 @@
     /* The size, in place: what the assistant may spend with no Touch ID. */
     var size = dom.el('form', 'vault-confirm vault-size');
     size.hidden = true;
-    size.appendChild(dom.el('p', 'vault-confirm-text', 'Your assistant spends up to this with no Touch ID. Anything over it plus 10 percent goes back to your vault on its own.'));
+    size.appendChild(dom.el('p', 'vault-confirm-text', 'Your assistant spends up to this with no Touch ID. Anything over it plus 10 percent goes back to your vault on its own. Type 0 to turn it off.'));
     refs.sizeField = amountLine('allowance-size', '$', 'Allowance size, in dollars');
     fillChips(refs.sizeField, SIZES, kit.usdShort);
     size.appendChild(refs.sizeField.line);

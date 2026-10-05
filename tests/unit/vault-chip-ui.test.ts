@@ -749,13 +749,13 @@ test('Hide words takes the words off the screen and keeps the paper: Show the wo
 
 test('after a restart the paper is typed again against the one proven before, and a paper shown before it is void', () => {
   const retype = build({ vault: { chip: chipSlice({ paper: 'retype' }) } });
-  assert.ok(said(keyRow(retype)).includes('Phosphor restarted or locked, so type the paper you wrote for this move again, all 24 words.'));
+  assert.ok(said(keyRow(retype)).includes('Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'));
   assert.equal(fields(retype).length, 24);
   assert.ok(shownButtons(keyRow(retype)).some((b: Any) => b.textContent === 'Show a new paper key'), 'no way to a new paper when the old one is lost');
   const shown = build({ vault: { chip: chipSlice({ paper: 'shown' }) } });
   assert.equal(fields(shown).length, 24, 'a paper on screen in another window is not typed back here');
   const isVoid = build({ vault: { chip: chipSlice({ paper: 'void' }) } });
-  assert.ok(said(keyRow(isVoid)).includes('The paper key shown before Phosphor restarted opens nothing. Destroy it, then write a new one.'));
+  assert.ok(said(keyRow(isVoid)).includes('The paper key shown earlier opens nothing. Destroy it, then write a new one.'));
   assert.ok(shownButtons(keyRow(isVoid)).some((b: Any) => b.textContent === 'Show a new paper key'));
 });
 
@@ -994,7 +994,7 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
   assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'done', old: 'now' });
   const oldFields = fields(w);
   assert.equal(oldFields.length, 24);
-  assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), ["confirm this Mac's Touch ID key for your vault", RESTORE_VAULT_REASON]);
+  assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), [RESTORE_VAULT_REASON, "confirm this Mac's Touch ID key for your vault"]);
   w.answer.post['/api/vault/chip/restore'] = { ok: true, run: 'r2' };
   w.answer.onRefresh = () => w.chip({ state: 'moving', run: { id: 'r2', kind: 'restore', status: 'creating', reason: null, said: null } });
   type(oldFields, OLD_PAPER);

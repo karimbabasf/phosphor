@@ -111,9 +111,10 @@
     ];
   }
 
-  // An address or a key as the Touch ID dialogs shorten it: eight and eight.
+  // An address or a key as the Touch ID dialogs shorten it: eight and eight, an address in lower case.
   function short(id) {
     var s = String(id || '');
+    if (/^0x/i.test(s)) s = s.toLowerCase();
     var prefix = s.indexOf('0x') === 0 ? '0x' : s.slice(0, s.indexOf(':') + 1);
     var body = s.slice(prefix.length);
     return body.length > 20 ? prefix + body.slice(0, 8) + '...' + body.slice(-8) : s;
@@ -350,8 +351,8 @@
     var vault = current.vault || {};
     flow.appendChild(dom.el('p', 'vault-flow-title', screen === 'restore' ? 'Restore your vault on this Mac' : 'Move your vault to Touch ID'));
     flow.appendChild(kit.text('vault-text', screen === 'restore'
-      ? 'Your paper key brings your vault here. Write a new paper key first, then type the old one: the restore adds the new paper and retires the old one.'
-      : 'After the move only this Mac\'s Touch ID key and a paper key you write by hand open your vault. Your assistant spends from a small allowance, and anything more asks for your Touch ID.'));
+      ? 'Have your old paper key with you before you start. Write a new paper key first, then type the old one: the restore puts the new paper on your vault and retires the old one.'
+      : 'After the move nothing on this Mac moves your vault\'s money without a Touch ID that names the move. Only this Mac\'s Touch ID key and a paper key you write by hand open your vault, and your assistant spends from a small allowance.'));
     refs.block = dom.el('p', 'vault-warn');
     kit.append(refs.block, kit.icon('warning', 'icon-16'));
     refs.blockText = dom.el('span', '');
@@ -498,7 +499,7 @@
     if (isVoid) {
       var gone = kit.problem();
       body.appendChild(gone);
-      kit.say(gone, 'The paper key shown before Phosphor restarted opens nothing. Destroy it, then write a new one.');
+      kit.say(gone, 'The paper key shown earlier opens nothing. Destroy it, then write a new one.');
     }
     body.appendChild(kit.text('vault-text', screen === 'restore'
       ? '24 words you write by hand. The restore puts this new paper on your vault and takes the old one off.'
@@ -681,7 +682,7 @@
     var retype = !paper && slice.paper === 'retype';
     body.appendChild(dom.el('p', 'vault-flow-title', 'Type your paper key back'));
     body.appendChild(kit.text('vault-sub', retype
-      ? 'Phosphor restarted or locked, so type the paper you wrote for this move again, all 24 words.'
+      ? 'Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'
       : 'All 24 words, from your paper, in order. It proves the paper is right before your vault depends on it.'));
     var inputs = paperFields(body, 'paper');
     refs.paperError = kit.problem();
@@ -809,7 +810,7 @@
   function drawOldStep(body) {
     body.appendChild(kit.text('vault-text', 'The 24 words of the paper you wrote when your vault moved. They never leave this Mac, and the restore retires that paper.'));
     refs.oldInputs = paperFields(body, 'old-paper');
-    drawSays(body, [['Touch ID reads', SAYS.chip], ['If it asks once more first', SAYS.restore]]);
+    drawSays(body, [['If this Mac asks for your wallet\'s key first, Touch ID reads', SAYS.restore], ['Then Touch ID reads', SAYS.chip]]);
     goTools(body, 'Restore my vault');
     dom.on(refs.go, 'click', function () {
       var read = window.PhosphorCustody.readPaper(valuesOf(refs.oldInputs));

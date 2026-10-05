@@ -180,8 +180,8 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
   Hyperliquid deposit from the vault: each one says so before anything is signed. Restore the vault
   on this Mac to spend from it here. The gas account still takes NEAR: Add NEAR shows its account
   whole, to send 0.1 to 1 NEAR to it from any NEAR wallet.
-- **A paper shown before Phosphor restarted opens nothing.** It was never added to the vault. Show a
-  new one and write that down; destroy the old one.
+- **A paper shown earlier opens nothing.** It was never added to the vault. Show a new one and write
+  that down; destroy the old one.
 - **Your vault moved, and it also holds a key Phosphor did not add.** Someone with your owner key
   added a key while the move was being signed, and that key can still move the vault's money. The
   Vault tab names it. Treat the owner key and its backup as seen by someone else: send the money in
