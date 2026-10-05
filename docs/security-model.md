@@ -1189,6 +1189,21 @@ gas        ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7
 Both owner keys are public test keys (the canonical Ethereum documentation key and the
 hyperliquid-python-sdk signing fixture), so every value above holds nothing.
 
+**A third derived key: the Hyperliquid trading key of a vault on the chip.** A moved vault's wallet
+file takes no new key, so the key plans trade with comes from the EVM key the same way:
+HKDF-SHA256, salt `phosphor`, info `phosphor/hl-agent/v<n>` (n a counter from 1, drawn again under
+`/1`, `/2` like ALLOWANCE), made at every open beside ALLOWANCE and GAS, wiped by the lock and by the
+next open, and written nowhere (`src/keystore/derived.ts`, `src/keystore/store.ts`). It trades only
+once Hyperliquid approved it. Allow trading (`POST /api/vault/trading-key/allow`, window only, no
+agent door) asks one Touch ID whose sentence is read off the signed approval and names the key and
+its days ("Let 0x... trade on your Hyperliquid account for 90 days"); the EVM key signs that
+approveAgent and is zeroed (`src/hl/agent-key.ts`). The approval carries its end (`valid_until`, 90
+days; the venue takes at most 180), one name holds one key at a time, and the counter in
+`state/vault.json` only goes up, so no approval names an address the venue approved before. From
+then on `apiWallet()` serves the derived key, never the API wallet the file holds. The key backup
+also makes the trading key, which reaches nothing the owner key does not. Its vectors, checked with
+Python's hmac, `openssl kdf` and `cast wallet address`: `tests/fixtures/hl-agent-keys.ts`.
+
 **Once a vault has moved to the chip, the EVM key is out of the session.** `state/vault.json` names
 the chip key and the vault it moved (`src/vault/prefs.ts`), and the keystore reads it at every open
 (`keepOwnerKeyOutWhen`, wired in `src/main.ts`). That session holds the Hyperliquid API wallet,

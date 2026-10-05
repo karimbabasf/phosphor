@@ -162,7 +162,8 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
 - **The gas account has no NEAR yet, or needs more.** The move is paid from the gas account, a NEAR
   account derived from your key. Add 0.1 to 1 NEAR from the Vault tab: it is a payout you click
   and confirm with Touch ID, and the dialog names the gas account. Nothing is made or signed until
-  it can pay.
+  it can pay. Once your vault is on Touch ID, the NEAR comes from your allowance; when the allowance
+  holds too little, Phosphor first moves the difference from your vault, behind one more Touch ID.
 - **Touch ID took longer than the move can wait.** Each signature lives about two minutes. Start the
   move again and answer both dialogs when they come.
 - **Your last vault move can still land on NEAR.** A call that left this Mac can run until its own

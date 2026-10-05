@@ -777,6 +777,16 @@ audit line carries a word of a paper. The rekey writes vault.json, lets the owne
 the accounts again, in that order, once NEAR says the move is done; the top-up asks the accounts
 again right before its own signature.
 
+**The trading key of a vault on the chip** (`src/http/hl-agent.ts`, `src/hl/agent-key.ts`; window
+only, none on `/api/mcp`):
+
+    GET  /api/vault/trading-key          ->  {moved, key: {address, version, validUntil, approvedAt, expired} | null, next, days}
+    POST /api/vault/trading-key/allow    ->  {ok, address, version, validUntil, days} | {ok: false, code, error, venue?}
+
+The read sits behind the read gate; the write carries the window token through `guarded()`. Allow
+trading approves the next key the open derived from the owner key with one Touch ID, and the
+runner trades with it from that moment (`keystore.apiWallet()`).
+
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
 here. Treat the balance behind these keys as the amount you are willing to lose to something that
@@ -812,7 +822,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
 
     src/main.ts        app process: state owner, wiring, HTTP + UI on 127.0.0.1:4177
     src/server.ts      the composition root: builds the context and hands it to the router
-    src/http/          the surface itself: the router, the routes, auth, SSE, /api/mcp, the log tail
+    src/http/          the surface itself: the router, the routes, auth, SSE, /api/mcp, the log tail,
+                       and the trading key's two window routes (hl-agent.ts)
     src/mcp.ts         stdio MCP server, thin proxy to the app, no approval path
     src/greeting.ts    the connect-time greeting and the index of everything an agent can do
     src/agents.ts      who is driving: the roster, roles, heartbeat TTLs, the lead
@@ -851,7 +862,8 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/drawings.ts    the objects that make the chart a shared coordinate system
     src/batch.ts       many operations, one round trip, because latency is turns not ms
     src/market/        the candle cache and the catalog: why the chart stops being late
-    src/hl/            hyperliquid: signing, msgpack, order format, liquidation maths
+    src/hl/            hyperliquid: signing, msgpack, order format, liquidation maths, and the
+                       trading key a vault on Touch ID derives, and its approval (agent-key.ts)
     src/trade/         the trading surface: raw venue state in, one payload out
     src/runner/        the only code that places an order. No model runs in this process
     src/view/          the basic screen as one pure function, and the mode itself
