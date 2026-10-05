@@ -39,14 +39,15 @@ function fakeWorld(hlUsdc = 0): World {
   const world: World = { verifier: 'ok', oneClick: 'ok', hl: 'ok', fetchImpl: fetch };
   world.fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
+    const host = new URL(url).hostname;
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-    if (url.includes('coinbase.com')) return json([[0, 0, 0, 0, 100, 0]]);
+    if (host === 'coinbase.com' || host.endsWith('.coinbase.com')) return json([[0, 0, 0, 0, 100, 0]]);
     if (url.endsWith('/v0/tokens')) {
       // The incident: no answer at all until the caller's own deadline gives up.
       if (world.oneClick === 'hang') return new Promise<Response>((_, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason)));
       return json([{ assetId: NEAR_USDC, decimals: 6, blockchain: 'near', symbol: 'USDC' }]);
     }
-    if (url.includes('hyperliquid.xyz')) {
+    if (host === 'hyperliquid.xyz' || host.endsWith('.hyperliquid.xyz')) {
       if (world.hl === 'down') return json({ error: 'busy' }, 429);
       const type = String(body?.type);
       if (type === 'clearinghouseState') return json({ marginSummary: { accountValue: '0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] });
