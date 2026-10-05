@@ -592,9 +592,9 @@
   font-feature-settings: "tnum";
 }
 
+/* The dots take the key's own shape, so Show and Hide move nothing around them. */
 .vault-secret-text[data-masked] {
   color: var(--text-3);
-  letter-spacing: 0.1em;
   -webkit-user-select: none;
   user-select: none;
 }
@@ -1144,6 +1144,11 @@
 
 @container (max-width: 520px) {
   .vault-paper-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* The check asks for three words: three to a row, so no slot stands empty. */
+.vault-paper-fields.vault-paper-check {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 @container (max-width: 400px) {
