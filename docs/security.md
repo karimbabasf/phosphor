@@ -245,7 +245,10 @@ clone, `node scripts/verifier-check.ts` reads which verifier is deployed (its ve
 of its code) and prints `spiked: yes` only for the build the Touch ID vault was tested against,
 0.4.4. Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
 `simulate_intents`, signed by keys made for that run, and check that the verifier reports exactly
-the events the app expects. Neither sends anything.
+the events the app expects. Neither sends anything. A release asks the same question: once the app
+is signed, `scripts/release-check.ts` reads the deployed verifier and stops the release on any other
+build, or when the NEAR RPC gives no answer, until someone reruns the spike on it and pins the new
+pair in `scripts/verifier-gate.ts` and `src/relay/verifier.ts`.
 
 ## The lock
 
