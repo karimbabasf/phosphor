@@ -793,6 +793,7 @@ test('the move names both Touch IDs before it asks, then shows each step as its 
   assert.ok(text.includes('This Mac\'s Touch ID key signs only for these two.'));
   assert.ok(find(row, '.vault-pins .vault-rule-value').map((n: Any) => n.textContent).includes('0x8902c5f1...3c4daede'));
   assert.equal(find(row, '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the done check does not pop');
+  assert.equal(find(row, '.vault-backup-line')[0].scrolled, true, 'the done check pops above the window');
   assert.equal(find(keyRow(w), '.vault-row-value')[0].textContent, 'Touch ID');
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'));
   // Once the allowance has a size, the sentence names its cap in dollars: $100 plus 10 percent.

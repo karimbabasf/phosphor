@@ -1082,6 +1082,8 @@
     }
     if (justDone && !refs.doneLine.dataset.popped) {
       refs.doneLine.dataset.popped = 'true';
+      // Move my vault sat at the foot of step 4: the tick pops where the person can see it.
+      kit.bringIntoView(refs.doneLine);
       kit.pop(refs.doneLine);
     }
 
