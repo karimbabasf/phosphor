@@ -499,3 +499,22 @@ test('the sweep signs only with the allowance key, and only a payload that names
     await w.stop();
   }
 });
+
+test('no price, no move with no click: a coin nothing prices is refused before anything signs, whatever the click line', async () => {
+  const w = await allowanceWorld({ policy: (p) => {
+    p.outbound.humanClickAboveUsd = 1_000_000;
+  } });
+  try {
+    w.chain.fund(w.account, ODD, usdc(500));
+    w.ledger.reread();
+    const deposit = await settledRow(w, w.svc.proposeHlDeposit({ amount: 1, symbol: 'ODD' }));
+    assert.equal(deposit.status, 'policy_refused', JSON.stringify(deposit.verdict));
+    assert.equal((deposit.verdict as { rule: string }).rule, 'invalid_amount');
+    const send = await settledRow(w, w.svc.proposeSend({ to: SINK, symbol: 'ODD', amount: 1, where: 'intents' }));
+    assert.equal(send.status, 'policy_refused');
+    assert.equal(w.chain.balanceOf(w.account, ODD), usdc(500));
+    assert.deepEqual(w.spends, [], 'nothing was signed');
+  } finally {
+    await w.stop();
+  }
+});
