@@ -798,11 +798,11 @@ Progress comes as `{type:'chip', kind:'chip', run, status, reason?, said?}` fram
 `/api/state` `vault.chip`. Its `state` reads `checking` while vault.json names no chip for a vault
 this Mac moved (the run record says done, or a marker of this Mac's names it) and NEAR has not yet
 answered for those markers; `resumeChip` writes the entry back once the chip is on the vault, and
-the tab never offers that vault a move meanwhile. `POST /api/vault/gas/fund {near}` files a NEAR payout of 0.1 to 1 NEAR
-(four places at most) to the gas account, whose id is derived from the owner key and never read
-from the body, and answers `{ok, proposal}`. Once NEAR says a move or a restore is done, the rekey
-writes vault.json, lets the owner key go and asks the accounts again, in that order; a top-up asks
-the accounts again right before its own signature.
+the tab never offers that vault a move meanwhile. `POST /api/vault/gas/fund {near}` files a NEAR
+payout of 0.1 to 1 NEAR (four places at most) to the gas account, whose id is derived from the
+owner key and never read from the body, and answers `{ok, proposal}`. Once NEAR says a move or a
+restore is done, the rekey writes vault.json, lets the owner key go and asks the accounts again, in
+that order; a top-up asks the accounts again right before its own signature.
 
 **The trading key of a vault on the chip** (`src/http/hl-agent.ts`, `src/hl/agent-key.ts`; window
 only, none on `/api/mcp`):

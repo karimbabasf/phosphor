@@ -294,10 +294,11 @@ deletes the signing keychain, signs the updater bundle with
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
 one team on every binary and the signing gate once more, and asks two NEAR RPCs run by different
 companies which intents.near is deployed: any build but the one the Touch ID vault was spiked on
-(`scripts/verifier-gate.ts`), no answer from either, or two answers that differ, stops the release. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
-app inside it, and nothing checks what else sits beside the app before the DMG is signed and
-notarized. The split keeps the secrets from the build. This check stops the build
-from changing a first-party file in the payload or adding an entitlement before signing. It
+(`scripts/verifier-gate.ts`), no answer from either, or two answers that differ, stops the
+release. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the app inside it,
+and nothing checks what else sits beside the app before the DMG is signed and notarized. The split
+keeps the secrets from the build. This check stops the build from changing a first-party file in
+the payload or adding an entitlement before signing. It
 cannot vouch for the compiled programs (the shell, the bundled Node, the Secure Enclave service)
 or for `node_modules`, which the build job made and the sign job signs as handed over; only a
 reproducible build could. The release build also does not run `npm audit signatures` or the
