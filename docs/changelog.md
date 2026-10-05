@@ -7,7 +7,7 @@ without a git tag say so.
 
 ## 0.10.17
 
-Built 2026-10-05, the swap card fix. Not tagged at the time of writing.
+Built 2026-10-05, the swap card fix. Tagged v0.10.17 on 2026-10-05.
 
 - Every move card follows its own move to the end, however many run at once. Before, the window
   carried only the newest few, and the other cards stopped where they were: after "divide my funds
