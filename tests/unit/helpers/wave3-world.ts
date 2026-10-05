@@ -300,8 +300,16 @@ export async function wave3World(
     seen.push(r);
     return (await opts.hook?.(r)) ?? { kind: 'run' };
   });
-  const probed = await relay.ask({ op: 'probe' });
+  // src/main.ts's start: the probe, then the chip markers queued right behind it, whose answer asks
+  // the owner key gate about this wallet's vault before any unlock is answered.
+  const probing = relay.ask({ op: 'probe' });
+  const marking = relay.ask({ op: 'chipStatus' }).then(() => {
+    const evm = keystore.addresses().evm;
+    if (evm !== null) gate(evm);
+  });
+  const probed = await probing;
   assert.ok(probed.ok, JSON.stringify(probed));
+  await marking;
 
   const post = (route: string, body: Record<string, unknown> = {}) => send(route, { token, ...body });
 

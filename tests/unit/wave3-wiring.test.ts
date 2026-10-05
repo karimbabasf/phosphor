@@ -9,6 +9,8 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
 
 import { recoverTypedDataAddress } from 'viem';
 import { english } from 'viem/accounts';
@@ -178,6 +180,31 @@ test('after the move, Allow trading on Hyperliquid is one Touch ID whose sentenc
     assert.throws(() => w.keystore.evmPrivateKey(), /owner_touch_required|Touch ID/, 'and the owner key stays out of the session');
   } finally {
     await w.close();
+  }
+});
+
+test('a start asks the chip markers right behind the probe, as src/main.ts does: with vault.json\'s chip entry deleted, the first unlock keeps the owner key out', { skip, timeout: 120_000 }, async () => {
+  const w = await wave3World({ papers: [PAPER] });
+  let first: Wave3World | null = w;
+  let again: Wave3World | null = null;
+  try {
+    const { vault } = await moved(w);
+    await w.close();
+    first = null;
+    const file = path.join(w.dataDir, 'vault.json');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete doc.chip;
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+
+    // Nothing here asks the service for its markers: the start does, before any unlock is answered.
+    again = await wave3World({ chain: w.chain, mac: w.mac, dataDir: w.dataDir });
+    assert.ok(again.relay.chipMarkers(vault).length > 0, 'the start learned the marker naming this vault');
+    assert.equal((await again.post('/api/vault/unlock')).json.ok, true);
+    const owner = again;
+    assert.throws(() => owner.keystore.evmPrivateKey(), /owner_touch_required|Touch ID/, 'the marker and the chain keep the owner key out');
+  } finally {
+    await first?.close();
+    await again?.close();
   }
 });
 
