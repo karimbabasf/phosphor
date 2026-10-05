@@ -858,17 +858,27 @@
 
   /* Once the vault has moved to a Touch ID key, what this row shows no longer
      opens the vault, and the allowance, the gas account and Hyperliquid are
-     still its own (docs/known-limits.md says the same), so the reveal says so
-     beside it. NEAR's reading of the wallet's key decides; with none in, a
-     vault this Mac moved does. */
-  function movedLine(what) {
+     still its own (docs/known-limits.md says the same), so the reveal and its
+     sheet say so. NEAR's reading of the wallet's key decides; with none in, a
+     vault this Mac moved does. A NEAR door NEAR reads open lets the words
+     reach the vault again, and then nothing here says otherwise. */
+  function vaultMoved() {
     var vault = (store.get() || {}).vault || {};
     var chip = vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
-    var moved = !!chip && (chip.oldOnChain === false || (chip.oldOnChain !== true && chip.state === 'done'));
-    if (!moved) return null;
+    return !!chip && chip.predecessorAuth !== true && (chip.oldOnChain === false || (chip.oldOnChain !== true && chip.state === 'done'));
+  }
+
+  function movedLine(what) {
+    if (!vaultMoved()) return null;
     return text('vault-text', what === 'key'
-      ? 'Your vault moved to a Touch ID key, so this key no longer opens it. It still opens your allowance, the gas account and Hyperliquid, so keep it like cash.'
-      : 'Your vault moved to a Touch ID key, so these words no longer open it. They still open your allowance, the gas account and Hyperliquid, so keep them like cash.');
+      ? 'Your vault moved to a Touch ID key, so this key no longer opens it.'
+      : 'Your vault moved to a Touch ID key, so these words no longer open it.');
+  }
+
+  // The lock line beside the words or the key: what whoever reads them can take.
+  function takes(what) {
+    var reads = what === 'key' ? 'reads this key' : 'reads these words';
+    return 'On this screen only. Anyone who ' + reads + ' can take ' + (vaultMoved() ? 'what your allowance, the gas account and Hyperliquid hold.' : 'your money.');
   }
 
   function drawWords(note) {
@@ -880,7 +890,7 @@
 
     var warn = dom.el('p', 'vault-warn');
     append(warn, icon('lock', 'icon-16'));
-    warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads these words can take your money.'));
+    warn.appendChild(dom.el('span', '', takes('words')));
     flow.appendChild(warn);
     var movedWords = movedLine('words');
     if (movedWords) flow.appendChild(movedWords);
@@ -929,7 +939,7 @@
     if (!words || !words.length) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet away from your Mac.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has ' + (vaultMoved() ? 'your allowance, the gas account and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', '');
     for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
     sheet.appendChild(list);
@@ -1085,7 +1095,7 @@
 
     var warn = dom.el('p', 'vault-warn');
     append(warn, icon('lock', 'icon-16'));
-    warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads this key can take your money.'));
+    warn.appendChild(dom.el('span', '', takes('key')));
     flow.appendChild(warn);
     var movedKey = movedLine('key');
     if (movedKey) flow.appendChild(movedKey);
@@ -1130,7 +1140,7 @@
     if (!groups || groups.length !== KEY_GROUPS) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor private key'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has the money. Keep this sheet away from your Mac.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has ' + (vaultMoved() ? 'your allowance, the gas account and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', 'print-key');
     for (var i = 0; i < groups.length; i += 1) list.appendChild(dom.el('li', '', groups[i]));
     sheet.appendChild(list);
