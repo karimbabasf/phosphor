@@ -224,6 +224,74 @@ What it means: the Vault tab reads the flag from the chain and says when the doo
 does, keep your key backup like cash, and move your money to a fresh wallet if anyone else may have
 that key. What closes it: nothing Phosphor controls; the switch is the verifier's.
 
+## A backend compromised after the move writes every dialog but the chip's
+
+The owner key's unwrap and the presence ask carry sentences the backend writes. A backend someone
+broke into after the move can word those dialogs as it likes, and can ask for your paper on a
+screen of its own.
+
+What it means: only a chip dialog moves money out of the vault, and the vault service writes that
+sentence from the payload it read, never the backend. Phosphor asks for the 24 words only in a move
+or a restore you started: type them nowhere else. What closes it: nothing in this build.
+
+## This Mac's login password answers the chip's dialog
+
+The vault's Touch ID key asks for you on every use, by Touch ID or this Mac's login password.
+
+What it means: a stolen Mac and its login password move the vault. Keep the password strong and the
+Mac locked when you leave it. What closes it: nothing in this build.
+
+## Every chain read trusts one NEAR RPC
+
+The app reads NEAR through one provider, FastNEAR. Phosphor checks what it can: a move is called
+done only when the whole move reads right at one block, and a top-up the RPC turned down after it
+saw the signed bundle waits on NEAR rather than reading as nothing moved. Two gaps stay. A lying
+RPC can make a top-up whose call landed look dead, because the check that calls a bundle dead
+trusts a final block whose time is not tied to its hash and asks no second RPC, and it can hide a
+forced switch of the NEAR door from the Vault tab.
+
+What it means: in the first case your next approval of the same top-up moves the money a second
+time, still inside your own accounts, and the sweep sends what is over the size back to the vault.
+What closes it: a second RPC asked before such a verdict, and a final height recorded at the send.
+
+## The chip's sentence must fit the dialog
+
+The vault service refuses any payload whose sentence would run past 120 characters, but no real
+Touch ID dialog has been read in a test yet.
+
+What it means: if a dialog ever looks cut short, cancel it. What closes it: a session on a real Mac
+that reads each sentence in the system dialog.
+
+## An unlock can keep your owner key out for the session
+
+At an unlock the app asks NEAR whether your vault moved when this Mac holds a chip marker for it
+from a move that stopped, or when it could not read the markers at its start. If NEAR answers
+after the unlock, a wallet that never moved opens without its owner key.
+
+What it means: moves from the vault are refused, saying the vault moved, until you lock and unlock
+again; nothing is signed and nothing moves. What closes it: asking NEAR before the unlock is
+answered.
+
+## The trading key's counter can be rolled back
+
+vault.json counts the trading keys the Vault tab has approved on Hyperliquid. A program running as
+you that rolls the counter back makes the next Allow trading approve an address the venue approved
+before.
+
+What it means: that key's signed actions inside the venue's nonce window, about two days, could
+replay. It cannot trade with or approve a key someone else holds: every trading key comes from your
+owner key. What closes it: deriving each trading key under its approval's own nonce.
+
+## A signed test session leaves a signing window open
+
+A maintainer's signed run of the release harness unlocks a throwaway keychain for that run, and its
+key trusts codesign, so a program running as the maintainer could sign with the Developer ID in that
+window.
+
+What it means: nothing for a copy you install; it is about the maintainer's Mac, where such a
+program could already read the signing key's file. What closes it: moving the signing keys off the
+maintainer's Mac first, and that session waits for it.
+
 ## A program running as you during the move
 
 The owner key and the paper sign the call that changes the vault's keys inside the app, not in the

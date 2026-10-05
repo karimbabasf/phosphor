@@ -363,8 +363,8 @@ your money.
   payload's own files match the tagged source and that every program carries only the committed
   entitlements, and that the vault service carries the five chip ops and the grammar's newest
   rule (a service built without them, or from an older grammar, is never signed; that is a check
-  of a few strings, not of the whole program). Nothing checks the rest of the disk image beside
-  the app. It cannot vouch for
+  of a few strings, not of how the program was built, and since the move that program is the
+  vault's last check). Nothing checks the rest of the disk image beside the app. It cannot vouch for
   the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
   installed packages, and the release build does not repeat CI's check of each package's registry
   signature. What closes it: a build anyone can reproduce byte for byte.
@@ -391,6 +391,44 @@ your money.
   (`force_enable_auth_by_predecessor_ids`), which would let that key reach a moved vault again. The
   Vault tab reads the flag from the chain and says when the door is open, with what to do, so a
   forced flip is visible. What closes it: nothing Phosphor controls; the switch is the verifier's.
+- **A backend compromised after the move writes every Touch ID dialog but the chip's.** The owner
+  key's unwrap and the presence ask carry sentences the backend writes, and such a backend can ask
+  for the paper on a screen of its own: Phosphor asks for the 24 words only in a move or a restore
+  you started. Only a chip dialog moves money out of the vault, and the vault service writes that
+  one from the payload it read. What closes it: nothing in this build.
+- **This Mac's login password answers the chip's dialog.** The chip key asks for you on every use,
+  by Touch ID or the login password, so a stolen Mac and its password move the vault. What closes
+  it: nothing in this build; keep the login password strong and the Mac locked.
+- **Every chain read trusts one NEAR RPC.** The app reads NEAR through FastNEAR alone. A lying RPC
+  can make a top-up whose call landed look dead: the settle trusts a final block whose time is not
+  tied to its hash, and asks no second RPC before it calls a bundle dead, so the next approval signs
+  again, and the money moves twice inside your own accounts. It can make a stopped move look done
+  only by lying about the whole move at one block (this Mac's key and the paper on, the owner key
+  and the NEAR door off), and it can always hide a forced switch of the NEAR door from the Vault
+  tab. What closes it: a second RPC asked before any verdict that lets a signature through, and the
+  final height recorded at the send.
+- **The chip's sentence is 120 characters at most, and the dialog must show all of it.** A payload
+  whose sentence would run longer is refused, but no real Touch ID dialog has been read in a test
+  yet. What closes it: a session on a real Mac (session S) that reads each sentence in the system
+  dialog.
+- **An unlock answered while the gate's chain read is out keeps the owner key out all session.** A
+  stale chip marker (a move stopped after the commit), or no marker known at the start (its status
+  refused), has the owner-key gate ask NEAR at the open. When the answer comes after the unlock, a
+  wallet that never moved opens without its owner key, and every move it signs is refused as if the
+  vault had moved, until a lock and an unlock. What closes it: asking the chain before the unlock
+  is answered.
+- **The trading key's counter in vault.json can be rolled back.** A program running as you that
+  rolls it back makes the next Allow trading approve an address the venue approved before, so
+  that key's signed actions inside the venue's nonce window (about two days) could replay; a
+  counter of 2^31 - 1 makes every approval ask for a reopen. It cannot make the app trade with or
+  approve a key someone else holds: every trading key is derived from the owner key. What closes
+  it: deriving each trading key under its approval's own nonce.
+- **A signed test session leaves a signing window open.** A maintainer's signed run of the release
+  harness unlocks its throwaway keychain for that run, its key trusts codesign, and the import
+  passes the p12 password on a command line, so a program running as the maintainer could sign
+  with the Developer ID in that window. It adds nothing while such a program can already read the
+  signing key's file. What closes it: moving the signing keys off the maintainer's Mac first, and
+  that session waits for it.
 - **The web gate lets a little through.** Which pages the agent chooses to read can tell those
   sites a few bits each, at most 12 pages a session and 3 a site.
 - **Grok has no web search.** With Grok in the chat, the agent cannot search the web. Give it a
