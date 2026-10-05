@@ -1109,16 +1109,27 @@ test('the gas account: its NEAR, low and empty said plainly, its id to check the
   const w = build({ vault: { chip: chipSlice({ gas: { account: GAS, near: '0.4985', low: false } }) } });
   const row = rowOf(w, 'gas');
   assert.equal(find(row, '.vault-row-value')[0].textContent, '0.4985 NEAR');
-  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault.'));
+  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault, once you move it.'));
   assert.equal(find(row, '.vault-id')[0].textContent, 'a1b2c3d4...e5f6a7b8');
   assert.ok(said(row).includes('A payout to it names a1b2c3d4...e5f6a7b8 in its Touch ID.'));
   assert.equal(find(row, '.vault-warn').filter(isShown).length, 0);
-  w.chip({ gas: { account: GAS, near: '0.04', low: true } });
+  // Before a move anyone asked for, low, empty or unread is no worry on this row.
+  for (const gas of [{ near: '0.04', low: true }, { near: '0', low: true }, { near: null, low: null }]) {
+    w.chip({ gas: { account: GAS, ...gas } });
+    assert.equal(find(row, '.vault-warn').filter(isShown).length, 0, `a warning about a move nobody asked for: ${JSON.stringify(gas)}`);
+  }
+  const fresh = build({ vault: { backedUp: false, chip: chipSlice({ state: 'none', needs: ['backup', 'gas'], gas: { account: GAS, near: '0', low: true } }) } });
+  assert.equal(find(rowOf(fresh, 'gas'), '.vault-warn').filter(isShown).length, 0, 'a wallet that never moved opens on a warning');
+  // Once a move is under way, low and empty are said plainly.
+  w.chip({ state: 'moving', gas: { account: GAS, near: '0.04', low: true } });
+  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault.'));
+  assert.equal(said(row).includes('once you move it'), false);
   assert.ok(said(row).includes('Low. Your vault\'s moves wait until it holds more NEAR.'));
   w.chip({ gas: { account: GAS, near: '0', low: true } });
   assert.ok(said(row).includes('Empty. Add NEAR before your vault can move.'));
   w.chip({ gas: { account: GAS, near: null, low: null } });
   assert.ok(said(row).includes('Phosphor could not read the gas account just now. It reads it again in a minute.'));
+  w.chip({ state: 'ready' });
 
   press(row, 'Add NEAR');
   const form = find(row, '.vault-gas-add')[0];

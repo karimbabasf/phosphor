@@ -529,6 +529,9 @@
     var empty = near !== null && Number(near) === 0;
     var low = !!gas && gas.low === true;
     dom.setText(refs.gasValue, near !== null ? near + ' NEAR' : '');
+    // Before a move anyone asked for, an empty gas account is no worry: step 2 says what to do.
+    var before = slice.state === 'none' || slice.state === 'ready';
+    dom.setText(refs.gasLine, before ? 'Pays NEAR\'s small fee for every move of your vault, once you move it.' : 'Pays NEAR\'s small fee for every move of your vault.');
     dom.setText(refs.gasLowText, !gas
       ? 'Phosphor reads the gas account once the wallet has been open.'
       : near === null
@@ -536,7 +539,7 @@
         : empty
           ? 'Empty. Add NEAR before your vault can move.'
           : 'Low. Your vault\'s moves wait until it holds more NEAR.');
-    dom.setHidden(refs.gasLow, !(low || !gas || near === null));
+    dom.setHidden(refs.gasLow, before || !(low || !gas || near === null));
     if (direct && !nothingToPay()) direct = false;
     var straight = directOf();
     dom.setText(refs.gasDirectLine, straight === 'elsewhere'
