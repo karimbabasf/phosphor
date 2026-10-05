@@ -320,6 +320,13 @@ function price(n: number): string {
 
 // ---------- the panel ----------
 
+// The places a caption names, in the words the window uses for them.
+const PLACE_WORDS: Record<string, string> = { intents: 'NEAR Intents', hyperliquid: 'the trading account' };
+
+function placesOf(places: string[]): string {
+  return places.map((p) => PLACE_WORDS[p] ?? p).join(' and ');
+}
+
 export function buildBasic(input: BasicInput): BasicView {
   const { wallet, proposals, policyReadable, killSwitch } = input;
 
@@ -344,7 +351,7 @@ export function buildBasic(input: BasicInput): BasicView {
 
   let caption: string;
   if (wallet.pending === true) caption = 'Reading your balance.';
-  else if (staleChains.length > 0) caption = totalLine === '' ? 'Still checking your balance.' : 'still checking';
+  else if (staleChains.length > 0) caption = totalLine === '' ? 'Still checking your balance.' : `still checking ${placesOf(staleChains)}`;
   else if (staleAfterWrite) caption = totalLine === '' ? 'Checking your new balance.' : 'checking your new balance';
   else if (nothingPriced) caption = `No price for ${namesOf(unpriced)} right now, so there is no total yet.`;
   else if (unpriced.length > 0) caption = `in your balance, not counting ${namesOf(unpriced)}`;
@@ -355,12 +362,13 @@ export function buildBasic(input: BasicInput): BasicView {
   if (killSwitch) warning = 'You have frozen everything. The assistant cannot move any money.';
   else if (!policyReadable) warning = 'The safety rules cannot be read, so every move is being refused.';
 
-  /* EMPTIED WHEN A PLACE COULD NOT BE READ, and only then. A list with a place missing from it
-     looks exactly like the list of someone who owns less. A read that merely predates the last
-     write is a different thing: every place answered, the figures are from a moment ago, and the
-     caption already says the new balance is being checked (2026-09-19, a $250 deposit settling
-     under "Nothing here yet"). */
-  const held = buildHoldings(wallet, staleChains.length > 0);
+  /* EMPTIED WHEN A PLACE HAS NO FIGURES AT ALL, and only then. A list with a place missing from it
+     looks exactly like the list of someone who owns less. A place whose read missed is a different
+     thing: its last good rows are in the wallet, so the list keeps them and the caption names the
+     place still being checked (2026-10-05: one missed Hyperliquid read emptied the whole list). Nor
+     is a read that merely predates the last write: every place answered, the figures are from a
+     moment ago (2026-09-19, a $250 deposit settling under "Nothing here yet"). */
+  const held = buildHoldings(wallet, (wallet.unread ?? []).length > 0);
 
   // Nothing read yet is not a place that could not be read: the caption says it is being read.
   let emptyLine: string | null = null;

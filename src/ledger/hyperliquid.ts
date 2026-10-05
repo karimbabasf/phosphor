@@ -23,6 +23,8 @@ export type HlRead = {
   openPositions: number;
   unified: boolean;
   error?: string;
+  // Set on a failed read with no good read before it: the zeros above are no figures at all.
+  unknown?: true;
 };
 
 export async function fetchHyperliquidRead(deps: HlUserSignedDeps, account: string): Promise<HlRead> {

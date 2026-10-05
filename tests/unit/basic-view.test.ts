@@ -110,7 +110,7 @@ test('a stale place keeps the last read total in the slot, and says it is still 
   const view = buildBasic(baseInput({ wallet: wallet({ rows: [row], totalUsd: 2000, stale: ['hyperliquid'] }) }));
   assert.equal(view.totalUsd, null, 'the number is not fact while a place is unread');
   assert.equal(view.totalLine, '$2,000.00');
-  assert.equal(view.caption, 'still checking');
+  assert.equal(view.caption, 'still checking the trading account', 'and names the part it is still checking');
 });
 
 test('a coin with no price keeps the total from reading as the whole, and is named', () => {
@@ -224,12 +224,18 @@ test('balances under a cent fold into one quiet line, counted with the ones the 
   assert.equal(buildBasic(baseInput({ wallet: wallet({ rows: [walletRow()], totalUsd: 100 }) })).smallLine, null);
 });
 
-test('holdings go empty exactly when a place could not be read, and the list says why', () => {
+test('holdings go empty exactly when a place has no figures at all, and the list says why', () => {
   const rows = [walletRow({ valueUsd: 100, quantity: 100 })];
-  const stale = buildBasic(baseInput({ wallet: wallet({ rows, totalUsd: 100, stale: ['intents'] }) }));
+  const stale = buildBasic(baseInput({ wallet: wallet({ rows, totalUsd: 100, stale: ['hyperliquid'], unread: ['hyperliquid'] }) }));
   assert.deepEqual(stale.holdings, [], 'a partial list is worse than no list');
   assert.equal(stale.emptyLine, 'Part of your balance could not be read just now. It shows here as soon as it can be.');
   assert.doesNotMatch(stale.emptyLine ?? '', /Nothing here/, 'an unread wallet is not an empty one');
+
+  // A place whose read missed keeps its last good rows in the wallet, so the list is whole.
+  const missed = buildBasic(baseInput({ wallet: wallet({ rows, totalUsd: 100, stale: ['intents'] }) }));
+  assert.equal(missed.holdings.length, 1);
+  assert.equal(missed.emptyLine, null);
+  assert.equal(missed.caption, 'still checking NEAR Intents');
 
   const fine = buildBasic(baseInput({ wallet: wallet({ rows, totalUsd: 100 }) }));
   assert.equal(fine.holdings.length, 1);

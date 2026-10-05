@@ -529,10 +529,13 @@
     var stale = wallet && Array.isArray(wallet.stale) && wallet.stale.indexOf('hyperliquid') >= 0;
     var funded = wallet && wallet.hyperliquid ? wallet.hyperliquid.funded : null;
     var text = '';
-    if (stale) text = 'not answering right now';
+    /* A read that missed keeps the last good figure, said to be a moment old; only an account
+       nothing has read yet has no figure to keep. */
+    if (stale && !row) text = 'not answering right now';
     else if (row && isFinite(Number(row.valueUsd))) {
       var open = row.hyperliquid && typeof row.hyperliquid.openPositions === 'number' ? row.hyperliquid.openPositions : null;
       text = dom.usd(Number(row.valueUsd)) + (open === null ? '' : ' · ' + (open === 0 ? 'no positions' : open === 1 ? '1 position' : open + ' positions'));
+      if (stale) text += ' · still checking';
     } else if (funded === false) text = 'no money in it yet';
     dom.setText(refs.tradeFigure, text);
     dom.setHidden(refs.tradeFigure, !text);
