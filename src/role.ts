@@ -23,7 +23,7 @@
 
 import { CAPABILITIES } from './greeting.ts';
 import type { Profile } from './profile/index.ts';
-import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, RESEARCH_BY_LINK, TRADING, VOICE, WINDOW, WORDS } from './persona.ts';
+import { CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, RESEARCH, RESEARCH_BY_LINK, TRADING, VAULT, VAULT_RULES, VOICE, WINDOW, WORDS } from './persona.ts';
 import { skillsInstruction } from './skills.ts';
 
 export type RoleOptions = {
@@ -106,6 +106,11 @@ export function buildRole(opts: RoleOptions): string {
     ...MONEY,
     ...TRADING,
     '',
+    'HOW THEIR WALLET AND VAULT WORK.',
+    '',
+    ...VAULT,
+    ...VAULT_RULES,
+    '',
     'RESEARCH.',
     '',
     ...(opts.webSearch === false ? RESEARCH_BY_LINK : RESEARCH),
@@ -128,9 +133,10 @@ export function buildRole(opts: RoleOptions): string {
 
 /* A persona from config.json (`driver.systemPrompt`) sets how the agent talks, and the rules that
    are facts about the code still ride with it: the chat's MCP server sends only a one-line pointer
-   to the system prompt, so a custom one would otherwise carry no rule at all. */
+   to the system prompt, so a custom one would otherwise carry no rule at all. The vault's rules
+   ride too: a voice of their own must not be the one that takes a paper key's words. */
 export function customPersona(text: string): string {
-  return [text.trim(), '', 'RULES, each a fact about the code:', ...OPERATING_RULES.map((rule, i) => `${i + 1}. ${rule}`)].join('\n');
+  return [text.trim(), '', 'RULES, each a fact about the code:', ...OPERATING_RULES.map((rule, i) => `${i + 1}. ${rule}`), ...VAULT_RULES].join('\n');
 }
 
 /* ---------- the worker ----------

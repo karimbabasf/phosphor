@@ -18,7 +18,7 @@ import { fileURLToPath } from 'node:url';
 
 import { buildRole, chatToolNames, customPersona } from '../../src/role.ts';
 import { CAPABILITIES } from '../../src/greeting.ts';
-import { CHAT_WITHHELD, OPERATING_RULES } from '../../src/persona.ts';
+import { CHAT_WITHHELD, OPERATING_RULES, VAULT_RULES } from '../../src/persona.ts';
 import { loadProfile, parseProfile, profilePath, recordLearned } from '../../src/profile/index.ts';
 import { tempDir } from './helpers/tmp.ts';
 
@@ -236,10 +236,12 @@ test('the persona is short enough to be read, and carries half the old weight', 
      one line a failed move wakes the agent for (src/http/ended.ts), and quoting every step of a
      plan of swaps before any is filed. Both together measure 10,311; the ceiling is 10,400. Asking
      them to say go once step one lands came in at no cost: 10,310, with the wNEAR line out of MONEY,
-     which propose_swap's own text carries. */
+     which propose_swap's own text carries. On 2026-10-05 the wallet and the vault came in (Karim:
+     the agent explains what is new in 0.10.15 and 0.10.16 if asked), sixteen lines that measure
+     14,554; the ceiling is 14,700. */
   const text = buildRole({ root: ROOT, view: 'trade', agent: 'Claude Code' });
   assert.ok(text.length > 3000, 'the persona got gutted');
-  assert.ok(text.length < 10_400, `the persona is ${text.length} characters`);
+  assert.ok(text.length < 14_700, `the persona is ${text.length} characters`);
 });
 
 // ---------- the knowledge profile ----------
@@ -283,4 +285,6 @@ test('a persona from config sets the voice, and the rules about the code still r
   const text = customPersona('You are my terse money bot.');
   assert.ok(text.startsWith('You are my terse money bot.'));
   for (const rule of OPERATING_RULES) assert.ok(text.includes(rule), `a custom persona lost: ${rule.slice(0, 50)}`);
+  // A voice of their own must not be the one that takes a paper key's words.
+  for (const rule of VAULT_RULES) assert.ok(text.includes(rule), `a custom persona lost: ${rule.slice(0, 50)}`);
 });
