@@ -7,7 +7,7 @@
 // whatever runs during the build (a dependency's build script, a poisoned cache) never sees an
 // Apple key. But the sign job signs whatever the build job hands it. So a build that changed a
 // first-party file would come out signed, notarized and attested as this workflow at this
-// commit. Four things are checked, and all must hold:
+// commit. Four things are checked, and all must hold, and a fifth once the app is signed:
 //
 //   1. every first-party file in the payload (PAYLOAD in scripts/payload-digest.ts) is the
 //      checkout's, byte for byte, and the payload holds no first-party file the checkout lacks;
@@ -27,7 +27,13 @@
 //      unless told otherwise, and nothing promises a binary starts on a macOS older than the one it
 //      asks for: the vault service, built that way, asked for macOS 15.0 inside 0.10.13. No GitHub
 //      runner has macOS 13, so this is what holds the floor; the release's smoke job starts the
-//      service on the versions that do have one.
+//      service on the versions that do have one;
+//   5. signed only: the NEAR Intents verifier the release's chip vault signs for is the build it was
+//      spiked on (scripts/verifier-gate.ts, the check scripts/verifier-check.ts prints). Its owners
+//      can upgrade it, and every payload shape, event and view the vault relies on was run live on
+//      one build. Another build, or no answer from the NEAR RPC, stops the release until someone
+//      reruns the spike on it and pins the new pair in scripts/verifier-gate.ts and
+//      src/relay/verifier.ts.
 //
 // What it cannot see: node_modules is installed by the build job from the lockfile and nothing
 // here rebuilds it, so (2) says the shell and the payload agree, not that the build job was
@@ -44,6 +50,7 @@ import path from 'node:path';
 
 import { PAYLOAD, SKIPPED, payloadDigest } from './payload-digest.ts';
 import { type Entitlements, entitlementProblem, machOFiles, readPlist, signatureOf, signingGate } from './signing-gate.ts';
+import { type DeployedVerifier, readDeployedVerifier, verifierProblems } from './verifier-gate.ts';
 
 export { entitlementProblem, type Entitlements };
 export type Stage = 'built' | 'signed';
@@ -240,28 +247,42 @@ export function checkApp(app: string, checkout: string, stage: Stage, options: C
   return problems;
 }
 
-function arg(name: string): string | undefined {
-  const at = process.argv.indexOf(name);
-  return at === -1 ? undefined : process.argv[at + 1];
-}
+export type CliDeps = {
+  // Which intents.near is deployed (scripts/verifier-gate.ts); the signed stage asks it once.
+  readVerifier?: () => Promise<DeployedVerifier | null>;
+  out?: (line: string) => void;
+  err?: (line: string) => void;
+};
 
-if (import.meta.main) {
+/* The command line, as an exit code: 0 passes, 1 fails, 2 is a usage error. */
+export async function releaseCheck(argv: string[], deps: CliDeps = {}): Promise<number> {
+  const arg = (name: string): string | undefined => {
+    const at = argv.indexOf(name);
+    return at === -1 ? undefined : argv[at + 1];
+  };
+  const out = deps.out ?? ((line: string) => console.log(line));
+  const err = deps.err ?? ((line: string) => console.error(line));
   const app = arg('--app');
   const checkout = arg('--checkout') ?? '.';
   const stage = arg('--stage');
   if (app === undefined || (stage !== 'built' && stage !== 'signed')) {
-    console.error('usage: node scripts/release-check.ts --app <Phosphor.app> --checkout <repo root> --stage built|signed');
-    process.exit(2);
+    err('usage: node scripts/release-check.ts --app <Phosphor.app> --checkout <repo root> --stage built|signed');
+    return 2;
   }
   const problems = checkApp(path.resolve(app), path.resolve(checkout), stage, { team: process.env.APPLE_TEAM_ID });
+  const deployed = stage === 'signed' ? await (deps.readVerifier ?? readDeployedVerifier)() : null;
+  if (stage === 'signed') problems.push(...verifierProblems(deployed));
   if (problems.length > 0) {
-    console.error(`release-check: ${app} (${stage}) FAILS:\n  ${problems.join('\n  ')}`);
-    process.exit(1);
+    err(`release-check: ${app} (${stage}) FAILS:\n  ${problems.join('\n  ')}`);
+    return 1;
   }
   const floor = versionText(supportedMacOS(path.resolve(checkout)));
-  console.log(
+  out(
     stage === 'signed'
-      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team, and every binary runs on macOS ${floor}`
+      ? `release-check: ${app} (signed) is the checkout, each binary carries its own entitlements, the vault service passes the signing gate, the hardened runtime and one team, every binary runs on macOS ${floor}, and intents.near is ${deployed?.version}, the verifier the chip vault was spiked on`
       : `release-check: ${app} (built) is the checkout, carries the committed entitlements, and every binary runs on macOS ${floor}`,
   );
+  return 0;
 }
+
+if (import.meta.main) process.exit(await releaseCheck(process.argv));

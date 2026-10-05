@@ -287,7 +287,9 @@ that the profile, the signing certificate and the release's team are one team. T
 deletes the signing keychain, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary and the signing gate once more. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
+one team on every binary and the signing gate once more, and asks the NEAR RPC which intents.near is
+deployed: any build but the one the Touch ID vault was spiked on (`scripts/verifier-gate.ts`), or
+no answer, stops the release. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
 app inside it, and nothing checks what else sits beside the app before the DMG is signed and
 notarized. The split keeps the secrets from the build. This check stops the build
 from changing a first-party file in the payload or adding an entitlement before signing. It

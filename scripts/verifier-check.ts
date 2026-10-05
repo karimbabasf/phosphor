@@ -13,15 +13,19 @@
 // src/vault/payload.ts expects. simulate_intents is a view: nothing is sent, the throwaway account
 // holds nothing, and the keys never leave this process.
 //
+// The first line is the release gate's own check (scripts/verifier-gate.ts): once the app is
+// signed, scripts/release-check.ts refuses a release on any verifier but the spiked one.
+//
 // Run: node scripts/verifier-check.ts [--simulate]
 
 import crypto from 'node:crypto';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import type { Hex } from 'viem';
 
+import { SPIKED, isSpiked, readDeployedVerifier } from './verifier-gate.ts';
 import { base58Encode } from '../src/chain/near.ts';
 import { ERC191_STANDARD, erc191SignatureField } from '../src/intents-sign.ts';
-import { SPIKED_VERIFIER, isSpikedVerifier, liveVerifier } from '../src/relay/verifier.ts';
+import { liveVerifier } from '../src/relay/verifier.ts';
 import type { SignedIntent, VerifierEvent } from '../src/relay/verifier.ts';
 import { buildVaultPayload, eventsMismatch, expectedEvents } from '../src/vault/payload.ts';
 import type { VaultIntent } from '../src/vault/payload.ts';
@@ -45,11 +49,11 @@ function noAnswer(what: string): never {
   process.exit(2);
 }
 
-const source = await asked(() => verifier.sourceMetadata!());
+const source = await readDeployedVerifier();
 if (source === null) noAnswer('intents.near');
-const spiked = isSpikedVerifier(source);
+const spiked = isSpiked(source);
 console.log(`intents.near ${source.version} ${short(source.codeHash)} spiked: ${spiked ? 'yes' : 'no'}`);
-if (!spiked) console.log(`spiked on ${SPIKED_VERIFIER.version} ${short(SPIKED_VERIFIER.codeHash)}: this build has not been tested`);
+if (!spiked) console.log(`spiked on ${SPIKED.version} ${short(SPIKED.codeHash)}: this build has not been tested`);
 if (!process.argv.includes('--simulate')) process.exit(spiked ? 0 : 1);
 
 // ---------- the live simulations ----------

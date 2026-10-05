@@ -623,7 +623,9 @@ it). After signing and before notarizing, `scripts/signing-gate.ts` checks the p
 that signed), each path's entitlements, that the service run by hand gets past AMFI (it aborts in
 `xpc_main` with 134; a refused one is killed with 137), and that the profile, the certificate and
 `APPLE_TEAM_ID` name one team. The job runs the same checks on the signed app in the DMG and in
-the update; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
+the update, plus one more: the deployed intents.near must be the build the Touch ID vault was
+spiked on (`scripts/verifier-gate.ts`, the check `scripts/verifier-check.ts` prints), or the release
+stops; the rest of the DMG is the build job's and goes unchecked. It deletes the signing keychain right
 after the script, and only then signs the updater bundle with `scripts/updater-sign.ts`, which uses
 Node's own crypto. Then the smoke job, which holds no secret, runs the service by hand from both
 signed apps on each Apple silicon macOS GitHub hosts, and nothing is published until it reaches
