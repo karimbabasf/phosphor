@@ -8,12 +8,13 @@
 // the paper with pasting off, and a slip is named by its number and never by the word; all 24 are
 // typed only where the row no longer holds them; and a lock, the tab left or Hide words takes them
 // off the screen. The screen says plainly that the paper is the only key
-// away from this Mac and that the wallet's backup also holds the allowance and the gas account.
-// Then every face of the row: the four steps, the move under way with the Touch ID sentences
-// named before they are asked, the vault that moved (who opens it, the NEAR door, a key nobody
-// added), the restore on a new Mac beside the wallet's own restore, the allowance ("$63 of
-// $100"), the gas account, the trading key, every refusal in calm words, and the agent's one line
-// while the vault moves.
+// away from this Mac and that the wallet's backup also holds the allowance and Hyperliquid.
+// Then every face of the row: two lines and one button, Secure my vault, then only the steps
+// still needed, one at a time; the move under way with the Touch ID sentences named before they
+// are asked; the vault that moved (who opens it, the NEAR door, a key nobody added); the restore
+// on a new Mac beside the wallet's own restore; the allowance ("$63 of $100"); the old fee
+// account's one quiet row; the trading key; every refusal in calm words; and the agent's one line
+// while the vault moves. Phosphor pays NEAR's fee for every vault move, so no face asks for NEAR.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -218,7 +219,6 @@ const leaks = (text: string, words: string[] = PAPER_WORDS): string[] =>
 
 const VAULT = '0x8902c5f1a1b2c3d4e5f6a7b8c9d0e1f23c4daede';
 const ALLOWANCE = '0x12ab5678a1b2c3d4e5f6a7b8c9d0e1f290abcd34';
-const GAS = 'a1b2c3d4' + '0'.repeat(48) + 'e5f6a7b8';
 const NEXT_AGENT = '0x77aa5678a1b2c3d4e5f6a7b8c9d0e1f2deadbe01';
 
 function chipSlice(over: Any = {}): Any {
@@ -230,7 +230,8 @@ function chipSlice(over: Any = {}): Any {
       predecessorAuth: true,
       otherKeys: null,
       allowance: null,
-      gas: { account: GAS, near: '0.4985', low: false },
+      // CONTRACT.md: null, or what the old fee account would send home.
+      oldGas: null,
       needs: [],
       paper: 'none',
       run: null,
@@ -368,6 +369,9 @@ function build(options: { vault?: Any; proposals?: Any[] } = {}): World {
     lock: () => { calls.push({ route: '/api/lock' }); return Promise.resolve({ ok: true }); },
     kill: () => Promise.resolve({ ok: true }),
     vaultPrefs: () => Promise.resolve({ ok: true }),
+    // The backup row's reveal, which the backup step starts: asked, then cancelled at the Touch ID.
+    vaultReveal: () => { calls.push({ route: 'reveal' }); return Promise.resolve({ ok: false, code: 'user_cancel' }); },
+    vaultRevealKey: () => { calls.push({ route: 'reveal' }); return Promise.resolve({ ok: false, code: 'user_cancel' }); },
   };
 
   createContext(sandbox);
@@ -427,7 +431,15 @@ const press = (root: Any, label: string): Any => {
   return btn;
 };
 const said = (root: Any): string => visible(root).join(' ').replace(/\s+/g, ' ');
-const stepState = (w: World): Record<string, string> => Object.fromEntries(find(keyRow(w), '.vault-step').map((s: Any) => [s.dataset.step, s.dataset.state]));
+// The one step on screen: which it is, its name, and where it sits among those still needed.
+const stepOf = (w: World): string | null => find(keyRow(w), '.vault-move-body').filter(isShown).map((b: Any) => b.dataset.step)[0] ?? null;
+const titleOf = (w: World): string | null => find(keyRow(w), '.vault-move-head .vault-flow-title').filter(isShown).map((t: Any) => t.textContent)[0] ?? null;
+const countOf = (w: World): string | null => find(keyRow(w), '.vault-move-count').filter(isShown).map((t: Any) => t.textContent)[0] ?? null;
+const hasButton = (root: Any, label: string): boolean => shownButtons(root).some((b: Any) => b.textContent === label);
+// The one button, when the row still offers it.
+const secure = (w: World): void => {
+  if (hasButton(keyRow(w), 'Secure my vault')) press(keyRow(w), 'Secure my vault');
+};
 const fields = (w: World): Any[] => find(keyRow(w), '.vault-paper-input').filter(isShown);
 const errorLine = (root: Any): string => find(root, '.vault-error').filter(isShown).map((e: Any) => e.textContent).join(' ');
 const type = (inputs: Any[], words: string[]): void => {
@@ -463,6 +475,7 @@ function screenHoldsNoWord(w: World, step: string, words: string[] = PAPER_WORDS
 async function showPaper(w: World, words: string[] = PAPER_WORDS): Promise<void> {
   w.answer.post['/api/vault/chip/phrase'] = () => ({ ok: true, words: words.slice() });
   w.answer.onRefresh = () => w.chip({ paper: 'shown' });
+  secure(w);
   press(keyRow(w), 'Show my paper key');
   await flush();
 }
@@ -493,6 +506,10 @@ test('the two screens never write markup, a clipboard, a print job, the console 
     assert.equal(/PhosphorConfirm|showModal|window\.confirm|window\.alert|alert\(/.test(source), false, `${file} opens a dialog`);
     assert.equal(/document\.title|Notification|PhosphorToast/.test(source), false, `${file} writes the title, a notification or a toast`);
   }
+  // Phosphor pays NEAR's fee for every vault move: no sentence names a gas account, no step asks for NEAR.
+  for (const [file, source] of [['chip.js', CHIP_JS], ['allowance.js', ALLOWANCE_JS], ['vault.js', VAULT_JS]] as const) {
+    assert.equal(/gas account|Add NEAR|gas\/fund/i.test(source), false, `${file} still names the gas account`);
+  }
   // The words take no selection, so a drag never puts them on the clipboard.
   assert.match(CSS, /\.vault-paper \{[^}]*user-select: none;/);
   // The Touch ID sentences the window names are the ones the app and the vault service write.
@@ -514,11 +531,11 @@ test('Your vault sits between Safety and the wallet once this copy can move a va
   const w = build();
   assert.deepEqual(find(w.view, '.vault-sec').map((s: Any) => s.dataset.surface), ['agent', 'safety', 'chip', 'wallet']);
   assert.equal(find(section(w), '.vault-title')[0].textContent, 'Your vault');
-  assert.deepEqual(find(section(w), '.vault-row').filter(isShown).map((r: Any) => r.dataset.surface), ['chip', 'gas'], 'before the move: the key and the gas account');
+  assert.deepEqual(find(section(w), '.vault-row').filter(isShown).map((r: Any) => r.dataset.surface), ['chip'], 'before the move: the key alone');
   assert.equal(keyRow(w).getAttribute('data-reveal'), 'vault-key');
 
   const cases: Array<[string, Any]> = [
-    ['a demo with no chain (state none, nothing needed)', { chip: chipSlice({ state: 'none', needs: [], gas: null, oldOnChain: null, predecessorAuth: null }) }],
+    ['a demo with no chain (state none, nothing needed)', { chip: chipSlice({ state: 'none', needs: [], oldOnChain: null, predecessorAuth: null }) }],
     ['a build with no keychain home', { chip: chipSlice({ state: 'none', needs: ['keychain'] }) }],
     ['a password wallet on a Mac with no Touch ID', { custody: 'software', enclave: { attached: true, ready: false }, chip: chipSlice({ state: 'none', needs: ['touch_id'] }) }],
     ['no wallet', { custody: null, chip: chipSlice({ state: 'none', needs: [] }) }],
@@ -530,50 +547,91 @@ test('Your vault sits between Safety and the wallet once this copy can move a va
   }
 });
 
-/* ---------- the offer: four steps ---------- */
+/* ---------- the offer: one button, then one step at a time ---------- */
 
-test('the move is four numbered steps in order, the open one first, each with the action that gets past it', async () => {
-  const w = build({ vault: { backedUp: false, chip: chipSlice({ state: 'none', needs: ['backup', 'gas'], gas: { account: GAS, near: '0', low: true } }) } });
+test('one button: two lines say what the move gives, Secure my vault opens only the steps still needed, one at a time', async () => {
+  const w = build({ vault: { backedUp: false, chip: chipSlice({ state: 'none', needs: ['backup'] }) } });
   const row = keyRow(w);
-  assert.ok(said(row).includes('Your private key opens your vault today.'));
-  assert.ok(said(row).includes('Move your vault to Touch ID'));
-  assert.deepEqual(find(row, '.vault-step-title').map((t: Any) => t.textContent),
-    ['Back up your private key', 'Add NEAR to the gas account', 'Write your paper key', 'Move your vault']);
-  assert.deepEqual(stepState(w), { backup: 'now', gas: 'next', paper: 'next', move: 'next' });
-  assert.equal(find(row, '.vault-step-body').filter(isShown).length, 1, 'more than one step is open');
-  assert.ok(said(row).includes('After the move your private key still opens your allowance, the gas account and Hyperliquid, so back it up first.'));
-  const backupRow = rowOf(w, 'backup');
-  press(row, 'Back it up first');
-  assert.equal(backupRow.scrolled, true, 'Back it up first does not take the person to the backup');
+  // Before the press: the two lines and the one button, no step and no list.
+  assert.ok(said(row).includes('Your money stays in your vault. Your assistant spends from a small allowance, and anything bigger needs your Touch ID.'));
+  assert.deepEqual(shownButtons(row).map((b: Any) => [b.textContent, b.className]), [['Secure my vault', 'btn btn-sm']]);
+  assert.equal(stepOf(w), null, 'a step before the press');
+  assert.equal(find(row, 'ol').filter(isShown).length, 0, 'a list of steps up front');
+  assert.equal(find(row, '.vault-flow').filter(isShown).length, 0, 'an empty card under the button');
+  for (const gone of ['gas', 'NEAR', 'Protect with Touch ID']) assert.equal(said(section(w)).includes(gone), false, `"${gone}" on the offer`);
 
-  // Backed up: the gas account is next, and its button opens the gas account's own step.
+  // The press: the first step still needed, the backup, as the first of three.
+  press(row, 'Secure my vault');
+  assert.equal(stepOf(w), 'backup');
+  assert.equal(titleOf(w), 'Back up your private key');
+  assert.equal(countOf(w), '1 of 3');
+  assert.equal(hasButton(row, 'Secure my vault'), false, 'the button outlived its press');
+  assert.ok(said(row).includes('After the move it still opens your allowance and Hyperliquid.'));
+  assert.equal(find(row, '.vault-move-body').filter(isShown).length, 1, 'more than one step on screen');
+  const first = shownButtons(row).find((b: Any) => b.textContent === 'Back it up') as Any;
+  assert.equal(first.focused, true, 'the press leaves the keyboard behind');
+  // Back it up starts the backup row's own reveal, there.
+  press(row, 'Back it up');
+  await flush();
+  assert.equal(rowOf(w, 'backup').scrolled, true, 'Back it up does not take the person to the backup');
+  assert.equal(w.calls.filter((c) => c.route === 'reveal').length, 1, 'Back it up did not start the reveal');
+  // Proven there: this row comes back into view for the next step.
+  row.scrolled = false;
+  assert.equal(w.sandbox.PhosphorChip.backedUp(), true);
+  assert.equal(row.scrolled, true, 'the steps did not come back into view after the backup');
+
+  // Backed up: the paper key, two of three; the backup never shows again.
   w.put({ vault: Object.assign({}, w.store.get().vault, { backedUp: true }) });
-  w.chip({ needs: ['gas'] });
-  assert.deepEqual(stepState(w), { backup: 'done', gas: 'now', paper: 'next', move: 'next' });
-  assert.ok(said(row).includes('Backed up.'));
-  assert.ok(said(row).includes('It holds 0 NEAR, and the move needs more.'));
-  press(row, 'Add NEAR');
-  const gas = rowOf(w, 'gas');
-  assert.equal(gas.scrolled, true);
-  assert.equal(find(gas, '.vault-gas-add')[0].hidden, false, 'Add NEAR does not open the gas account\'s step');
-
-  // Funded: the paper is next (with nothing left to need, the backend reads the vault ready).
-  w.chip({ state: 'ready', needs: [], gas: { account: GAS, near: '0.4985', low: false } });
-  assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'now', move: 'next' });
-  assert.ok(said(row).includes('0.4985 NEAR, enough for the move.'));
+  w.chip({ state: 'ready', needs: [] });
+  assert.equal(stepOf(w), 'paper');
+  assert.equal(titleOf(w), 'Write your paper key');
+  assert.equal(countOf(w), '2 of 3');
+  assert.equal(said(row).includes('Back up your private key'), false, 'a done step still shows');
   assert.ok(said(row).includes('24 words you write by hand. With this Mac, they are the only key to your vault.'));
+
+  // Paper checked: the move, three of three, its fee Phosphor's.
+  w.chip({ paper: 'proven' });
+  assert.equal(stepOf(w), 'move');
+  assert.equal(titleOf(w), 'Move your vault');
+  assert.equal(countOf(w), '3 of 3');
+  assert.ok(said(row).includes('Phosphor pays NEAR\'s fee for every vault move, as it does for swaps.'));
+
+  // The tab left: the row is its one button again, and the press opens where the move stands.
+  w.leave();
+  assert.deepEqual(shownButtons(row).map((b: Any) => b.textContent), ['Secure my vault']);
+  assert.equal(stepOf(w), null);
+  assert.equal(w.sandbox.PhosphorChip.backedUp(), false, 'no step open, yet the row took the view from the backup');
+  press(row, 'Secure my vault');
+  assert.equal(stepOf(w), 'move');
+  assert.equal(countOf(w), null, 'a count for the one step left');
 });
 
-test('a wallet that cannot move yet says why in one line, with the way past it where there is one', () => {
-  const locked = build({ vault: { chip: chipSlice({ state: 'none', needs: ['open', 'gas'] }) } });
+test('a wallet that cannot move yet says why in one line; a password wallet\'s press opens the password card first', () => {
+  const locked = build({ vault: { chip: chipSlice({ state: 'none', needs: ['open'] }) } });
   assert.ok(said(keyRow(locked)).includes('Open your wallet to go on.'));
-  assert.equal(find(keyRow(locked), '.vault-step-body').filter(isShown).length, 0);
-  const password = build({ vault: { custody: 'software', enclave: { attached: true, ready: true }, chip: chipSlice({ state: 'none', needs: ['touch_id', 'gas'] }) } });
-  assert.ok(said(keyRow(password)).includes('Your wallet opens with a password. Move it behind Touch ID first; your vault moves after that.'));
-  press(keyRow(password), 'Protect with Touch ID');
-  assert.equal(password.sandbox.document.getElementById('screen-migrate').hidden, false, 'Protect with Touch ID does not open the move behind Touch ID');
+  assert.deepEqual(shownButtons(keyRow(locked)), [], 'a button that can do nothing yet');
   const outside = build({ vault: { enclave: { attached: false, ready: false }, chip: chipSlice({ state: 'none', needs: ['touch_id'] }) } });
   assert.ok(said(keyRow(outside)).includes('Touch ID only works inside the Phosphor app. Open the app to move your vault.'));
+  assert.deepEqual(shownButtons(keyRow(outside)), []);
+
+  const password = build({ vault: { custody: 'software', enclave: { attached: true, ready: true }, backedUp: false, chip: chipSlice({ state: 'none', needs: ['touch_id', 'backup'] }) } });
+  const card = password.sandbox.document.getElementById('screen-migrate');
+  assert.equal(hasButton(keyRow(password), 'Protect with Touch ID'), false, 'the password button sits beside the one button');
+  press(keyRow(password), 'Secure my vault');
+  assert.equal(card.hidden, false, 'Secure my vault does not open the password card');
+  // Behind the card, its step: the first of four, with its own way back to the card.
+  assert.equal(stepOf(password), 'touch');
+  assert.equal(titleOf(password), 'Turn on Touch ID');
+  assert.equal(countOf(password), '1 of 4');
+  assert.ok(said(keyRow(password)).includes('Your wallet still opens with a password. Type it once, and Touch ID opens it from now on.'));
+  card.hidden = true;
+  press(keyRow(password), 'Protect with Touch ID');
+  assert.equal(card.hidden, false, 'the step\'s button does not open the password card');
+  // Behind Touch ID now: the backup, two of four.
+  password.put({ vault: Object.assign({}, password.store.get().vault, { custody: 'secure-enclave' }) });
+  password.chip({ needs: ['backup'] });
+  assert.equal(stepOf(password), 'backup');
+  assert.equal(countOf(password), '2 of 4');
 });
 
 /* ---------- the paper key ---------- */
@@ -592,7 +650,7 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   // Rule 1, on the phrase screen, for a wallet whose backup is its private key.
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'), text);
   // Hyperliquid too, which can hold more than both; before the move the allowance has no size to name.
-  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
+  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, more while a move is under way) and your Hyperliquid account, so keep both like cash.'), text);
   assert.ok(text.includes('On this screen only. Anyone who reads these words can open your vault.'));
   assert.ok(text.includes('Under the words, write your vault\'s address:'));
   assert.equal(find(row, '.vault-mono')[0].textContent, VAULT);
@@ -605,7 +663,7 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   // A recovery phrase wallet's second sentence names its phrase.
   const phrase = build({ vault: { hasMnemonic: true } });
   await showPaper(phrase);
-  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
+  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way) and your Hyperliquid account, so keep both like cash.'));
 });
 
 test('the paper key opens at its warning: the lock line comes into view, and the focus on I wrote it down scrolls nothing past it', async () => {
@@ -719,8 +777,10 @@ test('the check: three words at random places, typed only, a slip named by its n
   assert.deepEqual([...(proven[0]?.words ?? [])], PAPER_WORDS);
   screenHoldsNoWord(w, 'proven');
   holdsNoWord(w, 'proven');
-  assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'done', move: 'now' });
-  assert.ok(said(row).includes('Checked.'));
+  // Checked: the move, the second of the two steps this wallet needed.
+  assert.equal(stepOf(w), 'move');
+  assert.equal(countOf(w), '2 of 2');
+  assert.equal(said(row).includes('Check three words'), false, 'a done step still shows');
 });
 
 test('a lock, the tab left and Hide words each take the paper off the screen and out of the fields', async () => {
@@ -775,15 +835,20 @@ test('Hide words takes the words off the screen and keeps the paper: Show the wo
 
 test('after a restart the paper is typed again against the one proven before, and a paper shown before it is void', () => {
   const retype = build({ vault: { chip: chipSlice({ paper: 'retype' }) } });
+  secure(retype);
+  assert.equal(titleOf(retype), 'Type your paper key again');
   assert.ok(said(keyRow(retype)).includes('Phosphor forgets a checked paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'));
   assert.equal(fields(retype).length, 24);
   assert.ok(shownButtons(keyRow(retype)).some((b: Any) => b.textContent === 'Show a new paper key'), 'no way to a new paper when the old one is lost');
   // A paper this row no longer holds (a lock, the tab left) is typed whole, or a new one is shown.
   const shown = build({ vault: { chip: chipSlice({ paper: 'shown' }) } });
+  secure(shown);
+  assert.equal(titleOf(shown), 'Type your paper key');
   assert.equal(fields(shown).length, 24, 'a paper on screen in another window is not typed back here');
   assert.ok(said(keyRow(shown)).includes('The words left this screen before you checked them. Type all 24 from your paper, or show a new paper key.'));
   assert.ok(shownButtons(keyRow(shown)).some((b: Any) => b.textContent === 'Show a new paper key'));
   const isVoid = build({ vault: { chip: chipSlice({ paper: 'void' }) } });
+  secure(isVoid);
   assert.ok(said(keyRow(isVoid)).includes('The paper key shown earlier opens nothing. Destroy it, then write a new one.'));
   assert.ok(shownButtons(keyRow(isVoid)).some((b: Any) => b.textContent === 'Show a new paper key'));
 });
@@ -793,6 +858,7 @@ test('after a restart the paper is typed again against the one proven before, an
 test('the move names both Touch IDs before it asks, then shows each step as its frame arrives, and lands on the done state', async () => {
   const w = build({ vault: { chip: chipSlice({ paper: 'proven' }) } });
   const row = keyRow(w);
+  secure(w);
   assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), [MOVE_VAULT_REASON, "confirm this Mac's Touch ID key for your vault"]);
   assert.ok(said(row).includes('Cancel any Touch ID that reads anything else. While the move runs, your assistant\'s moves wait.'));
   w.answer.post['/api/vault/chip/move'] = { ok: true, run: 'r1' };
@@ -826,7 +892,7 @@ test('the move names both Touch IDs before it asks, then shows each step as its 
   assert.equal(find(keyRow(w), '.vault-row-value')[0].textContent, 'Touch ID');
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'));
   // Once the allowance has a size, the sentence names its cap in dollars: $100 plus 10 percent.
-  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, $110 now, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
+  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, $110 now, more while a move is under way) and your Hyperliquid account, so keep both like cash.'), text);
   holdsNoWord(w, 'done');
   // Back on the tab later, the moment has rested: the row says who opens the vault.
   w.leave();
@@ -882,16 +948,14 @@ test('a done frame that beats the state lands on the done moment, never back on 
   const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r5', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
   w.frame({ run: 'r5', status: 'done' });
   const row = keyRow(w);
-  assert.equal(find(row, '.vault-step').length, 0, 'the steps came back between the last frame and the state');
+  assert.equal(find(row, '.vault-move-body').length, 0, 'the steps came back between the last frame and the state');
   assert.ok(said(row).includes('Your vault is on this Mac\'s Touch ID key.'));
 });
 
 test('a move that stops says why in calm words, with the action that helps beside Try again', async () => {
   const cases: Array<[string, string, string | null]> = [
     ['user_cancel', 'Touch ID was cancelled. Nothing changed.', null],
-    ['gas_low', String(refusal('gas_low').error), 'Add NEAR'],
-    ['gas_unfunded', String(refusal('gas_unfunded').error), 'Add NEAR'],
-    ['not_backed_up', String(refusal('not_backed_up').error), 'Back it up first'],
+    ['not_backed_up', String(refusal('not_backed_up').error), 'Back it up'],
     ['wrong_paper', String(chipRefusal('wrong_paper').error), 'Show a new paper key'],
     ['rekey_slow', String(chipRefusal('rekey_slow').error), null],
     ['events_mismatch', String(refusal('events_mismatch').error), null],
@@ -899,6 +963,8 @@ test('a move that stops says why in calm words, with the action that helps besid
   for (const [code, words, fix] of cases) {
     const w = build({ vault: { chip: chipSlice({ paper: 'proven', run: { id: 'r9', kind: 'migrate', status: 'failed', reason: code, said: String(chipRefusal(code).error) } }) } });
     const row = keyRow(w);
+    // A move that failed opens on its step with no press, so the reason is read where it happened.
+    assert.equal(stepOf(w), 'move', code);
     assert.equal(errorLine(row), words, code);
     const tone = find(row, '.vault-error').filter(isShown)[0].getAttribute('data-tone');
     assert.equal(tone, code === 'user_cancel' ? 'quiet' : null, `${code}: a cancel reads as a warning, or a refusal as a choice`);
@@ -910,15 +976,16 @@ test('a move that stops says why in calm words, with the action that helps besid
   // A frame from a move that ended never stands in for a later one the state names.
   const later = build({ vault: { chip: chipSlice({ paper: 'proven' }) } });
   later.frame({ run: 'r-old', status: 'done' });
-  later.chip({ run: { id: 'r-new', kind: 'migrate', status: 'failed', reason: 'gas_low', said: String(refusal('gas_low').error) } });
-  assert.equal(errorLine(keyRow(later)), String(refusal('gas_low').error), 'an old run\'s frame hid the new run\'s failure');
-  assert.ok(shownButtons(keyRow(later)).some((b: Any) => b.textContent === 'Add NEAR'));
+  later.chip({ run: { id: 'r-new', kind: 'migrate', status: 'failed', reason: 'not_backed_up', said: String(refusal('not_backed_up').error) } });
+  assert.equal(errorLine(keyRow(later)), String(refusal('not_backed_up').error), 'an old run\'s frame hid the new run\'s failure');
+  assert.ok(hasButton(keyRow(later), 'Back it up'));
   // Text the service wrote for its logs never reaches the row, whatever carried it.
   const raw = build({ vault: { chip: chipSlice({ paper: 'proven', run: { id: 'r9', kind: 'migrate', status: 'failed', reason: 'crypto_failed', said: 'keychain key -25300' } }) } });
   assert.equal(errorLine(keyRow(raw)), 'That did not finish, so nothing changed. Try again.');
   // A route's refusal at the click: said the same way.
   const w = build({ vault: { chip: chipSlice({ paper: 'proven' }) } });
   w.answer.post['/api/vault/chip/move'] = chipRefusal('rekey_busy');
+  secure(w);
   press(keyRow(w), 'Move my vault');
   await flush();
   assert.equal(errorLine(keyRow(w)), String(chipRefusal('rekey_busy').error));
@@ -936,7 +1003,7 @@ test('every refusal the vault\'s routes and frames can carry is a calm sentence 
   const hlSaid = [...hlBlock.matchAll(/'((?:[^'\\]|\\.)+)'/g)].map((m) => (m[1] as string).replace(/\\'/g, "'")).filter((s) => /^[A-Z]/.test(s));
   assert.ok(hlSaid.length >= 10, `read ${hlSaid.length} sentences off src/http/hl-agent.ts`);
   const shared = ['grammar', 'wrong_signer', 'chip_missing', 'chip_payload', 'chip_answer', 'vault_bundle', 'vault_journal', 'simulate_unavailable', 'simulate_refused', 'events_mismatch',
-    'vault_settling', 'vault_pending', 'vault_checking', 'vault_mismatch', 'vault_unknown', 'gas_low', 'gas_unfunded', 'gas_key_missing', 'rpc_unavailable', 'invalid_request', 'chip_unsupported',
+    'vault_settling', 'vault_pending', 'vault_checking', 'vault_mismatch', 'vault_unknown', 'rpc_unavailable', 'invalid_request', 'chip_unsupported',
     'not_backed_up', 'wallet_locked', 'enclave_unavailable', 'keychain_unavailable', 'user_cancel', 'timeout', 'auth_failed', 'interaction_required', 'crypto_failed', 'no_key', 'not_committed'];
   const sentences: Array<[string, string]> = [
     ...chipCodes.map((code): [string, string] => [code, String(chipRefusal(code).error)]),
@@ -964,7 +1031,7 @@ test('a vault that moved says who opens it, as NEAR reads it, with the NEAR door
   const headline = (): string => find(row, '.vault-row-main .vault-text')[0].textContent;
   assert.equal(headline(), 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.');
   assert.ok(said(row).includes('A back way in for your private key, through NEAR. The move shut it, and Phosphor checks it each time it reads your vault.'));
-  assert.ok(said(row).includes('It still opens your allowance, the gas account and Hyperliquid.'));
+  assert.ok(said(row).includes('It still opens your allowance and Hyperliquid.'));
   assert.equal(find(row, '.vault-backup-line').filter(isShown).length, 0, 'the done moment shows on every open, not only after the move');
   assert.equal(find(row, '.vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 0);
 
@@ -1009,8 +1076,12 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
   const w = build({ vault: { chip: chipSlice({ state: 'broken', oldOnChain: false, predecessorAuth: false }) } });
   const row = keyRow(w);
   assert.ok(said(row).includes('Your vault answers to a Touch ID key this Mac does not have.'));
-  assert.ok(said(row).includes('Restore your vault on this Mac'));
-  assert.deepEqual(find(row, '.vault-step-title').map((t: Any) => t.textContent), ['Back up your private key', 'Add NEAR to the gas account', 'Write a new paper key', 'Type your old paper key']);
+  assert.ok(said(row).includes('Have your old paper key with you before you start.'));
+  // No press: the restore is the only way on, so its first step still needed shows, in its own order.
+  assert.equal(hasButton(row, 'Secure my vault'), false, 'the move\'s button on a restore');
+  assert.equal(stepOf(w), 'paper');
+  assert.equal(titleOf(w), 'Write a new paper key');
+  assert.equal(countOf(w), '1 of 2');
   // Beside the wallet's restore, which says what the vault needs.
   const restoreRow = rowOf(w, 'recovery');
   assert.ok(said(restoreRow).includes('Your wallet is back. Your vault comes back with your paper key.'));
@@ -1020,7 +1091,9 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
   await showPaper(w);
   press(row, 'I wrote it down');
   await proveRight(w);
-  assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'done', old: 'now' });
+  assert.equal(stepOf(w), 'old');
+  assert.equal(titleOf(w), 'Type your old paper key');
+  assert.equal(countOf(w), '2 of 2');
   const oldFields = fields(w);
   assert.equal(oldFields.length, 24);
   assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), [RESTORE_VAULT_REASON, "confirm this Mac's Touch ID key for your vault"]);
@@ -1054,12 +1127,13 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
 });
 
 test('a vault moved here whose vault.json lost its chip entry reads one calm checking line, never the offer to move it, until NEAR answers', () => {
-  const w = build({ vault: { chip: chipSlice({ state: 'checking', needs: ['open', 'gas'], oldOnChain: null, predecessorAuth: null, gas: null }) } });
+  const w = build({ vault: { chip: chipSlice({ state: 'checking', needs: ['open'], oldOnChain: null, predecessorAuth: null }) } });
   const row = keyRow(w);
   assert.ok(isShown(section(w)), 'the section shows while it checks');
   assert.ok(said(row).includes('Checking which keys open your vault, with NEAR. This takes a moment.'));
-  for (const offer of ['opens your vault today', 'Move your vault to Touch ID', 'Restore your vault on this Mac']) assert.equal(said(row).includes(offer), false, offer);
-  assert.equal(find(row, '.vault-step').filter(isShown).length, 0, 'no steps while it checks');
+  for (const offer of ['Your money stays in your vault', 'Secure my vault', 'Have your old paper key']) assert.equal(said(row).includes(offer), false, offer);
+  assert.equal(stepOf(w), null, 'a step while it checks');
+  assert.equal(find(row, '.vault-flow').filter(isShown).length, 0, 'an empty card under the checking line');
   for (const line of visible(row)) assert.equal(JARGON.test(line), false, line);
   // NEAR answered and vault.json names the chip again: who opens the vault.
   w.chip(MOVED());
@@ -1068,11 +1142,16 @@ test('a vault moved here whose vault.json lost its chip entry reads one calm che
 
 test('a restore that a failure or a restart cut short goes back to its own steps, never the move\'s', () => {
   const failed = build({ vault: { chip: chipSlice({ state: 'moving', oldOnChain: false, paper: 'retype', run: { id: 'r3', kind: 'restore', status: 'failed', reason: 'user_cancel', said: 'Touch ID was cancelled. Nothing changed.' } }) } });
-  assert.ok(said(keyRow(failed)).includes('Restore your vault on this Mac'));
+  assert.ok(said(keyRow(failed)).includes('Your vault answers to a Touch ID key this Mac does not have.'));
+  assert.equal(titleOf(failed), 'Type your paper key again');
   const restarted = build({ vault: { chip: chipSlice({ state: 'moving', oldOnChain: false, paper: 'retype', run: null }) } });
-  assert.ok(said(keyRow(restarted)).includes('Restore your vault on this Mac'));
+  assert.ok(said(keyRow(restarted)).includes('Have your old paper key with you before you start.'));
+  assert.equal(titleOf(restarted), 'Type your paper key again');
+  // A move a restart cut short opens on its step with no press: the paper typed again, then Try again.
   const migrate = build({ vault: { chip: chipSlice({ state: 'moving', oldOnChain: true, paper: 'retype', run: null }) } });
-  assert.ok(said(keyRow(migrate)).includes('Move your vault to Touch ID'));
+  assert.ok(said(keyRow(migrate)).includes('Your money stays in your vault.'));
+  assert.equal(hasButton(keyRow(migrate), 'Secure my vault'), false);
+  assert.equal(titleOf(migrate), 'Type your paper key again');
 });
 
 /* ---------- the allowance ---------- */
@@ -1155,150 +1234,64 @@ test('the two-touch card says the move\'s own Touch ID comes first, then the one
   assert.ok(line.startsWith('Your allowance holds '), 'src/proposals/execute.ts askedFor keys on this start');
 });
 
-/* ---------- the gas account ---------- */
+/* ---------- the old fee account ---------- */
 
-test('the gas account: its NEAR, low and empty said plainly, its id to check the Touch ID against, and a refill on its card', async () => {
-  const w = build({ vault: { chip: chipSlice({ gas: { account: GAS, near: '0.4985', low: false } }) } });
-  const row = rowOf(w, 'gas');
-  assert.equal(find(row, '.vault-row-value')[0].textContent, '0.4985 NEAR');
-  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault, once you move it.'));
-  assert.equal(find(row, '.vault-id')[0].textContent, 'a1b2c3d4...e5f6a7b8');
-  assert.ok(said(row).includes('A payout to it names a1b2c3d4...e5f6a7b8 in its Touch ID.'));
-  assert.equal(find(row, '.vault-warn').filter(isShown).length, 0);
-  // Before a move anyone asked for, low, empty or unread is no worry on this row.
-  for (const gas of [{ near: '0.04', low: true }, { near: '0', low: true }, { near: null, low: null }]) {
-    w.chip({ gas: { account: GAS, ...gas } });
-    assert.equal(find(row, '.vault-warn').filter(isShown).length, 0, `a warning about a move nobody asked for: ${JSON.stringify(gas)}`);
-  }
-  const fresh = build({ vault: { backedUp: false, chip: chipSlice({ state: 'none', needs: ['backup', 'gas'], gas: { account: GAS, near: '0', low: true } }) } });
-  assert.equal(find(rowOf(fresh, 'gas'), '.vault-warn').filter(isShown).length, 0, 'a wallet that never moved opens on a warning');
-  // Once a move is under way, low and empty are said plainly.
-  w.chip({ state: 'moving', gas: { account: GAS, near: '0.04', low: true } });
-  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault.'));
-  assert.equal(said(row).includes('once you move it'), false);
-  assert.ok(said(row).includes('Low. Your vault\'s moves wait until it holds more NEAR.'));
-  w.chip({ gas: { account: GAS, near: '0', low: true } });
-  assert.ok(said(row).includes('Empty. Add NEAR before your vault can move.'));
-  w.chip({ gas: { account: GAS, near: null, low: null } });
-  assert.ok(said(row).includes('Phosphor could not read the gas account just now. It reads it again in a minute.'));
-  w.chip({ state: 'ready' });
+test('NEAR left in the old fee account is one quiet row with Send to my vault, and no row at all when none is left', async () => {
+  const none = build({ vault: { chip: MOVED() } });
+  assert.equal(isShown(rowOf(none, 'old-fee')), false, 'a row for an old fee account with nothing in it');
+  assert.deepEqual(find(section(none), '.vault-row').filter(isShown).map((r: Any) => r.dataset.surface), ['chip', 'allowance']);
+  // Right under the move, across the section, while it shows.
+  const moved = build({ vault: { chip: MOVED({ oldGas: { near: '1.2' } }) } });
+  assert.deepEqual(find(section(moved), '.vault-row').filter(isShown).map((r: Any) => r.dataset.surface), ['chip', 'old-fee', 'allowance']);
+  assert.ok(String(rowOf(moved, 'old-fee').className).split(' ').includes('vault-row-wide'));
 
-  press(row, 'Add NEAR');
-  const form = find(row, '.vault-gas-add')[0];
-  assert.deepEqual(find(form, '.vault-chip').map((c: Any) => c.textContent), ['0.25', '0.5', '1']);
-  assert.ok(said(form).includes('From your vault, as a payout on NEAR. Its card in the conversation waits for your click, then one Touch ID names the gas account.'));
-  assert.equal(shownButtons(form)[shownButtons(form).length - 2].textContent, 'Add 0.5 NEAR');
-  find(form, '.vault-money-input')[0].value = '2';
-  form.dispatch('submit');
-  assert.equal(errorLine(form), 'Add between 0.1 and 1 NEAR, with four places at most.');
-  find(form, '.vault-money-input')[0].value = '0.5';
-  w.answer.post['/api/vault/gas/fund'] = { ok: true, proposal: { id: 'p-gas', status: 'pending' } };
-  form.dispatch('submit');
+  const w = build({ vault: { chip: chipSlice({ oldGas: { near: '0.4955' } }) } });
+  const row = rowOf(w, 'old-fee');
+  assert.ok(isShown(row));
+  assert.deepEqual(find(section(w), '.vault-row').filter(isShown).map((r: Any) => r.dataset.surface), ['chip', 'old-fee']);
+  assert.equal(find(row, '.vault-row-title')[0].textContent, '0.4955 NEAR is left in the old fee account');
+  assert.deepEqual(shownButtons(row).map((b: Any) => [b.textContent, b.className]), [['Send to my vault', 'btn btn-ghost btn-sm']]);
+  assert.equal(said(row).includes('Sent.'), false);
+
+  // A refusal is the route's own sentence, and the button stays for another try.
+  const words = 'Open your wallet first, then send it again. Nothing moved.';
+  w.answer.post['/api/vault/gas/return'] = { ok: false, code: 'wallet_locked', error: words };
+  press(row, 'Send to my vault');
   await flush();
-  assert.deepEqual(w.calls.filter((c) => c.route === '/api/vault/gas/fund').map((c) => c.near), [0.5]);
-  assert.ok(said(row).includes('Your payout of 0.5 NEAR is on its card in the conversation. Approve it there; its Touch ID names the gas account.'));
-  // A card that never waited keeps its line until the tab is left.
-  press(row, 'Add NEAR');
-  w.answer.post['/api/vault/gas/fund'] = { ok: true, proposal: { id: 'p-gas-2', status: 'policy_refused' } };
-  form.dispatch('submit');
+  const asks = w.calls.filter((c) => c.route === '/api/vault/gas/return');
+  assert.deepEqual(asks.map((c) => Object.keys(c).sort()), [['route', 'touch']], 'the body is not {}');
+  assert.equal(asks[0].touch, false, 'it waits like a Touch ID route, and it has none');
+  assert.equal(errorLine(row), words);
+  assert.ok(hasButton(row, 'Send to my vault'));
+  // Words written for a log never reach the row; a route that answers 409 is said the same way.
+  w.answer.post['/api/vault/gas/return'] = { ok: false, code: 'gas_return_failed', error: 'rpc_unavailable: 502' };
+  press(row, 'Send to my vault');
   await flush();
-  w.put({ proposals: [{ id: 'p-gas-2', status: 'policy_refused' }] });
-  assert.ok(said(row).includes('Its card in the conversation says why the payout of 0.5 NEAR did not go ahead.'));
+  assert.equal(errorLine(row), 'Phosphor could not send it just now. Try again in a minute.');
+  w.answer.post['/api/vault/gas/return'] = Object.assign(new Error('The old fee account holds nothing to send. Nothing moved.'), { status: 409 });
+  press(row, 'Send to my vault');
+  await flush();
+  assert.equal(errorLine(row), 'The old fee account holds nothing to send. Nothing moved.');
+
+  // Sent: the done line pops, the button goes, and the row keeps its answer past the next read.
+  w.answer.post['/api/vault/gas/return'] = { ok: true, near: '0.4955', txHash: '9xQe1Lk' };
+  w.answer.onRefresh = () => w.chip({ oldGas: null });
+  const kit = w.sandbox.PhosphorVault.kit;
+  const popped: Any[] = [];
+  const pop = kit.pop;
+  kit.pop = (node: Any) => { popped.push(node); pop(node); };
+  press(row, 'Send to my vault');
+  await flush();
+  assert.ok(said(row).includes('Sent. It shows in your vault in a minute.'));
+  assert.deepEqual(popped, [find(row, '.vault-backup-line')[0]], 'the done line does not pop');
+  assert.equal(errorLine(row), '');
+  assert.deepEqual(shownButtons(row), []);
+  assert.equal(isShown(row), true, 'the answer went with the read that found the account empty');
+  assert.equal(said(row).includes('9xQe1Lk'), false, 'a transaction hash on the row');
+  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
+  // The tab left with the account empty: no row.
   w.leave();
-  assert.equal(said(row).includes('did not go ahead'), false, 'the line outlived the tab');
-  // A refusal is the route's own sentence.
-  press(row, 'Add NEAR');
-  w.answer.post['/api/vault/gas/fund'] = chipRefusal('fund_amount');
-  form.dispatch('submit');
-  await flush();
-  assert.equal(errorLine(form), String(chipRefusal('fund_amount').error));
-  // Once the vault has moved, the NEAR comes from the allowance.
-  const moved = build({ vault: { chip: MOVED() } });
-  press(rowOf(moved, 'gas'), 'Add NEAR');
-  assert.ok(said(rowOf(moved, 'gas')).includes('From your allowance, as a payout on NEAR.'));
-});
-
-test('step 2 for a vault that holds no NEAR: Add NEAR shows the gas account whole with Copy and the swap that fills the vault, never a payout bound to fail', async () => {
-  const w = build({ vault: { backedUp: true, chip: chipSlice({ state: 'none', needs: ['gas'], gas: { account: GAS, near: '0', low: true }, sourceNear: 0 }) } });
-  const copied: string[] = [];
-  w.sandbox.PhosphorNetPick.copyChecked = (value: string, say: (words: string) => void) => {
-    copied.push(value);
-    say('Account copied, ends in ...' + value.slice(-6));
-    return Promise.resolve(true);
-  };
-  w.chip({});
-  const gas = rowOf(w, 'gas');
-  const straight = (): Any => find(gas, '.vault-gas-elsewhere')[0];
-  assert.equal(straight().hidden, true, 'the account shows before anyone asked for NEAR');
-  press(keyRow(w), 'Add NEAR');
-  assert.equal(gas.scrolled, true);
-  assert.equal(find(gas, '.vault-gas-add')[0].hidden, true, 'a payout form for a vault with no NEAR to pay');
-  assert.equal(straight().hidden, false);
-  assert.ok(said(gas).includes('Your vault holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
-  assert.deepEqual(find(gas, '.vault-mono').filter(isShown).map((n: Any) => n.textContent), [GAS], 'the account whole, not cut to its ends');
-  assert.ok(said(gas).includes('Or ask your assistant to swap a little USDC to NEAR (0.5 NEAR is enough), then add it here.'));
-  assert.equal(shownButtons(gas).some((b: Any) => b.textContent === 'Add NEAR'), false);
-  press(gas, 'Copy');
-  await flush();
-  assert.deepEqual(copied, [GAS]);
-  assert.ok(said(gas).includes('Account copied, ends in ...' + GAS.slice(-6)));
-  assert.equal(w.calls.some((c) => c.route === '/api/vault/gas/fund'), false, 'a payout was filed');
-  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
-  // Escape puts it away, and NEAR in the vault makes Add NEAR the payout again.
-  assert.equal(w.key('Escape'), true);
-  assert.equal(straight().hidden, true);
-  w.chip({ sourceNear: 2.5 });
-  press(gas, 'Add NEAR');
-  assert.equal(find(gas, '.vault-gas-add')[0].hidden, false, 'a vault with NEAR gets no form');
-  // Not read yet is not none: the form opens, and its card says why if it cannot pay.
-  const unread = build({ vault: { chip: chipSlice({ sourceNear: null }) } });
-  press(rowOf(unread, 'gas'), 'Add NEAR');
-  assert.equal(find(rowOf(unread, 'gas'), '.vault-gas-add')[0].hidden, false);
-  // After the move the payout comes from the allowance, so it is the allowance that holds none.
-  const moved = build({ vault: { chip: MOVED({ sourceNear: 0 }) } });
-  press(rowOf(moved, 'gas'), 'Add NEAR');
-  assert.ok(said(rowOf(moved, 'gas')).includes('Your allowance holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
-  moved.leave();
-  assert.equal(find(rowOf(moved, 'gas'), '.vault-gas-elsewhere')[0].hidden, true, 'the account outlived the tab');
-});
-
-test('a vault on another Mac\'s keys pays no NEAR from here: Add NEAR shows the gas account whole, to send NEAR to it straight', async () => {
-  const elsewhere = chipSlice({ state: 'broken', oldOnChain: false, predecessorAuth: false, elsewhere: true, needs: ['gas'], gas: { account: GAS, near: '0', low: true } });
-  const w = build({ vault: { chip: elsewhere } });
-  const copied: string[] = [];
-  w.sandbox.PhosphorNetPick.copyChecked = (value: string, say: (words: string) => void) => {
-    copied.push(value);
-    say('Account copied, ends in ...' + value.slice(-6));
-    return Promise.resolve(true);
-  };
-  w.chip({});
-  const gas = rowOf(w, 'gas');
-  assert.ok(said(gas).includes('Your vault opens with another Mac\'s Touch ID key now, so this Mac cannot pay NEAR from it. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
-  assert.deepEqual(find(gas, '.vault-mono').filter(isShown).map((n: Any) => n.textContent), [GAS], 'the account whole, not cut to its ends');
-  assert.equal(shownButtons(gas).some((b: Any) => b.textContent === 'Add NEAR'), false, 'no payout from the vault is offered');
-  press(gas, 'Copy');
-  await flush();
-  assert.deepEqual(copied, [GAS]);
-  assert.ok(said(gas).includes('Account copied, ends in ...' + GAS.slice(-6)));
-  // The restore's gas step says where NEAR goes, and its button brings the account into view.
-  const key = keyRow(w);
-  assert.ok(said(key).includes('if not, send it 0.1 to 1 NEAR on NEAR from any NEAR wallet. Its account is in the Gas account row below.'));
-  press(key, 'Show the gas account');
-  assert.equal(gas.scrolled, true);
-  assert.equal(find(gas, '.vault-gas-add')[0].hidden, true, 'no payout form');
-  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
-  // A form opened before NEAR's word came goes, and the route's refusal says why.
-  const before = build({ vault: { chip: chipSlice({ state: 'broken', oldOnChain: false, needs: ['gas'], gas: { account: GAS, near: '0', low: true } }) } });
-  const row = rowOf(before, 'gas');
-  press(row, 'Add NEAR');
-  const form = find(row, '.vault-gas-add')[0];
-  before.answer.post['/api/vault/gas/fund'] = Object.assign(chipRefusal('fund_elsewhere'), { gas: GAS });
-  before.answer.onRefresh = () => before.chip({ elsewhere: true });
-  form.dispatch('submit');
-  await flush();
-  assert.equal(form.hidden, true, 'the payout form is gone');
-  assert.ok(said(row).includes('Send 0.1 to 1 NEAR on NEAR straight to this account'));
-  assert.ok(said(row).includes(GAS));
+  assert.equal(isShown(row), false);
 });
 
 /* ---------- the trading key ---------- */
@@ -1370,7 +1363,8 @@ test('a trading key near its end, or past it, is said with why it matters, and a
 
 test('no face of Your vault says a part underneath, and every button is one of the Vault\'s own families', async () => {
   const faces: Array<[string, Any]> = [
-    ['offer', chipSlice({ needs: ['backup', 'gas'] })],
+    ['offer', chipSlice({ needs: ['backup'] })],
+    ['old fee', chipSlice({ oldGas: { near: '0.4955' } })],
     ['paper', chipSlice()],
     ['typeback', chipSlice({ paper: 'shown' })],
     ['move', chipSlice({ paper: 'proven' })],
@@ -1384,6 +1378,9 @@ test('no face of Your vault says a part underneath, and every button is one of t
     const w = build({ vault: { chip } });
     await flush();
     for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, `${face}: "${line}"`);
+    // The step the press opens, read the same way.
+    secure(w);
+    for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, `${face}, its step: "${line}"`);
     for (const b of find(section(w), 'button')) assert.ok(families.has(b.className), `${face}: a button of a new family, "${b.className}"`);
   }
 });
@@ -1472,7 +1469,7 @@ test('after a restart mid-move the agent\'s head reads the fact that holds its m
 test('getting-started.md says the same two plain sentences as the paper key\'s screen', () => {
   const flat = GETTING_STARTED.replace(/\s+/g, ' ');
   assert.ok(flat.includes('Your paper key is the only key that opens your vault away from this Mac.'));
-  assert.ok(flat.includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
+  assert.ok(flat.includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way) and your Hyperliquid account, so keep both like cash.'));
   assert.ok(flat.includes('On a wallet with no recovery phrase, that second backup is your private key.'));
   assert.ok(flat.includes(MOVE_VAULT_REASON));
   assert.ok(flat.includes("confirm this Mac's Touch ID key for your vault"));

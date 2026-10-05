@@ -22,6 +22,7 @@ import { amountUsdOf, didHeadline, triedHeadline } from '../view/basic.ts';
 import { depositHandleOf } from '../transactions.ts';
 import { explorerName } from '../explorers.ts';
 import { COIN_KINDS } from '../proposals/coin-words.ts';
+import { receiveNetworkOf } from '../rails/intents-address.ts';
 
 export const RECEIPT_LIMIT_DEFAULT = 25;
 export const RECEIPT_LIMIT_MAX = 200;
@@ -36,7 +37,7 @@ export const RECEIPT_KINDS: Record<string, readonly string[]> = {
   trade: ['trade'],
   move: [
     'intents_deposit', 'intents_withdraw', 'intents_send', 'intents_pay', 'hl_deposit', 'hl_withdraw', 'transfer', 'consolidate',
-    'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'invite',
+    'lp_add', 'lp_remove', 'yield_deposit', 'yield_withdraw', 'invite', 'received',
   ],
   bot: ['bot'],
 };
@@ -65,6 +66,7 @@ const KIND_WORDS: Record<string, string> = {
   trade: 'trade',
   bot: 'bot plan',
   invite: 'invite code gift arrived added',
+  received: 'receive received deposit deposited arrived added',
 };
 
 export type ReceiptQuery = {
@@ -101,6 +103,7 @@ type ReceiptTx = { chain: string; hash: string; url: string | null; explorer: st
 export type Receipt = {
   id: string;
   kind: string;
+  // '' for a received deposit nobody knows the time of (src/received.ts): it pages last.
   at: string;
   headline: string;
   summary: string;
@@ -135,7 +138,8 @@ export type Receipt = {
   wallet: string | null;
   balanceBefore: number | null;
   balanceAfter: number | null;
-  status: 'executed' | 'failed' | 'needs_reconciliation';
+  // 'arriving' is a received deposit the bridge has seen and not yet credited, and nothing else.
+  status: 'executed' | 'failed' | 'needs_reconciliation' | 'arriving';
   // The checks the app ran before it signed (src/preflight/), the newest attempt's, for the
   // folded rail under the card. null for a row that never ran them.
   preflight: Preflight | null;
@@ -143,11 +147,14 @@ export type Receipt = {
 
 // The three outcomes a receipt can describe. `executing` is not one of them: a card for an
 // action still in flight would be a receipt for something that has not happened, and the boot
-// sweep turns any row stranded in that state into needs_reconciliation anyway.
+// sweep turns any row stranded in that state into needs_reconciliation anyway. A move of the
+// app's own under way is drawn off the state frame instead. Money arriving from outside has no
+// such frame, so it is the one thing in flight that is a receipt: 'arriving'.
 function receiptStatus(entry: TxEntry): Receipt['status'] | null {
   if (entry.status === 'executed' || entry.status === 'failed' || entry.status === 'needs_reconciliation') {
     return entry.status;
   }
+  if (entry.status === 'executing' && entry.kind === 'received') return 'arriving';
   return null;
 }
 
@@ -166,6 +173,11 @@ function feesOf(entry: TxEntry): number | null {
 function headlineFor(proposal: Proposal | undefined, status: Receipt['status'], entry: TxEntry, word: (symbol: string) => string): string {
   // An invite claim has no proposal: the code's key signed it, and it only ever lands.
   if (entry.kind === 'invite') return entry.received === null ? 'Invite' : `Invite: +${entry.received.amount} ${entry.received.symbol}`;
+  // Money in through the bridge: the same words whatever its state, which the row says beside it.
+  if (entry.kind === 'received') {
+    const what = entry.received === null ? 'money' : `${entry.received.amount.toLocaleString('en-US', { maximumFractionDigits: 8 })} ${entry.received.symbol}`;
+    return `Received ${what} on ${receiveNetworkOf(entry.place)?.name ?? entry.place}`;
+  }
   if (proposal === undefined) return '';
   const amount = amountUsdOf(proposal.draft);
   // The coins in their words: a swap's draft can name one by its id.
@@ -332,5 +344,8 @@ export function sendReceipts(ctx: Ctx, url: URL, res: http.ServerResponse): void
     fail(res, 400, query.error);
     return;
   }
+  // The window is reading its activity: the bridge is asked again if its last answer is a minute
+  // old (src/received.ts). Behind this answer, never in front of it.
+  ctx.received?.refresh();
   sendJson(res, 200, pageReceipts(buildReceipts(ctx), query));
 }

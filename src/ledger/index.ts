@@ -7,6 +7,7 @@
 // way out (a payout), and it is not held there. So there is no per-chain balance fan-out, no
 // chain status and no gas table: the snapshot carries the prices the pocket reads are valued at
 // and the stamp of the pass, and each pocket read carries its own ok flag.
+import path from 'node:path';
 import type { AppConfig, LedgerSnapshot } from '../types.ts';
 import { loadDemoLedger, loadDemoReads } from './demo.ts';
 import { fetchIntentsHoldings, mergeIntentsReads, REFRESH_PERIOD_MS, type AccountRead, type IntentsRead } from './intents.ts';
@@ -204,8 +205,20 @@ export function spendAccountId(cfg: AppConfig): string | null {
 }
 
 function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: string) => void): Ledger {
-  // Shared client so the 186-entry token list is fetched once per process, not per refresh.
-  const oneClick = oneClickClient({ fetchImpl });
+  // Shared client so the 186-entry token list is fetched once per process, not per refresh, and
+  // its names kept in the data directory so the next start has them before 1Click answers.
+  const oneClick = oneClickClient({ fetchImpl, cachePath: path.join(cfg.dataDir, 'oneclick-tokens.json') });
+  /* THE LIST IN HAND, NEVER A WAIT ON 1CLICK, once there is one. The verifier's balances came back
+     in 0.38 s and waited on the list for their names and decimals until 0.72 s on a good day, and
+     until the 10 s read deadline while 1Click hung (2026-10-05, Karim: "it says zero for a while").
+     A list past its minute is read again behind the balance, for the next pass. With none in hand
+     at all, a first run, the read still waits: decimals are what make the numbers right. */
+  const tokenList = (): Promise<OneClickToken[]> => {
+    const inHand = oneClick.cached?.() ?? null;
+    if (inHand === null) return oneClick.tokens();
+    void oneClick.tokens().catch(() => undefined);
+    return Promise.resolve(inHand);
+  };
   const listeners = refreshListeners();
   // One read per account (PHASE2-PLAN.md C6), each keeping its own misses and its own last good
   // holdings, and the accounts the last pass read: intents() and reads() answer from these.
@@ -218,11 +231,13 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   // it, marking the verifier stale when it had just answered.
   let started = 0;
   let written = 0;
+  // Pending until the first pass lands: every place is unknown, not empty (src/wallet.ts).
   let current: LedgerSnapshot = {
     mode: 'live',
     fetchedAt: new Date().toISOString(),
     prices: {},
     priceAsOf: {},
+    pending: true,
   };
 
   // A verifier read that fails keeps the last good holdings AND their stamp, counts the miss,
@@ -236,14 +251,15 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     const read = await fetchIntentsHoldings({
       rpcUrl: NEAR_RPC_URL,
       accountId: account,
-      tokenList: () => oneClick.tokens(),
+      tokenList,
       listedAt: () => oneClick.listedAt?.() ?? null,
       fetchImpl,
     });
     if (read.ok) return { ...read, failures: 0 };
     const failures = (last?.failures ?? 0) + 1;
     log(`phosphor: the verifier read${which} failed (${read.error ?? 'no reason given'}), ${failures} in a row`);
-    if (last === undefined) return { ...read, failures };
+    // No good read before this one: there are no holdings to keep, so none to show.
+    if (last === undefined || last.unknown === true) return { ...read, failures, unknown: true };
     return { ...read, holdings: last.holdings, fetchedAt: last.fetchedAt, failures };
   }
 
@@ -261,8 +277,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   async function refreshHyperliquid(account: string | null): Promise<HlRead | undefined> {
     if (account === null) return undefined;
     const read = await fetchHyperliquidRead({ keysPath: cfg.keysPath, fetchImpl }, account);
-    if (!read.ok && liveHl !== undefined) return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
-    return read;
+    if (read.ok) return read;
+    if (liveHl === undefined || liveHl.unknown === true) return { ...read, unknown: true };
+    return { ...liveHl, ok: false, fetchedAt: read.fetchedAt, error: read.error };
   }
 
   async function refresh(): Promise<LedgerSnapshot> {

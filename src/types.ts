@@ -63,6 +63,8 @@ export type LedgerSnapshot = {
      no map at all carries a static table rather than a reading, and there is no fetch time to be
      old. See PRICE_STALENESS_MS in src/proposals/draft.ts for the bound. */
   priceAsOf?: Record<string, number>;
+  // Set on a live ledger until its first pass lands: nothing has been read, which is not zero.
+  pending?: true;
 };
 
 // ---------- Composition ----------
@@ -156,6 +158,13 @@ export type WalletView = {
   // The trading account, when it was read: funded or not. Unfunded is where a new account
   // starts, so it is never counted as an empty holding.
   hyperliquid?: { funded: boolean };
+  // Nothing read yet (LedgerSnapshot.pending): every place is in `stale`, and the window says
+  // the balance is being read rather than that it could not be.
+  pending?: true;
+  // The stale places with no figures at all: every place before the first pass lands, and the
+  // verifier while no read of it has answered. A stale place outside this list keeps its last
+  // good figures in `rows`, and a screen shows them as the last known balance.
+  unread?: WalletPlace[];
 };
 
 // ---------- Policy ----------
@@ -407,7 +416,7 @@ export type TradeDraft =
 
 /* Money moving from the vault to the allowance, inside the verifier, once the vault has moved to
    this Mac's Touch ID key (PHASE2-PLAN.md C8). The vault's chip key signs it behind one Touch ID
-   whose sentence names the amount, and the gas account sends it: never the agent, never with no
+   whose sentence names the amount, and the NEAR Intents relay sends it: never the agent, never with no
    click. `why` is who asked: a move bigger than the allowance (`shortfall`, the exact difference,
    filed by the app when a person approved that move, `forProposal` naming it), the window's
    offer when the allowance runs low (`low`), or the person (`manual`). See src/vault/allowance.ts. */

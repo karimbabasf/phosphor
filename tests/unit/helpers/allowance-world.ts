@@ -69,7 +69,6 @@ export const USDT = 'nep141:usdt.tether-token.near';
 export const ODD = 'nep141:odd.coin.near';
 export const SINK = '0x5151515151515151515151515151515151515151';
 // One NEAR, in yocto: more than any test's sends burn.
-const ONE_NEAR = 1_000_000_000_000_000_000_000_000n;
 
 export const TOKENS: TokensFile = {
   eth: {},
@@ -310,16 +309,13 @@ export async function allowanceWorld(opts: { service?: ChipService; start?: numb
   assert.equal(now.kind, 'chip', JSON.stringify(now));
   assert.equal(now.spend, V.allowance);
 
-  chain.fundGas(V.gas, ONE_NEAR);
   chain.fund(vault, USDC, opts.vaultUsdc ?? 1_850_000_000n);
   if ((opts.allowanceUsdc ?? 0n) > 0n) chain.fund(account, USDC, opts.allowanceUsdc!);
 
   const submitter = createVaultSubmitter({
     verifier: chain.verifier,
-    gasSeed: () => keys.gasSeed(),
-    gasAccount: () => keys.derivedAccounts()?.gas ?? null,
+    relay: chain.relay,
     journal: memoryJournal(),
-    near: chain.near,
     now: chain.now,
     sleep: chain.near.sleep,
   });

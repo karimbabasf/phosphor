@@ -1,10 +1,15 @@
 // Sending a vault bundle, and knowing what became of it (PHASE2-PLAN C7; CONTRACTS.md, "Lead's
 // call: nonce lifetime and settling a submit").
 //
-// A vault bundle is one or more signed payloads for one account (at most near-tx's eight): a top-up
-// the chip signed, a rekey's three, a paper key's own move. The gas account (GAS) puts it on chain in one
-// execute_intents call (src/chain/near-tx.ts), never through the solver relay or 1Click: no third
-// party can hold a key change back, and a rekey lands whole or not at all.
+// A vault bundle is one or more signed payloads for one account (at most eight): a top-up the chip
+// signed, a rekey's three, a paper key's own move. It goes to the NEAR Intents solver relay in one
+// publish_intents call with no quote (src/relay/client.ts), which puts it on chain in one call, in
+// order, and pays NEAR's fee, as it does for swaps. The relay can delay a bundle or drop it; it
+// cannot change it, because every payload in it is signed. A dropped bundle settles dead after its
+// deadline (below), and the move can then be sent again with new nonces. Done is what NEAR's views
+// say, never what the relay says. Checked live on 2026-10-05: a two-payload bundle, the second a
+// webauthn payload signed by the key the first adds, ran whole, in order, in one transaction
+// (4MGdLb226dYTRWjiwPFkX43KE5d59UEMGuxp7Ru63JwJ), with no NEAR from this app.
 //
 // BEFORE ANYTHING IS SENT the verifier simulates this exact bundle and must report exactly the
 // events it has to make (src/vault/payload.ts, expectedEvents), payload by payload. One changed,
@@ -14,18 +19,20 @@
 // EXECUTED IS NOT DONE. Done is what the views say at one final block afterwards: every payload's
 // nonce spent, and the caller's own checks there (for a rekey: the chip and the paper key on the
 // vault, the old key off, predecessor auth off), with the balances it asked for read at that block.
+// A bundle of which only some payloads ran is never done: its other nonces never read spent.
 //
 // ONE SIGNATURE PER MOVE. A signed bundle that left this Mac can run until its own deadline,
-// whatever came back: simulate_intents hands it to the RPC, a failed transaction carried it in its
-// bytes (near-tx: `failed` is about that transaction only), and a timeout or a lost reply can hide a
-// copy that ran. So a bundle is written down (the journal) before it leaves, and no new signature
-// for that account is asked for until every bundle written down for it is settled:
-//   ran: GAS's own transaction executed, asked by its hash first; or every nonce reads spent.
-//   dead: NEAR's final block and this Mac's clock are both two minutes past the last deadline, no
-//     transaction it rode in ran (by hash), and at that one block every nonce reads unspent while
-//     its salt is still valid and its own seven-day life runs. The verifier cleans a nonce only once
-//     its salt is gone or its life is over, and a cleaned nonce reads unspent even when it ran
-//     (garbage_collector.rs), so those two are what make "unspent" mean "never ran".
+// whatever came back: simulate_intents hands it to the RPC, a FAILED answer from the relay does not
+// prove the relay never sent it, and a timeout or a lost reply can hide a copy that ran. So a bundle
+// is written down (the journal) before it leaves, and no new signature for that account is asked
+// for until every bundle written down for it is settled:
+//   ran: every nonce reads spent at one final block. The relay's SETTLED names the NEAR
+//     transaction that carried it, a hint for the row; the nonces decide.
+//   dead: NEAR's final block and this Mac's clock are both two minutes past the last deadline, and
+//     at that one block every nonce reads unspent while its salt is still valid and its own
+//     seven-day life runs. The verifier cleans a nonce only once its salt is gone or its life is
+//     over, and a cleaned nonce reads unspent even when it ran (garbage_collector.rs), so those two
+//     are what make "unspent" mean "never ran".
 //   unknown: past the deadline and two minutes, so it can never run again, but whether it ran can
 //     no longer be proved: its salt was taken out, or its nonce's own seven-day life is over. It no
 //     longer holds other moves back; its own move is never signed again by the app, and the person
@@ -39,12 +46,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { MAX_PAYLOADS, NearTxError, gasNeededYocto, implicitAccountOf, readFinalBlock, submitExecuteIntents, viewAccessKey, viewAccount } from '../chain/near-tx.ts';
-import type { MultiPayload, NearRpcDeps, NearTxRefusal, SubmitDeps } from '../chain/near-tx.ts';
-import { base58Encode, nearChainSpec } from '../chain/near.ts';
 import { atomicWrite } from '../fsatomic.ts';
-import { INTENTS_VERIFIER } from '../ledger/intents.ts';
-import { READ_TIMEOUT_MS, withTimeout } from '../net.ts';
+import type { MultiPayload, RelayBundleClient } from '../relay/client.ts';
 import { FATE_AHEAD_MAX_MS } from '../relay/fate.ts';
 import { decodeNonce } from '../relay/payload.ts';
 import type { FinalBlock, VerifierPort } from '../relay/verifier.ts';
@@ -74,8 +77,18 @@ export function foreignBundle(entry: Pick<JournalEntry, 'signed'>, nowMs: number
   });
 }
 
-// After an executed call, how often and how long the views are read before the window is told to
-// keep checking: a load-balanced RPC can answer from a node a block or two behind.
+// The most payloads one bundle carries: a rekey's three is the most a vault move signs.
+const MAX_PAYLOADS = 8;
+
+/* After the relay took a bundle: how long it is watched for, first a quarter second after the
+   publish, doubling to three seconds apart. A relay call lands in a block or two; past a minute the
+   payloads are near their own deadline and the nonces settle it. */
+const LAND_FIRST_MS = 250;
+const LAND_PAUSE_MS = 3_000;
+const LAND_WAIT_MS = 60_000;
+
+// After every nonce read spent, how often and how long the views are read before the window is told
+// to keep checking: a load-balanced RPC can answer from a node a block or two behind.
 const CONFIRM_TRIES = 4;
 const CONFIRM_PAUSE_MS = 1500;
 
@@ -114,25 +127,27 @@ export function rekeyViews(keys: { vault: string; chip: string; recovery: string
 export type VaultResult =
   | { state: 'refused'; code: string; detail: string; released: boolean }
   | { state: 'settling'; code: 'vault_settling'; detail: string; notBefore: number | null }
-  | { state: 'sent'; code: 'vault_pending'; txHash: string; detail: string }
+  | { state: 'sent'; code: 'vault_pending'; txHash: string | null; detail: string }
   | { state: 'checking'; code: 'vault_checking'; txHash: string | null; detail: string }
   | { state: 'mismatch'; code: 'vault_mismatch'; txHash: string | null; detail: string }
   | { state: 'unknown'; code: 'vault_unknown'; txHash: string | null; detail: string }
-  | { state: 'done'; txHash: string | null; block: FinalBlock; balances: BalanceSeen[]; gasBurnt: bigint | null };
+  | { state: 'done'; txHash: string | null; block: FinalBlock; balances: BalanceSeen[] };
 
 // ---------- the journal ----------
 
-/* `released`: it left this Mac (simulate was asked) and was not sent, or the send was refused before
-   GAS signed. `sent`: a GAS transaction carried it, with no final answer that it ran. `executed`:
-   it ran, and its move has not seen the views say done. `partial`: some of its payloads ran and the
-   rest never can. `unknown`: it can never run again and whether it ran cannot be proved. Only
-   `released` and `sent` hold a new signature back. */
+/* `released`: it left this Mac (simulate was asked) and did not reach the relay. `sent`: it was
+   handed to the relay, with no final answer that it ran. `executed`: it ran, and its move has not
+   seen the views say done. `partial`: some of its payloads ran and the rest never can. `unknown`: it
+   can never run again and whether it ran cannot be proved. Only `released` and `sent` hold a new
+   signature back. An entry 0.10.16 wrote carries `gas` (the old fee account, which sent it then)
+   and that account's own transactions in `txHashes`, and settles by its nonces like any other. */
 export type JournalEntry = {
   id: string; // the move's own id: a proposal id, a rekey run
   account: string; // the signer, lowercase
-  gas: string; // the gas account the transactions came from, for the lookup by hash
   signed: MultiPayload[]; // exactly as signed
-  txHashes: string[]; // every GAS transaction that carried it
+  intentHashes?: string[]; // the relay's hash for each payload, once it took the bundle
+  txHashes: string[]; // the NEAR transaction that carried it, once known
+  gas?: string; // 0.10.16 only: the old fee account that sent it
   state: 'released' | 'sent' | 'executed' | 'partial' | 'unknown';
   at: number; // when it was written down
   settledAt?: number; // when it became executed, partial or unknown
@@ -165,8 +180,9 @@ function isEntry(raw: unknown): raw is JournalEntry {
   return (
     typeof e.id === 'string' &&
     typeof e.account === 'string' &&
-    typeof e.gas === 'string' &&
+    (e.gas === undefined || typeof e.gas === 'string') &&
     signed(e.signed) &&
+    (e.intentHashes === undefined || strings(e.intentHashes)) &&
     strings(e.txHashes) &&
     (e.state === 'released' || e.state === 'sent' || e.state === 'executed' || e.state === 'partial' || e.state === 'unknown') &&
     typeof e.at === 'number' &&
@@ -206,87 +222,33 @@ export function journalPathFor(dataDir: string): string {
   return path.join(dataDir, 'vault-moves.json');
 }
 
-// ---------- GAS's own transaction, by hash ----------
+// ---------- the relay's word ----------
 
-export type TxFate = 'executed' | 'failed' | 'not_found' | 'unknown';
-export type TxLookup = (txHash: string, sender: string) => Promise<TxFate>;
+export type RelayWord = { txHash: string | null; dropped: boolean };
 
-function rec(value: unknown): Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {};
-}
-
-/* One `tx` answer read the way near-tx reads its own final outcome: executed when the receipt the
-   transaction became (transaction_outcome.receipt_ids[0]) ran on intents.near and succeeded, failed
-   when it or the transaction failed. Only a FINAL answer decides. nearcore answers
-   UNKNOWN_TRANSACTION for a hash it holds no record of when asked at NONE (at FINAL it waits out its
-   own timeout instead: chain/jsonrpc/src/lib.rs, tx_status_fetch), so that is `not_found`; every
-   other error, a rate limit and an answer short of FINAL are `unknown`. */
-export function txFateOf(body: unknown, txHash: string): TxFate {
-  const b = rec(body);
-  if (b.error !== undefined && b.error !== null) {
-    const error = rec(b.error);
-    const cause = typeof rec(error.cause).name === 'string' ? rec(error.cause).name : error.name;
-    return cause === 'UNKNOWN_TRANSACTION' ? 'not_found' : 'unknown';
+/* What the relay says about the intents of a bundle it took: the NEAR transaction that carried them
+   once one is SETTLED, and whether it says NOT_FOUND_OR_NOT_VALID for one. A hint and nothing more:
+   no answer is no word, and what ran is what the nonces say. */
+export async function relayWord(relay: Pick<RelayBundleClient, 'status'> | undefined, intentHashes: readonly string[] | undefined): Promise<RelayWord> {
+  const word: RelayWord = { txHash: null, dropped: false };
+  if (relay === undefined) return word;
+  for (const hash of intentHashes ?? []) {
+    const s = await relay.status(hash).catch(() => null);
+    if (s === null) continue;
+    if (s.status === 'SETTLED' && s.nearTxHash !== null) word.txHash ??= s.nearTxHash;
+    if (s.status === 'NOT_FOUND_OR_NOT_VALID') word.dropped = true;
   }
-  const r = rec(b.result);
-  if (r.final_execution_status !== 'FINAL' || rec(r.transaction).hash !== txHash) return 'unknown';
-  const txOutcome = rec(rec(r.transaction_outcome).outcome);
-  if ('Failure' in rec(txOutcome.status)) return 'failed';
-  const mainId = Array.isArray(txOutcome.receipt_ids) ? txOutcome.receipt_ids[0] : undefined;
-  const main = (Array.isArray(r.receipts_outcome) ? r.receipts_outcome : []).map(rec).find((x) => typeof mainId === 'string' && x.id === mainId);
-  const outcome = rec(main?.outcome);
-  if (main === undefined || outcome.executor_id !== INTENTS_VERIFIER) return 'unknown';
-  const status = rec(outcome.status);
-  if ('Failure' in status) return 'failed';
-  if ('SuccessValue' in status || 'SuccessReceiptId' in status) return 'executed';
-  return 'unknown';
-}
-
-export function liveTxLookup(deps: NearRpcDeps = {}): TxLookup {
-  return async (txHash, sender) => {
-    try {
-      const res = await (deps.fetchImpl ?? fetch)(deps.rpcUrl ?? nearChainSpec().rpcUrl, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ jsonrpc: '2.0', id: 'phosphor', method: 'tx', params: { tx_hash: txHash, sender_account_id: sender, wait_until: 'NONE' } }),
-        signal: withTimeout(READ_TIMEOUT_MS),
-      });
-      if (res.status === 429) return 'unknown';
-      return txFateOf(await res.json(), txHash);
-    } catch {
-      return 'unknown';
-    }
-  };
-}
-
-// ---------- the gas account, before any touch ----------
-
-/* Whether the gas account can pay for one submit, asked BEFORE the Touch ID so nobody signs a move
-   the gas account cannot send (PHASE2-PLAN risk 10): the same reads and threshold
-   submitExecuteIntents checks again before it signs. Null when it can. */
-export async function gasReady(gasAccount: string, near: NearRpcDeps = {}): Promise<{ code: NearTxRefusal; detail: string } | null> {
-  if (!/^[0-9a-f]{64}$/.test(gasAccount)) return { code: 'invalid_request', detail: 'the gas account is not a 64 hex implicit account' };
-  const publicKey = `ed25519:${base58Encode(Buffer.from(gasAccount, 'hex'))}`;
-  try {
-    const [block, account, key] = await Promise.all([readFinalBlock(near), viewAccount(gasAccount, near), viewAccessKey(gasAccount, publicKey, near)]);
-    if (!account.found) return { code: 'gas_unfunded', detail: 'the gas account does not exist yet: no NEAR has been paid into it' };
-    if (!key.found) return { code: 'gas_key_missing', detail: 'the gas account does not carry the key this app derives for it' };
-    const need = gasNeededYocto(block.gasPrice);
-    if (account.amount < need) return { code: 'gas_low', detail: `the gas account holds ${account.amount} yoctoNEAR and a submit needs ${need}` };
-    return null;
-  } catch (err) {
-    if (err instanceof NearTxError) return { code: err.code, detail: err.message };
-    return { code: 'rpc_unavailable', detail: oneLine(err instanceof Error ? err.message : err, 200) };
-  }
+  return word;
 }
 
 // ---------- settling what was written down ----------
 
 export type Settlement =
-  | { verdict: 'ran' }
+  // `txHash`: the NEAR transaction the relay says carried it, when it said so.
+  | { verdict: 'ran'; txHash?: string }
   | { verdict: 'dead'; block: FinalBlock }
-  // Some payloads ran and the rest never can: only someone running part of the bundle on their own
-  // gets here. Never a done; the views say what the account is now.
+  // Some payloads ran and the rest never can: a relay that ran only part of the bundle, or someone
+  // running part of it on their own. Never a done; the views say what the account is now.
   | { verdict: 'partial' }
   // Past the deadline and two minutes, so it can never run again, and nothing can prove whether it
   // ran: a salt taken out or a nonce past its own life (a cleaned nonce reads unspent either way).
@@ -314,13 +276,13 @@ function partsOf(entry: JournalEntry): Part[] | null {
 
 export type SettleDeps = {
   verifier: VerifierPort;
-  lookup: TxLookup;
+  relay?: Pick<RelayBundleClient, 'status'>;
   now?: () => number;
 };
 
-/* What became of one bundle written down. The order is the lead's: GAS's own transactions by hash,
-   then the nonces at one final block, and "never ran" only past the deadline, with every salt valid
-   and every nonce inside its own life at that same block. */
+/* What became of one bundle written down. The order is the lead's: the relay's word on each intent
+   first (a hint), then the nonces at one final block, which decide, and "never ran" only past the
+   deadline, with every salt valid and every nonce inside its own life at that same block. */
 export async function settleEntry(entry: JournalEntry, deps: SettleDeps): Promise<Settlement> {
   const wait = (why: string, notBefore: number | null = null): Settlement => ({ verdict: 'wait', why, notBefore });
   if (entry.state === 'executed') return { verdict: 'ran' };
@@ -330,12 +292,7 @@ export async function settleEntry(entry: JournalEntry, deps: SettleDeps): Promis
   // Not a bundle this app wrote down: nothing to wait for.
   if (parts === null) return { verdict: 'unknown', why: 'the bundle written down does not read as vault payloads' };
   if (foreignBundle(entry, (deps.now ?? Date.now)())) return { verdict: 'unknown', why: 'a deadline lies further ahead than any bundle this app writes, so the bundle is not the app\'s' };
-  let lookupUnknown = false;
-  for (const hash of entry.txHashes) {
-    const fate = await deps.lookup(hash, entry.gas).catch((): TxFate => 'unknown');
-    if (fate === 'executed') return { verdict: 'ran' };
-    if (fate === 'unknown') lookupUnknown = true;
-  }
+  const hint = entry.txHashes.length === 0 ? await relayWord(deps.relay, entry.intentHashes) : { txHash: null, dropped: false };
   const { verifier } = deps;
   const now = (deps.now ?? Date.now)();
   const block = verifier.finalBlock === undefined ? null : await verifier.finalBlock().catch(() => null);
@@ -343,10 +300,11 @@ export async function settleEntry(entry: JournalEntry, deps: SettleDeps): Promis
   if (block.atMs > now + FATE_AHEAD_MAX_MS) return wait('the final block is stamped too far ahead of this clock to be believed');
   const used = await Promise.all(parts.map((p) => verifier.nonceUsed(entry.account, p.nonce, block.hash).catch(() => null)));
   if (used.some((u) => u === null)) return wait('the verifier did not say whether every nonce is spent');
-  if (used.every((u) => u === true)) return { verdict: 'ran' };
+  if (used.every((u) => u === true)) return hint.txHash === null ? { verdict: 'ran' } : { verdict: 'ran', txHash: hint.txHash };
   const notBefore = Math.max(...parts.map((p) => p.deadlineMs)) + VAULT_SETTLE_FLOOR_MS;
-  if (block.atMs <= notBefore || now < notBefore) return wait('the bundle can still run: its deadline and two minutes have not passed', notBefore);
-  if (lookupUnknown) return wait('NEAR did not say what became of a transaction that carried it');
+  if (block.atMs <= notBefore || now < notBefore) {
+    return wait(hint.txHash === null ? 'the bundle can still run: its deadline and two minutes have not passed' : 'the relay says it settled, and NEAR does not show every nonce spent yet', notBefore);
+  }
   for (const [i, p] of parts.entries()) {
     if (used[i]) continue;
     if (block.atMs > p.nonceDeadlineMs) return { verdict: 'unknown', why: 'a nonce is past its own life, so unspent no longer means never ran' };
@@ -373,14 +331,9 @@ export type VaultMove = {
 
 export type VaultSubmitDeps = {
   verifier: VerifierPort;
-  // The session's gas seed (keystore.gasSeed()), read at the moment it is needed and never kept.
-  gasSeed(): Uint8Array;
-  /* The gas account's id (keystore.derivedAccounts().gas), so asking for it makes no key object out
-     of the seed; derived from the seed when absent. */
-  gasAccount?(): string | null;
+  // The solver relay: publish_intents for the bundle, get_status for its intents.
+  relay: RelayBundleClient;
   journal: VaultJournal;
-  near?: SubmitDeps;
-  lookup?: TxLookup;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 };
@@ -396,9 +349,8 @@ export type VaultSubmitter = {
 export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
   const now = deps.now ?? Date.now;
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
-  const lookup = deps.lookup ?? liveTxLookup(deps.near);
-  const { verifier, journal } = deps;
-  const settleDeps: SettleDeps = { verifier, lookup, now };
+  const { verifier, relay, journal } = deps;
+  const settleDeps: SettleDeps = { verifier, relay, now };
 
   // One move at a time per account, so two windows cannot both find the journal clear.
   const turns = new Map<string, Promise<unknown>>();
@@ -425,7 +377,7 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
      behind answers. Every nonce must read spent at that block before any view there is believed.
      Only done lets the entry go: a mismatch or a check still under way keeps it, so the same move
      asked again reads the views again and is never signed again. */
-  async function confirm(entry: JournalEntry, move: VaultMove, txHash: string | null, gasBurnt: bigint | null): Promise<VaultResult> {
+  async function confirm(entry: JournalEntry, move: VaultMove, txHash: string | null): Promise<VaultResult> {
     const parts = partsOf(entry) ?? [];
     let last = 'NEAR did not answer the reads';
     for (let attempt = 0; attempt < CONFIRM_TRIES; attempt += 1) {
@@ -453,9 +405,44 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
         (move.balances ?? []).map(async (b) => ({ ...b, amount: await verifier.balance(b.account, b.asset, block.hash).catch(() => null) })),
       );
       journal.drop(entry.id);
-      return { state: 'done', txHash, block, balances, gasBurnt };
+      return { state: 'done', txHash, block, balances };
     }
     return { state: 'checking', code: 'vault_checking', txHash, detail: last };
+  }
+
+  /* After the relay took the bundle: NEAR's final block, read again until every nonce in it reads
+     spent there, the relay's word riding along (SETTLED names the transaction for the row,
+     NOT_FOUND_OR_NOT_VALID ends the wait early). Only the nonces move the entry to executed; with
+     none of that inside the wait the move stays sent, held back until its nonces settle it. */
+  async function land(entry: JournalEntry, move: VaultMove): Promise<VaultResult> {
+    const parts = partsOf(entry) ?? [];
+    let txHash: string | null = null;
+    let last = 'the relay took the move, and NEAR does not show it yet';
+    const started = now();
+    for (let round = 0; now() - started < LAND_WAIT_MS; round += 1) {
+      await sleep(Math.min(LAND_FIRST_MS * 2 ** round, LAND_PAUSE_MS));
+      // Once the relay named the transaction, only the nonces are left to read.
+      const word: RelayWord = txHash === null ? await relayWord(relay, entry.intentHashes) : { txHash, dropped: false };
+      txHash = word.txHash;
+      const block = verifier.finalBlock === undefined ? null : await verifier.finalBlock().catch(() => null);
+      const spent = block === null ? [] : await Promise.all(parts.map((p) => verifier.nonceUsed(entry.account, p.nonce, block.hash).catch(() => null)));
+      if (parts.length > 0 && spent.length === parts.length && spent.every((s) => s === true)) {
+        entry.state = 'executed';
+        entry.settledAt = now();
+        if (txHash !== null) entry.txHashes.push(txHash);
+        try {
+          journal.put(entry);
+        } catch {
+          // The entry as it was put still holds every new signature back until it is settled.
+        }
+        return confirm(entry, move, txHash);
+      }
+      if (word.dropped) {
+        last = 'the relay says it does not hold the move; NEAR settles it by its nonces once its deadline has passed';
+        break;
+      }
+    }
+    return { state: 'sent', code: 'vault_pending', txHash, detail: last };
   }
 
   /* The gate before the send, then the send. The entry is written down before simulate is asked,
@@ -479,9 +466,7 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
       return { state: 'refused', code: 'vault_bundle', detail: oneLine(err instanceof Error ? err.message : err, 300), released: false };
     }
     if (verifier.simulate === undefined) return { state: 'refused', code: 'simulate_unavailable', detail: 'this verifier port cannot simulate', released: false };
-    const gas = gasAccountNow();
-    if (gas === null) return { state: 'refused', code: 'wallet_locked', detail: 'the wallet locked before the bundle was sent', released: false };
-    const entry: JournalEntry = { id: move.id, account, gas, signed, txHashes: [], state: 'released', at: now() };
+    const entry: JournalEntry = { id: move.id, account, signed, txHashes: [], state: 'released', at: now() };
     try {
       journal.put(entry);
     } catch (err) {
@@ -494,17 +479,17 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
     const mismatch = eventsMismatch(sim.events, expected);
     if (mismatch !== null) return { state: 'refused', code: 'events_mismatch', detail: mismatch, released: true };
 
-    let outcome;
+    // One publish, in the bundle's order, never again: a FAILED answer or none at all does not
+    // prove the relay never sent it, so the nonces settle it either way.
+    let published: { ok: true; intentHashes: string[] } | { ok: false; why: string };
     try {
-      // Read again here, never kept from above: a lock in between zeroes the session's seed.
-      outcome = await submitExecuteIntents({ gasSeed: deps.gasSeed(), signed }, deps.near);
+      const answer = await relay.publishIntents(signed);
+      published = answer.status === 'OK' ? { ok: true, intentHashes: answer.intentHashes } : { ok: false, why: `the relay did not take the move: ${answer.reason}` };
     } catch (err) {
-      if (err instanceof NearTxError) return { state: 'refused', code: err.code, detail: err.message, released: true };
-      return { state: 'refused', code: 'wallet_locked', detail: oneLine(err instanceof Error ? err.message : err, 200), released: true };
+      published = { ok: false, why: `the relay did not answer the publish: ${oneLine(err instanceof Error ? err.message : err, 200)}` };
     }
-    entry.txHashes.push(outcome.txHash);
-    entry.state = outcome.status === 'executed' ? 'executed' : 'sent';
-    if (outcome.status === 'executed') entry.settledAt = now();
+    entry.state = 'sent';
+    if (published.ok) entry.intentHashes = published.intentHashes;
     // A write that fails here leaves the entry as it was put before the bundle left, which still
     // holds every new signature back until it is settled by its nonces.
     try {
@@ -512,18 +497,8 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
     } catch {
       // The answer below is what happened; the earlier entry keeps the account safe.
     }
-    if (outcome.status === 'executed') return confirm(entry, move, outcome.txHash, outcome.gasBurnt);
-    return { state: 'sent', code: 'vault_pending', txHash: outcome.txHash, detail: outcome.reason ?? outcome.status };
-  }
-
-  // The gas account's id, or null while the wallet is shut (the seed is the session's).
-  function gasAccountNow(): string | null {
-    try {
-      const seed = deps.gasSeed();
-      return deps.gasAccount?.() ?? implicitAccountOf(seed).accountId;
-    } catch {
-      return null;
-    }
+    if (!published.ok) return { state: 'sent', code: 'vault_pending', txHash: null, detail: published.why };
+    return land(entry, move);
   }
 
   /* Settles what is written down: a bundle that ran becomes `executed`, part of one `partial`, one
@@ -538,7 +513,10 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
         continue;
       }
       const settlement = await settleEntry(entry, settleDeps);
-      if (settlement.verdict === 'ran' && entry.state !== 'executed') journal.put({ ...entry, state: 'executed', settledAt: now() });
+      if (settlement.verdict === 'ran' && entry.state !== 'executed') {
+        if (settlement.txHash !== undefined) entry.txHashes = [settlement.txHash];
+        journal.put({ ...entry, state: 'executed', settledAt: now() });
+      }
       if (settlement.verdict === 'partial' && entry.state !== 'partial') journal.put({ ...entry, state: 'partial', settledAt: now() });
       if (settlement.verdict === 'unknown' && entry.state !== 'unknown') journal.put({ ...entry, state: 'unknown', settledAt: now(), why: settlement.why });
       if (settlement.verdict === 'dead') journal.drop(entry.id);
@@ -556,8 +534,8 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
     if (own !== undefined) {
       const { entry, settlement } = own;
       const txHash = entry.txHashes.at(-1) ?? null;
-      if (settlement.verdict === 'ran') return confirm(entry, spec, txHash, null);
-      if (settlement.verdict === 'partial') return { state: 'mismatch', code: 'vault_mismatch', txHash, detail: 'only part of this move ran, in a call this app did not make' };
+      if (settlement.verdict === 'ran') return confirm(entry, spec, txHash);
+      if (settlement.verdict === 'partial') return { state: 'mismatch', code: 'vault_mismatch', txHash, detail: 'only part of this move ran, and the rest never can' };
       if (settlement.verdict === 'unknown') return { state: 'unknown', code: 'vault_unknown', txHash, detail: settlement.why };
       if (settlement.verdict === 'wait') return { state: 'settling', code: 'vault_settling', detail: `this move: ${settlement.why}`, notBefore: settlement.notBefore };
       // Dead: it never ran and never can, so the move may be signed again, with fresh nonces.
@@ -567,10 +545,6 @@ export function createVaultSubmitter(deps: VaultSubmitDeps): VaultSubmitter {
     if (waiting !== undefined && waiting.settlement.verdict === 'wait') {
       return { state: 'settling', code: 'vault_settling', detail: `an earlier vault move: ${waiting.settlement.why}`, notBefore: waiting.settlement.notBefore };
     }
-    const gasAccount = gasAccountNow();
-    if (gasAccount === null) return { state: 'refused', code: 'wallet_locked', detail: 'the wallet is shut, so the gas account has no key here', released: false };
-    const gas = await gasReady(gasAccount, deps.near);
-    if (gas !== null) return { state: 'refused', code: gas.code, detail: gas.detail, released: false };
     // A sign() that throws signed nothing that left this Mac.
     const signing = await spec.sign().catch((err: unknown) => ({ ok: false as const, code: 'vault_bundle', detail: oneLine(err instanceof Error ? err.message : err, 200) }));
     if (!signing.ok) return { state: 'refused', code: signing.code, detail: signing.detail, released: false };

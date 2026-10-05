@@ -293,7 +293,7 @@ test('the total is the NEAR money alone: the trading account is its own line, ne
 
 test('a balance that could not be read is words, never $0.00, and a coin with no price says so', () => {
   const rig = boot();
-  rig.put(state({ wallet: { rows: [intents('USDC', 5)], stale: ['intents'], hyperliquid: { funded: true } } }));
+  rig.put(state({ wallet: { rows: [], stale: ['intents'], unread: ['intents'], hyperliquid: { funded: true } } }));
   assert.equal(one(rig.host, 'stmt-total').hidden, true);
   assert.equal(one(rig.host, 'stmt-caption').textContent, 'Still reading your coins.');
   assert.ok(!words(rig.host).includes('$0.00'), JSON.stringify(words(rig.host)));
@@ -304,6 +304,28 @@ test('a balance that could not be read is words, never $0.00, and a coin with no
   assert.equal(one(wif, 'l-val').textContent, 'No price');
   assert.equal(one(wif, 'l-val').getAttribute('data-unpriced'), 'true');
   assert.equal(one(wif, 'l-price-figure').textContent, '', 'a price with no price behind it');
+});
+
+test('a refresh that misses keeps the last good coins on screen and says it is still checking', () => {
+  // Karim, 2026-10-05: "the wallet tends to go out and say still reading your coins". Two missed
+  // verifier reads in a row, or a last read older than two idle periods (a Mac back from sleep),
+  // mark the place stale while the ledger still holds its last good holdings in the rows, and Pro
+  // threw them away for the words meant for a balance nothing has read.
+  const rig = boot();
+  rig.put(state());
+  const total = one(rig.host, 'stmt-total').textContent;
+  rig.put(state({ wallet: { ...state().wallet, stale: ['intents'] } }));
+  assert.equal(one(rig.host, 'stmt-total').hidden, false, 'the figure stays');
+  assert.equal(one(rig.host, 'stmt-total').textContent, total);
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins, still checking');
+  const rows = withClass(one(rig.host, 'l-rows'), 'l-row').filter((r) => !r.hidden);
+  assert.deepEqual(rows.map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR', 'SOL']);
+
+  // The trading account the same way: its last good figure stays, said to be still checking.
+  rig.put(state({ wallet: { ...state().wallet, stale: ['hyperliquid'] } }));
+  assert.equal(one(rig.host, 'stmt-trade-figure').textContent, '$1,046.82 · 2 positions · still checking');
+  rig.put(state({ wallet: { ...state().wallet, rows: state().wallet.rows.filter((r: Any) => r.kind !== 'hyperliquid'), stale: ['hyperliquid'], unread: ['hyperliquid'] } }));
+  assert.equal(one(rig.host, 'stmt-trade-figure').textContent, 'not answering right now');
 });
 
 test('each coin: its price, the amount under its name and in its own column, and its value', () => {
@@ -895,4 +917,21 @@ test('the Vault\'s Policies row is the place Basic\'s button lands, brought into
   assert.match(SHELL, /function revealSoon\(\) \{[\s\S]*?if \(!sliding\) reveal\(\);/);
   assert.match(SHELL, /world\.scrollTo\(\{ top: top, behavior: 'smooth' \}\)/, 'the world does not glide there');
   assert.doesNotMatch(SHELL.slice(SHELL.indexOf('function lightOnce')), /--ink|--up\b|ink\)/, 'the arrival lights in green, the live move\'s light');
+});
+
+test('money in through the bridge reads Received, on its way while the bridge is crediting it', async () => {
+  const at = new Date(Date.now() - 60_000).toISOString();
+  const rig = boot({ receipts: [
+    { id: 'received:eth:8453:usdc:0xb', kind: 'received', at, status: 'arriving', headline: 'Received 5 USDC on Base', summary: '', amount: null, symbol: null, received: null },
+    // From before the app first looked: no time (src/received.ts).
+    { id: 'received:btc:mainnet:native:ab', kind: 'received', at: '', status: 'executed', headline: 'Received 0.01 BTC on Bitcoin', summary: '', amount: null, symbol: null, received: { symbol: 'BTC', amount: 0.01 } },
+  ] });
+  rig.put(state());
+  rig.view('pro');
+  await tick();
+  const rows = withClass(one(rig.host, 'moves'), 'move');
+  assert.deepEqual(rows.map((m) => one(m, 'move-title').textContent), ['Received 5 USDC on Base', 'Received 0.01 BTC on Bitcoin']);
+  assert.deepEqual(rows.map((m) => words(one(m, 'move-state')).join('')), ['On its way', 'Done']);
+  assert.deepEqual(rows.map((m) => one(m, 'move-state').getAttribute('data-dir')), ['going', 'done']);
+  assert.equal(one(rows[1], 'move-meta').textContent, 'Earlier');
 });

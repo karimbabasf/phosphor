@@ -4,7 +4,8 @@
 // every accepted bundle gives the very events the verifier reported, and every refused one is
 // refused with the verifier's own words. Then its own rules, one each: the nonce and deadline
 // refusals in the verifier's order, a call that runs whole or not at all, reads at an older block,
-// and the RPC running the same bytes once however often they are sent.
+// the relay running a bundle once and in order, and the RPC running the same bytes once however
+// often they are sent.
 //
 // Run: node --test tests/unit/intents-double.test.ts
 
@@ -16,8 +17,8 @@ import fs from 'node:fs';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../../src/chain/near.ts';
-import { implicitAccountOf, submitExecuteIntents } from '../../src/chain/near-tx.ts';
-import type { MultiPayload } from '../../src/chain/near-tx.ts';
+import { implicitAccountOf, transferAll } from '../../src/chain/near-tx.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import { erc191SignatureField } from '../../src/intents-sign.ts';
 import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
 import { buildNonce } from '../../src/relay/payload.ts';
@@ -101,24 +102,45 @@ test('one call runs whole or not at all, and a read at an older block shows that
   assert.equal(await double.verifier.balance(receiver, USDC), 4n);
 });
 
-test('the RPC checks the gas key\'s signature and runs the same bytes once, however often they are sent', async () => {
+test('the relay refuses what the verifier would, runs a bundle once in one call, and says SETTLED with that call\'s hash', async () => {
   const double = createIntentsDouble();
-  const seed = Uint8Array.from(crypto.randomBytes(32));
-  const gas = implicitAccountOf(seed).accountId;
-  double.fundGas(gas, 500_000_000_000_000_000_000_000n);
   const key = generatePrivateKey();
   const account = privateKeyToAccount(key).address.toLowerCase();
   const p256 = `p256:${base58Encode(Buffer.alloc(64, 2))}`;
-  const signed = [await erc191(key, buildVaultPayload({ signerId: account, intents: [{ intent: 'add_public_key', public_key: p256 }], deadlineMs: double.now() + 60_000, salt: SALT }))];
+  const deadlineMs = double.now() + 60_000;
+  const signed = [
+    await erc191(key, buildVaultPayload({ signerId: account, intents: [{ intent: 'add_public_key', public_key: p256 }], deadlineMs, salt: SALT })),
+    await erc191(key, buildVaultPayload({ signerId: account, intents: [], deadlineMs, salt: SALT })),
+  ];
+  const ok = await double.relay.publishIntents(signed);
+  assert.ok(ok.status === 'OK' && ok.intentHashes.length === 2);
+  assert.equal(double.executions(), 1);
+  assert.equal(double.hasKey(account, p256), true);
+  const [first, second] = await Promise.all(ok.intentHashes.map((h) => double.relay.status(h)));
+  assert.ok(first!.status === 'SETTLED' && first!.nearTxHash !== null && first!.nearTxHash === second!.nearTxHash, 'one call carried both');
+  // The same bundle again: its nonces are spent, so the relay refuses it and nothing runs twice.
+  const again = await double.relay.publishIntents(signed);
+  assert.ok(again.status === 'FAILED' && /nonce was already used/.test(again.reason), JSON.stringify(again));
+  assert.equal(double.executions(), 1);
+  // A bundle the relay never saw has no word but NOT_FOUND_OR_NOT_VALID.
+  assert.equal((await double.relay.status('H5kqrmnzGJxhW1YGFWS17ukfPgxBmWYp6xd81FrhhrGx')).status, 'NOT_FOUND_OR_NOT_VALID');
+});
+
+test('the RPC checks the account key\'s signature on a transfer and runs the same bytes once, however often they are sent', async () => {
+  const double = createIntentsDouble();
+  const seed = Uint8Array.from(crypto.randomBytes(32));
+  const from = implicitAccountOf(seed).accountId;
+  double.fundGas(from, 500_000_000_000_000_000_000_000n);
+  const to = 'e'.repeat(64);
   // Every answer lost after the copy ran: near-tx keeps sending the identical bytes.
   double.sends.push({ kind: 'lost', land: true }, { kind: 'lost', land: false }, { kind: 'ok' });
-  const outcome = await submitExecuteIntents({ gasSeed: seed, signed }, double.near);
+  const outcome = await transferAll({ seed, receiverId: to, keep: 3n * 10n ** 21n, least: 10n ** 22n }, double.near);
   assert.equal(outcome.status, 'executed');
   assert.equal(double.executions(), 1);
   assert.ok(double.sendCount() >= 3);
-  assert.deepEqual(outcome.events.map((e) => e.event), ['public_key_added', 'intents_executed']);
-  assert.equal(double.hasKey(account, p256), true);
-  // The same bytes with one bit of the gas key's signature changed are refused as a bad signature.
+  assert.equal(double.nearReceived(to), outcome.amount);
+  assert.equal(outcome.amount, 497n * 10n ** 21n);
+  // The same bytes with one bit of the account key's signature changed are refused as a bad signature.
   const sentBytes = Buffer.from(String(double.calls.find((c) => c.method === 'send_tx')!.params.signed_tx_base64), 'base64');
   sentBytes[sentBytes.length - 1]! ^= 1;
   const res = await double.near.fetchImpl(double.near.rpcUrl, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'send_tx', params: { signed_tx_base64: sentBytes.toString('base64'), wait_until: 'FINAL' } }) });

@@ -1,7 +1,7 @@
 // The rekey's own pieces, in Node with software keys (src/vault/rekey.ts, phrase24.ts,
 // gas-account.ts): the bundle a migration and a restore sign, the exact events the verifier must
 // report for it (C7's five for a migration), the payload checks before anything leaves, the paper
-// key, and the gas account's numbers. Every bundle here is run by the chain double, which applies
+// key, and the old fee account's numbers. Every bundle here is run by the chain double, which applies
 // the verifier's rules (tests/unit/helpers/intents-double.ts), so a bundle that passes here is one
 // the double executes to C7's four views.
 //
@@ -14,10 +14,10 @@ import crypto from 'node:crypto';
 import { english, generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../../src/chain/near.ts';
-import type { MultiPayload } from '../../src/chain/near-tx.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import { YOCTO_PER_NEAR } from '../../src/chain/near-tx.ts';
 import type { VerifierEvent } from '../../src/relay/verifier.ts';
-import { GAS_FUND_MAX_NEAR, GAS_FUND_MIN_NEAR, fundingNear, gasAccountOf, nearText } from '../../src/vault/gas-account.ts';
+import { OLD_GAS_KEEP_YOCTO, OLD_GAS_LEAST_YOCTO, gasAccountOf, nearText, readOldGas } from '../../src/vault/gas-account.ts';
 import { eventsMismatch, expectedEvents, readVaultPayload } from '../../src/vault/payload.ts';
 import { PAPER_PATH, isPaperPhrase, newPaperPhrase, paperKeyOf, phraseDigest, phraseOf, verifierKeyOf } from '../../src/vault/phrase24.ts';
 import { SUBMIT_MARGIN_MS, erc191Signed, rekeyChecks, rekeyEvents, rekeyIntents, signRekey } from '../../src/vault/rekey.ts';
@@ -273,14 +273,21 @@ test('a paper key\'s verifier name is secp256k1 and the base58 of its 64-byte pu
 
 // ---------- the gas account ----------
 
-test('the gas account is the derived id, never one typed, and funding takes 0.1 to 1 NEAR in four places at most', () => {
+test('the old fee account is the derived id, never one typed, and what comes back keeps 0.003 NEAR and is 0.01 at least', async () => {
   assert.equal(gasAccountOf({ derivedAccounts: () => null }), null);
   assert.equal(gasAccountOf({ derivedAccounts: () => ({ gas: 'a'.repeat(64) }) }), 'a'.repeat(64));
   assert.equal(gasAccountOf({ derivedAccounts: () => ({ gas: 'alice.near' }) }), null);
-  assert.equal(fundingNear(GAS_FUND_MIN_NEAR), GAS_FUND_MIN_NEAR);
-  assert.equal(fundingNear(0.5), 0.5);
-  assert.equal(fundingNear(GAS_FUND_MAX_NEAR), GAS_FUND_MAX_NEAR);
-  for (const bad of [0, 0.09, 1.01, 0.12345, Number.NaN, '0.5', null, -1]) assert.equal(fundingNear(bad), null, String(bad));
+  assert.equal(OLD_GAS_KEEP_YOCTO, 3n * 10n ** 21n);
+  assert.equal(OLD_GAS_LEAST_YOCTO, 10n ** 22n);
+  const double = createIntentsDouble();
+  const account = 'c'.repeat(64);
+  assert.equal(await readOldGas(account, double.near), null, 'an account NEAR never saw brings nothing back');
+  double.fundGas(account, OLD_GAS_KEEP_YOCTO + OLD_GAS_LEAST_YOCTO - 1n);
+  assert.equal(await readOldGas(account, double.near), null, 'under 0.01 NEAR to bring back is none');
+  double.fundGas(account, 498_512_345_000_000_000_000_000n);
+  assert.deepEqual(await readOldGas(account, double.near), { near: '0.4955' });
+  const failing = { ...double.near, fetchImpl: (async () => { throw new TypeError('fetch failed'); }) as unknown as typeof fetch, sleep: async () => undefined };
+  assert.equal(await readOldGas(account, failing), undefined, 'no answer is not an empty account');
   assert.equal(nearText(0n), '0');
   assert.equal(nearText(YOCTO_PER_NEAR / 2n), '0.5');
   assert.equal(nearText(498_512_345_000_000_000_000_000n), '0.4985');

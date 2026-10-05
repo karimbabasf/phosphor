@@ -408,10 +408,12 @@
      summed by symbol, largest first, a coin with no price last, with the
      asset ids behind it, largest row first, for its day. Null while the
      intents balance has not been read, which is a different fact from
-     holding nothing. */
+     holding nothing. A read that missed is not that: its rows are the last
+     good ones, and they stay (2026-10-05, "still reading your coins" over
+     a balance read a minute before). */
   function coinsOf(wallet) {
     if (!wallet || !Array.isArray(wallet.rows)) return null;
-    if (Array.isArray(wallet.stale) && wallet.stale.indexOf('intents') >= 0) return null;
+    if (Array.isArray(wallet.unread) && wallet.unread.indexOf('intents') >= 0) return null;
     var by = {};
     var order = [];
     wallet.rows.forEach(function (row) {
@@ -467,7 +469,9 @@
     var priced = coins.some(function (c) { return c.priced; });
     dom.setNumber(refs.total, priced || !coins.length ? dom.usd(totalOf(coins)) : '');
     dom.setHidden(refs.total, !(priced || !coins.length));
-    dom.setText(refs.caption, unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins');
+    var words = unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins';
+    var checking = Array.isArray(state.wallet.stale) && state.wallet.stale.indexOf('intents') >= 0;
+    dom.setText(refs.caption, checking ? words + ', still checking' : words);
     // No "+$X today" beside the total: price moves times today's amounts reads as profit while it
     // ignores deposits and swaps. Each coin's own 24h change in the ledger is the true signal.
     dom.setHidden(refs.today, true);
@@ -525,10 +529,13 @@
     var stale = wallet && Array.isArray(wallet.stale) && wallet.stale.indexOf('hyperliquid') >= 0;
     var funded = wallet && wallet.hyperliquid ? wallet.hyperliquid.funded : null;
     var text = '';
-    if (stale) text = 'not answering right now';
+    /* A read that missed keeps the last good figure, said to be a moment old; only an account
+       nothing has read yet has no figure to keep. */
+    if (stale && !row) text = 'not answering right now';
     else if (row && isFinite(Number(row.valueUsd))) {
       var open = row.hyperliquid && typeof row.hyperliquid.openPositions === 'number' ? row.hyperliquid.openPositions : null;
       text = dom.usd(Number(row.valueUsd)) + (open === null ? '' : ' · ' + (open === 0 ? 'no positions' : open === 1 ? '1 position' : open + ' positions'));
+      if (stale) text += ' · still checking';
     } else if (funded === false) text = 'no money in it yet';
     dom.setText(refs.tradeFigure, text);
     dom.setHidden(refs.tradeFigure, !text);
@@ -1091,7 +1098,8 @@
         title: titleOf(r.kind, moneyOfReceipt(r, p), r.status === 'executed') || r.headline || r.summary || 'Something moved',
         state: endWord(r),
         dir: endDir(r),
-        meta: upper(dom.ago(r.at)) + (own ? ', on its own' : ''),
+        /* A deposit from before the app first looked has no time (src/received.ts). */
+        meta: (r.at ? upper(dom.ago(r.at)) : 'Earlier') + (own ? ', on its own' : ''),
         receipt: r
       };
     });
@@ -1210,19 +1218,23 @@
     return text.charAt(0).toUpperCase() + text.slice(1);
   }
 
+  /* `arriving` is money coming in through the bridge that it has not
+     credited yet (src/received.ts): the one receipt still under way. */
   function endWord(r) {
+    if (r.status === 'arriving') return 'On its way';
     if (r.status === 'failed') return 'Didn\'t go through';
     if (r.status === 'needs_reconciliation') return 'Not confirmed';
     return r.kind === 'intents_deposit' ? 'Arrived' : 'Done';
   }
 
   function endDir(r) {
+    if (r.status === 'arriving') return 'going';
     if (r.status === 'failed') return 'no';
     if (r.status === 'needs_reconciliation') return 'unsure';
     return 'done';
   }
 
-  var MOVE_ICONS = { swap: 'swap', intents_deposit: 'deposit', hl_deposit: 'send', hl_withdraw: 'deposit', intents_withdraw: 'withdraw', intents_send: 'send', intents_pay: 'send', transfer: 'send' };
+  var MOVE_ICONS = { swap: 'swap', intents_deposit: 'deposit', received: 'deposit', hl_deposit: 'send', hl_withdraw: 'deposit', intents_withdraw: 'withdraw', intents_send: 'send', intents_pay: 'send', transfer: 'send' };
 
   function makeMove(m) {
     var li = dom.el('li', 'move');

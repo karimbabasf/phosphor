@@ -1,6 +1,7 @@
 // An agent reaches for the chip vault. Everything that moves the vault to the chip, shows or takes
-// the paper key, restores it, tops up or sizes the allowance, funds the gas account, allows a
-// trading key, or drains the enclave relay is a POST under /api/vault, meant for the window alone.
+// the paper key, restores it, tops up or sizes the allowance, returns the old fee account's NEAR,
+// allows a trading key, or drains the enclave relay is a POST under /api/vault, meant for the window
+// alone.
 // An agent holds one of two secrets: agent.secret, which any process running as the owner can read
 // off the data dir (the OUTSIDE seat), or the seat secret the app hands the agents it spawns (case
 // 06 plays both). It may also send nothing at all.

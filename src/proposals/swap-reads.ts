@@ -561,8 +561,8 @@ function coinWord(side: SwapSide): string {
 const OVER_ALLOWANCE = {
   topUp: (held: string, short: string, coin: string): string =>
     `Your allowance holds ${held} ${coin}, less than this swap spends, so ${short} ${coin} moves from your vault first; you confirm that move with Touch ID.`,
-  allNone: (coin: string): string =>
-    `Your allowance holds no ${coin}; what your vault holds moves only through a top-up you confirm with Touch ID, so name an amount instead.`,
+  allNone: (saved: string, coin: string): string =>
+    `Your allowance holds no ${coin}, and your vault holds ${saved} ${coin}. Swap ${saved} ${coin} instead of "all": Approve then moves it from your vault with one more Touch ID.`,
 };
 
 /* The vault's account when it is not the one the moves spend from (kind chip), else null. */
@@ -663,7 +663,8 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
   let base: bigint;
   if (ask.all) {
     if (heldBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
-    if (heldBase === 0n && savedBase !== 0n && vault !== null) return { ...none, from, to, reason: 'insufficient_balance', sentence: OVER_ALLOWANCE.allNone(coinWord(from)) };
+    if (heldBase === 0n && vault !== null && savedBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
+    if (heldBase === 0n && savedBase !== null && savedBase !== 0n && vault !== null) return { ...none, from, to, reason: 'insufficient_balance', sentence: OVER_ALLOWANCE.allNone(baseUnitsToDecimal(savedBase, from.decimals), coinWord(from)) };
     if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)), details: NOT_HELD.allNext };
     base = heldBase;
   } else {

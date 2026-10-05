@@ -540,6 +540,20 @@ test('a coin that cannot come in as itself is skipped for the next one, and reme
   assert.deepEqual(asked().slice(4), ['1cs_v1:hypercore:hip1:0x6d', '1cs_v1:hypercore:erc20:0xb', '1cs_v1:hypercore:hip1:0x20'], 'an unfit coin was never asked again');
 });
 
+/* Live on 2026-10-05: 1Click lists Solana's sUSDC, then answers its quote "Asset ID is not
+   supported ... unknown blockchain", while SOL quotes 201. A deposit address waits for 1Click's
+   own yes, so a coin it cannot take in as itself hands the question to the chain's own coin. */
+test('a coin 1Click calls an unsupported asset is skipped for the chain\'s own coin', async () => {
+  const sUsdc: OneClickToken = { assetId: 'nep141:sol-2dc7b64e5dd3c717fc85abaf51cdcd4b18687f09.omft.near', blockchain: 'sol', symbol: 'sUSDC', decimals: 6, contractAddress: '3tMdx4g4grCgqHjELqALfTPnZnG1BLwsPntD3tGREgvp', price: 0.999933 };
+  const said = `Asset ID is not supported. Asset ID: ${sUsdc.assetId} Details: Asset belongs to unknown blockchain.`;
+  assert.equal(classifyProbe(400, { message: said }).unfit, true);
+  const { fetchImpl, calls } = fakeFetch({ quote: (b) => (b.originAsset === sUsdc.assetId ? { status: 400, body: { message: said } } : QUOTED) });
+  const verdict = await checker({ tokens: async () => [...TOKENS, sUsdc], fetchImpl }).check({ network: 'sol', direction: 'in', account: ACCOUNT, asset: sUsdc.assetId });
+  assert.equal(verdict.state, 'open');
+  assert.equal(verdict.reasons[0].text, '1Click takes SOL in from Solana');
+  assert.deepEqual(calls.filter((c) => c.url.endsWith('/v0/quote')).map((c) => c.body?.originAsset), [sUsdc.assetId, 'nep141:sol.omft.near']);
+});
+
 test('a chain that stops wanting MEMO is asked plainly again', async () => {
   const clock = { t: NOW };
   let wantsMemo = true;

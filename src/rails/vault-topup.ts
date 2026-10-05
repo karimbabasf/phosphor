@@ -1,8 +1,9 @@
 // The top-up rail: a vault_top_up draft, from the vault to the allowance (PHASE2-PLAN.md C8).
 //
 // The money never leaves the verifier and never reaches anyone else: the vault's chip key signs
-// one transfer to the allowance behind one Touch ID, and the gas account sends it
-// (src/vault/allowance.ts, src/vault/submit.ts). Nothing here signs with a key this process holds.
+// one transfer to the allowance behind one Touch ID, and the NEAR Intents relay sends it and pays
+// NEAR's fee (src/vault/allowance.ts, src/vault/submit.ts). Nothing here signs with a key this
+// process holds.
 //
 // A top-up runs only on a person's click: the engine never allows one on its own
 // (src/policy/engine.ts), and this rail refuses one the policy decided as well. The accounts are
@@ -82,8 +83,8 @@ export function vaultTopUpRail(deps: VaultTopUpDeps): Rail<VaultTopUpDraft> {
       const pinned = { assetId: coin.asset, decimals: coin.decimals };
       return {
         ok: true,
-        summary: `Moves ${words(coin)} from your vault to your allowance. One Touch ID signs it with your vault's key, and the gas account sends it inside NEAR Intents.`,
-        developer: `transfer ${coin.base} of ${coin.asset} from ${vault} to ${draft.to.toLowerCase()}, signed by the chip (webauthn), sent with execute_intents`,
+        summary: `Moves ${words(coin)} from your vault to your allowance. One Touch ID signs it with your vault's key, and Phosphor sends it inside NEAR Intents, which pays NEAR's fee.`,
+        developer: `transfer ${coin.base} of ${coin.asset} from ${vault} to ${draft.to.toLowerCase()}, signed by the chip (webauthn), published to the solver relay`,
         assets: { origin: pinned, destination: pinned },
       };
     } catch (err) {
@@ -134,7 +135,7 @@ function railResult(result: VaultResult, coin: CoinAmount, vault: string, allowa
       const read = pocket(after);
       return {
         ok: true,
-        detail: `moved ${what}; NEAR confirmed it at block ${result.block.hash} (${new Date(result.block.atMs).toISOString()})${result.gasBurnt === null ? '' : `, ${result.gasBurnt} gas burnt`}`,
+        detail: `moved ${what}; NEAR confirmed it at block ${result.block.hash} (${new Date(result.block.atMs).toISOString()})`,
         txids: result.txHash === null ? [] : [result.txHash],
         ...(read === undefined ? {} : { pocket: read }),
       };

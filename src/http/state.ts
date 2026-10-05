@@ -196,8 +196,8 @@ export function buildState(ctx: Ctx): unknown {
        first-run screen and the decision card all read it from here. Never a key.
        `chip` is the move to the Touch ID key (src/vault/rekey.ts, PHASE2-PLAN.md C9): where the
        move stands, what the chain last said about the paper key, the owner key and predecessor
-       auth, the allowance and the gas account. Fixed size, public keys only, never a word of the
-       paper key. */
+       auth, the allowance and the old fee account's NEAR. Fixed size, public keys only, never a
+       word of the paper key. */
     vault: { ...vaultStatus(ctx), chip: chipVaultSlice(ctx) },
     /* Whether the terms of use are accepted at their current version. The window shows its
        terms screen ahead of everything else until this says so. */
@@ -371,6 +371,8 @@ export function transactionsPayload(ctx: Ctx): { entries: ReturnType<typeof buil
     events: ctx.audit.tail(LOG_LIMIT_MAX),
     selfAddresses: ctx.cfg.addresses.evm === undefined ? [] : [ctx.cfg.addresses.evm],
     invites: ctx.invites.landed(),
+    // What the bridge said came in, as last read (src/received.ts): no chain is read here either.
+    received: ctx.received?.list() ?? [],
   });
   return { entries };
 }

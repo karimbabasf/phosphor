@@ -1,27 +1,29 @@
 // Sending a vault bundle (src/vault/submit.ts, PHASE2-PLAN C7), end to end in Node: payloads the app
 // builds (src/vault/payload.ts), signed through the relay (src/vault/relay.ts) by a software chip
 // that answers as the vault service does (tests/unit/helpers/chip-fake.ts) and checked by the chip
-// signer (src/vault/chip.ts), then simulated, sent by the gas account and confirmed on a chain
-// double that runs the verifier's rules and the RPC's (tests/unit/helpers/intents-double.ts).
+// signer (src/vault/chip.ts), then simulated, published to the solver relay with no quote and
+// confirmed on a chain double that runs the verifier's rules and plays the relay
+// (tests/unit/helpers/intents-double.ts).
 //
 // What it holds the code to: nothing is sent unless the simulation reports exactly the bundle's
-// events; executed is only done once the views say so; and after any answer that leaves a signed
-// bundle able to run (a timeout, a lost reply, INVALID_TRANSACTION for a copy that was forwarded, a
-// failed call, a refused simulation), no new signature is asked for until the bundle is settled.
-// One signature per move, counted at the chip, every time.
+// events; executed is only done once the nonces and the views say so, whatever the relay says; and
+// after any answer that leaves a signed bundle able to run (a lost reply, a FAILED answer from a
+// relay that ran it anyway, a relay that runs it late or only in part, a refused simulation), no
+// new signature is asked for until the bundle is settled. One signature per move, counted at the
+// chip, every time.
 //
 // Run: node --test tests/unit/vault-submit.test.ts
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import path from 'node:path';
 
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../../src/chain/near.ts';
-import { GAS_LOW_YOCTO, implicitAccountOf } from '../../src/chain/near-tx.ts';
-import type { MultiPayload } from '../../src/chain/near-tx.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import { erc191SignatureField } from '../../src/intents-sign.ts';
 import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
 import { buildNonce, decodeNonce } from '../../src/relay/payload.ts';
@@ -32,17 +34,15 @@ import { buildVaultPayload } from '../../src/vault/payload.ts';
 import type { VaultIntent } from '../../src/vault/payload.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import type { VaultRequest } from '../../src/vault/relay.ts';
-import { VAULT_SETTLE_FLOOR_MS, createVaultSubmitter, fileJournal, journalPathFor, memoryJournal, rekeyViews, settleEntry, txFateOf } from '../../src/vault/submit.ts';
+import { VAULT_SETTLE_FLOOR_MS, createVaultSubmitter, fileJournal, journalPathFor, memoryJournal, rekeyViews, settleEntry } from '../../src/vault/submit.ts';
 import type { VaultJournal, VaultMove, VaultResult } from '../../src/vault/submit.ts';
 import { SoftwareChipService, serve } from './helpers/chip-fake.ts';
 import type { Answer } from './helpers/chip-fake.ts';
 import { SALT, createIntentsDouble } from './helpers/intents-double.ts';
-import type { Send } from './helpers/intents-double.ts';
+import type { Publish } from './helpers/intents-double.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 const USDC = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
-const HALF_NEAR = 500_000_000_000_000_000_000_000n;
-
 function secpKey(privateKey: `0x${string}`): string {
   return `secp256k1:${base58Encode(Buffer.from(privateKeyToAccount(privateKey).publicKey.slice(4), 'hex'))}`;
 }
@@ -52,8 +52,9 @@ async function erc191(privateKey: `0x${string}`, payload: string): Promise<Multi
 }
 
 /* One vault on the double: its own key (OLD), a paper key (RECOVERY), a chip committed for it in
-   the software service, an allowance, a funded gas account, and the submitter over all of it. */
-async function world(opts: { chipOnChain?: boolean; gas?: bigint; journal?: VaultJournal; vaultUsdc?: bigint; service?: (now: () => number) => { run(request: VaultRequest): Answer } } = {}) {
+   the software service, an allowance, and the submitter over all of it. No NEAR anywhere: the relay
+   pays NEAR's fee. */
+async function world(opts: { chipOnChain?: boolean; journal?: VaultJournal; vaultUsdc?: bigint; service?: (now: () => number) => { run(request: VaultRequest): Answer } } = {}) {
   const double = createIntentsDouble();
   const relay = createVaultRelay({ transportKey: crypto.randomBytes(32), makesKeys: true });
   const service = new SoftwareChipService(double.now);
@@ -69,11 +70,8 @@ async function world(opts: { chipOnChain?: boolean; gas?: bigint; journal?: Vaul
   const pin: ChipPin = { keyRef: made.keyRef, publicKey: made.publicKey, account: vault };
   if (opts.chipOnChain ?? true) double.addKey(vault, made.publicKey);
   double.fund(vault, USDC, opts.vaultUsdc ?? 100_000_000n);
-  const gasSeed = Uint8Array.from(crypto.randomBytes(32));
-  const gas = implicitAccountOf(gasSeed).accountId;
-  double.fundGas(gas, opts.gas ?? HALF_NEAR);
   const journal = opts.journal ?? memoryJournal();
-  const submitter = createVaultSubmitter({ verifier: double.verifier, gasSeed: () => gasSeed, journal, near: double.near, now: double.now, sleep: double.near.sleep });
+  const submitter = createVaultSubmitter({ verifier: double.verifier, relay: double.relay, journal, now: double.now, sleep: double.near.sleep });
 
   async function payload(intents: VaultIntent[], signer = vault): Promise<string> {
     const salt = (await double.verifier.currentSalt())!;
@@ -99,7 +97,7 @@ async function world(opts: { chipOnChain?: boolean; gas?: bigint; journal?: Vaul
     };
   }
 
-  return { double, relay, service, shell, old, recovery, vault, allowance, pin, gas, gasSeed, journal, submitter, payload, topUp, signedBundles, stop: () => shell.stop() };
+  return { double, relay, service, shell, old, recovery, vault, allowance, pin, journal, submitter, payload, topUp, signedBundles, stop: () => shell.stop() };
 }
 
 function stateOf(result: VaultResult): string {
@@ -123,9 +121,13 @@ test('a top-up the software chip signed runs in the double: one Touch ID, one ca
     // The nonce lives exactly seven days past the payload (buildVaultPayload, buildNonce).
     const body = JSON.parse(w.signedBundles[0]![0]!.payload) as { deadline: string; nonce: string };
     assert.equal(decodeNonce(body.nonce)!.deadlineMs, Date.parse(body.deadline) + NONCE_LIFE_AFTER_DEADLINE_MS);
-    // Done lets the entry go; the gas account paid.
+    // Done lets the entry go. One publish, with no quote: the relay put it on chain and paid the fee.
     assert.deepEqual(w.submitter.pending(), []);
-    assert.ok(w.double.gasAmount(w.gas)! < HALF_NEAR);
+    const published = w.double.calls.filter((c) => c.method === 'publish_intents');
+    assert.equal(published.length, 1);
+    assert.deepEqual(published[0]!.params.quote_hashes, []);
+    assert.deepEqual(published[0]!.params.signed_datas, w.signedBundles[0]);
+    assert.ok(result.txHash !== null, 'the relay named the NEAR transaction');
   } finally {
     await w.stop();
   }
@@ -152,7 +154,7 @@ test('one changed event in the simulation stops the submit: nothing is sent, and
       assert.ok(result.state === 'refused');
       assert.equal(result.code, 'events_mismatch', what);
       assert.equal(result.released, true, what);
-      assert.equal(w.double.sendCount(), 0, `${what}: nothing was sent`);
+      assert.equal(w.double.publishCount(), 0, `${what}: nothing was sent`);
       assert.equal(w.double.balanceOf(w.allowance, USDC), 0n, what);
       // The simulation already handed the signed bundle to the RPC, so the same move waits.
       w.double.faults.simulate = null;
@@ -226,11 +228,11 @@ test('the migrate rekey: C7\'s five events on the old key\'s payload, then the f
         return { ok: true, bundle: [pa2], before: { predecessorAuth: true } };
       },
     };
-    const sends = w.double.sendCount();
+    const publishes = w.double.publishCount();
     const refused = await w.submitter.move(stale);
     assert.equal(refused.state, 'refused', stateOf(refused));
     assert.ok(refused.state === 'refused' && refused.code === 'events_mismatch');
-    assert.equal(w.double.sendCount(), sends);
+    assert.equal(w.double.publishCount(), publishes);
   } finally {
     await w.stop();
   }
@@ -279,20 +281,18 @@ test('a restore expects the predecessor event only when the flag read true, and 
   }
 });
 
-/* The ambiguous answers. Each script makes near-tx answer `unknown` (the budget runs out with the
-   copy's fate unread) while the copy did run; the same move asked again settles on GAS's own
-   transaction by hash and is done, with the one signature it already had. */
-const LANDED: [string, Send[]][] = [
-  ['a timeout, the copy landed', [{ kind: 'timeout', land: true }, { kind: 'timeout', land: false }]],
-  ['a lost reply, the copy landed', [{ kind: 'lost', land: true }, { kind: 'lost', land: false }]],
-  ['INVALID_TRANSACTION for a copy that was forwarded and ran', [{ kind: 'invalid', land: true }, { kind: 'invalid', land: false, variant: { InvalidNonce: { tx_nonce: 1, ak_nonce: 1 } } }]],
+/* The ambiguous answers. Each script leaves the publish with no OK while the bundle did run; the
+   same move asked again settles by its nonces and is done, with the one signature it already had. */
+const LANDED: [string, Publish[]][] = [
+  ['a lost reply, the bundle ran', [{ kind: 'lost', land: true }]],
+  ['FAILED from a relay that ran it anyway', [{ kind: 'failed', land: true }]],
 ];
 
 for (const [what, script] of LANDED) {
-  test(`ambiguous submit, ${what}: one signature, one call that ran, done on the second ask`, async () => {
+  test(`ambiguous publish, ${what}: one signature, one call that ran, done on the second ask`, async () => {
     const w = await world();
     try {
-      w.double.sends.push(...script);
+      w.double.publishes.push(...script);
       const first = await w.submitter.move(w.topUp('top-up', 5_000_000n));
       assert.equal(first.state, 'sent', stateOf(first));
       assert.ok(first.state === 'sent' && first.code === 'vault_pending');
@@ -303,7 +303,7 @@ for (const [what, script] of LANDED) {
       assert.equal(w.double.executions(), 1);
       assert.equal(w.double.balanceOf(w.allowance, USDC), 5_000_000n);
       // A new move (a new id) is signed normally afterwards.
-      w.double.sends.splice(0, w.double.sends.length);
+      w.double.publishes.splice(0, w.double.publishes.length);
       const next = await w.submitter.move(w.topUp('top-up-2', 1_000_000n));
       assert.equal(next.state, 'done', stateOf(next));
       assert.equal(w.service.signatures, 2);
@@ -314,10 +314,27 @@ for (const [what, script] of LANDED) {
   });
 }
 
-test('ambiguous submit that never landed: nothing is signed before the deadline and two minutes, then once more with fresh nonces', async () => {
+test('a relay that answers OK and lands it a few seconds later: done on the first ask, by the nonces', async () => {
   const w = await world();
   try {
-    w.double.sends.push({ kind: 'timeout', land: false });
+    w.double.publishes.push({ kind: 'later', afterMs: 5_000 });
+    const result = await w.submitter.move(w.topUp('top-up', 5_000_000n));
+    assert.equal(result.state, 'done', stateOf(result));
+    assert.equal(w.double.executions(), 1);
+    assert.equal(w.service.signatures, 1);
+  } finally {
+    await w.stop();
+  }
+});
+
+for (const [what, script] of [
+  ['no answer, never run', { kind: 'lost', land: false }],
+  ['OK, then dropped', { kind: 'dropped' }],
+] as [string, Publish][]) {
+  test(`a publish that never ran (${what}): nothing is signed before the deadline and two minutes, then once more with fresh nonces`, async () => {
+  const w = await world();
+  try {
+    w.double.publishes.push(script);
     const first = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(first.state, 'sent', stateOf(first));
     // Before the deadline and the two minutes: wait, whatever is asked, and no touch.
@@ -332,7 +349,7 @@ test('ambiguous submit that never landed: nothing is signed before the deadline 
     assert.equal(w.service.signatures, 1);
     const deadline = Date.parse((JSON.parse(w.signedBundles[0]![0]!.payload) as { deadline: string }).deadline);
     w.double.advance(deadline + VAULT_SETTLE_FLOOR_MS + 1 - w.double.now());
-    w.double.sends.splice(0, w.double.sends.length, { kind: 'ok' });
+    w.double.publishes.splice(0, w.double.publishes.length, { kind: 'ok' });
     const again = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(again.state, 'done', stateOf(again));
     assert.equal(w.service.signatures, 2, 'signed again only once the first was proved dead');
@@ -343,12 +360,13 @@ test('ambiguous submit that never landed: nothing is signed before the deadline 
   } finally {
     await w.stop();
   }
-});
+  });
+}
 
-test('ambiguous submit that lands after the budget, before the deadline: settled as ran, never signed again', async () => {
+test('a relay that lands it after the wait, before the deadline: settled as ran, never signed again', async () => {
   const w = await world();
   try {
-    w.double.sends.push({ kind: 'later', afterMs: 75_000 });
+    w.double.publishes.push({ kind: 'later', afterMs: 75_000 });
     const first = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(first.state, 'sent', stateOf(first));
     assert.equal(w.double.executions(), 0);
@@ -364,10 +382,10 @@ test('ambiguous submit that lands after the budget, before the deadline: settled
   }
 });
 
-test('a failed call is about that call only: the same signed intents run for someone else before the deadline, and the move is done, not signed again', async () => {
+test('a FAILED publish is about that publish only: the same signed intents run for someone else before the deadline, and the move is done, not signed again', async () => {
   const w = await world();
   try {
-    // The simulation passes; the vault is emptied before the call runs, so the verifier refuses it.
+    // The simulation passes; the vault is emptied before the publish, so the relay refuses it.
     w.double.faults.simulate = (sim) => {
       w.double.fund(w.vault, USDC, -w.double.balanceOf(w.vault, USDC));
       w.double.faults.simulate = null;
@@ -397,7 +415,7 @@ test('a refused simulation still released the bundle: the move waits out its dea
     const first = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(first.state, 'refused', stateOf(first));
     assert.ok(first.state === 'refused' && first.code === 'simulate_refused' && first.released);
-    assert.equal(w.double.sendCount(), 0);
+    assert.equal(w.double.publishCount(), 0);
     w.double.fund(w.vault, USDC, 9_000_000n);
     const early = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(early.state, 'settling', stateOf(early));
@@ -411,10 +429,10 @@ test('a refused simulation still released the bundle: the move waits out its dea
   }
 });
 
-test('"never ran" needs every proof at one block: reads that fail, or a lookup with no answer, keep the move and the account waiting', async () => {
+test('"never ran" needs every proof at one block: reads that fail keep the move and the account waiting, and the relay\'s word decides nothing', async () => {
   const w0 = await world();
   try {
-    w0.double.sends.push({ kind: 'timeout', land: false });
+    w0.double.publishes.push({ kind: 'lost', land: false });
     assert.equal((await w0.submitter.move(w0.topUp('top-up', 5_000_000n))).state, 'sent');
     w0.double.advance(CHIP_PAYLOAD_LIFE_MS + VAULT_SETTLE_FLOOR_MS + 1);
     w0.double.faults.reads = true;
@@ -427,35 +445,36 @@ test('"never ran" needs every proof at one block: reads that fail, or a lookup w
     await w0.stop();
   }
 
-  // A lookup by hash with no answer: the nonces read unspent past the deadline, and it still waits.
+  // The relay took it and never ran it: SETTLED from the relay is a hint the nonces must confirm.
   const w = await world();
   try {
-    w.double.sends.push({ kind: 'timeout', land: false });
+    w.double.publishes.push({ kind: 'dropped' });
     assert.equal((await w.submitter.move(w.topUp('top-up', 5_000_000n))).state, 'sent');
-    w.double.advance(CHIP_PAYLOAD_LIFE_MS + VAULT_SETTLE_FLOOR_MS + 1);
     const [entry] = w.submitter.pending();
-    const settled = await settleEntry(entry!, { verifier: w.double.verifier, lookup: async () => 'unknown', now: w.double.now });
-    assert.equal(settled.verdict, 'wait');
-    assert.ok(settled.verdict === 'wait' && /did not say what became of a transaction/.test(settled.why));
-    // The same entry with a lookup that answers: dead, proved at one block.
-    const dead = await settleEntry(entry!, { verifier: w.double.verifier, lookup: async () => 'not_found', now: w.double.now });
+    assert.equal(entry!.intentHashes?.length, 1, 'the relay\'s intent hash is written down');
+    const lying = { status: async (intentHash: string) => ({ intentHash, status: 'SETTLED', statusDetails: null, nearTxHash: 'H5kqrmnzGJxhW1YGFWS17ukfPgxBmWYp6xd81FrhhrGx', filledAmounts: [] }) };
+    const hinted = await settleEntry(entry!, { verifier: w.double.verifier, relay: lying, now: w.double.now });
+    assert.ok(hinted.verdict === 'wait' && /relay says it settled/.test(hinted.why), JSON.stringify(hinted));
+    w.double.advance(CHIP_PAYLOAD_LIFE_MS + VAULT_SETTLE_FLOOR_MS + 1);
+    // Past the deadline and two minutes the nonces decide, whatever the relay says: dead, at one block.
+    assert.equal((await settleEntry(entry!, { verifier: w.double.verifier, relay: lying, now: w.double.now })).verdict, 'dead');
+    const dead = await settleEntry(entry!, { verifier: w.double.verifier, now: w.double.now });
     assert.equal(dead.verdict, 'dead');
     // A final block stamped minutes ahead of this clock is no block at all.
     const ahead = await settleEntry(entry!, {
       verifier: { ...w.double.verifier, finalBlock: async () => ({ hash: 'x', atMs: w.double.now() + 10 * 60_000 }) },
-      lookup: async () => 'not_found',
       now: w.double.now,
     });
     assert.ok(ahead.verdict === 'wait' && /too far ahead/.test(ahead.why));
     // A salt read with no answer is no "valid".
-    const saltUnread = await settleEntry(entry!, { verifier: { ...w.double.verifier, isValidSalt: async () => null }, lookup: async () => 'not_found', now: w.double.now });
+    const saltUnread = await settleEntry(entry!, { verifier: { ...w.double.verifier, isValidSalt: async () => null }, now: w.double.now });
     assert.ok(saltUnread.verdict === 'wait' && /whether a nonce salt is valid/.test(saltUnread.why));
     // A nonce read with no answer is no "unspent".
-    const nonceUnread = await settleEntry(entry!, { verifier: { ...w.double.verifier, nonceUsed: async () => null }, lookup: async () => 'not_found', now: w.double.now });
+    const nonceUnread = await settleEntry(entry!, { verifier: { ...w.double.verifier, nonceUsed: async () => null }, now: w.double.now });
     assert.ok(nonceUnread.verdict === 'wait' && /whether every nonce is spent/.test(nonceUnread.why));
     // This Mac's clock short of the deadline and two minutes is a wait, whatever the block says.
     const lastDeadline = Date.parse((JSON.parse(entry!.signed[0]!.payload) as { deadline: string }).deadline);
-    const early = await settleEntry(entry!, { verifier: w.double.verifier, lookup: async () => 'not_found', now: () => lastDeadline + VAULT_SETTLE_FLOOR_MS - 1 });
+    const early = await settleEntry(entry!, { verifier: w.double.verifier, now: () => lastDeadline + VAULT_SETTLE_FLOOR_MS - 1 });
     assert.ok(early.verdict === 'wait' && early.notBefore !== null, JSON.stringify(early));
   } finally {
     await w.stop();
@@ -470,7 +489,7 @@ test('a bundle whose fate can no longer be proved (its salt taken out, or its no
   for (const [what, harm, why] of cases) {
     const w = await world();
     try {
-      w.double.sends.push({ kind: 'timeout', land: false });
+      w.double.publishes.push({ kind: 'lost', land: false });
       assert.equal((await w.submitter.move(w.topUp('top-up', 5_000_000n))).state, 'sent');
       // Before the deadline and two minutes it waits like any other.
       harm(w);
@@ -481,7 +500,7 @@ test('a bundle whose fate can no longer be proved (its salt taken out, or its no
         assert.ok(asked.state === 'unknown' && asked.code === 'vault_unknown' && why.test(asked.detail), `${what}: ${stateOf(asked)}`);
       }
       assert.equal(w.service.signatures, 1, `${what}: the move is never signed again`);
-      w.double.sends.splice(0, w.double.sends.length, { kind: 'ok' });
+      w.double.publishes.splice(0, w.double.publishes.length, { kind: 'ok' });
       const other = await w.submitter.move(w.topUp('next', 1_000_000n));
       assert.equal(other.state, 'done', `${what}: ${stateOf(other)}`);
       assert.equal(w.service.signatures, 2);
@@ -498,33 +517,39 @@ test('a bundle whose fate can no longer be proved (its salt taken out, or its no
   }
 });
 
-test('part of a bundle run on its own is never done: the move reads as a mismatch and is not signed again', async () => {
-  const w = await world();
-  try {
-    w.double.sends.push({ kind: 'timeout', land: false });
-    const first = await w.submitter.move({
-      id: 'proofs',
-      account: w.vault,
-      async sign() {
-        const one = await erc191(w.old, await w.payload([]));
-        const two = await chipSign(w.relay, w.pin, await w.payload([]), { now: w.double.now });
-        assert.ok(two.ok);
-        w.signedBundles.push([one, two.signed]);
-        return { ok: true, bundle: [one, two.signed], before: {} };
-      },
-    });
-    assert.equal(first.state, 'sent', stateOf(first));
-    assert.equal((await w.double.runAsStranger([w.signedBundles[0]![0]!])).ok, true);
-    w.double.advance(CHIP_PAYLOAD_LIFE_MS + VAULT_SETTLE_FLOOR_MS + 1);
-    for (let i = 0; i < 2; i += 1) {
-      const asked = await w.submitter.move({ id: 'proofs', account: w.vault, sign: async () => assert.fail('never signed again') });
-      assert.equal(asked.state, 'mismatch', stateOf(asked));
+for (const [what, script] of [
+  ['someone running part of it on their own', { kind: 'lost', land: false }],
+  ['a relay that ran only part of it', { kind: 'part', count: 1 }],
+] as [string, Publish][]) {
+  test(`part of a bundle run (${what}) is never done: the move reads as a mismatch and is not signed again`, async () => {
+    const w = await world();
+    try {
+      w.double.publishes.push(script);
+      const first = await w.submitter.move({
+        id: 'proofs',
+        account: w.vault,
+        async sign() {
+          const one = await erc191(w.old, await w.payload([]));
+          const two = await chipSign(w.relay, w.pin, await w.payload([]), { now: w.double.now });
+          assert.ok(two.ok);
+          w.signedBundles.push([one, two.signed]);
+          return { ok: true, bundle: [one, two.signed], before: {} };
+        },
+      });
+      assert.equal(first.state, 'sent', stateOf(first));
+      if (script.kind === 'lost') assert.equal((await w.double.runAsStranger([w.signedBundles[0]![0]!])).ok, true);
+      assert.equal(w.double.executions(), 1, 'the first payload ran, the second never did');
+      w.double.advance(CHIP_PAYLOAD_LIFE_MS + VAULT_SETTLE_FLOOR_MS + 1);
+      for (let i = 0; i < 2; i += 1) {
+        const asked = await w.submitter.move({ id: 'proofs', account: w.vault, sign: async () => assert.fail('never signed again') });
+        assert.equal(asked.state, 'mismatch', stateOf(asked));
+      }
+      assert.equal(w.service.signatures, 1);
+    } finally {
+      await w.stop();
     }
-    assert.equal(w.service.signatures, 1);
-  } finally {
-    await w.stop();
-  }
-});
+  });
+}
 
 test('a view that reads wrong after the call ran is a mismatch, and asking again reads the views again with no new signature', async () => {
   const w = await world();
@@ -542,53 +567,14 @@ test('a view that reads wrong after the call ran is a mismatch, and asking again
   }
 });
 
-test('the gas account is asked before the Touch ID: under 0.06 NEAR, or not funded, nobody is asked to sign', async () => {
-  for (const [what, gas, code] of [
-    ['one yocto short of what a submit needs', GAS_LOW_YOCTO - 1n, 'gas_low'],
-    ['no account yet', null, 'gas_unfunded'],
-  ] as const) {
-    const w = await world({ gas: gas ?? HALF_NEAR });
-    try {
-      if (gas === null) {
-        const other = Uint8Array.from(crypto.randomBytes(32));
-        const sub = createVaultSubmitter({ verifier: w.double.verifier, gasSeed: () => other, journal: memoryJournal(), near: w.double.near, now: w.double.now, sleep: w.double.near.sleep });
-        const result = await sub.move(w.topUp('top-up', 5_000_000n));
-        assert.ok(result.state === 'refused' && result.code === code && !result.released, `${what}: ${stateOf(result)}`);
-      } else {
-        const result = await w.submitter.move(w.topUp('top-up', 5_000_000n));
-        assert.ok(result.state === 'refused' && result.code === code && !result.released, `${what}: ${stateOf(result)}`);
-      }
-      assert.equal(w.service.signatures, 0, what);
-      assert.deepEqual(w.service.seen.filter((r) => r.op === 'signIntent'), [], what);
-    } finally {
-      await w.stop();
-    }
-  }
-  // Exactly the threshold is enough.
-  const w = await world({ gas: GAS_LOW_YOCTO });
-  try {
-    assert.equal((await w.submitter.move(w.topUp('top-up', 5_000_000n))).state, 'done');
-  } finally {
-    await w.stop();
-  }
-});
-
-test('a shut wallet has no gas key: the move is refused before any Touch ID', async () => {
+test('no NEAR and no open session: a vault move needs neither, and a shut wallet still sends what the chip signs', async () => {
   const w = await world();
   try {
-    const shut = createVaultSubmitter({
-      verifier: w.double.verifier,
-      gasSeed: () => {
-        throw new Error('the wallet is locked: open it first');
-      },
-      journal: memoryJournal(),
-      near: w.double.near,
-      now: w.double.now,
-      sleep: w.double.near.sleep,
-    });
-    const result = await shut.move(w.topUp('top-up', 5_000_000n));
-    assert.ok(result.state === 'refused' && result.code === 'wallet_locked', stateOf(result));
-    assert.equal(w.service.signatures, 0);
+    // Nothing in this world holds NEAR or a session key: the relay pays NEAR's fee.
+    const result = await w.submitter.move(w.topUp('top-up', 5_000_000n));
+    assert.equal(result.state, 'done', stateOf(result));
+    assert.equal(w.service.signatures, 1);
+    assert.deepEqual(w.double.calls.filter((c) => c.method === 'send_tx'), [], 'no NEAR transaction of this app\'s');
   } finally {
     await w.stop();
   }
@@ -600,10 +586,10 @@ test('the journal on disk outlives the process: a new submitter over it waits, t
   assert.equal(path.basename(file), 'vault-moves.json');
   const w = await world({ journal: fileJournal(file) });
   try {
-    w.double.sends.push({ kind: 'later', afterMs: 70_000 });
+    w.double.publishes.push({ kind: 'later', afterMs: 70_000 });
     assert.equal((await w.submitter.move(w.topUp('top-up', 5_000_000n))).state, 'sent');
     // The process dies here. The next one reads the same file.
-    const reborn = createVaultSubmitter({ verifier: w.double.verifier, gasSeed: () => w.gasSeed, journal: fileJournal(file), near: w.double.near, now: w.double.now, sleep: w.double.near.sleep });
+    const reborn = createVaultSubmitter({ verifier: w.double.verifier, relay: w.double.relay, journal: fileJournal(file), now: w.double.now, sleep: w.double.near.sleep });
     assert.equal(reborn.pending().length, 1);
     assert.equal((await reborn.move(w.topUp('top-up', 5_000_000n))).state, 'settling');
     w.double.advance(30_000);
@@ -637,7 +623,7 @@ test('a bundle that is not the app\'s is never released: another account, a reus
     // A signer that throws (a wallet that locked between two touches, say) signed nothing that left.
     const thrown = await w.submitter.move({ id: 'throws', account: w.vault, sign: async () => { throw new Error('the wallet is locked: open it first'); } });
     assert.ok(thrown.state === 'refused' && thrown.code === 'vault_bundle' && !thrown.released, stateOf(thrown));
-    assert.equal(w.double.sendCount(), 0);
+    assert.equal(w.double.publishCount(), 0);
     assert.deepEqual(w.submitter.pending(), []);
   } finally {
     await w.stop();
@@ -647,10 +633,10 @@ test('a bundle that is not the app\'s is never released: another account, a reus
 test('a move that ran is answered from its own bundle, even while a later move of the same vault still waits', async () => {
   const w = await world({ journal: fileJournal(journalPathFor(tempDir('phosphor-vault-order-'))) });
   try {
-    w.double.sends.push({ kind: 'timeout', land: true }, { kind: 'timeout', land: false });
+    w.double.publishes.push({ kind: 'lost', land: true });
     assert.equal((await w.submitter.move(w.topUp('a', 5_000_000n))).state, 'sent');
     // b is signed once a's bundle reads as ran, and is itself left undecided.
-    w.double.sends.splice(0, w.double.sends.length, { kind: 'timeout', land: false });
+    w.double.publishes.splice(0, w.double.publishes.length, { kind: 'lost', land: false });
     assert.equal((await w.submitter.move(w.topUp('b', 1_000_000n))).state, 'sent');
     const a = await w.submitter.move(w.topUp('a', 5_000_000n));
     assert.equal(a.state, 'done', stateOf(a));
@@ -679,33 +665,31 @@ test('a bundle that cannot be written down never leaves this Mac', async () => {
     const result = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.ok(result.state === 'refused' && result.code === 'vault_journal' && !result.released, stateOf(result));
     assert.equal(simulated, 0, 'not even simulated');
-    assert.equal(w.double.sendCount(), 0);
+    assert.equal(w.double.publishCount(), 0);
   } finally {
     await w.stop();
   }
 });
 
-test('GAS\'s own transaction read by hash: only a FINAL answer decides, UNKNOWN_TRANSACTION is not found, anything else unknown', () => {
-  const hash = 'H5kqrmnzGJxhW1YGFWS17ukfPgxBmWYp6xd81FrhhrGx';
-  const final = (main: Record<string, unknown>, status = 'FINAL', txStatus: Record<string, unknown> = { SuccessReceiptId: 'R1' }) => ({
-    result: {
-      final_execution_status: status,
-      transaction: { hash },
-      transaction_outcome: { outcome: { receipt_ids: ['R1'], status: txStatus } },
-      receipts_outcome: [{ id: 'R1', outcome: { executor_id: 'intents.near', status: main } }],
-    },
-  });
-  assert.equal(txFateOf(final({ SuccessValue: '' }), hash), 'executed');
-  assert.equal(txFateOf(final({ Failure: {} }), hash), 'failed');
-  assert.equal(txFateOf(final({ SuccessValue: '' }, 'FINAL', { Failure: {} }), hash), 'failed');
-  assert.equal(txFateOf(final({ SuccessValue: '' }, 'EXECUTED_OPTIMISTIC'), hash), 'unknown');
-  assert.equal(txFateOf(final({ SuccessValue: '' }), 'another'), 'unknown');
-  assert.equal(txFateOf({ error: { name: 'HANDLER_ERROR', cause: { name: 'UNKNOWN_TRANSACTION' } } }, hash), 'not_found');
-  assert.equal(txFateOf({ error: { name: 'HANDLER_ERROR', cause: { name: 'TIMEOUT_ERROR' } } }, hash), 'unknown');
-  assert.equal(txFateOf({ error: { code: -429 } }, hash), 'unknown');
-  const elsewhere = final({ SuccessValue: '' });
-  elsewhere.result.receipts_outcome[0]!.outcome.executor_id = 'wrap.near';
-  assert.equal(txFateOf(elsewhere, hash), 'unknown');
+test('an entry 0.10.16 wrote, with its gas account and its own transaction, still loads and settles by its nonces', async () => {
+  const dir = tempDir('phosphor-vault-old-');
+  const file = journalPathFor(dir);
+  const w = await world();
+  try {
+    const signed = await erc191(w.old, await w.payload([]));
+    fs.writeFileSync(file, `${JSON.stringify({ v: 1, entries: [{ id: 'old-move', account: w.vault, gas: 'd'.repeat(64), signed: [signed], txHashes: ['H5kqrmnzGJxhW1YGFWS17ukfPgxBmWYp6xd81FrhhrGx'], state: 'sent', at: w.double.now() }] })}\n`);
+    const reborn = createVaultSubmitter({ verifier: w.double.verifier, relay: w.double.relay, journal: fileJournal(file), now: w.double.now, sleep: w.double.near.sleep });
+    assert.deepEqual(reborn.pending().map((e) => [e.id, e.state, e.gas]), [['old-move', 'sent', 'd'.repeat(64)]]);
+    // Unspent and inside its deadline: it holds the next move back.
+    assert.equal((await reborn.move(w.topUp('next', 1_000_000n))).state, 'settling');
+    // It ran: settled by its nonce, and the next move goes.
+    assert.equal((await w.double.runAsStranger([signed])).ok, true);
+    const next = await reborn.move(w.topUp('next', 1_000_000n));
+    assert.equal(next.state, 'done', stateOf(next));
+    assert.deepEqual(reborn.pending().map((e) => [e.id, e.state]), [['old-move', 'executed']]);
+  } finally {
+    await w.stop();
+  }
 });
 
 /* The same top-up and the same ambiguous submit against the vault service's own stand-in (U5's
@@ -735,7 +719,7 @@ test('the same moves against the vault service\'s own stand-in', async (t) => {
     const done = await w.submitter.move(w.topUp('top-up', 5_000_000n));
     assert.equal(done.state, 'done', stateOf(done));
     assert.equal(w.double.balanceOf(w.allowance, USDC), 5_000_000n);
-    w.double.sends.push({ kind: 'timeout', land: true }, { kind: 'timeout', land: false });
+    w.double.publishes.push({ kind: 'lost', land: true });
     assert.equal((await w.submitter.move(w.topUp('ambiguous', 1_000_000n))).state, 'sent');
     const settled = await w.submitter.move(w.topUp('ambiguous', 1_000_000n));
     assert.equal(settled.state, 'done', stateOf(settled));

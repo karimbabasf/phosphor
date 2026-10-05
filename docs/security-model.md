@@ -8,7 +8,7 @@ What this app defends against, how, and where the v1 boundary honestly sits.
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
 defends against and the test that proves each defence, what stays open, what the invite tools
-guard, and how to check a release yourself. It describes version 0.10.17. The rest of the
+guard, and how to check a release yourself. It describes version 0.10.18. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -235,7 +235,7 @@ build; add `-- --app <Phosphor.app>` to run it.
 
 ### What stays open
 
-These are true of 0.10.17. [Known limits](known-limits.md) gives each one with what it means for
+These are true of 0.10.18. [Known limits](known-limits.md) gives each one with what it means for
 your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
@@ -246,8 +246,8 @@ your money.
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
   closes it for the vault: the move to the chip ([below](#the-move-to-the-chip-and-the-restore)).
   After it the vault answers only to this Mac's Touch ID key and the paper key, and the session
-  holds the allowance key, the gas key and the trading key, never the owner key; none of them
-  reaches the vault. Until you move it, lock the wallet when you step away.
+  holds the allowance key, the old fee account's key and the trading key, never the owner key;
+  none of them reaches the vault. Until you move it, lock the wallet when you step away.
 - **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
   the vault service carried its provisioning profile, or by a copy you build yourself, has a key
   another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
@@ -263,7 +263,7 @@ your money.
   Touch ID with its own dialog, and an older Phosphor build opens it too. Phosphor shreds only the
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
   yourself. What closes it for the vault: the move to the chip, after which the old key is no key
-  of the vault. An old copy still holds the allowance, the gas account and Hyperliquid.
+  of the vault. An old copy still holds the allowance and Hyperliquid.
 - **The paper is the only key that opens the vault away from this Mac.** After the move the vault
   answers to this Mac's Touch ID key and the 24-word paper key, and to nothing else: the key backup
   alone no longer reaches it, by design. If the Mac is lost and the paper is lost or wrong, the vault
@@ -271,22 +271,21 @@ your money.
   lock, the tab left or a restart), and the paper signs an empty proof on chain in the same call
   that adds it, but it cannot see the paper you wrote, so a slip in a word it did not ask for shows
   only at a restore. A
-  restore on a new Mac takes both: the key backup brings back the vault's address, the allowance,
-  the gas account and Hyperliquid, and the paper brings back the vault. Keep the paper like cash,
+  restore on a new Mac takes both: the key backup brings back the vault's address, the allowance
+  and Hyperliquid, and the paper brings back the vault. Keep the paper like cash,
   apart from the key backup. The paper is also an ordinary EVM key at m/44'/60'/0'/0/0, so it signs
   for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
-- **The key backup also controls the allowance and the gas account.** Both keys are derived from
-  the owner key, so whoever holds the key backup holds the allowance (its size plus 10 percent,
-  $110 at the default, more while a move is under way), the gas account (about 0.5 NEAR) and
-  Hyperliquid. Keep it like cash. What closes it: nothing planned; deriving them is what keeps one
-  backup instead of three.
-- **After the move, your wallet's words still open the allowance, the gas account and
-  Hyperliquid.** The move takes your wallet's key off the vault, not out of use: the recovery
-  phrase or private key the Vault tab still shows after the move no longer opens the vault, but the
-  allowance key and the gas key are derived from it, and it still owns your Hyperliquid account.
-  The reveal says so beside the words. Whoever reads those words can spend the allowance, the gas
-  account's NEAR and your Hyperliquid collateral. What closes it: nothing planned; show the words
-  only to write your backup.
+- **The key backup also controls the allowance.** The allowance key is derived from the owner key,
+  so whoever holds the key backup holds the allowance (its size plus 10 percent, $110 at the
+  default, more while a move is under way), any NEAR left in the old fee account a 0.10.16 wallet
+  paid into, and Hyperliquid. Keep it like cash. What closes it: nothing planned; deriving the keys
+  is what keeps one backup instead of several.
+- **After the move, your wallet's words still open the allowance and Hyperliquid.** The move takes
+  your wallet's key off the vault, not out of use: the recovery phrase or private key the Vault tab
+  still shows after the move no longer opens the vault, but the allowance key is derived from it,
+  and it still owns your Hyperliquid account. The reveal says so beside the words. Whoever reads
+  those words can spend the allowance and your Hyperliquid collateral. What closes it: nothing
+  planned; show the words only to write your backup.
 - **A program running as you during the move sees what the move sees.** The owner key and the paper
   sign the call that changes the vault's keys in the app, not in the chip, so such a program could
   read the paper's words as you type them, pin a wrong allowance, or add a key of its own in the same
@@ -504,7 +503,7 @@ It should be built by this repository's release workflow, from the tag of its ve
 ```
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.17
+  --source-ref refs/tags/v0.10.18
 ```
 
 With `--repo` alone, the check also passes for a file any other workflow in this repository
@@ -520,7 +519,7 @@ the tag builds:
 cd /Applications/Phosphor.app/Contents/Resources/phosphor
 find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
 
-git clone --depth 1 --branch v0.10.17 https://github.com/karimbabasf/phosphor.git
+git clone --depth 1 --branch v0.10.18 https://github.com/karimbabasf/phosphor.git
 cd phosphor && npm run bundle
 ```
 
@@ -1175,7 +1174,7 @@ money: the EVM key in the keystore. It signs ERC-191 intents for the NEAR Intent
 EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Orders on Hyperliquid are signed by
 a second key, a Hyperliquid API wallet kept in the same file (`src/hl/sign.ts`), which the venue
 lets trade and forbids from withdrawing, transferring or approving another agent. No wallet key
-signs a chain transaction (only GAS does, the vault's `execute_intents` calls below): the chain
+signs a chain transaction (only GAS does, the old fee account's one return of its NEAR below): the chain
 signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets
 (2026-09-16), and those two files now hold only the readers, the explorer prefixes, the NEAR RPC and
 the address rules. Since 0.10.5 a new wallet holds the EVM key alone, and importing a Solana or NEAR
@@ -1245,8 +1244,10 @@ its end; its digits typed as O, I or L; or a code split over two messages. Each 
 code.
 
 **Two keys derived from the owner key, never stored.** The chip vault adds ALLOWANCE, a
-0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account
-that pays for the vault's `execute_intents` calls. Both come from the EVM key at every open and are
+0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account,
+the old fee account: it paid NEAR's fee for the vault's moves until the NEAR Intents relay took that
+over in 0.10.18, and now only sends what a 0.10.16 wallet paid into it back to the vault, in one
+transfer (`src/vault/gas-account.ts`, `src/chain/near-tx.ts`). Both come from the EVM key at every open and are
 written nowhere (`src/keystore/derived.ts`): HKDF-SHA256 (RFC 5869) over the key's 32 bytes, salt
 `phosphor`. ALLOWANCE takes info `phosphor-allowance-v1` and reads the 32 bytes as a secp256k1
 scalar, drawn again under `phosphor-allowance-v1/1`, `/2` and on while it is 0 or not below the
@@ -1254,8 +1255,8 @@ group order. GAS takes info `phosphor-gas-v1` as an ed25519 seed, and its accoun
 public key. The keystore holds both as buffers beside the EVM key and the lock zeroes them with it.
 Derived rather than kept, so no new key enters the wallet file and the backup a person already has
 brings both back. The cost of that: whoever holds the EVM key, or its backup, also holds ALLOWANCE
-(its size plus 10 %, $110 at the default, more while a move is under way) and GAS (about 0.5
-NEAR). Keep the key backup like cash. The published vectors, checked outside this code with
+(its size plus 10 %, $110 at the default, more while a move is under way) and whatever is left in
+GAS. Keep the key backup like cash. The published vectors, checked outside this code with
 Python's hmac, foundry's `cast` and the OpenSSL command line, and checked again by
 `tests/unit/keystore-derived.test.ts`:
 
@@ -1389,10 +1390,15 @@ add a key until the call runs, so a key added after the last read before the sig
 there, and the window says the vault holds a key Phosphor did not add (the Vault tab names it).
 Then `state/vault.json` names the chip, the session lets go of the owner key at once, and the rails
 spend the allowance. Every check that can stop a move runs before the first Touch ID: the wallet
-open, a Touch ID wallet with a proven backup, the paper checked, the vault still answering to
-the old signer, and a gas account that can pay for the call. The gas account's id is derived from
-the owner key and never typed; funding it is a NEAR payout to that id, one click and one Touch ID
-that names it (`POST /api/vault/gas/fund`, 0.1 to 1 NEAR).
+open, a Touch ID wallet with a proven backup, the paper checked, and the vault still answering to
+the old signer. No NEAR is needed: the signed bundle goes to the NEAR Intents solver relay in one
+`publish_intents` call with no quote, which puts it on chain in one call, in order, and pays NEAR's
+fee. The relay can delay or drop a bundle and cannot change it, since every payload in it is
+signed; a dropped bundle settles dead after its deadline and the move is signed again with new
+nonces, and done is only what NEAR's views say. A bundle of which only some payloads ran never
+reads done (its other nonces never read spent); when one left this paper and this Mac's chip on the
+vault beside the owner key, the paper typed again goes on from there, adding neither and taking the
+old keys off.
 
 The paper's 24 words are shown once, to the window that asked, and written nowhere: no state file,
 audit line, frame or `/api/state`. While they are written down the window holds them and the app

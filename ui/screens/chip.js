@@ -10,6 +10,13 @@
    and anything bigger asks for a Touch ID. The rows are the Vault's own
    (ui/screens/vault.js hands its pieces over as `kit`).
 
+   ONE BUTTON. Karim, 2026-10-05, after setting up a second Mac: the move was
+   "a little complicated". So the row says what the move gives in two lines
+   and offers one button, Secure my vault. The press opens the steps the move
+   still needs, one at a time and in order: the wallet to Touch ID, the
+   backup, the paper key, the move. A step already done never shows. Phosphor
+   pays NEAR's fee for every vault move, so no step asks for NEAR.
+
    THE PAPER KEY. Its words come from the backend once (POST
    /api/vault/chip/phrase), are drawn in this row only, and are held in this
    file's memory, never the store, a log or a frame, until the paper is
@@ -24,11 +31,10 @@
    restart, and for the old paper of a restore.
 
    ONE NAME FOR EACH THING, the one the docs, the refusals and the Touch ID
-   sentences use: your vault, your allowance, the gas account, your paper key,
-   this Mac's Touch ID key, and the wallet's own backup by the name its row
-   gives it. Nothing a person reads says chip, enclave, marker, nonce or
-   keychain; the one part underneath that has to be shown, the NEAR door, is
-   said with what it does. */
+   sentences use: your vault, your allowance, your paper key, this Mac's Touch
+   ID key, and the wallet's own backup by the name its row gives it. Nothing a
+   person reads says chip, enclave, marker, nonce or keychain; the one part
+   underneath that has to be shown, the NEAR door, is said with what it does. */
 (function () {
   'use strict';
 
@@ -73,6 +79,11 @@
   var trading = null;
   var tradingAsked = false;
   var tradingDone = null;
+  // Secure my vault was pressed on this visit to the tab, and the steps it counts.
+  var started = false;
+  var plan = null;
+  // Why the words are back on screen after two misses, said once above them.
+  var againNote = null;
 
   function button(label, kind, pending) {
     var node = dom.el('button', 'btn ' + (kind || 'btn-ghost btn-sm'));
@@ -114,7 +125,7 @@
     var cap = a && kit ? ', ' + kit.usdShort(Math.floor(a.sizeUsd * 110 + 1e-6) / 100) + ' now' : '';
     return [
       'Your paper key is the only key that opens your vault away from this Mac.',
-      'Your ' + backupName(vault) + ' also controls your allowance (its size plus 10 percent' + cap + ', more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'
+      'Your ' + backupName(vault) + ' also controls your allowance (its size plus 10 percent' + cap + ', more while a move is under way) and your Hyperliquid account, so keep both like cash.'
     ];
   }
 
@@ -191,8 +202,20 @@
     refs.row = r.node;
     refs.value = dom.el('span', 'vault-row-value');
     r.act.appendChild(refs.value);
+    refs.secure = button('Secure my vault', 'btn-sm');
+    refs.secure.hidden = true;
+    dom.on(refs.secure, 'click', secure);
+    r.act.appendChild(refs.secure);
     refs.line = kit.text();
     r.main.appendChild(refs.line);
+    refs.sub = kit.text('vault-sub');
+    refs.sub.hidden = true;
+    r.main.appendChild(refs.sub);
+    var block = warnLine();
+    refs.block = block.line;
+    refs.blockText = block.words;
+    refs.block.hidden = true;
+    r.main.appendChild(refs.block);
     refs.flow = dom.el('div', 'vault-flow vault-move');
     r.body.appendChild(refs.flow);
     host.appendChild(r.node);
@@ -209,7 +232,7 @@
     }
   }
 
-  // The trading key's row, last in the section: after the allowance and the gas account.
+  // The trading key's row, last in the section: after the allowance and the old fee account.
   function mountTrading(host) {
     if (!mounted || refs.trading) return;
     buildTrading(host);
@@ -247,7 +270,7 @@
     var screen = screenOf(run);
 
     var lines = {
-      offer: 'Your ' + backupName(vault) + ' opens your vault today.',
+      offer: 'Your money stays in your vault. Your assistant spends from a small allowance, and anything bigger needs your Touch ID.',
       restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
       moved: screen === 'moved' ? whoOpens(vault) : '',
@@ -255,37 +278,72 @@
     };
     dom.setText(refs.line, lines[screen] || '');
     dom.setText(refs.value, screen === 'moved' ? 'Touch ID' : '');
+    paintCard(screen);
 
-    var key = screen === 'offer' || screen === 'restore' ? screen + ':' + stepNow(screen) + ':' + bodyKey(screen) : screen;
+    var open = showsSteps(screen);
+    var key = screen === 'offer' || screen === 'restore' ? screen + ':' + (open ? stepNow(screen) + ':' + bodyKey(screen) : 'card') : screen;
     if (screen === 'run') key += ':' + (run ? run.id : '');
     if (key !== drawn) {
       var first = drawn === '';
+      // A step after a step keeps its card: only the words change, and they rise in (vault.css).
+      var fade = refs.stepBody && open ? null : refs.flow;
       drawn = key;
       var redraw = function () { drawFlow(screen); };
       if (first) redraw();
-      else kit.grow(refs.row, redraw, refs.flow);
+      else kit.grow(refs.row, redraw, fade);
       return;
     }
     update(screen);
   }
 
-  function stepsOf(screen) {
-    return screen === 'restore' ? ['backup', 'gas', 'paper', 'old'] : ['backup', 'gas', 'paper', 'move'];
-  }
+  /* ---------- the offer and the restore: one step at a time ----------
+
+     The offer is the row's two lines and Secure my vault. The press opens the
+     steps the move still needs, in this order, one at a time; the password
+     card opens with the press when it is the first. A restore has no press:
+     it is the only way on, so its steps show at once, in its own order. */
+  var STEPS = {
+    offer: ['touch', 'backup', 'paper', 'move'],
+    restore: ['touch', 'backup', 'paper', 'old']
+  };
 
   function done(step) {
+    var vault = current.vault || {};
     var needs = Array.isArray(slice.needs) ? slice.needs : [];
+    if (step === 'touch') return !(needs.indexOf('touch_id') >= 0 && vault.custody === 'software');
     if (step === 'backup') return needs.indexOf('backup') < 0;
-    if (step === 'gas') return needs.indexOf('gas') < 0;
     if (step === 'paper') return slice.paper === 'proven';
     return false;
   }
 
-  // The step the stepper is on: the first one not done yet.
+  // The step on screen: the first one not done yet.
   function stepNow(screen) {
-    var steps = stepsOf(screen);
+    var steps = STEPS[screen];
     for (var i = 0; i < steps.length; i += 1) if (!done(steps[i])) return steps[i];
     return steps[steps.length - 1];
+  }
+
+  /* The steps show once Secure my vault is pressed, and with no press for a
+     restore, for a move a restart cut short, and for one that failed or was
+     refused, so the reason is read where it happened. */
+  function isOpen(screen) {
+    if (screen === 'restore') return true;
+    var run = runOf();
+    return started || !!paper || !!refused || slice.state === 'moving' || (!!run && run.status === 'failed');
+  }
+
+  function showsSteps(screen) {
+    return (screen === 'offer' || screen === 'restore') && isOpen(screen) && !blocked();
+  }
+
+  /* The steps this visit counts: the ones still needed when they opened, and
+     any that came back since (a paper a restart voided). Done ones never
+     show, so "2 of 3" counts only what the person is asked to do. */
+  function counted(screen) {
+    var need = STEPS[screen].filter(function (step) { return !done(step); });
+    if (!plan || plan.screen !== screen) plan = { screen: screen, steps: need };
+    else plan.steps = STEPS[screen].filter(function (step) { return plan.steps.indexOf(step) >= 0 || need.indexOf(step) >= 0; });
+    return plan.steps;
   }
 
   /* What the open step's body depends on: a new key redraws it, anything else
@@ -295,7 +353,6 @@
     var now = stepNow(screen);
     if (now === 'paper') return paperStage() + (paper ? ':held' : '');
     if (now === 'move' || now === 'old') return 'go';
-    if (now === 'gas' && slice.elsewhere === true) return 'send';
     return 'ask';
   }
 
@@ -311,143 +368,117 @@
     return 'none';
   }
 
+  // Why no step can start yet, with nothing on this row that gets past it.
   function blocked() {
     var vault = current.vault || {};
     var needs = Array.isArray(slice.needs) ? slice.needs : [];
     if (needs.indexOf('open') >= 0) return 'Open your wallet to go on.';
-    if (needs.indexOf('touch_id') >= 0) {
-      if (vault.custody === 'software') return 'software';
-      return 'Touch ID only works inside the Phosphor app. Open the app to move your vault.';
-    }
+    if (needs.indexOf('touch_id') >= 0 && vault.custody !== 'software') return 'Touch ID only works inside the Phosphor app. Open the app to move your vault.';
     return '';
+  }
+
+  /* The row's own lines on the offer and the restore: what the restore asks
+     you to have with you, why nothing can start yet, and the one button while
+     no step is open. */
+  function paintCard(screen) {
+    var steps = screen === 'offer' || screen === 'restore';
+    var why = steps ? blocked() : '';
+    dom.setText(refs.sub, screen === 'restore' ? 'Have your old paper key with you before you start.' : '');
+    dom.setHidden(refs.sub, screen !== 'restore');
+    dom.setText(refs.blockText, why);
+    dom.setHidden(refs.block, !why);
+    dom.setHidden(refs.secure, screen !== 'offer' || !!why || isOpen(screen));
+  }
+
+  // The one button: the steps open, and the first one still needed runs from the press.
+  function secure() {
+    if (!mounted || !slice || started) return;
+    started = true;
+    plan = null;
+    paint();
+    if (!showsSteps('offer')) return;
+    if (stepNow('offer') === 'touch') {
+      kit.openMigrate(false);
+      return;
+    }
+    var first = refs.stepBody && refs.stepBody.querySelector('button');
+    if (first && first.focus) first.focus({ preventScroll: true });
   }
 
   function drawFlow(screen) {
     var flow = refs.flow;
     dom.clear(flow);
-    refs.steps = null;
+    refs.stepTitle = null;
+    refs.stepCount = null;
+    refs.stepBody = null;
     refs.facts = null;
     refs.runSteps = null;
     refs.go = null;
     refs.fix = null;
     refs.goError = null;
     refs.oldInputs = null;
-    refs.gasNote = null;
     flow.dataset.screen = screen;
-    if (screen === 'offer' || screen === 'restore') drawStepper(flow, screen);
+    if (showsSteps(screen)) drawStep(flow, screen);
     else if (screen === 'run') drawRun(flow);
     else if (screen === 'moved') drawMoved(flow);
+    // The offer before its press, and the check, are the row's lines alone: no empty card under them.
+    dom.setHidden(flow, !flow.childNodes.length);
     update(screen);
   }
 
   function update(screen) {
-    if (screen === 'offer' || screen === 'restore') paintSteps(screen);
+    if (showsSteps(screen)) paintStep(screen);
     else if (screen === 'run') paintRun();
     else if (screen === 'moved') paintMoved();
   }
 
-  /* ---------- the offer and the restore: four steps ---------- */
-
-  var STEP_TITLES = {
-    backup: function (vault) { return 'Back up your ' + backupName(vault); },
-    gas: function () { return 'Add NEAR to the gas account'; },
-    paper: function (vault, screen) { return screen === 'restore' ? 'Write a new paper key' : 'Write your paper key'; },
-    move: function () { return 'Move your vault'; },
-    old: function () { return 'Type your old paper key'; }
-  };
-
-  function drawStepper(flow, screen) {
-    var vault = current.vault || {};
-    flow.appendChild(dom.el('p', 'vault-flow-title', screen === 'restore' ? 'Restore your vault on this Mac' : 'Move your vault to Touch ID'));
-    flow.appendChild(kit.text('vault-text', screen === 'restore'
-      ? 'Have your old paper key with you before you start. Write a new paper key first, then type the old one: the restore puts the new paper on your vault and retires the old one.'
-      : 'After the move nothing on this Mac moves your vault\'s money without a Touch ID that names the move. Only this Mac\'s Touch ID key and a paper key you write by hand open your vault, and your assistant spends from a small allowance.'));
-    refs.block = dom.el('p', 'vault-warn');
-    kit.append(refs.block, kit.icon('warning', 'icon-16'));
-    refs.blockText = dom.el('span', '');
-    refs.block.appendChild(refs.blockText);
-    flow.appendChild(refs.block);
-    refs.blockTools = dom.el('div', 'vault-actions');
-    var protect = button('Protect with Touch ID', 'btn-sm');
-    dom.on(protect, 'click', function () { kit.openMigrate(false); });
-    refs.blockTools.appendChild(protect);
-    flow.appendChild(refs.blockTools);
-
-    var list = dom.el('ol', 'vault-steps');
-    refs.steps = {};
-    stepsOf(screen).forEach(function (step, i) {
-      var item = dom.el('li', 'vault-step');
-      item.dataset.step = step;
-      var disc = dom.el('span', 'vault-step-disc num');
-      disc.setAttribute('aria-hidden', 'true');
-      disc.appendChild(dom.el('span', 'vault-step-number', String(i + 1)));
-      kit.append(disc, kit.icon('check', 'vault-step-check'));
-      item.appendChild(disc);
-      var words = dom.el('div', 'vault-step-words');
-      var title = dom.el('p', 'vault-step-title', STEP_TITLES[step](vault, screen));
-      var note = dom.el('p', 'vault-step-note');
-      words.appendChild(title);
-      words.appendChild(note);
-      var body = dom.el('div', 'vault-step-body');
-      words.appendChild(body);
-      item.appendChild(words);
-      list.appendChild(item);
-      refs.steps[step] = { item: item, title: title, note: note, body: body };
-    });
-    flow.appendChild(list);
-
-    var now = stepNow(screen);
-    var open = refs.steps[now].body;
-    if (now === 'backup') drawBackupStep(open);
-    else if (now === 'gas') drawGasStep(open, screen);
-    else if (now === 'paper') drawPaperStep(open, screen);
-    else if (now === 'move') drawMoveStep(open);
-    else if (now === 'old') drawOldStep(open);
+  function titleOf(step, screen) {
+    if (step === 'touch') return 'Turn on Touch ID';
+    if (step === 'backup') return 'Back up your ' + backupName(current.vault || {});
+    if (step === 'move') return 'Move your vault';
+    if (step === 'old') return 'Type your old paper key';
+    var at = paperStage();
+    if (at === 'confirm') return 'Check three words';
+    if (at === 'typeback') return slice.paper === 'retype' ? 'Type your paper key again' : 'Type your paper key';
+    return screen === 'restore' ? 'Write a new paper key' : 'Write your paper key';
   }
 
-  function paintSteps(screen) {
-    if (!refs.steps) return;
-    var vault = current.vault || {};
-    var why = blocked();
-    dom.setText(refs.blockText, why === 'software' ? 'Your wallet opens with a password. Move it behind Touch ID first; your vault moves after that.' : why);
-    dom.setHidden(refs.block, !why);
-    dom.setHidden(refs.blockTools, why !== 'software');
+  /* One step on the card: its name, where it sits among the steps still
+     needed ("2 of 3", only when there is more than one), and its body. */
+  function drawStep(flow, screen) {
     var now = stepNow(screen);
-    var passed = true;
-    stepsOf(screen).forEach(function (step) {
-      var s = refs.steps[step];
-      var isDone = passed && done(step);
-      var state = isDone ? 'done' : (passed ? 'now' : 'next');
-      if (!isDone) passed = false;
-      s.item.dataset.state = why && state === 'now' ? 'next' : state;
-      dom.setText(s.title, STEP_TITLES[step](vault, screen));
-      var note = noteFor(step, state);
-      dom.setText(s.note, note);
-      dom.setHidden(s.note, !note);
-      dom.setHidden(s.body, step !== now || !!why);
-    });
+    var head = dom.el('div', 'vault-move-head');
+    refs.stepTitle = dom.el('p', 'vault-flow-title');
+    head.appendChild(refs.stepTitle);
+    refs.stepCount = dom.el('span', 'vault-move-count num');
+    head.appendChild(refs.stepCount);
+    flow.appendChild(head);
+    var body = dom.el('div', 'vault-move-body');
+    body.dataset.step = now;
+    flow.appendChild(body);
+    refs.stepBody = body;
+    if (now === 'touch') drawTouchStep(body);
+    else if (now === 'backup') drawBackupStep(body);
+    else if (now === 'paper') drawPaperStep(body, screen);
+    else if (now === 'move') drawMoveStep(body);
+    else drawOldStep(body);
+  }
+
+  function paintStep(screen) {
+    if (!refs.stepTitle) return;
+    var now = stepNow(screen);
+    var steps = counted(screen);
+    var at = steps.indexOf(now);
+    var shown = steps.length > 1 && at >= 0;
+    dom.setText(refs.stepTitle, titleOf(now, screen));
+    dom.setText(refs.stepCount, shown ? (at + 1) + ' of ' + steps.length : '');
+    dom.setHidden(refs.stepCount, !shown);
     paintOpen(now);
-  }
-
-  function noteFor(step, state) {
-    if (state !== 'done') return '';
-    if (step === 'backup') return 'Backed up.';
-    if (step === 'gas') return slice.gas && slice.gas.near ? slice.gas.near + ' NEAR, enough for the move.' : 'Ready.';
-    if (step === 'paper') return 'Checked.';
-    return '';
   }
 
   /* The open step's lines follow the state while what the person typed
      stays. */
   function paintOpen(now) {
-    if (now === 'gas' && refs.gasNote) {
-      var gas = slice.gas;
-      dom.setText(refs.gasNote, !gas
-        ? 'Phosphor reads the gas account once the wallet has been open, and again every minute.'
-        : gas.near === null
-          ? 'Phosphor could not read the gas account just now. It reads it again in a minute.'
-          : 'It holds ' + gas.near + ' NEAR, and the move needs more.');
-    }
     if ((now === 'move' || now === 'old') && refs.goError) {
       var run = runOf();
       if (refused) kit.sayRefusal(refs.goError, refused, refused.said);
@@ -459,36 +490,28 @@
     }
   }
 
-  /* ---------- step: the backup ---------- */
+  /* ---------- step: the wallet to Touch ID ---------- */
 
-  function drawBackupStep(body) {
-    var vault = current.vault || {};
-    body.appendChild(kit.text('vault-text', 'After the move your ' + backupName(vault) + ' still opens your allowance, the gas account and Hyperliquid, so back it up first.'));
+  // The password card the Keys row opens (ui/screens/vault.js openMigrate): the move needs Touch ID.
+  function drawTouchStep(body) {
+    body.appendChild(kit.text('vault-text', 'Your wallet still opens with a password. Type it once, and Touch ID opens it from now on.'));
     var tools = dom.el('div', 'vault-actions');
-    var go = button('Back it up first', 'btn-sm');
-    dom.on(go, 'click', function () { kit.focusRecovery(); });
+    var go = button('Protect with Touch ID', 'btn-sm');
+    dom.on(go, 'click', function () { kit.openMigrate(false); });
     tools.appendChild(go);
     body.appendChild(tools);
   }
 
-  /* ---------- step: the gas account ---------- */
+  /* ---------- step: the backup ----------
 
-  function drawGasStep(body, screen) {
-    // A vault on another Mac's keys pays nothing from here: NEAR goes to the account straight.
-    var elsewhere = slice.elsewhere === true;
-    body.appendChild(kit.text('vault-text', elsewhere
-      ? 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. It came back with your wallet, often with NEAR still in it; if not, send it 0.1 to 1 NEAR on NEAR from any NEAR wallet. Its account is in the Gas account row below.'
-      : screen === 'restore'
-        ? 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. It came back with your wallet, often with NEAR still in it; if not, add 0.1 to 1 NEAR: one click on its card, then one Touch ID.'
-        : 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. Add 0.1 to 1 NEAR from your vault: one click on its card, then one Touch ID.'));
-    refs.gasNote = kit.text('vault-sub');
-    body.appendChild(refs.gasNote);
+     The backup row's own reveal, started from here (its Touch ID, its words
+     or key, its proof); once it is proven the row brings this one back into
+     view (backedUp below). */
+  function drawBackupStep(body) {
+    body.appendChild(kit.text('vault-text', 'After the move it still opens your allowance and Hyperliquid.'));
     var tools = dom.el('div', 'vault-actions');
-    var go = button(elsewhere ? 'Show the gas account' : 'Add NEAR', 'btn-sm');
-    dom.on(go, 'click', function () {
-      var allowance = window.PhosphorAllowance;
-      if (allowance && typeof allowance.openGas === 'function') allowance.openGas();
-    });
+    var go = button('Back it up', 'btn-sm');
+    dom.on(go, 'click', function () { kit.startReveal(); });
     tools.appendChild(go);
     body.appendChild(tools);
   }
@@ -553,8 +576,10 @@
   /* The words, once: numbered as the paper will number them, with the
      vault's address to write under them. Nothing here offers to print or
      copy them, and the grid takes no selection. */
-  function drawWords(body, again) {
+  function drawWords(body) {
     var vault = current.vault || {};
+    var again = againNote;
+    againNote = null;
     var warn = dom.el('p', 'vault-warn');
     kit.append(warn, kit.icon('lock', 'icon-16'));
     warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads these words can open your vault.'));
@@ -725,7 +750,6 @@
      24 go to the backend, which checks them against the paper it showed and
      holds its key for the move. */
   function drawConfirm(body) {
-    body.appendChild(dom.el('p', 'vault-flow-title', 'Check three words'));
     body.appendChild(kit.text('vault-sub', 'Type these words from your paper.'));
     var grid = dom.el('div', 'vault-paper-fields vault-paper-check');
     var inputs = paper.ask.map(function (at) {
@@ -813,7 +837,6 @@
      it, or after a lock or the tab left against the paper still waiting. */
   function drawTypeBack(body, screen) {
     var retype = slice.paper === 'retype';
-    body.appendChild(dom.el('p', 'vault-flow-title', retype ? 'Type your paper key again' : 'Type your paper key'));
     body.appendChild(kit.text('vault-sub', retype
       ? 'Phosphor forgets a checked paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'
       : 'The words left this screen before you checked them. Type all 24 from your paper, or show a new paper key.'));
@@ -859,14 +882,10 @@
 
   // Two misses: the words come back on screen, with why.
   function showWordsAgain(why) {
-    if (!refs.steps || !refs.steps.paper || !paper) return;
+    if (!paper) return;
     stage = 'words';
-    var body = refs.steps.paper.body;
-    kit.grow(refs.row, function () {
-      dom.clear(body);
-      drawWords(body, why);
-      drawn = (slice.state === 'broken' ? 'restore' : 'offer') + ':paper:' + bodyKey(slice.state === 'broken' ? 'restore' : 'offer');
-    }, body);
+    againNote = why;
+    paint();
   }
 
   /* ---------- step: the move ---------- */
@@ -888,7 +907,7 @@
     var tools = dom.el('div', 'vault-actions');
     refs.go = button(words, 'btn-sm', 'Starting');
     tools.appendChild(refs.go);
-    refs.fix = button('Add NEAR', 'btn-ghost btn-sm');
+    refs.fix = button('Back it up', 'btn-ghost btn-sm');
     refs.fix.hidden = true;
     dom.on(refs.fix, 'click', fixIt);
     tools.appendChild(refs.fix);
@@ -896,7 +915,7 @@
   }
 
   function drawMoveStep(body) {
-    body.appendChild(kit.text('vault-text', 'Two Touch IDs move it, in one call to NEAR that lands whole or not at all.'));
+    body.appendChild(kit.text('vault-text', 'Two Touch IDs move it, in one call to NEAR that lands whole or not at all. Phosphor pays NEAR\'s fee for every vault move, as it does for swaps.'));
     drawSays(body, [['The first reads', SAYS.move], ['The second reads', SAYS.chip]]);
     body.appendChild(kit.text('vault-sub', 'Cancel any Touch ID that reads anything else. While the move runs, your assistant\'s moves wait.'));
     goTools(body, 'Move my vault');
@@ -922,13 +941,11 @@
   }
 
   /* After a refusal or a failed move, the action that helps sits beside Try
-     again: NEAR for an empty gas account, the backup, a new paper for a paper
-     that is gone. */
+     again: the backup, or a new paper for a paper that is gone. */
   function fixOf() {
     var run = runOf();
     var code = refused ? refused.code : (run && run.status === 'failed' ? run.reason : null);
-    if (code === 'gas_low' || code === 'gas_unfunded') return { label: slice.elsewhere === true ? 'Show the gas account' : 'Add NEAR', go: 'gas' };
-    if (code === 'not_backed_up') return { label: 'Back it up first', go: 'backup' };
+    if (code === 'not_backed_up') return { label: 'Back it up', go: 'backup' };
     if (code === 'phrase_gone' || code === 'wrong_paper') return { label: 'Show a new paper key', go: 'paper' };
     return null;
   }
@@ -946,12 +963,8 @@
   function fixIt() {
     var fix = fixOf();
     if (!fix) return;
-    if (fix.go === 'gas') {
-      if (window.PhosphorAllowance) window.PhosphorAllowance.openGas();
-      return;
-    }
     if (fix.go === 'backup') {
-      kit.focusRecovery();
+      kit.startReveal();
       return;
     }
     refused = null;
@@ -1196,7 +1209,7 @@
     }
     if (justDone && !refs.doneLine.dataset.popped) {
       refs.doneLine.dataset.popped = 'true';
-      // Move my vault sat at the foot of step 4: the tick pops where the person can see it.
+      // Move my vault sat at the foot of the last step: the tick pops where the person can see it.
       kit.bringIntoView(refs.doneLine);
       kit.pop(refs.doneLine);
     }
@@ -1212,7 +1225,7 @@
     paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : checking), paperOn === false ? 'warn' : null,
       paperOn === false ? 'Your vault reads no paper key. Move your money to a fresh wallet while this Mac still opens your vault.' : null);
     paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : checking), oldOn === true ? 'warn' : null,
-      'It still opens your allowance, the gas account and Hyperliquid.');
+      'It still opens your allowance and Hyperliquid.');
     paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : checking), door === true ? 'warn' : null,
       door === true
         ? 'A way for your ' + name + ' to act for your vault through NEAR. NEAR Intents\' admins opened it again.'
@@ -1241,15 +1254,28 @@
     if (focus && focus.focus) focus.focus();
   }
 
+  /* The backup the steps sent the person to is proven (ui/screens/vault.js
+     proven): this row comes back into view with the next step, in place of
+     the backup's row. False when no step is open here. */
+  function backedUp() {
+    if (!mounted || !slice || !showsSteps(screenOf(runOf()))) return false;
+    kit.bringIntoView(refs.row);
+    return true;
+  }
+
   /* The paper key leaves the window: the words, the fields, and the step goes
      back to where it rests. The moment a move landed rests too: back on the
-     tab, the row says who opens the vault. */
+     tab, the row says who opens the vault, and an offer is its one button
+     again. */
   function wipe() {
-    var had = !!paper || stage !== null || justDone;
+    var had = !!paper || stage !== null || justDone || started;
     paper = null;
     stage = null;
     misses = 0;
     justDone = false;
+    started = false;
+    plan = null;
+    againNote = null;
     if (refs.flow) {
       var fields = refs.flow.querySelectorAll('.vault-paper-input');
       for (var i = 0; i < fields.length; i += 1) fields[i].value = '';
@@ -1403,6 +1429,7 @@
     render: render,
     wipe: wipe,
     startRestore: startRestore,
+    backedUp: backedUp,
     plainTruth: plainTruth
   };
 })();

@@ -39,14 +39,21 @@
 // it does not prove where the money went. The receiver's balance of the asset is a public view
 // on the verifier, so the rail reads it before the quote and again once 1Click reports success,
 // and the receipt states the rise. A rise smaller than the floor is said as such, never as done.
+//
+// AND IT IS DONE WHEN NEAR SHOWS IT RAN, whatever 1Click still says. On 2026-10-05 a 5 USDC send
+// sat on "Taking longer · 2m" while the receiver already held it: the watch ended on 1Click's word
+// alone and 1Click was slow that day. The same two reads that end a swap (src/rails/watch.ts
+// ranProof) end a send: its own signed transfer's nonce spent at the verifier, and the receiver up
+// by at least the floor since the read before the quote.
 
 import { formatUnits, isAddress } from 'viem';
 import type { IntentsSendDraft, Rail, RailHooks, RailResult, SendSimulation, SimulationResult } from '../types.ts';
-import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
+import { ONECLICK_TERMINAL, baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
-import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
-import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
+import { INTENTS_VERIFIER, RAN_RECHECK_MS, intentsApi, liveIntentsSigner, liveNonceUsed } from './intents-native.ts';
+import type { IntentsApiPort, IntentsSignerPort, NonceUsedPort } from './intents-native.ts';
 import { spendFromIntents } from './intents-spend.ts';
+import { ranProof } from './watch.ts';
 import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { describeHeld, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { isNearAccountId, nearChainSpec } from '../chain/near.ts';
@@ -111,6 +118,10 @@ export type IntentsSendRailDeps = {
   // in its own ledger.
   receiverBalance?: (accountId: string, assetId: string) => Promise<bigint | null>;
   nearRpcUrl?: string;
+  // Whether the verifier shows a nonce spent. Defaults to the live view call; a test hands in its own.
+  nonceUsed?: NonceUsedPort;
+  // How often the watch asks NEAR whether the send ran. Defaults to RAN_RECHECK_MS.
+  ranRecheckMs?: number;
 };
 
 export type IntentsSendRail = Rail<IntentsSendDraft>;
@@ -133,6 +144,8 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
   const receiverBalance =
     deps.receiverBalance ??
     ((accountId: string, assetId: string) => fetchIntentsAssetBalance({ rpcUrl, accountId, assetId, fetchImpl }));
+  const nonceUsed = deps.nonceUsed ?? liveNonceUsed(deps.fetchImpl);
+  const ranRecheckMs = deps.ranRecheckMs ?? RAN_RECHECK_MS;
 
   type Plan = {
     asset: string; // the 1Click asset id held; the same on both sides, since nothing is swapped
@@ -326,6 +339,18 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
         slippageToleranceBps: SEND_SLIPPAGE_BPS,
         echo: echoWant(draft, p),
         checkQuote: (quote) => checkQuote(draft, p, quote),
+        ...(before === null
+          ? {}
+          : {
+              ran: (nonce: string) =>
+                ranProof({
+                  now,
+                  everyMs: ranRecheckMs,
+                  spent: () => nonceUsed(owner, nonce),
+                  read: () => receiverBalance(p.to, p.asset),
+                  landed: (held) => held - before >= p.minReceivedBase,
+                }),
+            }),
       },
       hooks,
     );
@@ -337,6 +362,19 @@ export function intentsSendRail(deps: IntentsSendRailDeps): IntentsSendRail {
     }
     const { quote, depositAddress, watch, signedQuote } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
+
+    // NEAR's word, while 1Click is still short of one: a terminal word from 1Click takes its own branch below.
+    if (spent.ran !== null && before !== null && !(ONECLICK_TERMINAL as readonly string[]).includes(watch.status)) {
+      return {
+        ok: true,
+        detail:
+          `sent ${draft.amount} ${draft.symbol} from ${owner} to ${p.to} inside ${INTENTS_VERIFIER}; ` +
+          `${p.to} now holds ${(spent.ran - before).toString()} base units more of ${draft.symbol} inside the verifier, read back once ` +
+          `NEAR showed this send's own signed transfer spent while 1click still reported ${oneLine(watch.status, 40)}; ${evidence}.`,
+        txids: uniqueTxids(spent.intentHash, watch),
+        evidence: { ...settledEvidence(watch, depositAddress), quote: signedQuote },
+      };
+    }
 
     if (watch.status === 'SUCCESS') {
       const after = await receiverBalance(p.to, p.asset);

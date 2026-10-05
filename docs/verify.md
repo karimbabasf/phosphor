@@ -38,8 +38,9 @@ be compromised, so the service reads each one itself. Its tests run it with a st
 
 The move is one call to the NEAR Intents verifier: add the chip key and the paper key, remove every
 other key, turn off auth by predecessor id. Its dry run must report exactly the events the app
-planned, and afterwards the app checks at one final block that those two are the vault's only keys,
-and says so when another key is there.
+planned. The NEAR Intents relay puts the signed call on chain and pays NEAR's fee; it can delay or
+drop it and cannot change it, because every payload in it is signed. Afterwards the app checks at
+one final block that those two are the vault's only keys, and says so when another key is there.
 
 Enforced by the verifier, which runs an intent for the vault only when a key it holds for it signed;
 `IntentGrammar.swift` (`refusedKinds`, claim 3); `src/vault/rekey.ts` (`rekeyIntents`,

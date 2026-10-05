@@ -1,0 +1,99 @@
+{
+  "id": "S34",
+  "title": "\"swap all my USDT\" with the USDT in the vault",
+  "userSays": "swap all my USDT to USDC",
+  "pre": {
+    "demo": {
+      "intents": [
+        {
+          "symbol": "USDT",
+          "originChain": "near",
+          "assetId": "nep141:usdt.tether-token.near",
+          "amount": 15.06,
+          "decimals": 6
+        }
+      ],
+      "allowance": {
+        "account": "0x2222222222222222222222222222222222222222",
+        "intents": [
+          {
+            "symbol": "USDC",
+            "originChain": "eth",
+            "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+            "amount": 40,
+            "decimals": 6
+          }
+        ]
+      }
+    }
+  },
+  "script": [
+    {
+      "tool": "wallet"
+    },
+    {
+      "tool": "swap_quote",
+      "args": {
+        "fromSymbol": "USDT",
+        "toSymbol": "USDC",
+        "amountIn": "15.06"
+      }
+    },
+    {
+      "tool": "propose_swap",
+      "args": {
+        "fromSymbol": "USDT",
+        "toSymbol": "USDC",
+        "amountIn": "15.06"
+      }
+    },
+    {
+      "say": "Your 15.06 USDT is in your vault, so this one waits for your click.\nApprove asks two Touch IDs: the swap's own, then one that moves the USDT from your vault."
+    }
+  ],
+  "mustCall": [
+    "wallet|swap_quote|swap_assets",
+    "propose_swap"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_hl_deposit",
+    "propose_hl_withdraw"
+  ],
+  "maxCalls": {
+    "propose_swap": 1
+  },
+  "ordering": [
+    [
+      "wallet|swap_quote|swap_assets",
+      "propose_swap"
+    ]
+  ],
+  "argChecks": [
+    {
+      "tool": "propose_swap",
+      "path": "fromSymbol",
+      "matches": "^USDT$"
+    },
+    {
+      "tool": "propose_swap",
+      "path": "amountIn",
+      "matches": "^15\\.06$"
+    }
+  ],
+  "mustSayFigures": [
+    "15\\.06"
+  ],
+  "mustNotSay": [
+    "can'?t swap|cannot swap|can'?t do|cannot be done",
+    "[Tt]op (it )?up (your allowance )?first",
+    "proposal_status|propose_swap|swap_quote|mcp__phosphor__"
+  ],
+  "window": {
+    "card": "propose_swap",
+    "withinMs": 1000
+  },
+  "rubric": "The agent proposes the swap of the exact 15.06 USDT the vault holds on the first ask, never \"all\", never a trip to the Vault tab to top up first, and says in plain words that it waits for their click and that Approve moves the USDT from the vault with one more Touch ID. At most three short lines; no tool name.",
+  "mustSayText": "the swap of 15.06 USDT is proposed; it waits for their click; Approve moves the USDT from the vault with one more Touch ID.",
+  "pass": "one propose_swap of exactly 15.06 USDT after a read; no refusal, no 'all', no instruction to top up first."
+}

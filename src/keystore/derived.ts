@@ -2,14 +2,15 @@
 //
 // Phase 2 moves the vault onto this Mac's Touch ID key and leaves two small keys for the session:
 // ALLOWANCE, a 0x account the agent spends from with no click up to its size, and GAS, a NEAR
-// implicit account that pays for the vault's execute_intents calls (about 0.5 NEAR). Both come
+// implicit account, the old fee account: it paid NEAR's fee for the vault's moves until the relay
+// took that over in 0.10.18, and now only gives back what was paid into it. Both come
 // from OLD, the wallet's EVM key, at every open, are held as bytes beside it, and are zeroed by
 // the same lock. Derived rather than made and kept, the lead's call 7: a new key in the wallet
 // file is a payload rewrite (audit1b AU1B-04), a bound file cannot be committed again once its
 // key is ten minutes old, and the key backup a person already holds brings both back.
 //
 // THE COST, said where the keys are made: whoever holds OLD, or its backup, also holds ALLOWANCE
-// (at most its size plus 10 %, $110 at the default) and GAS (about 0.5 NEAR). So the key backup
+// (at most its size plus 10 %, $110 at the default) and GAS (what is left in it). So the key backup
 // is kept like cash.
 //
 // HKDF-SHA256 (RFC 5869) over OLD's 32 bytes, salt "phosphor", one info string per key:

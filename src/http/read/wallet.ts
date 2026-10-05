@@ -383,6 +383,8 @@ export const walletReads: ReadTable = {
        the card and the notice rides in the answer and in the line the agent relays. */
     const route = await depositRoute(ctx, chain, report.account, token.assetId, 'agent');
     if (route.closed !== null) return sendJson(res, 200, { ok: false, reason: route.closed, statusLink: route.link, accepted });
+    // 1Click did not say it takes this coin in: no card, no fingerprint, ask again in a minute.
+    if (route.unconfirmed !== null) return sendJson(res, 200, { ok: false, reason: route.unconfirmed, accepted });
     // The agent's forms: what the status page wrote rides only inside its labeled quote.
     const notice = route.notice ?? network.agentNotice;
     const statusLink = route.link ?? network.statusLink;

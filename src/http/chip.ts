@@ -1,8 +1,8 @@
 // The chip vault's window routes (PHASE2-PLAN.md C9): the paper key, the move to this Mac's Touch
-// ID key, the restore on a new Mac, and the gas account's funding. Every one carries the window
-// token through guarded(), and none is on /api/mcp: no agent reaches the words, the pins or a
-// rekey. The work is src/vault/rekey.ts; this file is the door, the Touch ID for the owner key, and
-// the sentences.
+// ID key, the restore on a new Mac, and the return of the old fee account's NEAR. Every one carries
+// the window token through guarded(), and none is on /api/mcp: no agent reaches the words, the
+// pins, a rekey or the return. The work is src/vault/rekey.ts and src/vault/gas-account.ts; this
+// file is the door, the Touch ID for the owner key, and the sentences.
 //
 // THE WORDS. /chip/phrase answers the 24 words once, to the window that asked, and nothing here
 // logs, audits or echoes them, a refusal included: a sentence that quoted a mistyped word would put
@@ -14,19 +14,17 @@ import type http from 'node:http';
 import { errText, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import type { Ctx } from './context.ts';
-import { guarded, knownRefusal, refusal } from './wallet.ts';
+import { depositRoute, guarded, knownRefusal, refusal } from './wallet.ts';
 import { backupProven } from './vault.ts';
 import { settleFor } from './custody.ts';
-import { heldSymbol } from '../intents.ts';
-import { railAccounts } from '../intents-sign.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { allowanceState } from '../vault/allowance.ts';
-import { GAS_FUND_MAX_NEAR, GAS_FUND_MIN_NEAR, fundingNear, gasAccountOf } from '../vault/gas-account.ts';
-import { chipSlice, provePaper, showPaper, startRekey, vaultMovedElsewhere } from '../vault/rekey.ts';
+import { returnOldGas } from '../vault/gas-account.ts';
+import { chipSlice, chipVaultChain, oldGasReturned, provePaper, showPaper, startRekey } from '../vault/rekey.ts';
 import type { ChipFrame, ChipSlice, Refused, RekeyHost } from '../vault/rekey.ts';
 
-/* The rekey's own refusals, said once here. Codes from the vault service, the relay, the submit
-   and the gas account keep their sentences in src/http/wallet.ts (REFUSALS). */
+/* The rekey's and the return's own refusals, said once here. Codes from the vault service, the
+   relay and the submit keep their sentences in src/http/wallet.ts (REFUSALS). */
 const CHIP_WORDS: Record<string, string> = {
   move_not_enclave: 'Only a wallet that opens with Touch ID can move its vault to a Touch ID key.',
   already_moved: 'Your vault already moved to a Touch ID key on this Mac.',
@@ -43,8 +41,8 @@ const CHIP_WORDS: Record<string, string> = {
   vault_changed: "Your vault's keys changed while it was moving, so nothing was sent. Look at the Vault tab, then try again.",
   vault_json: 'Your vault moved, and Phosphor could not note it on this Mac yet. It tries again on its own while the app is open.',
   vault_other_keys: 'Your vault moved, and it also holds a key Phosphor did not add. Look at the Vault tab before you move anything else.',
-  fund_amount: `Add between ${GAS_FUND_MIN_NEAR} and ${GAS_FUND_MAX_NEAR} NEAR to the gas account.`,
-  fund_elsewhere: `Your vault opens with another Mac's Touch ID key now, so this Mac cannot pay NEAR from it. Send ${GAS_FUND_MIN_NEAR} to ${GAS_FUND_MAX_NEAR} NEAR on NEAR straight to the gas account instead, from any NEAR wallet.`,
+  gas_empty: 'The old fee account holds no NEAR that can come back to your vault, so nothing was sent.',
+  gas_return_failed: 'The NEAR in the old fee account did not come back just now. If the Vault tab still shows it in a minute, try again.',
 };
 
 // The sentence for any code a chip route or frame can carry.
@@ -96,22 +94,11 @@ export function hostOf(ctx: Ctx): RekeyHost {
   };
 }
 
-/* The NEAR held by the account a payout to the gas account comes from (the vault before the move,
-   the allowance after it), by the ledger's last read, or null when that read is missing or failed:
-   holding none and not read yet are different facts. */
-function sourceNear(ctx: Ctx): number | null {
-  const from = railAccounts(ctx.cfg.keysPath).spend?.toLowerCase() ?? null;
-  const read = ctx.ledger.intents();
-  if (from === null || read === undefined || !read.ok) return null;
-  const near = heldSymbol('NEAR').toUpperCase();
-  return read.holdings.filter((h) => h.accountId.toLowerCase() === from && h.symbol.toUpperCase() === near).reduce((sum, h) => sum + h.amount, 0);
-}
-
 /* The Vault tab's chip slice for /api/state. The allowance's account, size and balance are the
    allowance unit's read (src/vault/allowance.ts): null while the wallet spends from its vault. */
-export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null; sourceNear: number | null } {
+export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null } {
   const slice = chipSlice(hostOf(ctx), () => allowanceState(ctx));
-  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) }, sourceNear: sourceNear(ctx) };
+  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) } };
 }
 
 // POST /api/vault/chip/phrase -> {ok, words[24]}: a new paper key, shown once.
@@ -156,21 +143,55 @@ export async function handleChipRestore(ctx: Ctx, req: http.IncomingMessage, res
   sendJson(res, 202, { ok: true, run: started.run });
 }
 
-/* POST /api/vault/gas/fund {near} -> {ok, proposal}: NEAR paid out on the NEAR chain to the gas
-   account, the R4 route. The receiver is the derived id and nothing from the body; the proposal
-   waits for a click and a Touch ID that names the receiver, as every payout does. A vault NEAR shows
-   on another Mac's keys cannot pay it (src/vault/rekey.ts vaultMovedElsewhere): the answer says so
-   and carries the gas account's id, so NEAR can be sent to it straight. Nothing is filed. */
-export async function handleGasFund(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-  const body = await guarded(ctx, '/api/vault/gas/fund', req, res);
+/* The vault's NEAR deposit address as the Receive row shows it (ctx.intentsReceive, the bridge's
+   address held to its pin and to whether NEAR Intents takes deposits on NEAR right now), or null:
+   no row, no address on it, a memo a transfer cannot carry, or a report for another account. */
+async function vaultNearAddress(ctx: Ctx, vault: string): Promise<string | null> {
+  const report = await ctx.intentsReceive().catch(() => null);
+  if (report === null || report.tampered || report.account?.toLowerCase() !== vault.toLowerCase()) return null;
+  const row = report.networks.find((n) => n.id === 'near');
+  return row !== undefined && row.address !== null && row.memo === null ? row.address : null;
+}
+
+/* POST /api/vault/gas/return {} -> {ok, near, txHash}: what the old fee account holds, less what
+   it keeps, back to this wallet's vault in one NEAR transfer signed by the account's derived key.
+   The receiver is the vault's NEAR deposit address as the Receive row shows it, found here and never
+   read from the body. Window only: no agent tool, MCP tool or proposal reaches it. */
+export async function handleGasReturn(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  const body = await guarded(ctx, '/api/vault/gas/return', req, res);
   if (body === null) return;
-  const near = fundingNear(body.near);
-  if (near === null) return sendJson(res, 200, chipRefusal('fund_amount'));
-  const gas = gasAccountOf(ctx.keystore);
-  if (gas === null) return sendJson(res, 200, refusal('wallet_locked'));
-  if (vaultMovedElsewhere(ctx.keystore)) return sendJson(res, 200, { ...chipRefusal('fund_elsewhere'), gas });
-  const proposal = await ctx.proposals.proposeSend({ to: gas, symbol: 'NEAR', amount: near, where: 'near' });
-  ctx.audit.append('app_start', `the window asked to pay ${near} NEAR to the gas account`, { gas, proposal: proposal.id, status: proposal.status });
+  // The vault this open wallet's own keys name, as the move reads it (src/vault/rekey.ts openVault).
+  const report = ctx.keystore.isUnlocked() ? ctx.keystore.addressReport() : null;
+  const vault = report !== null && report.verified === true ? report.addresses.evm : null;
+  if (vault === null) return sendJson(res, 200, chipRefusal('wallet_locked'));
+  // The same gate as every deposit address: NEAR's route must read open by 1Click's own answer
+  // before NEAR goes to the bridge's address (review18 M1).
+  const gate = await depositRoute(ctx, 'near', vault, '');
+  const shut = gate.closed ?? gate.unconfirmed;
+  if (shut !== null) {
+    ctx.audit.append('app_start', "the old fee account's NEAR did not go back: NEAR Intents is not confirmed open for NEAR deposits", {});
+    return sendJson(res, 200, { ...chipRefusal('gas_return_failed'), error: shut });
+  }
+  const to = await vaultNearAddress(ctx, vault);
+  if (to === null) {
+    ctx.audit.append('app_start', "the old fee account's NEAR did not go back: the bridge showed no NEAR deposit address for the vault", {});
+    return sendJson(res, 200, chipRefusal('gas_return_failed'));
+  }
+  // Read now, never kept from above: a lock in between zeroes the session's seed.
+  let seed: Buffer;
+  try {
+    seed = ctx.keystore.gasSeed();
+  } catch {
+    return sendJson(res, 200, chipRefusal('wallet_locked'));
+  }
+  const back = await returnOldGas({ seed, to }, chipVaultChain()?.near);
+  if (!back.ok) {
+    ctx.audit.append('app_start', `the old fee account's NEAR did not go back: ${back.detail}`, { code: back.code, to, txHash: back.txHash });
+    return sendJson(res, 200, chipRefusal(back.code));
+  }
+  oldGasReturned(ctx.keystore);
+  ctx.audit.append('app_start', `${back.near} NEAR went back from the old fee account to the vault`, { to, txHash: back.txHash });
   ctx.session.touch();
-  sendJson(res, 200, { ok: true, proposal: { id: proposal.id, status: proposal.status } });
+  ctx.sse.broadcastState();
+  sendJson(res, 200, { ok: true, near: back.near, txHash: back.txHash });
 }

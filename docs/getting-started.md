@@ -27,7 +27,7 @@ file was built from the public code. It needs the GitHub CLI (`brew install gh`)
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.17
+  --source-ref refs/tags/v0.10.18
 ```
 
 Put the version you downloaded in the last line. It passes only for a file that this
@@ -206,27 +206,26 @@ every move out of the vault asks for a Touch ID that names it, and your assistan
 small allowance.
 
 Your paper key is the only key that opens your vault away from this Mac. Your recovery phrase also
-controls your allowance (its size plus 10 percent, more while a move is under way), the gas account
-(about 0.5 NEAR) and your Hyperliquid account, so keep both like cash. On a wallet with no recovery
+controls your allowance (its size plus 10 percent, more while a move is under way) and your
+Hyperliquid account, so keep both like cash. On a wallet with no recovery
 phrase, that second backup is your private key. Once the vault has moved, the Vault tab names the
 allowance's cap in dollars: $110 at the default size of $100.
 
-Under Your vault, the Vault key row takes you through four steps, in order:
+You never need NEAR for fees: Phosphor sends each vault move through the NEAR Intents relay, which
+pays NEAR's fee, as it does for swaps. If your wallet paid NEAR into the old fee account in 0.10.16,
+the Vault tab offers to send it back to your vault, in one click.
 
-1. **Back up your recovery phrase** (or private key). It still opens the allowance, the gas account
-   and Hyperliquid after the move.
-2. **Add NEAR to the gas account.** It pays NEAR's small fee for every move of your vault. Add 0.1 to
-   1 NEAR from the Gas account row: a payout you approve on its card in the conversation, with one
-   Touch ID that names the gas account. If your vault holds no NEAR yet, Add NEAR shows the gas
-   account whole, with Copy: send 0.1 to 1 NEAR to it on NEAR from any NEAR wallet, or ask your
-   assistant to swap a little USDC to NEAR, then add it here.
-3. **Write your paper key.** Show my paper key puts 24 words on screen once, with your vault's
+Under Your vault, the Vault key row takes you through three steps, in order:
+
+1. **Back up your recovery phrase** (or private key). It still opens the allowance and Hyperliquid
+   after the move.
+2. **Write your paper key.** Show my paper key puts 24 words on screen once, with your vault's
    address to write under them. Write both by hand, and check each word as you write it: there is
    no Print and no Copy, because a printer, a screenshot or a clipboard keeps one more key to your
    vault. Then type three of the words, at places the app picks, from the paper, with pasting off.
    A slip is named by its number, never by the word. You type all 24 only when the app no longer
    holds them: after a lock, the tab left or a restart before the move.
-4. **Move your vault.** Two Touch IDs: the first reads "Move your vault to this Mac's Touch ID key and
+3. **Move your vault.** Two Touch IDs: the first reads "Move your vault to this Mac's Touch ID key and
    your paper key", the second "confirm this Mac's Touch ID key for your vault". Cancel any other
    sentence. The row shows each step as it runs, and your assistant's moves wait until it is done.
 

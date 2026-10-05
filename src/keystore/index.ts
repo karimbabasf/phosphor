@@ -69,7 +69,8 @@ export function apiWallet(keysPath: string): ApiWallet | null {
 }
 
 /* Phase 2's two derived keys (src/keystore/derived.ts): the ALLOWANCE key every rail signs with
-   once the vault has moved to the chip, and the GAS seed that signs execute_intents. Both are the
+   once the vault has moved to the chip, and the GAS seed that signs the old fee account's one
+   return of its NEAR (src/vault/gas-account.ts). Both are the
    session's own buffers: read them for one signature in the same turn, never keep or change them,
    and the lock zeroes them. Signers, so they fail while locked, and they have no plaintext
    fallback: a wallet still in a plaintext file derives neither. */

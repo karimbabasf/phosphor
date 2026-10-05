@@ -1,88 +1,47 @@
-// The one NEAR transaction Phosphor signs: the gas account's call of execute_intents on intents.near.
+// The one NEAR transaction Phosphor signs: the old fee account's one transfer of its NEAR back to
+// the vault.
 //
-// The chip vault puts signed intents on chain itself, never through 1Click or the solver relay: a
-// third party in the middle could hold back a key change, and a rekey has to land as one atomic
-// call. So a small NEAR account derived from the owner key (the gas account, an implicit account
-// whose id is the hex of its ed25519 public key) pays for exactly one shape of transaction, a single
-// FunctionCall of `execute_intents` on intents.near with no deposit. This module reads what that
-// needs, builds it, signs it and sends it. Nothing else here signs, and nothing else in the app
-// sends a NEAR transaction.
+// Until 0.10.18 a small NEAR account derived from the owner key (now the old fee account, an
+// implicit account whose id is the hex of its ed25519 public key) put every vault move on chain
+// and paid NEAR's fee from what it held. The NEAR Intents relay pays that fee now
+// (src/vault/submit.ts), so what a 0.10.16 wallet paid into that account goes back to the vault:
+// one Transfer, signed by the account's derived key, to the vault's NEAR deposit address
+// (src/vault/gas-account.ts). This module reads what that needs, builds it, signs it and sends it.
+// Nothing else here signs, and nothing else in the app sends a NEAR transaction.
 //
 // Borsh is written by hand, as src/chain/near.ts did until 2026-09-16, for the same reason: sha256
 // and ed25519 come from node:crypto, and a wrong byte in the body is a signature the chain refuses,
 // so the failure is loud and costs nothing. near-api-js's published vectors pin every byte the
 // encoder writes (tests/unit/near-tx.test.ts): the whole V0 action set from its multi-action
-// transaction, and the signing rule from its signed transfer.
+// transaction, and the signing rule and the transfer from its signed transfer.
 //
-// Gas. NEP-642 is live at protocol 86: attached gas is bought upfront at min_gas_purchase_price,
-// 0.001 NEAR per TGas, and what is not burnt comes back in a refund receipt a block later. So the
-// account needs the attached gas and the call's own fees, at that price, free at every submit, and
-// `gas_low` refuses before anything is signed. 50 TGas is about three times the heaviest call the vault makes: 68 live
-// execute_intents read back on 2026-10-04 burnt 3.07 TGas plus 3.31 per signed intent, and a
-// webauthn intent adds about 1.1 for its P-256 check.
-//
-// After the bytes leave there are three answers. executed: the verifier's receipt ran. failed: it
-// did not and never can (the verifier refused the intents, or the node refused bytes no block will
-// ever take). unknown: anything else. A rate limit, a timeout, a lost reply or a refusal that a later
-// block could lift is never "failed": the IDENTICAL bytes are sent again, never re-signed, so at most
-// one copy can run. send_tx is idempotent on identical bytes and waits for their outcome, which makes
-// a resend the poll that also recovers a copy a node dropped.
+// After the bytes leave there are three answers. executed: the transfer's receipt ran. failed: it
+// did not and never can (the receipt failed, or the node refused bytes no block will ever take).
+// unknown: anything else. A rate limit, a timeout, a lost reply or a refusal that a later block
+// could lift is never "failed": the IDENTICAL bytes are sent again, never re-signed, so at most one
+// copy can run. send_tx is idempotent on identical bytes and waits for their outcome, which makes a
+// resend the poll that also recovers a copy a node dropped.
 
 import crypto from 'node:crypto';
 
-import { INTENTS_VERIFIER } from '../ledger/intents.ts';
 import { READ_TIMEOUT_MS, VENUE_WRITE_TIMEOUT_MS, isTimeout, withTimeout } from '../net.ts';
 import { oneLine } from '../venue-words.ts';
 import { base58Decode, base58Encode, nearChainSpec } from './near.ts';
 
 // ---------- units and limits ----------
 
-export const TGAS = 10n ** 12n;
 export const YOCTO_PER_NEAR = 10n ** 24n;
 
-export const EXECUTE_INTENTS_GAS = 50n * TGAS;
-
-/* The floor under the price attached gas is bought at, in yoctoNEAR per gas: NEP-642's
-   runtime_config.min_gas_purchase_price, read live on 2026-10-04 at protocol 86. When the block's own
-   gas price is higher, that is the price. */
-export const MIN_GAS_PURCHASE_PRICE = 1_000_000_000n;
-
-/* The call's own fees on top of the attached gas: creating the receipt and the FunctionCall action,
-   sent and executed. Protocol 86's runtime config puts them at 1.2 TGas plus 0.05 TGas a kilobyte of
-   args, 4.5 TGas at the 64 KiB allowed here. Counted at the purchase price, which is never lower
-   than the price the sending part burns at. */
-const FEE_GAS = 8n * TGAS;
-
-// What the account must keep for its own storage: an implicit account with its one key stores 182
-// bytes, 0.00182 NEAR at 10^19 yocto a byte.
-const STORAGE_RESERVE = 2n * 10n ** 21n;
-
-// What the gas account must hold for one submit at a given block gas price.
-export function gasNeededYocto(gasPrice: bigint): bigint {
-  const price = gasPrice > MIN_GAS_PURCHASE_PRICE ? gasPrice : MIN_GAS_PURCHASE_PRICE;
-  return (EXECUTE_INTENTS_GAS + FEE_GAS) * price + STORAGE_RESERVE;
-}
-
-// The same at today's gas price, which sits under the floor: 0.06 NEAR.
-export const GAS_LOW_YOCTO = gasNeededYocto(0n);
-
-/* Signed intents in one call. A rekey carries three, the heaviest the vault sends; eight webauthn
-   intents burn about 39 TGas at the rates above, still inside what is attached. */
-export const MAX_PAYLOADS = 8;
-const MAX_ARGS_BYTES = 64 * 1024;
-
 /* How long a submit keeps asking after the first send before it answers unknown; no request or
-   pause runs past it. send_tx at FINAL answers in a few seconds; past a minute the signed intents
-   are near their own two-minute deadline, and the caller's proof by the verifier's nonce is the
-   better question. */
+   pause runs past it. send_tx at FINAL answers in a few seconds. */
 export const SUBMIT_BUDGET_MS = 60_000;
 
 // ---------- refusals ----------
 
-export type NearTxRefusal = 'invalid_request' | 'rpc_unavailable' | 'gas_unfunded' | 'gas_key_missing' | 'gas_low';
+export type NearTxRefusal = 'invalid_request' | 'rpc_unavailable' | 'gas_empty';
 
-/* A submit refused before anything was signed: nothing left this Mac, and the same signed intents
-   can be submitted again. The code picks the sentence a person reads; the message is the log line. */
+/* A send refused before anything was signed: nothing left this Mac. The code picks the sentence a
+   person reads; the message is the log line. */
 export class NearTxError extends Error {
   readonly code: NearTxRefusal;
   constructor(code: NearTxRefusal, message: string) {
@@ -161,8 +120,8 @@ export type NearAccessKeyPermission =
 
 /* The V0 action set, in nearcore's order, which is the borsh tag: CreateAccount 0 to DeleteAccount 7.
    All eight are here so the published multi-action vector checks every byte the encoder writes;
-   the one transaction this app builds is a single FunctionCall (submitExecuteIntents). Public keys
-   are ed25519, 32 raw bytes. */
+   the one transaction this app builds is a single Transfer (transferAll). Public keys are ed25519,
+   32 raw bytes. */
 export type NearAction =
   | { type: 'createAccount' }
   | { type: 'deployContract'; code: Uint8Array }
@@ -484,61 +443,38 @@ export async function viewAccount(accountId: string, deps: NearRpcDeps = {}): Pr
   throw unavailable('view_account', reply);
 }
 
-// ---------- submit ----------
+// ---------- the transfer ----------
 
-/* One signed intent as execute_intents takes it. Fields beyond these three (a webauthn intent's
-   public_key, client_data_json and authenticator_data) go along exactly as given. */
-export type MultiPayload = { readonly standard: string; readonly payload: string; readonly signature: string; readonly [field: string]: string };
-
-export type NearEvent = { standard: string; version: string; event: string; data: unknown };
-
-export type ExecuteOutcome = {
+export type TransferOutcome = {
   status: 'executed' | 'failed' | 'unknown';
   txHash: string;
-  gasBurnt: bigint | null; // gas over the transaction and every receipt; null when no final outcome was read
-  tokensBurnt: bigint | null; // what that gas cost, in yoctoNEAR
-  events: NearEvent[]; // every EVENT_JSON line intents.near logged, in receipt order
+  amount: bigint; // what the transfer carries, in yoctoNEAR
   reason?: string; // the log line when not executed
 };
 
-/* Signs one execute_intents call with the gas account and sends it at FINAL. Throws NearTxError
-   only before anything is signed; once signed it always answers an ExecuteOutcome. `failed` is about
-   this transaction, not the signed intents inside it: they left this Mac in its bytes, anyone holding
-   them can still submit them until their own deadline, so nothing replaces them before that. */
-export async function submitExecuteIntents(
-  request: { gasSeed: Uint8Array; signed: readonly MultiPayload[] },
+// The one transaction this app builds: a single Transfer of `deposit` yoctoNEAR.
+export function transferTransaction(tx: Omit<NearTransaction, 'actions'> & { deposit: bigint }): NearTransaction {
+  return { signerId: tx.signerId, publicKey: tx.publicKey, nonce: tx.nonce, receiverId: tx.receiverId, blockHash: tx.blockHash, actions: [{ type: 'transfer', deposit: tx.deposit }] };
+}
+
+/* Sends everything the seed's implicit account holds above `keep` to `receiverId`, in one Transfer
+   signed by that seed, at FINAL. Throws NearTxError only before anything is signed: `gas_empty`
+   when the account does not exist or holds less than `least` above `keep`. Once signed it always
+   answers a TransferOutcome. */
+export async function transferAll(
+  request: { seed: Uint8Array; receiverId: string; keep: bigint; least: bigint },
   deps: SubmitDeps = {},
-): Promise<ExecuteOutcome> {
-  const args = argsOf(request.signed);
-  if (!(request.gasSeed instanceof Uint8Array) || request.gasSeed.length !== 32) {
-    throw new NearTxError('invalid_request', 'the gas seed is not 32 bytes');
-  }
+): Promise<TransferOutcome> {
+  if (!(request.seed instanceof Uint8Array) || request.seed.length !== 32) throw new NearTxError('invalid_request', 'the seed is not 32 bytes');
+  if (typeof request.receiverId !== 'string' || request.receiverId === '') throw new NearTxError('invalid_request', 'the transfer names no receiver');
   // The key is parsed now: the caller may wipe its seed while this waits its turn.
-  const key = privateKeyOf(request.gasSeed);
-  const gas = accountOfKey(publicKeyOf(key));
-  return exclusive(gas.accountId, () => submitAs(gas, key, args, withDefaults(deps)));
+  const key = privateKeyOf(request.seed);
+  const from = accountOfKey(publicKeyOf(key));
+  return exclusive(from.accountId, () => transferAs(from, key, request, withDefaults(deps)));
 }
 
-function argsOf(signed: readonly MultiPayload[]): Uint8Array {
-  if (!Array.isArray(signed) || signed.length === 0) throw new NearTxError('invalid_request', 'there are no signed intents to submit');
-  if (signed.length > MAX_PAYLOADS) {
-    throw new NearTxError('invalid_request', `${signed.length} signed intents in one call; at most ${MAX_PAYLOADS} fit the gas it attaches`);
-  }
-  for (const entry of signed as readonly unknown[]) {
-    const proto = entry !== null && typeof entry === 'object' ? Object.getPrototypeOf(entry) : undefined;
-    const fields = proto === Object.prototype || proto === null ? Object.values(entry as object) : [];
-    const e = record(entry);
-    if (fields.length === 0 || !fields.every((v) => typeof v === 'string') || !e.standard || !e.payload || !e.signature) {
-      throw new NearTxError('invalid_request', 'a signed intent is not a plain object of strings with a standard, a payload and a signature');
-    }
-  }
-  const args = new Uint8Array(Buffer.from(JSON.stringify({ signed }), 'utf8'));
-  if (args.length > MAX_ARGS_BYTES) throw new NearTxError('invalid_request', `the signed intents are ${args.length} bytes, over ${MAX_ARGS_BYTES}`);
-  return args;
-}
-
-/* One submit at a time per gas account in this process. Two at once would read the same access key
-   nonce and one would be refused; the ten-minute sweep and a top-up can meet. */
+/* One send at a time per account in this process: two at once would read the same access key
+   nonce and one would be refused. */
 const turns = new Map<string, Promise<void>>();
 
 async function exclusive<T>(account: string, run: () => Promise<T>): Promise<T> {
@@ -558,11 +494,6 @@ async function exclusive<T>(account: string, run: () => Promise<T>): Promise<T> 
   }
 }
 
-function canCallVerifier(permission: NearAccessKeyPermission): boolean {
-  if (permission.type === 'fullAccess') return true;
-  return permission.receiverId === INTENTS_VERIFIER && (permission.methodNames.length === 0 || permission.methodNames.includes('execute_intents'));
-}
-
 function nearText(yocto: bigint): string {
   const fraction = (yocto % YOCTO_PER_NEAR).toString().padStart(24, '0').slice(0, 6).replace(/0+$/, '');
   return fraction === '' ? `${yocto / YOCTO_PER_NEAR}` : `${yocto / YOCTO_PER_NEAR}.${fraction}`;
@@ -572,29 +503,23 @@ function shortId(id: string): string {
   return id.length > 20 ? `${id.slice(0, 8)}...${id.slice(-8)}` : id;
 }
 
-async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8Array, d: Deps): Promise<ExecuteOutcome> {
+async function transferAs(from: ImplicitAccount, key: crypto.KeyObject, request: { receiverId: string; keep: bigint; least: bigint }, d: Deps): Promise<TransferOutcome> {
   /* Three reads, then the refusals, then the one signature. The key's nonce is read at optimistic:
      a transaction that ran a block ago is already counted there and not yet at final, and a nonce
      the chain has seen is refused. The budget runs from here, so slow reads shorten the sending. */
   const started = d.now();
   const [block, account, accessKey] = await Promise.all([
     readFinalBlock(d),
-    viewAccount(gas.accountId, d),
-    viewAccessKey(gas.accountId, gas.publicKey, { ...d, finality: 'optimistic' }),
+    viewAccount(from.accountId, d),
+    viewAccessKey(from.accountId, from.publicKey, { ...d, finality: 'optimistic' }),
   ]);
-  if (!account.found) {
-    throw new NearTxError('gas_unfunded', `the gas account ${shortId(gas.accountId)} does not exist yet: no NEAR has been paid into it`);
+  if (!account.found) throw new NearTxError('gas_empty', `the account ${shortId(from.accountId)} does not exist: no NEAR was ever paid into it`);
+  const amount = account.amount - request.keep;
+  if (amount < request.least) {
+    throw new NearTxError('gas_empty', `the account ${shortId(from.accountId)} holds ${nearText(account.amount)} NEAR, under the ${nearText(request.keep + request.least)} a return needs`);
   }
-  if (!accessKey.found || !canCallVerifier(accessKey.permission)) {
-    throw new NearTxError('gas_key_missing', `the gas account ${shortId(gas.accountId)} does not carry the key this app derives for it`);
-  }
-  const need = gasNeededYocto(block.gasPrice);
-  if (account.amount < need) {
-    throw new NearTxError(
-      'gas_low',
-      `the gas account holds ${nearText(account.amount)} NEAR and a submit needs ${nearText(need)} NEAR: ` +
-        `${(EXECUTE_INTENTS_GAS + FEE_GAS) / TGAS} TGas bought upfront (NEP-642), and its own storage`,
-    );
+  if (!accessKey.found || accessKey.permission.type !== 'fullAccess') {
+    throw new NearTxError('invalid_request', `the account ${shortId(from.accountId)} does not carry the key this app derives for it`);
   }
   // Reads that ate half the budget mean an RPC in trouble: stop while nothing is signed, so a send
   // always keeps at least half.
@@ -602,17 +527,10 @@ async function submitAs(gas: ImplicitAccount, key: crypto.KeyObject, args: Uint8
     throw new NearTxError('rpc_unavailable', `NEAR took ${Math.round(d.now() - started)} ms to answer the reads before signing; nothing was signed`);
   }
   const signed = signWith(
-    {
-      signerId: gas.accountId,
-      publicKey: gas.publicKeyBytes,
-      nonce: accessKey.nonce + 1n,
-      receiverId: INTENTS_VERIFIER,
-      blockHash: block.hashBytes,
-      actions: [{ type: 'functionCall', methodName: 'execute_intents', args, gas: EXECUTE_INTENTS_GAS, deposit: 0n }],
-    },
+    transferTransaction({ signerId: from.accountId, publicKey: from.publicKeyBytes, nonce: accessKey.nonce + 1n, receiverId: request.receiverId, blockHash: block.hashBytes, deposit: amount }),
     key,
   );
-  return deliver(signed, gas.accountId, d, started);
+  return { ...(await deliver(signed, from.accountId, request.receiverId, d, started)), amount };
 }
 
 /* Refusals the bytes alone decide, with no chain state read: every node says the same about them,
@@ -636,7 +554,9 @@ function neverValid(reply: { cause: string; data: unknown }): boolean {
   return name !== undefined && NEVER_VALID.has(name);
 }
 
-async function deliver(signed: SignedNearTransaction, sender: string, d: Deps, started: number): Promise<ExecuteOutcome> {
+type Delivered = Omit<TransferOutcome, 'amount'>;
+
+async function deliver(signed: SignedNearTransaction, sender: string, receiver: string, d: Deps, started: number): Promise<Delivered> {
   const left = () => d.budgetMs - (d.now() - started);
   // Whether any copy sent so far may have been taken. Until one may, a refusal of the bytes is final.
   let mayHaveLanded = false;
@@ -655,7 +575,7 @@ async function deliver(signed: SignedNearTransaction, sender: string, d: Deps, s
     // at FINAL on a hash the node never saw only times out, so it cannot tell a dropped copy apart.
     ask = 'send';
     if (reply.kind === 'result') {
-      const outcome = outcomeOf(reply.result, signed.hash);
+      const outcome = outcomeOf(reply.result, signed.hash, receiver);
       if (outcome !== null) return outcome;
       mayHaveLanded = true;
       ask = 'poll';
@@ -679,62 +599,30 @@ async function deliver(signed: SignedNearTransaction, sender: string, d: Deps, s
   }
 }
 
-function settled(status: 'failed' | 'unknown', txHash: string, reason: string): ExecuteOutcome {
-  return { status, txHash, gasBurnt: null, tokensBurnt: null, events: [], reason: oneLine(reason, 300) };
+function settled(status: 'failed' | 'unknown', txHash: string, reason: string): Delivered {
+  return { status, txHash, reason: oneLine(reason, 300) };
 }
 
-/* A FINAL outcome, or null when the answer cannot decide it. The verifier ran the intents exactly
-   when the receipt the transaction became, executed by intents.near, succeeded: a failed receipt
-   there rolled back everything it did, nonces included. */
-function outcomeOf(result: unknown, txHash: string): ExecuteOutcome | null {
+/* A FINAL outcome, or null when the answer cannot decide it. The transfer ran exactly when the
+   receipt the transaction became, executed by the receiver, succeeded: a failed receipt there
+   refunds the deposit. */
+function outcomeOf(result: unknown, txHash: string, receiver: string): Delivered | null {
   const r = record(result);
   if (r.final_execution_status !== 'FINAL' || record(r.transaction).hash !== txHash) return null;
   const txOutcome = record(record(r.transaction_outcome).outcome);
   const receipts = (Array.isArray(r.receipts_outcome) ? r.receipts_outcome : []).map((x) => ({ id: record(x).id, outcome: record(record(x).outcome) }));
-  let gasBurnt = 0n;
-  let tokensBurnt = 0n;
-  for (const o of [txOutcome, ...receipts.map((x) => x.outcome)]) {
-    gasBurnt += uint(o.gas_burnt) ?? 0n;
-    tokensBurnt += uint(o.tokens_burnt) ?? 0n;
-  }
-  const events = receipts.filter((x) => x.outcome.executor_id === INTENTS_VERIFIER).flatMap((x) => eventsOf(x.outcome.logs));
   const txStatus = record(txOutcome.status);
-  if ('Failure' in txStatus) {
-    return { status: 'failed', txHash, gasBurnt, tokensBurnt, events, reason: `the transaction failed before the verifier ran: ${failureText(txStatus.Failure)}` };
-  }
+  if ('Failure' in txStatus) return { status: 'failed', txHash, reason: `the transaction failed before its receipt ran: ${failureText(txStatus.Failure)}` };
   const mainId = Array.isArray(txOutcome.receipt_ids) ? txOutcome.receipt_ids[0] : undefined;
   const main = receipts.find((x) => typeof mainId === 'string' && x.id === mainId);
-  if (main === undefined || main.outcome.executor_id !== INTENTS_VERIFIER) return null;
+  if (main === undefined || main.outcome.executor_id !== receiver) return null;
   const status = record(main.outcome.status);
-  if ('Failure' in status) {
-    return { status: 'failed', txHash, gasBurnt, tokensBurnt, events, reason: `the verifier refused the intents: ${failureText(status.Failure)}` };
-  }
-  if ('SuccessValue' in status || 'SuccessReceiptId' in status) return { status: 'executed', txHash, gasBurnt, tokensBurnt, events };
+  if ('Failure' in status) return { status: 'failed', txHash, reason: `the transfer's receipt failed: ${failureText(status.Failure)}` };
+  if ('SuccessValue' in status || 'SuccessReceiptId' in status) return { status: 'executed', txHash };
   return null;
 }
 
-// A contract panic sits at ActionError.kind.FunctionCallError.ExecutionError; anything else as JSON.
+// What a failure said, as one line.
 function failureText(failure: unknown): string {
-  const said = record(record(record(record(failure).ActionError).kind).FunctionCallError).ExecutionError;
-  return oneLine(typeof said === 'string' ? said : failure, 200);
-}
-
-const EVENT_PREFIX = 'EVENT_JSON:';
-
-function eventsOf(logs: unknown): NearEvent[] {
-  const out: NearEvent[] = [];
-  for (const line of Array.isArray(logs) ? logs : []) {
-    if (typeof line !== 'string' || !line.startsWith(EVENT_PREFIX)) continue;
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(line.slice(EVENT_PREFIX.length));
-    } catch {
-      continue;
-    }
-    const e = record(parsed);
-    if (typeof e.standard === 'string' && typeof e.version === 'string' && typeof e.event === 'string') {
-      out.push({ standard: e.standard, version: e.version, event: e.event, data: e.data });
-    }
-  }
-  return out;
+  return oneLine(failure, 200);
 }

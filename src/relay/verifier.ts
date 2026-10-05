@@ -261,7 +261,7 @@ export function verifierEventOf(line: unknown): VerifierEvent {
 }
 
 /* The same for an event already parsed out of its line ({standard, version, event, data}), the way
-   a submitted transaction's receipts hand them over (src/chain/near-tx.ts). */
+   a transaction's receipts hand them over. */
 export function verifierEventOfJson(event: unknown): VerifierEvent {
   return typedEvent(event, `${EVENT_PREFIX}${JSON.stringify(event) ?? String(event)}`);
 }

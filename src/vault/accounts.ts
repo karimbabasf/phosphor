@@ -40,7 +40,7 @@ export type Accounts = {
   // What the rails sign for: VAULT under `key`, ALLOWANCE otherwise.
   spend: string | null;
   allowance: string | null;
-  // The GAS account's NEAR implicit id, 64 hex characters.
+  // The GAS key's NEAR implicit id, 64 hex characters: the old fee account (src/vault/gas-account.ts).
   gas: string | null;
   chip: { keyRef: string; publicKey: string } | null;
   checked: boolean;

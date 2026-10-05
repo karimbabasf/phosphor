@@ -11,6 +11,8 @@
 //
 // Run: node --test tests/unit/rekey.test.ts
 
+import { combine } from '../../src/preflight/route-health.ts';
+import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -48,7 +50,7 @@ import { createVaultSubmitter, fileJournal, journalPathFor } from '../../src/vau
 import type { VaultSubmitter } from '../../src/vault/submit.ts';
 import { stubView } from '../fixtures/view.ts';
 import { SALT_HEX, createIntentsDouble } from './helpers/intents-double.ts';
-import type { IntentsDouble, Send } from './helpers/intents-double.ts';
+import type { IntentsDouble, Publish } from './helpers/intents-double.ts';
 import { tempDir } from './helpers/tmp.ts';
 import { T0, VaultDouble, relayTo, swiftc } from './helpers/vault-double.ts';
 import type { Answer, Hook, Request } from './helpers/vault-double.ts';
@@ -61,6 +63,8 @@ const skip = swiftc ? false : 'needs macOS with swiftc';
 const PAPER_A = [2047, 1022, 1343, 1392, 574, 1389, 2044, 766, 1026, 296, 1152, 804, 1522, 1266, 1046, 1233, 315, 250, 1824, 784, 1816, 1533, 953, 270].map((i) => english[i]).join(' ');
 const PAPER_B = [1283, 1255, 407, 784, 270, 574, 1303, 415, 1879, 1974, 1410, 1409, 1409, 873, 1392, 1295, 245, 521, 1233, 805, 1522, 873, 552, 1389].map((i) => english[i]).join(' ');
 const HALF_NEAR = 500_000_000_000_000_000_000_000n;
+// The vault's NEAR deposit address, as the bridge would hand one out: made up here.
+const DEPOSIT = 'fa'.repeat(32);
 const CHIP_SENTENCE = "confirm this Mac's Touch ID key for your vault";
 
 function fast(): ReturnType<typeof defaultParams> {
@@ -99,7 +103,7 @@ type App = {
    accounts the rails read, one vault move submitter over a journal in the data folder, and the chip
    vault installed over the chain double. The shell is the test, relaying to the stand-in service
    with its clock held to the chain's. `papers` are the paper keys /chip/phrase hands out, in order. */
-async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?: string[]; dataDir?: string; hook?: (r: Request) => Hook | undefined; near?: IntentsDouble['near']; intents?: () => IntentsRead | undefined } = {}): Promise<App> {
+async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?: string[]; dataDir?: string; hook?: (r: Request) => Hook | undefined; near?: IntentsDouble['near']; intents?: () => IntentsRead | undefined; nearDeposit?: () => string | null; routeHealth?: RouteHealth } = {}): Promise<App> {
   const dataDir = opts.dataDir ?? tempDir('phosphor-rekey-');
   const token = crypto.randomBytes(32).toString('hex');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -115,10 +119,8 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
   const accounts = createAccounts({ keystore, prefs, chipStatus: chipStatusReader(relay) });
   const submitter = createVaultSubmitter({
     verifier: chain.verifier,
-    gasSeed: () => keystore.gasSeed(),
-    gasAccount: () => keystore.derivedAccounts()?.gas ?? null,
+    relay: chain.relay,
     journal: fileJournal(journalPathFor(dataDir)),
-    near: chain.near,
     now: chain.now,
     sleep: chain.near.sleep,
   });
@@ -127,7 +129,7 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
     verifier: chain.verifier,
     submitter,
     accounts,
-    // The Vault tab's reads of the gas account, which a test may hold; the submitter keeps its own.
+    // The Vault tab's reads of the old fee account, which a test may hold.
     near: opts.near ?? chain.near,
     now: chain.now,
     newPhrase: () => {
@@ -146,7 +148,12 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
     cfg,
     token,
     vault: relay,
-    intentsReceive: async () => ({ account: keystore.addressReport().addresses.evm, verified: keystore.addressReport().verified, tampered: false, networks: [] }),
+    ...(opts.routeHealth === undefined ? {} : { routeHealth: opts.routeHealth }),
+    // The Receive report, with a NEAR row only when the test names its deposit address.
+    intentsReceive: async () => {
+      const near = opts.nearDeposit?.() ?? null;
+      return { account: keystore.addressReport().addresses.evm, verified: keystore.addressReport().verified, tampered: false, networks: near === null ? [] : [{ id: 'near', address: near, memo: null } as never] };
+    },
     audit: createAudit(dataDir),
     store: createStore(dataDir),
     keystore,
@@ -268,17 +275,14 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
   };
 }
 
-/* A Touch ID wallet made on this Mac by the window's own route, opened, its backup proven, and its
-   gas account funded on the chain: what the move starts from. */
-async function wallet(app: App, chain: IntentsDouble, opts: { gas?: bigint | null } = {}): Promise<string> {
+/* A Touch ID wallet made on this Mac by the window's own route, opened and its backup proven: what
+   the move starts from. No NEAR anywhere: the relay pays NEAR's fee. */
+async function wallet(app: App): Promise<string> {
   const made = await app.post('/api/vault/create');
   assert.equal(made.json.ok, true, JSON.stringify(made.json));
   if (app.keystore.state() !== 'unlocked') assert.equal((await app.post('/api/vault/unlock')).json.ok, true);
   const vault = made.json.addresses.evm.toLowerCase();
   app.prefs.markBackedUp(Date.now, vault);
-  const gas = app.keystore.derivedAccounts()?.gas;
-  assert.ok(gas !== undefined);
-  if (opts.gas !== null) chain.fundGas(gas, opts.gas ?? HALF_NEAR);
   return vault;
 }
 
@@ -343,7 +347,7 @@ test('the move to the chip through the window: two Touch IDs, C7\'s five events,
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const app = await chipApp(chain, { papers: [PAPER_A] });
   try {
-    const vault = await wallet(app, chain);
+    const vault = await wallet(app);
     const old = (await import('../../src/vault/phrase24.ts')).verifierKeyOf(Buffer.from(app.keystore.evmPrivateKey().slice(2), 'hex'));
     await noLeak(app, PAPER_A, 'the wallet was made');
     const ready = await chipState(app);
@@ -417,7 +421,10 @@ test('the move to the chip through the window: two Touch IDs, C7\'s five events,
       facts = await chipState(app);
     }
     assert.deepEqual([facts.recoveryOnChain, facts.oldOnChain, facts.predecessorAuth], [true, false, false]);
-    assert.equal(facts.gas.account, app.keystore.derivedAccounts()!.gas);
+    // No gas account in the move, and nothing in an old fee account to bring back.
+    assert.equal('gas' in facts, false);
+    assert.equal(facts.oldGas, null);
+    assert.equal(facts.needs.includes('gas'), false);
     await noLeak(app, PAPER_A, 'the state was read');
   } finally {
     await app.close();
@@ -426,7 +433,7 @@ test('the move to the chip through the window: two Touch IDs, C7\'s five events,
 
 test('the moment the move ends, no fact read before it reaches the tab: every key and the NEAR door, this Mac\'s Touch ID key included, wait for a read begun after it', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
-  // From the chip's Touch ID on, the tab's read of the gas account waits: a slow read after the move.
+  // From the chip's Touch ID on, the tab's read of the old fee account waits: a slow read after the move.
   let holding = false;
   let release: () => void = () => {};
   const held = new Promise<void>((r) => (release = r));
@@ -440,7 +447,7 @@ test('the moment the move ends, no fact read before it reaches the tab: every ke
   const app = await chipApp(chain, { papers: [PAPER_A], near, hook: (r) => { if (r.op === 'signIntent') holding = true; return undefined; } });
   const facts = (c: any): unknown[] => [c.chipOnChain, c.recoveryOnChain, c.oldOnChain, c.predecessorAuth, c.otherKeys];
   try {
-    await wallet(app, chain);
+    await wallet(app);
     // Before the move the tab reads the wallet's own key on the vault and the NEAR door open.
     let before = await chipState(app);
     for (let i = 0; i < 100 && before.oldOnChain !== true; i += 1) {
@@ -475,7 +482,7 @@ test('a restore on a new Mac takes the key backup and the paper: the paper signs
   let chipA = '';
   let old = '';
   try {
-    vault = await wallet(a, chain);
+    vault = await wallet(a);
     old = (await import('../../src/vault/phrase24.ts')).verifierKeyOf(Buffer.from(a.keystore.evmPrivateKey().slice(2), 'hex'));
     const revealed = await a.post('/api/vault/reveal');
     assert.equal(revealed.json.ok, true);
@@ -553,7 +560,7 @@ test('a restore with the owner key out of the session asks its own Restore your 
   let vault = '';
   let mnemonic = '';
   try {
-    vault = await wallet(a, chain);
+    vault = await wallet(a);
     const revealed = await a.post('/api/vault/reveal');
     assert.equal(revealed.json.ok, true);
     mnemonic = revealed.json.words.join(' ');
@@ -585,14 +592,14 @@ test('a restore with a paper that is not a key of the vault stops before the chi
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const a = await chipApp(chain, { papers: [PAPER_A] });
   try {
-    await wallet(a, chain);
+    await wallet(a);
     assert.equal((await migrate(a, PAPER_A)).result, 'done');
   } finally {
     await a.close();
   }
   const b = await chipApp(chain, { papers: [PAPER_B, PAPER_A] });
   try {
-    await wallet(b, chain);
+    await wallet(b);
     const shown = await b.post('/api/vault/chip/phrase');
     assert.equal((await b.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     // PAPER_A is a key of the first Mac's vault, not of this one.
@@ -607,11 +614,11 @@ test('a restore with a paper that is not a key of the vault stops before the chi
   }
 });
 
-test('the checks a Touch ID would waste come first: locked, no paper, no backup, no gas, and the routes want the window token', { skip, timeout: 120_000 }, async () => {
+test('the checks a Touch ID would waste come first: locked, no paper, no backup, and the routes want the window token; no NEAR is needed', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const app = await chipApp(chain, { papers: [PAPER_A, PAPER_B] });
   try {
-    const vault = await wallet(app, chain, { gas: null });
+    const vault = await wallet(app);
     // No paper typed back.
     assert.equal((await app.post('/api/vault/chip/move')).json.code, 'paper_needed');
     // No phrase on screen and none proven: nothing to type back.
@@ -622,20 +629,11 @@ test('the checks a Touch ID would waste come first: locked, no paper, no backup,
     app.prefs.clearBackedUp();
     assert.equal((await app.post('/api/vault/chip/move')).json.code, 'not_backed_up');
     app.prefs.markBackedUp(Date.now, vault);
-    // The gas account was never paid: refused before any key is made or any touch asked.
-    const from = app.shell.seen.length;
-    const unfunded = await app.post('/api/vault/chip/move');
-    assert.equal(unfunded.status, 202);
-    assert.equal(await settled(app, unfunded.json.run), 'failed gas_unfunded');
-    // Under the purchase price of the gas a submit attaches.
-    chain.fundGas(app.keystore.derivedAccounts()!.gas, 10_000_000_000_000_000_000_000n);
-    const low = await app.post('/api/vault/chip/move');
-    assert.equal(await settled(app, low.json.run), 'failed gas_low');
-    assert.deepEqual(touchesOf(app, from), [], 'no Touch ID');
-    assert.equal(chipKeysIn(app.mac), 0, 'no chip key made');
+    // Nothing paid NEAR anywhere, and nothing waits on it: what the move needs is all there.
+    assert.deepEqual((await chipState(app)).needs, []);
     assert.equal(chain.executions(), 0);
     // The window's token, and only the window's.
-    for (const route of ['/api/vault/chip/phrase', '/api/vault/chip/phrase-proven', '/api/vault/chip/move', '/api/vault/chip/restore', '/api/vault/gas/fund']) {
+    for (const route of ['/api/vault/chip/phrase', '/api/vault/chip/phrase-proven', '/api/vault/chip/move', '/api/vault/chip/restore', '/api/vault/gas/return']) {
       assert.equal((await app.postBare(route, {})).status, 403, route);
       assert.equal((await app.postBare(route, { token: 'f'.repeat(64) })).status, 403, route);
     }
@@ -655,7 +653,7 @@ test('a lock wipes a proven paper key, and after a restart the same paper typed 
   const dataDir = tempDir('phosphor-rekey-restart-');
   const a = await chipApp(chain, { mac, dataDir, papers: [PAPER_A] });
   try {
-    await wallet(a, chain);
+    await wallet(a);
     const shown = await a.post('/api/vault/chip/phrase');
     assert.equal((await a.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     const held = paperProbe(a.keystore)!;
@@ -686,7 +684,7 @@ test('a phrase shown and never typed back before a restart is void: the window s
   const dataDir = tempDir('phosphor-rekey-void-');
   const a = await chipApp(chain, { mac, dataDir, papers: [PAPER_A] });
   try {
-    await wallet(a, chain);
+    await wallet(a);
     assert.deepEqual((await a.post('/api/vault/chip/phrase')).json.words, PAPER_A.split(' '));
   } finally {
     await a.close();
@@ -716,7 +714,7 @@ test('either Touch ID cancelled sends nothing; the paper stays until it signs, a
     },
   });
   try {
-    const vault = await wallet(app, chain);
+    const vault = await wallet(app);
     const shown = await app.post('/api/vault/chip/phrase');
     assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     cancel = 'unwrap';
@@ -752,7 +750,7 @@ test('a dry run the verifier refuses (its salt taken out) is written down: no ne
     },
   });
   try {
-    const vault = await wallet(app, chain);
+    const vault = await wallet(app);
     const shown = await app.post('/api/vault/chip/phrase');
     assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     rotate = true;
@@ -780,20 +778,20 @@ test('a dry run the verifier refuses (its salt taken out) is written down: no ne
   }
 });
 
-test('NEAR answering nothing after the send: the move reads checking, then done once the call is found by its hash', { skip, timeout: 120_000 }, async () => {
+test('the relay answering nothing after it ran the move: the move reads checking, then done once its nonces read spent', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const app = await chipApp(chain, { papers: [PAPER_A] });
   try {
-    const vault = await wallet(app, chain);
-    const lost: Send[] = [{ kind: 'lost', land: true }];
-    chain.sends.push(...lost);
+    const vault = await wallet(app);
+    const lost: Publish[] = [{ kind: 'lost', land: true }];
+    chain.publishes.push(...lost);
     const shown = await app.post('/api/vault/chip/phrase');
     assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     const moved = await app.post('/api/vault/chip/move');
     assert.equal(await settled(app, moved.json.run), 'done');
     const statuses = [...app.frames().matchAll(/"status":"([a-z_]+)"/g)].map((m) => m[1]);
     assert.ok(statuses.includes('checking'), statuses.join(','));
-    assert.equal(chain.executions(), 1, 'one call ran, however many copies were sent');
+    assert.equal(chain.executions(), 1, 'one call ran, and nothing was signed again');
     assert.equal(app.prefs.get().chip?.account, vault);
   } finally {
     await app.close();
@@ -818,7 +816,7 @@ test('a key someone adds to the vault while the move is being signed is caught a
     },
   });
   try {
-    vault = await wallet(app, chain);
+    vault = await wallet(app);
     stranger = paperKeyOf(PAPER_B).publicKey;
     const shown = await app.post('/api/vault/chip/phrase');
     assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
@@ -862,7 +860,7 @@ test('the owner key gate and the move agree after a crash: a call that ran keeps
   const a = await chipApp(chain, { mac, dataDir, papers: [PAPER_A] });
   let vault = '';
   try {
-    vault = await wallet(a, chain);
+    vault = await wallet(a);
     assert.equal((await migrate(a, PAPER_A)).result, 'done');
   } finally {
     await a.close();
@@ -913,7 +911,7 @@ test('a chip committed and a call that never went out: once the chain answers, t
   });
   let vault = '';
   try {
-    vault = await wallet(a, chain);
+    vault = await wallet(a);
     const shown = await a.post('/api/vault/chip/phrase');
     assert.equal((await a.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     const moved = await a.post('/api/vault/chip/move');
@@ -942,7 +940,7 @@ test('two windows at once: one move runs, the other is told the vault is already
   const chain = createIntentsDouble({ start: T0 * 1000 });
   const app = await chipApp(chain, { papers: [PAPER_A] });
   try {
-    await wallet(app, chain);
+    await wallet(app);
     const shown = await app.post('/api/vault/chip/phrase');
     assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
     const [one, two] = await Promise.all([app.post('/api/vault/chip/move'), app.post('/api/vault/chip/move')]);
@@ -956,49 +954,119 @@ test('two windows at once: one move runs, the other is told the vault is already
   }
 });
 
-test('the gas account is funded by a NEAR payout to its derived id, whatever the body names', { skip, timeout: 120_000 }, async () => {
+test('the old fee account\'s NEAR goes back to the vault\'s NEAR deposit address in one transfer, whatever the body names, and each refusal says why', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
-  const app = await chipApp(chain, { papers: [] });
+  let deposit: string | null = null;
+  // NEAR's deposit route as 1Click answers it: unconfirmed until the test says open (review18 M1).
+  let oneclick: 'open' | 'unknown' = 'open';
+  const routeHealth: RouteHealth = {
+    check: async (ask) => {
+      const reasons: RouteVerdict['reasons'] = [{ source: 'oneclick', state: oneclick, text: '' }];
+      return { network: ask.network, direction: ask.direction, state: combine(reasons), reasons, checkedAt: 0 };
+    },
+  };
+  const app = await chipApp(chain, { papers: [], nearDeposit: () => deposit, routeHealth });
+  const oldGas = async (want: unknown): Promise<unknown> => {
+    let seen: unknown;
+    for (let i = 0; i < 100; i += 1) {
+      seen = (await chipState(app)).oldGas;
+      if (JSON.stringify(seen) === JSON.stringify(want)) break;
+      // A minute on, the Vault tab reads the chain again.
+      chain.advance(61_000);
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return seen;
+  };
   try {
-    await wallet(app, chain, { gas: null });
+    await wallet(app);
     const gas = app.keystore.derivedAccounts()!.gas;
-    const funded = await app.post('/api/vault/gas/fund', { near: 0.5, to: 'attacker.near', receiver: 'b'.repeat(64) });
-    assert.equal(funded.json.ok, true, JSON.stringify(funded.json));
-    assert.deepEqual(app.sends, [{ to: gas, symbol: 'NEAR', amount: 0.5, where: 'near' }]);
-    assert.deepEqual(funded.json.proposal, { id: 'p-1', status: 'pending' });
-    for (const near of [0, 0.05, 2, '0.5', null]) assert.equal((await app.post('/api/vault/gas/fund', { near })).json.code, 'fund_amount', String(near));
-    assert.equal(app.sends.length, 1);
-    const slice = await chipState(app);
-    assert.ok(slice.needs.includes('gas'), 'an unpaid gas account is what the move still needs');
+    const hostile = { to: 'attacker.near', receiver: 'b'.repeat(64), near: '5' };
+    // Nothing was ever paid in: nothing to send, and nothing is.
+    deposit = DEPOSIT;
+    assert.equal(await oldGas(null), null);
+    assert.equal((await app.post('/api/vault/gas/return', hostile)).json.code, 'gas_empty');
+    assert.equal(chain.sendCount(), 0);
+    // What a 0.10.16 wallet paid in: the state offers it, less what the account keeps.
+    chain.fundGas(gas, HALF_NEAR);
+    assert.deepEqual(await oldGas({ near: '0.497' }), { near: '0.497' });
+    // No NEAR row on the Receive screen: nowhere to send it, so nothing is signed.
+    deposit = null;
+    const nowhere = await app.post('/api/vault/gas/return', hostile);
+    assert.deepEqual([nowhere.json.ok, nowhere.json.code], [false, 'gas_return_failed']);
+    assert.equal(nowhere.json.error, 'The NEAR in the old fee account did not come back just now. If the Vault tab still shows it in a minute, try again.');
+    assert.equal(chain.sendCount(), 0);
+    // Shut: the account's key opens with the wallet.
+    assert.equal((await app.post('/api/lock')).json.ok, true);
+    deposit = DEPOSIT;
+    assert.equal((await app.post('/api/vault/gas/return', hostile)).json.code, 'wallet_locked');
+    assert.equal(chain.sendCount(), 0);
+    assert.equal((await app.post('/api/vault/unlock')).json.ok, true);
+    // A NEAR route 1Click has not confirmed: nothing goes to the bridge's address.
+    oneclick = 'unknown';
+    const unsure = await app.post('/api/vault/gas/return', hostile);
+    assert.deepEqual([unsure.json.ok, unsure.json.code], [false, 'gas_return_failed']);
+    assert.match(unsure.json.error, /^Phosphor cannot confirm NEAR Intents is taking NEAR deposits right now/);
+    assert.equal(chain.sendCount(), 0);
+    oneclick = 'open';
+    // Open, with the Receive row's address: one transfer, to that address and nowhere the body names.
+    const back = await app.post('/api/vault/gas/return', hostile);
+    assert.equal(back.json.ok, true, JSON.stringify(back.json));
+    assert.equal(back.json.near, '0.497');
+    assert.equal(typeof back.json.txHash, 'string');
+    assert.equal(chain.nearReceived(DEPOSIT), 497n * 10n ** 21n);
+    assert.equal(chain.nearReceived('attacker.near') + chain.nearReceived('b'.repeat(64)), 0n);
+    assert.equal(chain.executions(), 1);
+    assert.equal((await chipState(app)).oldGas, null, 'the state stops offering it at once');
+    // Once back, the account holds what it keeps: nothing more goes.
+    assert.equal((await app.post('/api/vault/gas/return', {})).json.code, 'gas_empty');
+    assert.equal(chain.executions(), 1);
   } finally {
     await app.close();
   }
 });
 
-test('the state says how much NEAR the gas account\'s payout could come from: none, some, or not read yet', { skip, timeout: 120_000 }, async () => {
+test('a move whose earlier send left this Mac\'s Touch ID key and the paper on the vault beside the owner key: the paper typed again finishes it', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
-  let read: IntentsRead | undefined;
-  const app = await chipApp(chain, { papers: [], intents: () => read });
-  const row = (accountId: string, symbol: string, amount: number) => ({ accountId, assetId: `nep141:${symbol}`, symbol, originChain: 'near', amount, decimals: 24 });
-  // The state is built at most once a second for inputs it does not watch (src/http/state.ts).
-  const sourceNear = async (want: number | null): Promise<unknown> => {
-    let seen: unknown;
-    for (let i = 0; i < 60; i += 1) {
-      seen = (await chipState(app)).sourceNear;
-      if (seen === want) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    return seen;
-  };
+  let cancel = false;
+  const app = await chipApp(chain, {
+    papers: [PAPER_A],
+    hook: (r) => {
+      if (cancel && r.op === 'unwrap' && r.reason === MOVE_VAULT_REASON) {
+        cancel = false;
+        return { kind: 'answer', answer: { ok: false, error: 'user_cancel', message: 'cancelled' } as Answer };
+      }
+      return undefined;
+    },
+  });
   try {
-    const vault = await wallet(app, chain, { gas: null });
-    assert.equal(await sourceNear(null), null, 'a ledger that never read the vault says none');
-    read = { ok: true, fetchedAt: new Date().toISOString(), holdings: [row(vault, 'USDC', 40), row('0x' + 'f'.repeat(40), 'wNEAR', 3)] };
-    assert.equal(await sourceNear(0), 0, 'NEAR another account holds was counted as the vault\'s');
-    read = { ...read, holdings: [...read.holdings, row(vault, 'wNEAR', 1.25)] };
-    assert.equal(await sourceNear(1.25), 1.25);
-    read = { ...read, ok: false, error: 'the verifier did not answer' };
-    assert.equal(await sourceNear(null), null, 'a failed read is not a vault with no NEAR');
+    const vault = await wallet(app);
+    const old = (await import('../../src/vault/phrase24.ts')).verifierKeyOf(Buffer.from(app.keystore.evmPrivateKey().slice(2), 'hex'));
+    const paper = paperKeyOf(PAPER_A).publicKey;
+    const shown = await app.post('/api/vault/chip/phrase');
+    assert.equal((await app.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
+    // A first try makes and pins the chip, then stops at the owner key's Touch ID.
+    cancel = true;
+    const first = await app.post('/api/vault/chip/move');
+    assert.equal(await settled(app, first.json.run), 'failed user_cancel');
+    const chip = (JSON.parse(fs.readFileSync(path.join(app.dataDir, 'chip-run.json'), 'utf8')) as { chip: { publicKey: string } | null }).chip?.publicKey ?? null;
+    assert.ok(chip !== null, 'the first try made and pinned a chip for the move');
+    // The state a send that ran only in part would leave: the chip and the paper on, the owner key too.
+    chain.addKey(vault, chip);
+    chain.addKey(vault, paper);
+    assert.deepEqual([chain.hasKey(vault, chip), chain.hasKey(vault, paper), chain.hasKey(vault, old)], [true, true, true]);
+    let simulated: VerifierEvent[] = [];
+    chain.faults.simulate = (sim) => {
+      if (sim.ok) simulated = sim.events ?? [];
+      return sim;
+    };
+    const again = await app.post('/api/vault/chip/move');
+    assert.equal(await settled(app, again.json.run), 'done');
+    // Nothing added twice: the owner key off, the NEAR door shut, and the three payloads run.
+    assert.deepEqual(names(simulated), ['public_key_removed', 'set_auth_by_predecessor_id:false', 'intents_executed(3)']);
+    assert.deepEqual([chain.hasKey(vault, chip), chain.hasKey(vault, paper), chain.hasKey(vault, old), chain.predecessorAuth(vault)], [true, true, false, false]);
+    assert.equal(app.prefs.get().chip?.publicKey, chip);
+    assert.equal(chipKeysIn(app.mac), 1, 'the same chip, never a second');
+    assert.equal(chain.executions(), 1);
   } finally {
     await app.close();
   }
@@ -1018,9 +1086,9 @@ test('a demo has no chip vault: the routes say so and nothing is asked of the ke
 test('the paper key moves through no agent door: no chip route is on /api/mcp, and no tool names one', () => {
   const root = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..');
   const mcp = fs.readFileSync(path.join(root, 'src', 'http', 'mcp.ts'), 'utf8') + fs.readFileSync(path.join(root, 'src', 'mcp.ts'), 'utf8');
-  for (const word of ['chip/phrase', 'chip/move', 'chip/restore', 'gas/fund', 'showPaper', 'provePaper', 'startRekey']) assert.ok(!mcp.includes(word), word);
+  for (const word of ['chip/phrase', 'chip/move', 'chip/restore', 'gas/return', 'returnOldGas', 'showPaper', 'provePaper', 'startRekey']) assert.ok(!mcp.includes(word), word);
   const router = fs.readFileSync(path.join(root, 'src', 'http', 'router.ts'), 'utf8');
-  for (const route of ['/api/vault/chip/phrase', '/api/vault/chip/phrase-proven', '/api/vault/chip/move', '/api/vault/chip/restore', '/api/vault/gas/fund']) {
+  for (const route of ['/api/vault/chip/phrase', '/api/vault/chip/phrase-proven', '/api/vault/chip/move', '/api/vault/chip/restore', '/api/vault/gas/return']) {
     assert.match(router, new RegExp(`'${route.replaceAll('/', '\\/')}': \\(ctx, req, res\\) => handle`), route);
   }
   // Only these sentences open the owner key for the vault, and the dialog says which.

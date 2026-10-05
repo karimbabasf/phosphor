@@ -41,7 +41,7 @@ import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
 import { rememberKeyShown, rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
-import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, depositConfirmed, routeLink, routeSentence, unconfirmedSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
 
 // Long enough that a four-digit guess is not the whole search space, short enough that it does
@@ -219,7 +219,7 @@ const REFUSALS: Record<string, string> = {
   chip_unsupported: "This copy of Phosphor cannot use the vault's Touch ID key, so nothing changed. Open the Phosphor app you downloaded.",
   chip_payload: 'Phosphor stopped this move before Touch ID because it was not built for your vault, so nothing was signed.',
   chip_answer: 'Touch ID came back with a signature for something Phosphor did not ask for, so it was not sent. Nothing moved.',
-  // Sending a vault move (src/vault/submit.ts), and the gas account that pays for it (src/chain/near-tx.ts).
+  // Sending a vault move (src/vault/submit.ts) through the NEAR Intents relay, which pays NEAR's fee.
   vault_bundle: 'Phosphor stopped this move before sending it because it was not built the way Phosphor builds a vault move. Nothing moved.',
   vault_journal: 'Phosphor could not note this move on this Mac before sending it, so nothing was sent. Check that the Mac has free space, then try again.',
   simulate_unavailable: 'Phosphor could not check this move with NEAR just now, so nothing was sent. Try again in a few minutes.',
@@ -230,9 +230,6 @@ const REFUSALS: Record<string, string> = {
   vault_checking: 'NEAR ran this move. Phosphor is reading your vault to confirm it.',
   vault_mismatch: 'NEAR ran this move, but your vault does not read the way it should afterwards. Phosphor stopped here; look at the Vault tab before you move anything else.',
   vault_unknown: 'This move can no longer run on NEAR, and Phosphor cannot tell whether it ran before that. Check your vault and allowance balances before you make it again.',
-  gas_low: 'The gas account needs more NEAR before it can send this move, so nothing was signed.',
-  gas_unfunded: 'The gas account has no NEAR yet, so nothing was signed. Add NEAR to it from the Vault tab first.',
-  gas_key_missing: "The gas account does not answer to this wallet's key, so nothing was signed.",
   rpc_unavailable: 'NEAR did not answer just now, so nothing was sent. Try again in a moment.',
   invalid_request: NOTHING_CHANGED,
 };
@@ -1116,10 +1113,17 @@ function withRoute(row: IntentsReceiveNetwork, verdict: RouteVerdict | undefined
 
 /* The route for the exact asset a card is about to be opened for, which the report's row (asked
    about the network's own coin) does not answer: TON USDT is its own question. Both doors that
-   open a deposit card ask it, the window's and the agent's. */
-export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null }> {
-  const gate = await routeGate(ctx.routeHealth, { network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS }, 'deposit', audience);
-  return { ...gate, link: gate.closed !== null || gate.notice !== null ? STATUS_LINK : null };
+   open a deposit card ask it, the window's and the agent's. An address needs 1Click's own yes
+   (depositConfirmed); without it, `unconfirmed` is the sentence both doors refuse with. No
+   checker (demo mode, a test server) refuses nothing. */
+export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null; unconfirmed: string | null }> {
+  const routes = ctx.routeHealth;
+  if (routes === undefined) return { closed: null, notice: null, link: null, unconfirmed: null };
+  const verdict = await routes.check({ network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS });
+  const sentence = routeSentence(verdict, 'deposit', audience);
+  if (verdict.state === 'closed') return { closed: sentence, notice: null, link: STATUS_LINK, unconfirmed: null };
+  if (!depositConfirmed(verdict)) return { closed: null, notice: null, link: null, unconfirmed: unconfirmedSentence(chain) };
+  return { closed: null, notice: sentence, link: sentence === null ? null : STATUS_LINK, unconfirmed: null };
 }
 
 /* The bridge addresses and what each network credits, as one report. The route above serves

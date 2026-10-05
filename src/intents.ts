@@ -16,8 +16,10 @@
 // amounts the server echoes back, verifies 1Click's signature over the whole quote before the
 // address is used (src/quote-signature.ts), and lets the policy engine cap what is at stake.
 
+import fs from 'node:fs';
 import { parseUnits } from 'viem';
 import type { ChainId } from './types.ts';
+import { atomicWrite } from './fsatomic.ts';
 import { readTimeout, venueWriteTimeout, withTimeout } from './net.ts';
 import { spendNetworkOf } from './rails/intents-address.ts';
 import { ReasonError } from './rails/reasons.ts';
@@ -779,7 +781,8 @@ export function refuseUnsentRequest(raw: unknown, sent: Record<string, unknown>)
   }
 }
 
-export type OneClickDeps = { fetchImpl?: typeof fetch };
+// cachePath: where the list's names and decimals are kept between runs. Only the ledger's client keeps them.
+export type OneClickDeps = { fetchImpl?: typeof fetch; cachePath?: string };
 
 export type OneClickClient = {
   tokens(): Promise<OneClickToken[]>;
@@ -798,11 +801,45 @@ export type OneClickClient = {
    last list and its stamp: the names stay good, and the prices age out of governing on their own. */
 export const TOKEN_LIST_TTL_MS = 60_000;
 
+/* THE NAMES OF THE LAST RUN, so a restart has every coin's name and decimals before 1Click answers.
+   The balance read labels its holdings off the list in hand (src/ledger/index.ts), and with none in
+   hand a cold open waited on 1Click: 0.5 s of a 0.72 s first balance on a good day, and the whole
+   read deadline while 1Click hung (2026-10-05). Kept without a price: one from an earlier run is no
+   price to show, so a coin only 1Click prices waits for this run's read for its dollars. It serves
+   cached() alone, so tokens() still reads 1Click for anyone who wants a list of this minute. */
+function keptNames(cachePath: string | undefined): OneClickToken[] | null {
+  if (cachePath === undefined) return null;
+  try {
+    const kept = JSON.parse(fs.readFileSync(cachePath, 'utf8')) as unknown;
+    if (!Array.isArray(kept) || kept.length === 0) return null;
+    const named = (t: { assetId?: unknown; symbol?: unknown; decimals?: unknown } | null): boolean =>
+      typeof t?.assetId === 'string' && typeof t.symbol === 'string' && Number.isInteger(t.decimals);
+    return kept.every(named) ? (kept as OneClickToken[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
   const fetchImpl = deps.fetchImpl ?? fetch;
   let tokenListCache: { list: OneClickToken[]; at: number } | null = null;
+  const kept = keptNames(deps.cachePath);
+  let keptJson = kept === null ? '' : JSON.stringify(kept);
   // One read at a time: callers that find the list old together share the read that renews it.
   let reading: Promise<OneClickToken[]> | null = null;
+
+  // Written when the names change, which is a coin listed or delisted, not every minute's prices.
+  function keep(list: OneClickToken[]): void {
+    if (deps.cachePath === undefined) return;
+    const json = JSON.stringify(list.map(({ price: _price, priceUpdatedAt: _at, ...name }) => name));
+    if (json === keptJson) return;
+    try {
+      atomicWrite(deps.cachePath, json, { mode: 0o600 });
+      keptJson = json;
+    } catch {
+      // Names that cannot be kept still work; the next start waits on 1Click for them.
+    }
+  }
 
   async function readList(): Promise<OneClickToken[]> {
     try {
@@ -813,6 +850,7 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
       }
       const list = (await res.json()) as OneClickToken[];
       tokenListCache = { list, at: Date.now() };
+      keep(list);
       return list;
     } catch (err) {
       if (tokenListCache !== null) return tokenListCache.list;
@@ -921,5 +959,5 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     return parseStatus(await res.json().catch(() => null));
   }
 
-  return { tokens, listedAt: () => tokenListCache?.at ?? null, cached: () => tokenListCache?.list ?? null, quote, submitDeposit, status };
+  return { tokens, listedAt: () => tokenListCache?.at ?? null, cached: () => tokenListCache?.list ?? kept, quote, submitDeposit, status };
 }

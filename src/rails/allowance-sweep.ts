@@ -2,7 +2,7 @@
 // settled, every ten minutes while the wallet is open, and when the size changes. What goes is
 // src/vault/allowance.ts sweepPlan's: everything over the size once the allowance is worth more
 // than the size plus 10 %, USDC first, then the rest by dollar value. The allowance key signs it,
-// with no click and no touch, and the gas account sends it.
+// with no click and no touch, and the NEAR Intents relay sends it and pays NEAR's fee.
 //
 // A no-click move, so it is held to the rules every no-click move is held to, and to two of its own:
 //   - a coin with no price is never moved, and with no price at all nothing is (the prices are the
@@ -40,7 +40,7 @@ export type SweepDeps = {
   reserved(): ReadonlyMap<string, bigint> | null;
   // Freeze, or rules that will not load: either stops every no-click move.
   frozen(): boolean;
-  // Whether the session holds the allowance key and the gas seed.
+  // Whether the session holds the allowance key.
   isOpen(): boolean;
   audit: Pick<Audit, 'append'>;
   // A ledger read: after a sweep went through, so the window shows it, and after a settled move.
@@ -67,7 +67,7 @@ export function createAllowanceSweep(deps: SweepDeps): AllowanceSweep {
   let running: Promise<SweepOutcome> | null = null;
   let waitingSince: number | null = null;
   let fallback: ReturnType<typeof setTimeout> | null = null;
-  // The last refusal written, so a sweep the gas account cannot pay for says so once, not every pass.
+  // The last refusal written, so a sweep that cannot go says so once, not every pass.
   let lastRefusal: string | null = null;
 
   const stopListening =

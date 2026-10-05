@@ -882,7 +882,7 @@ function askedFor(verdict: Verdict, line: string): Verdict {
 /* THE SHORTFALL STEP (PHASE2-PLAN.md C8, call 14). A move that spends more of a coin than the
    allowance holds right now takes exactly the difference from the vault first, of that coin, as
    a top-up row of its own (why: shortfall) that this move's click approved: the vault's chip key
-   signs it behind one Touch ID whose sentence names the amount, and the gas account sends it.
+   signs it behind one Touch ID whose sentence names the amount, and the NEAR Intents relay sends it.
    Only then does the move's own rail run. Null when there is nothing to add (or no allowance in
    play, or nothing to read it by, which the rail then judges alone); a result when the move stops
    here, with nothing signed for it.
