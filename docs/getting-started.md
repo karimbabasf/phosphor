@@ -235,6 +235,9 @@ act for your vault through NEAR, which the move shut. NEAR Intents' admins can o
 account, and the row would then say so. Each line comes from a read of NEAR begun after the move;
 until one answers, the line says Checking...
 
+The move puts nothing in the allowance: it starts empty, and the moment the move lands says so, with
+Top up beside it. Until a top-up, every move your assistant asks for waits for a Touch ID.
+
 The Allowance row reads like "$63 of $100": what your assistant spends with no Touch ID. Anything
 over the size plus 10 percent goes back to your vault on its own, USDC first. Top up asks for USDC
 from your vault on a card in the conversation, then one Touch ID that names the amount; under a

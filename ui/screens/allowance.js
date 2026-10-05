@@ -306,7 +306,9 @@
       : 'What your assistant spends with no Touch ID. Anything over ' + kit.usdShort(cents(size * OVER)) + ' goes back to your vault on its own, USDC first.');
     dom.setText(refs.allowLowText, balance === null
       ? 'Phosphor could not read the allowance just now. It reads it again in a moment.'
-      : 'Running low: under a quarter of its size. Top it up from your vault.');
+      : cents(balance) === 0
+        ? 'Empty. Top it up from your vault so your assistant can spend without a Touch ID.'
+        : 'Running low: under a quarter of its size. Top it up from your vault.');
     dom.setHidden(refs.allowLow, !(low || (balance === null && !off)));
     dom.setText(refs.allowAccount.id, a.account ? short(a.account) : '');
     dom.setHidden(refs.allowAccount.line, !a.account);
@@ -355,6 +357,14 @@
     dom.setHidden(refs.topUpRoom, room === null);
     kit.say(refs.topUpError, '');
     open(refs.topUp, refs.topUpField.input);
+  }
+
+  // From the moment the vault moved (ui/screens/chip.js): the allowance's row, its top-up open.
+  function topUp() {
+    if (!mounted || !allowanceOf()) return;
+    kit.bringIntoView(refs.allow);
+    if (refs.topUp.hidden) openTopUp();
+    else if (refs.topUpField.input.focus) refs.topUpField.input.focus();
   }
 
   function labelTopUp() {
@@ -694,6 +704,7 @@
     mount: mount,
     render: render,
     openGas: openGas,
+    topUp: topUp,
     escape: escape,
     rest: rest
   };

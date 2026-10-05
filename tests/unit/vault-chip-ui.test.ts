@@ -826,6 +826,29 @@ test('the moment the move lands paints no fact NEAR has not read since: each row
   assert.ok(said(row).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
 });
 
+test('a move that lands on an empty allowance says so at the moment it lands, with Top up beside it, and the row at $0 says Empty', async () => {
+  const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r7', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
+  w.frame({ run: 'r7', status: 'done' });
+  w.chip(MOVED({ run: { id: 'r7', kind: 'migrate', status: 'done', reason: null, said: null }, allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 0 } }));
+  const row = keyRow(w);
+  assert.ok(said(row).includes('From now on every move out of your vault asks for a Touch ID that names it. Your allowance starts empty: top it up so your assistant can spend up to $100 with no Touch ID.'), said(row));
+  assert.equal(said(row).includes('Your assistant spends from your allowance.'), false);
+  assert.equal(shownButtons(row).find((b: Any) => b.textContent === 'Top up')?.className, 'btn btn-ghost btn-sm');
+  const allowance = rowOf(w, 'allowance');
+  assert.ok(said(allowance).includes('Empty. Top it up from your vault so your assistant can spend without a Touch ID.'));
+  press(row, 'Top up');
+  assert.equal(allowance.scrolled, true, 'Top up does not take the person to the allowance');
+  assert.equal(find(allowance, '.vault-topup')[0].hidden, false, 'Top up does not open the top-up');
+  // Money in the allowance: the moment says where the assistant spends from, and offers nothing.
+  w.chip({ allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 63 } });
+  assert.ok(said(row).includes('From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.'));
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Top up'), false);
+  // Back on the tab later the moment has rested, Top up with it.
+  w.chip({ allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 0 } });
+  w.leave();
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Top up'), false);
+});
+
 test('a done frame that beats the state lands on the done moment, never back on the steps', () => {
   const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r5', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
   w.frame({ run: 'r5', status: 'done' });

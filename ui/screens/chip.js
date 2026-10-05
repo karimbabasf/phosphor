@@ -1034,8 +1034,16 @@
     kit.append(refs.doneLine, kit.icon('shield', 'vault-backup-mark'));
     refs.doneLine.appendChild(dom.el('span', 'vault-backup-words', 'Your vault is on this Mac\'s Touch ID key.'));
     flow.appendChild(refs.doneLine);
-    refs.doneSub = kit.text('vault-sub', 'From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.');
+    refs.doneSub = kit.text('vault-sub');
     flow.appendChild(refs.doneSub);
+    refs.doneTools = dom.el('div', 'vault-actions');
+    var topUp = button('Top up', 'btn-ghost btn-sm');
+    dom.on(topUp, 'click', function () {
+      var allowance = window.PhosphorAllowance;
+      if (allowance && typeof allowance.topUp === 'function') allowance.topUp();
+    });
+    refs.doneTools.appendChild(topUp);
+    flow.appendChild(refs.doneTools);
     refs.pins = dom.el('ul', 'vault-rules vault-pins');
     refs.pinVault = fact('pin-vault');
     refs.pinAllowance = fact('pin-allowance');
@@ -1075,6 +1083,13 @@
     var pins = slice.pins;
     dom.setHidden(refs.doneLine, !justDone);
     dom.setHidden(refs.doneSub, !justDone);
+    // The move puts nothing in the allowance: until a top-up, every move the assistant asks for asks a Touch ID.
+    var a = slice.allowance;
+    var empty = !!a && typeof a.sizeUsd === 'number' && a.sizeUsd > 0 && typeof a.balanceUsd === 'number' && a.balanceUsd < 0.005;
+    dom.setText(refs.doneSub, empty
+      ? 'From now on every move out of your vault asks for a Touch ID that names it. Your allowance starts empty: top it up so your assistant can spend up to ' + kit.usdShort(a.sizeUsd) + ' with no Touch ID.'
+      : 'From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.');
+    dom.setHidden(refs.doneTools, !(justDone && empty));
     dom.setHidden(refs.pins, !(justDone && pins));
     if (justDone && pins) {
       paintFact(refs.pinVault, 'Your vault', short(pins.vault), null, null);
