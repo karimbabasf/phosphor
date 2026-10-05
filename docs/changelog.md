@@ -65,7 +65,7 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   the trading key, and never asks for or repeats a paper key, recovery phrase or private key.
 - A portfolio held whole in what a 100 percent cap allows is no longer refused by a rounding error.
 - Backing up a private key is Touch ID, the key behind dots with Show and Copy, then I saved it
-  somewhere safe. Nothing is typed back.
+  somewhere safe. Nothing is typed back, and a copied key leaves the clipboard within 30 seconds.
 - Your wallet, your keys and your settings stay as they were until you move your vault.
 - To check before you trust: [Check it yourself](verify.md) gives each of the wallet's seven
   security claims its code, test and command, and `node scripts/vault-check.ts` reads who can move a

@@ -139,9 +139,10 @@ anyone who has it has your money. Under Safety its row is Private key: Back it u
 (or your password, on a password wallet) show the key in that row only, hidden behind dots, with the
 wallet it opens under it. Show reveals it and Hide puts the dots back; Copy puts the whole key on
 the clipboard, for a password manager, and Phosphor clears it when you click I saved it somewhere
-safe, Hide or Close, after 30 seconds at most, or when the wallet locks. Save it somewhere safe, then click I saved it somewhere
-safe: that turns the row to Backed up. Nothing is typed back. The line at the foot of the window
-says Private key not backed up until then, and Forget waits for it the same way.
+safe, Hide or Close, after 30 seconds at most, or when the wallet locks. Save it somewhere safe,
+then click I saved it somewhere safe: that turns the row to Backed up. Nothing is typed back. The
+line at the foot of the window says Private key not backed up until then, and Forget waits for it
+the same way.
 
 The click counts only just after the key was shown: half an hour later, or after a restart, the
 row asks you to show the key again. Later, Check my copy checks a copy you kept against this
