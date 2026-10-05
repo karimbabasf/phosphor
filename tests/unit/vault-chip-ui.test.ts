@@ -3,10 +3,11 @@
 // Touch ID key (src/vault/rekey.ts, src/http/chip.ts, src/http/allowance.ts, src/http/hl-agent.ts).
 //
 // What matters most is the paper key. Its 24 words are shown once, in their row only, and never
-// reach a log, a frame, the state, storage, an attribute or any request but the two that take
-// them back; there is no Print and no Copy; they are typed back whole, one to a field, with
-// pasting off; a slip is named by its number and never by the word; and a lock, the tab left or
-// Hide words takes them off the screen. The screen says plainly that the paper is the only key
+// reach a log, a frame, the state, storage, an attribute, a toast or any request but the two that
+// take them back; there is no Print and no Copy; three of them, at random places, are typed from
+// the paper with pasting off, and a slip is named by its number and never by the word; all 24 are
+// typed only where the row no longer holds them; and a lock, the tab left or Hide words takes them
+// off the screen. The screen says plainly that the paper is the only key
 // away from this Mac and that the wallet's backup also holds the allowance and the gas account.
 // Then every face of the row: the four steps, the move under way with the Touch ID sentences
 // named before they are asked, the vault that moved (who opens it, the NEAR door, a key nobody
@@ -466,12 +467,15 @@ async function showPaper(w: World, words: string[] = PAPER_WORDS): Promise<void>
   await flush();
 }
 
+// The places the check asks for, read off the fields' labels ("Word 7" is place 6).
+const asked = (w: World): number[] => fields(w).map((input: Any) => Number(String(input.getAttribute('aria-label')).slice(5)) - 1);
+
 async function proveRight(w: World): Promise<void> {
   w.answer.post['/api/vault/chip/phrase-proven'] = (body: Any) =>
     JSON.stringify(body.words) === JSON.stringify(PAPER_WORDS) ? { ok: true, recovery: 'secp256k1:abc' } : { ok: false, code: 'wrong_words', error: 'Those words do not match the paper key on screen. Check each word against your paper.' };
   w.answer.onRefresh = () => w.chip({ paper: 'proven' });
-  type(fields(w), PAPER_WORDS);
-  press(keyRow(w), 'Check my paper');
+  type(fields(w), asked(w).map((at) => PAPER_WORDS[at] as string));
+  press(keyRow(w), 'Check');
   await flush();
 }
 
@@ -487,6 +491,7 @@ test('the two screens never write markup, a clipboard, a print job, the console 
     assert.equal(/PhosphorState\.put|store\.put|PhosphorEvents\.emit|events\.emit/.test(source), false, `${file} writes the store or the bus`);
     assert.equal(/btn-primary|btn-danger/.test(source), false, `${file} paints a green or red button on the Vault`);
     assert.equal(/PhosphorConfirm|showModal|window\.confirm|window\.alert|alert\(/.test(source), false, `${file} opens a dialog`);
+    assert.equal(/document\.title|Notification|PhosphorToast/.test(source), false, `${file} writes the title, a notification or a toast`);
   }
   // The words take no selection, so a drag never puts them on the clipboard.
   assert.match(CSS, /\.vault-paper \{[^}]*user-select: none;/);
@@ -536,7 +541,7 @@ test('the move is four numbered steps in order, the open one first, each with th
     ['Back up your private key', 'Add NEAR to the gas account', 'Write your paper key', 'Move your vault']);
   assert.deepEqual(stepState(w), { backup: 'now', gas: 'next', paper: 'next', move: 'next' });
   assert.equal(find(row, '.vault-step-body').filter(isShown).length, 1, 'more than one step is open');
-  assert.ok(said(row).includes('After the move your private key still opens your allowance, the gas account and Hyperliquid, so prove your copy first.'));
+  assert.ok(said(row).includes('After the move your private key still opens your allowance, the gas account and Hyperliquid, so back it up first.'));
   const backupRow = rowOf(w, 'backup');
   press(row, 'Back it up first');
   assert.equal(backupRow.scrolled, true, 'Back it up first does not take the person to the backup');
@@ -591,7 +596,7 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   assert.ok(text.includes('On this screen only. Anyone who reads these words can open your vault.'));
   assert.ok(text.includes('Under the words, write your vault\'s address:'));
   assert.equal(find(row, '.vault-mono')[0].textContent, VAULT);
-  assert.ok(text.includes('By hand, on paper: a printer, a screenshot or a copy keeps one more key to your vault.'));
+  assert.ok(text.includes('Check each word as you write it.'));
   const labels = shownButtons(row).map((b: Any) => b.textContent);
   assert.deepEqual(labels, ['I wrote it down', 'Hide words']);
   assert.equal(labels.some((l: string) => /print|copy|save/i.test(l)), false);
@@ -615,10 +620,9 @@ test('the paper key opens at its warning: the lock line comes into view, and the
   assert.deepEqual({ ...wrote.focusOptions }, { preventScroll: true }, 'the focus scrolls the window past the warning');
   // Two misses bring the words back the same way.
   press(row, 'I wrote it down');
-  w.answer.post['/api/vault/chip/phrase-proven'] = () => ({ ok: false, code: 'wrong_words', error: 'Those words do not match the paper key on screen. Check each word against your paper.' });
   for (let i = 0; i < 2; i += 1) {
     type(fields(w), OLD_PAPER);
-    press(row, 'Check my paper');
+    press(row, 'Check');
     await flush();
   }
   const again = find(row, '.vault-paper')[0].parentNode.childNodes[0];
@@ -626,75 +630,97 @@ test('the paper key opens at its warning: the lock line comes into view, and the
   assert.deepEqual({ ...(shownButtons(row).find((b: Any) => b.textContent === 'I wrote it down') as Any).focusOptions }, { preventScroll: true });
 });
 
-test('typed back whole: 24 fields, pasting off, a slip named by its number and never by the word, two misses show the words again', async () => {
+test('the check: three words at random places, typed only, a slip named by its number and never by the word, two misses show the words again', async () => {
   const w = build();
+  holdsNoWord(w, 'before the paper');
   await showPaper(w);
-  press(keyRow(w), 'I wrote it down');
-  screenHoldsNoWord(w, 'the type-back opens');
+  holdsNoWord(w, 'the words on screen');
+  const row = keyRow(w);
+  press(row, 'I wrote it down');
+  screenHoldsNoWord(w, 'the check opens');
+  holdsNoWord(w, 'the check opens');
+  assert.ok(said(row).includes('Check three words'));
+  assert.ok(said(row).includes('Type these words from your paper.'));
   const inputs = fields(w);
-  assert.equal(inputs.length, 24);
-  assert.deepEqual(inputs.map((i: Any) => i.getAttribute('aria-label')), Array.from({ length: 24 }, (_, i) => `Word ${i + 1}`));
+  assert.equal(inputs.length, 3);
+  const at = asked(w);
+  assert.equal(new Set(at).size, 3, 'a place asked twice');
+  assert.ok(at.every((n) => Number.isInteger(n) && n >= 0 && n < 24), JSON.stringify(at));
+  assert.deepEqual(at, [...at].sort((a, b) => a - b), 'the places are not in the paper\'s order');
   for (const input of inputs) {
     assert.equal(input.autocomplete, 'off');
     assert.equal(input.spellcheck, false);
     assert.equal(input.getAttribute('autocorrect'), 'off');
     assert.equal(input.getAttribute('autocapitalize'), 'off');
   }
-  assert.ok(said(keyRow(w)).includes('All 24 words, from your paper, in order. It proves the paper is right before your vault depends on it.'));
+  // The places are drawn at random: across papers they are not always the same three.
+  const seen = new Set<string>();
+  for (let i = 0; i < 6; i += 1) {
+    const other = build();
+    await showPaper(other);
+    press(keyRow(other), 'I wrote it down');
+    seen.add(asked(other).join(','));
+  }
+  assert.ok(seen.size > 1, 'the same three places every time');
 
-  // Pasting is refused, and says why.
+  // Typed only: a paste or a drop is refused, and says why.
   assert.equal(inputs[0].dispatch('paste'), true, 'a paste went through');
-  assert.ok(said(keyRow(w)).includes('Type each word from your paper. Pasting is off here, so the check is of your paper.'));
-  assert.equal(inputs[0].dispatch('drop'), true, 'a drop went through');
+  assert.ok(said(row).includes('Type each word from your paper. Pasting is off here, so the check is of your paper.'));
+  assert.equal(inputs[1].dispatch('drop'), true, 'a drop went through');
+  holdsNoWord(w, 'a paste refused');
 
-  // Typing a space moves on: the words can go in as one run.
-  inputs[0].value = `${PAPER_WORDS[0]} ${PAPER_WORDS[1]} `;
-  inputs[0].dispatch('input');
-  assert.equal(inputs[0].value, PAPER_WORDS[0]);
-  assert.equal(inputs[1].value, PAPER_WORDS[1]);
-  assert.equal(inputs[2].focused, true);
-  // Enter goes on to the next field.
-  inputs[5].dispatch('keydown', { key: 'Enter' });
-  assert.equal(inputs[6].focused, true);
-
-  // Checked here before anything is sent: empty fields and a field with more than letters, by number.
-  type(inputs, []);
-  press(keyRow(w), 'Check my paper');
-  assert.equal(errorLine(keyRow(w)), 'Type the 24 words from your paper.');
-  type(inputs, PAPER_WORDS.map((word, i) => (i === 2 || i === 6 ? '' : word)));
-  press(keyRow(w), 'Check my paper');
-  assert.equal(errorLine(keyRow(w)), 'Words 3 and 7 are still empty. Your paper key is 24 words.');
-  type(inputs, PAPER_WORDS.map((word, i) => (i === 4 ? word + '7' : word)));
-  press(keyRow(w), 'Check my paper');
-  assert.equal(errorLine(keyRow(w)), 'Word 5 is not one word. A paper key word is letters only, one to a field.');
-  assert.equal(w.calls.filter((c) => c.route === '/api/vault/chip/phrase-proven').length, 0, 'a field the window could tell was wrong went to the backend');
-
-  // One word off: named by its number, from the paper still in this window; the word never.
-  w.answer.post['/api/vault/chip/phrase-proven'] = () => ({ ok: false, code: 'wrong_words', error: 'Those words do not match the paper key on screen. Check each word against your paper.' });
-  const slipped = PAPER_WORDS.slice();
-  slipped[6] = OLD_PAPER[0] as string;
-  type(inputs, slipped);
-  press(keyRow(w), 'Check my paper');
+  // Checked here first: empty fields say so, and nothing is sent.
+  press(row, 'Check');
+  assert.equal(errorLine(row), 'Type all three words.');
+  // One slip: named by its number, from the paper this row holds; the word never; nothing sent.
+  const typed = at.map((n) => PAPER_WORDS[n] as string);
+  typed[1] = OLD_PAPER[0] as string;
+  type(inputs, typed);
+  press(row, 'Check');
   await flush();
-  assert.equal(errorLine(keyRow(w)), 'Word 7 does not match the paper key Phosphor showed you. Check it on your paper, then try again.');
-  assert.deepEqual(leaks(errorLine(keyRow(w)), [...PAPER_WORDS, ...OLD_PAPER]), []);
+  assert.equal(errorLine(row), `Word ${at[1]! + 1} does not match your paper key. Check it on your paper, then try again.`);
+  assert.deepEqual(leaks(errorLine(row), [...PAPER_WORDS, ...OLD_PAPER]), []);
+  assert.equal(w.calls.filter((c) => c.route === '/api/vault/chip/phrase-proven').length, 0, 'a check the window could tell was wrong went to the backend');
   holdsNoWord(w, 'one miss');
-  type(fields(w), slipped);
-  press(keyRow(w), 'Check my paper');
+  // A second miss, two words off: the words come back on screen, with why.
+  type(fields(w), [OLD_PAPER[1] as string, OLD_PAPER[2] as string, typed[2] as string]);
+  press(row, 'Check');
   await flush();
-  assert.ok(said(keyRow(w)).includes('Two tries did not match. Check your paper word by word, then type it again.'));
-  assert.equal(find(keyRow(w), '.vault-paper').filter(isShown).length, 1, 'the words did not come back after two misses');
+  assert.ok(said(row).includes('Two tries did not match. Check your paper word by word, then try again.'));
+  assert.equal(find(row, '.vault-paper').filter(isShown).length, 1, 'the words did not come back after two misses');
   holdsNoWord(w, 'two misses');
+  // Two slips at once are both named, by number.
+  press(row, 'I wrote it down');
+  assert.deepEqual(asked(w), at, 'the places changed after a miss');
+  screenHoldsNoWord(w, 'the check again');
+  type(fields(w), [OLD_PAPER[3] as string, OLD_PAPER[4] as string, typed[2] as string]);
+  press(row, 'Check');
+  await flush();
+  assert.equal(errorLine(row), `Words ${at[0]! + 1} and ${at[1]! + 1} do not match your paper key. Check them on your paper, then try again.`);
+  holdsNoWord(w, 'two slips');
 
-  // Right: the words leave the window, the fields are emptied, and the move is the open step.
-  press(keyRow(w), 'I wrote it down');
-  await proveRight(w);
-  const proven = w.calls.filter((c) => c.route === '/api/vault/chip/phrase-proven').at(-1);
-  assert.deepEqual([...(proven?.words ?? [])], PAPER_WORDS);
+  // Right: while the backend checks, the button says Checking and no word is on the page outside
+  // the three fields the person typed; then the 24 this row held go back, and leave the window.
+  let release: (value: Any) => void = () => {};
+  w.answer.post['/api/vault/chip/phrase-proven'] = () => new Promise((resolve) => { release = resolve; });
+  w.answer.onRefresh = () => w.chip({ paper: 'proven' });
+  type(fields(w), at.map((n) => PAPER_WORDS[n] as string));
+  const check = press(row, 'Check');
+  await flush();
+  assert.equal(check.disabled, true, 'no Checking state');
+  assert.equal(check.dataset.pending, 'true');
+  assert.deepEqual(leaks(allText(w.view)), [], 'a word on the page while it checks');
+  assert.deepEqual(fields(w).map((input: Any) => input.value), at.map((n) => PAPER_WORDS[n]), 'a field holds more than what was typed into it');
+  holdsNoWord(w, 'checking');
+  release({ ok: true, recovery: 'secp256k1:abc' });
+  await flush();
+  const proven = w.calls.filter((c) => c.route === '/api/vault/chip/phrase-proven');
+  assert.equal(proven.length, 1);
+  assert.deepEqual([...(proven[0]?.words ?? [])], PAPER_WORDS);
   screenHoldsNoWord(w, 'proven');
   holdsNoWord(w, 'proven');
   assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'done', move: 'now' });
-  assert.ok(said(keyRow(w)).includes('Typed back whole.'));
+  assert.ok(said(row).includes('Checked.'));
 });
 
 test('a lock, the tab left and Hide words each take the paper off the screen and out of the fields', async () => {
@@ -733,10 +759,10 @@ test('Hide words takes the words off the screen and keeps the paper: Show the wo
   press(row, 'Show the words again');
   assert.deepEqual(find(find(row, '.vault-paper')[0], '.word-text').map((n: Any) => n.textContent), PAPER_WORDS, 'different words after Hide words');
   assert.equal(w.calls.filter((c) => c.route === '/api/vault/chip/phrase').length, 1, 'a second paper key was asked for');
-  // Hidden again, I wrote it down goes on to the type-back of this same paper.
+  // Hidden again, I wrote it down goes on to the check of this same paper.
   press(row, 'Hide words');
   press(row, 'I wrote it down');
-  assert.equal(fields(w).length, 24);
+  assert.equal(fields(w).length, 3);
   assert.ok(shownButtons(row).some((b: Any) => b.textContent === 'Show the words again'));
   // A lock takes the words for good.
   press(row, 'Show the words again');
@@ -749,11 +775,14 @@ test('Hide words takes the words off the screen and keeps the paper: Show the wo
 
 test('after a restart the paper is typed again against the one proven before, and a paper shown before it is void', () => {
   const retype = build({ vault: { chip: chipSlice({ paper: 'retype' }) } });
-  assert.ok(said(keyRow(retype)).includes('Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'));
+  assert.ok(said(keyRow(retype)).includes('Phosphor forgets a checked paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'));
   assert.equal(fields(retype).length, 24);
   assert.ok(shownButtons(keyRow(retype)).some((b: Any) => b.textContent === 'Show a new paper key'), 'no way to a new paper when the old one is lost');
+  // A paper this row no longer holds (a lock, the tab left) is typed whole, or a new one is shown.
   const shown = build({ vault: { chip: chipSlice({ paper: 'shown' }) } });
   assert.equal(fields(shown).length, 24, 'a paper on screen in another window is not typed back here');
+  assert.ok(said(keyRow(shown)).includes('The words left this screen before you checked them. Type all 24 from your paper, or show a new paper key.'));
+  assert.ok(shownButtons(keyRow(shown)).some((b: Any) => b.textContent === 'Show a new paper key'));
   const isVoid = build({ vault: { chip: chipSlice({ paper: 'void' }) } });
   assert.ok(said(keyRow(isVoid)).includes('The paper key shown earlier opens nothing. Destroy it, then write a new one.'));
   assert.ok(shownButtons(keyRow(isVoid)).some((b: Any) => b.textContent === 'Show a new paper key'));

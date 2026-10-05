@@ -155,8 +155,9 @@ in one call that lands whole or not at all. It asks two Touch IDs: the first rea
 to this Mac's Touch ID key and your paper key", the second "confirm this Mac's Touch ID key for your
 vault". Anything else in the dialog is not the move: cancel it. What the window may say instead:
 
-- **Type your paper key back first.** The 24 words are typed back whole before anything moves. A
-  lock wipes words already typed, so after a lock type them again.
+- **Type your paper key back first.** The paper is checked before anything moves: three words
+  while the app still holds the paper, all 24 after a lock, the tab left or a restart. A lock wipes
+  words already typed, so after a lock type them again.
 - **Those words do not match.** One word differs from your paper or from the screen. While the
   words are still in the window, it names the first slip by its number, never the word; after a
   lock or a restart it cannot, so check each word.

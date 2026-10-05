@@ -687,16 +687,16 @@ test('every time the card opens it lands on the token list, and the address wait
   assert.deepEqual(Object.keys(world.stored), [], 'the second acknowledgement was written down');
 });
 
-/* A key is proven by its whole copy, typed back once: the card says that, not three of its groups. */
-test('on a wallet with no phrase, the backup card in the deposit card asks for the whole key back', async () => {
+/* A key is backed up as every wallet does it: shown once and saved somewhere safe. Nothing is typed back. */
+test('on a wallet with no phrase, the backup card in the deposit card asks for the key to be saved, never typed back', async () => {
   const world = build({ vault: { custody: 'secure-enclave', backedUp: false, hasMnemonic: false } });
   await openCard(world);
   const dialog = world.dialog();
   world.store.put(Object.assign({}, world.store.get(), { deposit: frame({ phase: 'credited', amount: 5, ms: 41000 }) }));
   const backup = find(dialog, '.deposit-backup')[0];
   assert.equal(backup.hidden, false);
-  assert.ok(textOf(backup).includes('Your private key is the only way back to this wallet. Show it once, write it down, and type it back whole to prove your copy.'), String(textOf(backup)));
-  assert.ok(!textOf(backup).some((t) => /three groups/.test(t)));
+  assert.ok(textOf(backup).includes('Your private key is the only way back to this wallet. Show it once and save it somewhere safe.'), String(textOf(backup)));
+  assert.ok(!textOf(backup).some((t) => /three groups|type it back/.test(t)));
 });
 
 /* ---------- the reminder at every start ---------- */

@@ -185,8 +185,8 @@ const POST: Record<string, Route> = {
   '/api/vault/unlock': (ctx, req, res) => handleVaultUnlock(ctx, req, res),
   '/api/vault/reveal': (ctx, req, res) => handleVaultReveal(ctx, req, res),
   '/api/vault/backup-proven': (ctx, req, res) => handleVaultBackupProven(ctx, req, res),
-  // The same pair for a wallet with no phrase: its private key, and the whole copy typed back as the
-  // proof; later, if the person asks, the same check again with nothing written.
+  // The same pair for a wallet with no phrase: its private key, and I saved it somewhere safe as the
+  // proof; later, if the person asks, a check of a copy against the wallet with nothing written.
   '/api/vault/reveal-key': (ctx, req, res) => handleVaultRevealKey(ctx, req, res),
   '/api/vault/key-proven': (ctx, req, res) => handleVaultKeyProven(ctx, req, res),
   '/api/vault/key-check': (ctx, req, res) => handleVaultKeyCheck(ctx, req, res),

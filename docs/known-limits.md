@@ -33,8 +33,9 @@ or shown again, after five wrong tries, after half an hour with the Mac awake, o
 quits. It keeps only the three positions it asks for and one slow hash of those three words, the
 same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
 guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
-with no phrase backs up its private key instead, and its whole copy typed back is the proof, so
-nothing of the key is kept for it.
+with no phrase backs up its private key instead, and I saved it somewhere safe, clicked just after
+the key was shown, is the proof, so nothing of the key is kept for it: only the wallet it opens,
+for half an hour.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right
@@ -185,9 +186,10 @@ the venue's hands, not lost and not the app's to recover by itself. Do not send 
 After the move to the chip, the vault answers to this Mac's Touch ID key and to the 24 words you
 wrote by hand, and to nothing else. The key backup alone no longer reaches the vault. A restore on a
 new Mac needs both: the key backup brings back the vault's address, the allowance, the gas account
-and Hyperliquid, and the paper brings back the vault. Phosphor has you type all 24 words back before
-anything moves, and the paper signs a proof on chain in the same call that adds it, but nothing can
-check the paper itself.
+and Hyperliquid, and the paper brings back the vault. Phosphor has you type three of the words back
+before anything moves, so a slip in another word is caught only when you restore, and the paper
+signs a proof on chain in the same call that adds it, but nothing can check the paper itself. Check
+each word as you write it.
 
 What it means: if this Mac is lost and the paper is lost or wrong, the money in the vault is lost.
 Keep the paper like cash, apart from the key backup. The paper is an ordinary EVM key, so it also

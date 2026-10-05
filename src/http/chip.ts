@@ -35,7 +35,7 @@ const CHIP_WORDS: Record<string, string> = {
   rekey_busy: 'Your vault is moving right now. Wait for it to finish.',
   wrong_words: 'Those words do not match the paper key on screen. Check each word against your paper.',
   wrong_paper: 'Those words are not the paper key you wrote for this move. Type that paper again, or show a new one.',
-  phrase_gone: 'There is no paper key waiting to be typed back. Show a new one and write it down: a paper shown earlier opens nothing.',
+  phrase_gone: 'There is no paper key waiting to be checked. Show a new one and write it down: a paper shown earlier opens nothing.',
   bad_paper: 'Those are not the 24 words of a paper key. Check each word against your paper.',
   not_your_paper: 'That paper key is not on your vault, so nothing changed. Use the paper you wrote when your vault last moved; a paper from before a restore no longer works.',
   same_paper: 'Write a new paper key for the restore. The paper you restore from stops working once the restore is done.',
@@ -124,7 +124,9 @@ export async function handleChipPhrase(ctx: Ctx, req: http.IncomingMessage, res:
   sendJson(res, 200, { ok: true, words: shown.words });
 }
 
-// POST /api/vault/chip/phrase-proven {words[24]} -> {ok, recovery}: the paper typed back whole.
+// POST /api/vault/chip/phrase-proven {words[24]} -> {ok, recovery}: the paper's 24 words, from the
+// window that held them and checked three against the paper (ui/screens/chip.js), or typed whole
+// after a restart.
 export async function handleChipPhraseProven(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/chip/phrase-proven', req, res);
   if (body === null) return;

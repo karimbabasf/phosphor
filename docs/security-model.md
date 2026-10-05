@@ -267,8 +267,10 @@ your money.
 - **The paper is the only key that opens the vault away from this Mac.** After the move the vault
   answers to this Mac's Touch ID key and the 24-word paper key, and to nothing else: the key backup
   alone no longer reaches it, by design. If the Mac is lost and the paper is lost or wrong, the vault
-  is lost. Phosphor has you type all 24 words back before anything moves, and the paper signs an
-  empty proof on chain in the same call that adds it, but it cannot see the paper you wrote. A
+  is lost. Phosphor has you type three of the words back before anything moves (all 24 after a
+  lock, the tab left or a restart), and the paper signs an empty proof on chain in the same call
+  that adds it, but it cannot see the paper you wrote, so a slip in a word it did not ask for shows
+  only at a restore. A
   restore on a new Mac takes both: the key backup brings back the vault's address, the allowance,
   the gas account and Hyperliquid, and the paper brings back the vault. Keep the paper like cash,
   apart from the key backup. The paper is also an ordinary EVM key at m/44'/60'/0'/0/0, so it signs
@@ -1385,15 +1387,19 @@ add a key until the call runs, so a key added after the last read before the sig
 there, and the window says the vault holds a key Phosphor did not add (the Vault tab names it).
 Then `state/vault.json` names the chip, the session lets go of the owner key at once, and the rails
 spend the allowance. Every check that can stop a move runs before the first Touch ID: the wallet
-open, a Touch ID wallet with a proven backup, the paper typed back, the vault still answering to
+open, a Touch ID wallet with a proven backup, the paper checked, the vault still answering to
 the old signer, and a gas account that can pay for the call. The gas account's id is derived from
 the owner key and never typed; funding it is a NEAR payout to that id, one click and one Touch ID
 that names it (`POST /api/vault/gas/fund`, 0.1 to 1 NEAR).
 
 The paper's 24 words are shown once, to the window that asked, and written nowhere: no state file,
-audit line, frame or `/api/state`. While they are written down the app holds a SHA-256 of the
-phrase; once all 24 are typed back it holds the paper's private key in a buffer it zeroes after P_c
-signs, after half an hour, or at a lock. A typo is answered yes or no, never with the word. The
+audit line, frame or `/api/state`. While they are written down the window holds them and the app
+holds a SHA-256 of the phrase. The window checks three of them, at places it picks, typed from the
+paper with pasting off, and names a slip by its number, never the word; then it sends the 24 it
+holds, and the app checks them against the SHA-256 and holds the paper's private key in a buffer it
+zeroes after P_c signs, after half an hour, or at a lock. Where the window no longer holds the words
+(a lock, the tab left, a restart) all 24 are typed, and a typo is answered yes or no, never with the
+word. The
 strings the words travel in cannot be wiped, as for every phrase the app shows. Beside vault.json,
 `state/chip-run.json` keeps public keys only (the vault, the paper key, the owner key, the chip
 key), so a restart can finish or resume a move: a paper shown and never proven opens nothing and a

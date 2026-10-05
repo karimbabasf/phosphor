@@ -11,11 +11,11 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
 
 - Move your vault to this Mac's Touch ID key. On a Touch ID wallet, Your vault in the Vault tab
   takes you through four steps: back up your key, add NEAR to the gas account, write a 24-word paper
-  key by hand and type all 24 words back, then two Touch IDs, each sentence shown before it comes.
-  The paper key has no Print and no Copy, and pasting is off while you type it back. One call on
-  NEAR then adds the Touch ID key and the paper key, takes your wallet's key off the vault and shuts
-  the NEAR door, so those two keys alone open the vault. A move a crash cuts short finishes on the
-  next start, or asks only for the paper again.
+  key by hand and type three of its words back, then two Touch IDs, each sentence shown before it
+  comes. The paper key has no Print and no Copy, and pasting is off while you type. One call on NEAR
+  then adds the Touch ID key and the paper key, takes your wallet's key off the vault and shuts the
+  NEAR door, so those two keys alone open the vault. A move a crash cuts short finishes on the next
+  start, or asks only for the paper again.
 - Every Touch ID the vault asks for shows a sentence the vault service writes from the payload it
   read itself, such as "move 5.00 USDC from your vault to your allowance". It refuses what it cannot
   say in words, and by name a payload that adds a key or changes the NEAR door, before any dialog.
@@ -29,17 +29,17 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   beside it: write a new paper key, then type the old paper's 24 words.
 - Once your vault is on Touch ID, your assistant spends from an allowance, $100 unless you pick
   another size or turn it off. It starts empty. A top-up moves USDC from your vault: you ask in the
-  Vault tab, approve its card, and give one Touch ID that names the amount. Your assistant cannot
-  ask for one. A top-up NEAR turns down after it left your Mac waits for NEAR before saying whether
-  anything moved, and is never signed again. Whatever the allowance holds over its size plus 10
-  percent goes back to your vault on its own, USDC first, keeping what moves under way will spend.
+  Vault tab, approve its card and give one Touch ID. Your assistant cannot ask for one. A top-up
+  NEAR turns down after it left your Mac waits for NEAR before saying whether anything moved, and
+  is never signed again. Whatever the allowance holds over its size plus 10 percent goes back to
+  your vault on its own, USDC first, keeping what moves under way will spend.
 - A swap, send, payout or Hyperliquid deposit bigger than your allowance waits for your click, and
   its card says Approve asks two Touch IDs: the move's own, then one that moves exactly the
   difference from your vault. Cancel either and nothing is signed. The vault never adds more than
   the card named: if more is missing when it runs, the card asks again. A move nobody clicked never
   touches the vault: if the allowance is short, it stops with nothing signed.
-- The gas account pays NEAR's small fee for every move of your vault. It is a NEAR account made from
-  your key; its row says when it runs low and adds 0.1 to 1 NEAR with one click and one Touch ID. A
+- The gas account, a NEAR account made from your key, pays NEAR's small fee for every move of your
+  vault; its row says when it runs low and adds 0.1 to 1 NEAR with one click and one Touch ID. A
   vault with no NEAR shows the gas account whole with Copy, to send NEAR to from any NEAR wallet, or
   your assistant can swap a little USDC to NEAR.
 - After the move, the Vault tab lists who opens your vault as NEAR reads it, this Mac's Touch ID key
@@ -50,20 +50,21 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   moved, and a lost note of a move is checked with NEAR and written back.
 - On a Mac whose vault moved to another Mac's Touch ID key, a swap, send, payout or Hyperliquid
   deposit from the vault says so before anything is signed, and Add NEAR shows the gas account.
-- Once your vault is on Touch ID, Allow trading on Hyperliquid approves a trading key with one Touch
-  ID that names the key and its 90 days, and your plans trade with it at once. The key is made from
-  your key each time the wallet opens and is written nowhere. Each Hyperliquid action only your
-  wallet's key can sign asks for one Touch ID of its own that names it, and signs only for the
-  account its move was built for.
+- Once your vault is on Touch ID, Allow trading on Hyperliquid approves a trading key for 90 days
+  with one Touch ID, and your plans trade with it at once. The key is made from your key each time
+  the wallet opens and is written nowhere. Each Hyperliquid action only your wallet's key can sign
+  asks for one Touch ID of its own that names it, and signs only for the account its move was built
+  for.
 - While your vault moves, your assistant's moves wait, and its line says so, after a restart too:
   it can ask for nothing new, an earlier move cannot be approved until the move is done, and one on
   its way stops with nothing sent. A move record Phosphor did not write no longer pauses it.
-- An agent started outside Phosphor asks in a card that reads like "Claude Code wants to use
-  Phosphor", with its logo and when it connected, and its roster row names it the same way; at a $0
-  approval amount it says every move still waits after an Allow.
+- An agent started outside Phosphor asks in a card like "Claude Code wants to use Phosphor", with
+  its logo and when it connected, and its roster row names it the same way.
 - Your assistant can explain the Touch ID vault, the paper key, the allowance, the gas account and
   the trading key, and never asks for or repeats a paper key, recovery phrase or private key.
 - A portfolio held whole in what a 100 percent cap allows is no longer refused by a rounding error.
+- Backing up a private key is Touch ID, the key behind dots with Show and Copy, then I saved it
+  somewhere safe. Nothing is typed back.
 - Your wallet, your keys and your settings stay as they were until you move your vault.
 - To check before you trust: [Check it yourself](verify.md) gives each of the wallet's seven
   security claims its code, test and command, and `node scripts/vault-check.ts` reads who can move a

@@ -796,7 +796,8 @@ both payloads live 110 seconds, so an unanswered send settles within about four 
 
 **The move to the chip** (`src/http/chip.ts`, `src/vault/rekey.ts`). Window routes with the token,
 none on `/api/mcp`. `POST /api/vault/chip/phrase` answers `{ok, words}` once: a new 24-word paper
-key, written nowhere. `POST /api/vault/chip/phrase-proven {words}` takes all 24 back and answers
+key, written nowhere. `POST /api/vault/chip/phrase-proven {words}` takes all 24 back (from the
+window that held them once three were checked, or typed whole after a restart) and answers
 `{ok, recovery}`, the paper's `secp256k1:` key, or a refusal that never names a word.
 `POST /api/vault/chip/move` answers 202 `{ok, run}` and moves the vault: the owner key signs behind
 its own Touch ID, the chip key signs its proof behind another, the paper signs in the app, and one

@@ -415,9 +415,10 @@ export function showPaper(host: RekeyHost): { ok: true; words: string[] } | Refu
   return { ok: true, words: phrase.split(' ') };
 }
 
-/* All 24 words typed back. Against the phrase on screen while it is held; after a restart, against
-   the public key the run record kept for the paper that was proven before it. Either way the
-   answer is yes or no, never which word. */
+/* All 24 words: from the window that showed them, once three were checked against the paper, or
+   typed whole. Against the phrase on screen while it is held; after a restart, against the public
+   key the run record kept for the paper that was proven before it. Either way the answer is yes or
+   no, never which word. */
 export function provePaper(host: RekeyHost, words: unknown): { ok: true; recovery: string } | Refused {
   const box = boxOf(host);
   const vault = openVault(host);
@@ -452,7 +453,7 @@ export function provePaper(host: RekeyHost, words: unknown): { ok: true; recover
     chip: record?.recovery === paper.publicKey ? (record?.chip ?? null) : null,
     status: record?.status === 'moving' && record.recovery === paper.publicKey ? 'moving' : 'proven',
   });
-  host.audit.append('app_start', 'the paper key was typed back in full; its key is held until the move signs with it', { recovery: paper.publicKey });
+  host.audit.append('app_start', 'the paper key was checked; its key is held until the move signs with it', { recovery: paper.publicKey });
   host.changed();
   return { ok: true, recovery: paper.publicKey };
 }

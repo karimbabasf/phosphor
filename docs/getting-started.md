@@ -136,17 +136,15 @@ phrase row) and Save an encrypted copy (in the Restore row) both ask for the pas
 
 A wallet brought in as a key has no recovery phrase, so its backup is the private key itself, and
 anyone who has it has your money. Under Safety its row is Private key: Back it up and a Touch ID
-(or your password, on a password wallet) show the key in that row only, in sixteen numbered groups
-of four characters, with the wallet it opens under them. Write the groups down or Print them, then
-click I wrote it down and type the whole key back from your copy, once. Only a copy that opens this
-very wallet turns the row to Backed up; the line at the foot of the window says Private key not
-backed up until then, and Forget waits for it the same way.
+(or your password, on a password wallet) show the key in that row only, hidden behind dots, with the
+wallet it opens under it. Show reveals it and Hide puts the dots back; Copy puts the whole key on
+the clipboard, for a password manager. Save it somewhere safe, then click I saved it somewhere
+safe: that turns the row to Backed up. Nothing is typed back. The line at the foot of the window
+says Private key not backed up until then, and Forget waits for it the same way.
 
-The whole copy, and not three groups of it, because a key has no checksum: a copy with one slip is
-simply another wallet, and you would find out the day you restore it. A phrase does carry a
-checksum, which is why three of its words are enough. If a group is off, the row names it while the
-key you were just shown is still on screen; two misses show the key again. Later, Check my copy
-checks a copy against this wallet the same way, with no Touch ID and nothing changed. Never check a
+The click counts only just after the key was shown: half an hour later, or after a restart, the
+row asks you to show the key again. Later, Check my copy checks a copy you kept against this
+wallet, with no Touch ID and nothing changed. Never check a
 copy by restoring it over the wallet you have: after its Touch ID, a restore replaces the wallet on
 this Mac with whatever wallet the copy makes. A cancelled Touch ID leaves the wallet you have as it
 was.
@@ -221,10 +219,11 @@ Under Your vault, the Vault key row takes you through four steps, in order:
    account whole, with Copy: send 0.1 to 1 NEAR to it on NEAR from any NEAR wallet, or ask your
    assistant to swap a little USDC to NEAR, then add it here.
 3. **Write your paper key.** Show my paper key puts 24 words on screen once, with your vault's
-   address to write under them. Write both by hand: there is no Print and no Copy, because a
-   printer, a screenshot or a clipboard keeps one more key to your vault. Then type all 24 words
-   back from the paper, one to a field, with pasting off. A slip is named by its number, never by
-   the word.
+   address to write under them. Write both by hand, and check each word as you write it: there is
+   no Print and no Copy, because a printer, a screenshot or a clipboard keeps one more key to your
+   vault. Then type three of the words, at places the app picks, from the paper, with pasting off.
+   A slip is named by its number, never by the word. You type all 24 only when the app no longer
+   holds them: after a lock, the tab left or a restart before the move.
 4. **Move your vault.** Two Touch IDs: the first reads "Move your vault to this Mac's Touch ID key and
    your paper key", the second "confirm this Mac's Touch ID key for your vault". Cancel any other
    sentence. The row shows each step as it runs, and your assistant's moves wait until it is done.

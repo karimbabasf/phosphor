@@ -33,13 +33,13 @@ import { oneLine } from '../intents.ts';
 import { errText, fail, readBody, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import { osError } from '../err-text.ts';
-import { keyGroups, mnemonicProblem } from '../keystore/derive.ts';
+import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem } from '../keystore/derive.ts';
 import { lockCodeOf, lockReasonFor } from '../keystore/lock-reason.ts';
 import type { RailKeys } from '../keystore/derive.ts';
 import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
-import { rememberPhrase } from '../vault/phrase-proof.ts';
+import { rememberKeyShown, rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
@@ -55,7 +55,7 @@ const REVEAL_TTL_MS = 30_000;
 
 // The material rides in the slot as bytes, read under the password at the POST, so the GET needs
 // no open wallet and the slot can be wiped. `prove` is the three positions Prove it asks for of a
-// phrase (a key is proven by its whole copy, src/http/vault.ts key-proven).
+// phrase (a key is proven by I saved it somewhere safe, src/http/vault.ts key-proven).
 type Pending = { what: 'mnemonic' | 'keys'; expires: number; secret: Buffer | null; prove: number[] };
 const pending = new Map<string, Pending>();
 
@@ -587,7 +587,7 @@ export async function handleRevealStart(ctx: Ctx, req: http.IncomingMessage, res
     return sendJson(res, 200, refusal('no_mnemonic'));
   }
   // The phrase is proven by three of its words, so its reveal leaves the proof behind; a key is
-  // proven by the whole copy typed back (POST /api/vault/key-proven), which needs nothing kept here.
+  // proven by I saved it somewhere safe (POST /api/vault/key-proven), once the GET below has shown it.
   let prove: number[] = [];
   const wallet = ctx.keystore.addresses().evm;
   if (wallet !== null && secret !== null && what === 'mnemonic') prove = rememberPhrase(secret.split(' '), wallet, ctx.keystore.kdfParams());
@@ -655,6 +655,9 @@ export function handleRevealFetch(_ctx: Ctx, nonce: string, req: http.IncomingMe
     if (secret === null) return fail(res, 404, 'this wallet has no recovery phrase');
     return sendJson(res, 200, { ok: true, what: 'mnemonic', mnemonic: secret.split(' '), prove: held.prove });
   }
+  // Shown, so I saved it somewhere safe can prove it, for the wallet this key itself opens.
+  const opens = secret === null || keyProblem(secret) !== null ? undefined : addressesFromKeys({ evm: keyFrom(secret) }).evm;
+  if (opens) rememberKeyShown(opens);
   sendJson(res, 200, {
     ok: true,
     what: 'keys',
