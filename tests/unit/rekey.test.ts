@@ -230,8 +230,16 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
     mac.now = Math.floor(chain.now() / 1000);
     return opts.hook?.(r) ?? { kind: 'run' };
   });
-  const probed = await relay.ask({ op: 'probe' });
+  // src/main.ts's start: the probe, then the chip markers right behind it, whose answer asks the
+  // gate about this wallet's vault; without it no marker is known and the chain alone decides (FA-1).
+  const probing = relay.ask({ op: 'probe' });
+  const marking = relay.ask({ op: 'chipStatus' }).then(() => {
+    const evm = keystore.addresses().evm;
+    if (evm !== null) gate(evm);
+  });
+  const probed = await probing;
   assert.ok(probed.ok, JSON.stringify(probed));
+  await marking;
   return {
     dataDir,
     keystore,

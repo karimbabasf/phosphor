@@ -205,15 +205,48 @@ export const MARKER_RECHECK_MS = 60_000;
    vault that never moved. So a marker counts only when the chain shows its chip key, or the paper
    key it pins, on the vault: no one can put either there without a key the vault already answers
    to. Until the chain has answered (a read in flight, or one that failed) a marker keeps the key
-   out; once it says moved, that is for good. */
+   out; once it says moved, that is for good.
+   NO MARKER KNOWN IS NOT NO MARKER (fix2a FA-1). Until a status of every chip has answered in this
+   process (VaultRelay.chipMarkersKnown), the chain alone decides: the vault moved when its keys list
+   names any key or the owner key (`owner`, its public half from the keystore) reads off it, and the
+   key comes in only on "no key listed and the owner key on". No chain answer keeps it out until
+   there is one. A wallet whose status answered goes the way above, as before. */
 export function ownerKeyGate(
   prefs: () => { chip: ChipPrefs | null },
-  relay: Pick<VaultRelay, 'chipMarkers'>,
-  chain: Pick<VerifierPort, 'hasPublicKey'>,
-  opts: { now?: () => number } = {},
+  relay: Pick<VaultRelay, 'chipMarkers'> & Partial<Pick<VaultRelay, 'chipMarkersKnown'>>,
+  chain: Pick<VerifierPort, 'hasPublicKey'> & Partial<Pick<VerifierPort, 'publicKeysOf'>>,
+  opts: { now?: () => number; owner?: () => string | null } = {},
 ): (vault: string) => boolean {
   const now = opts.now ?? Date.now;
   const verdicts = new Map<string, { markers: string; moved: boolean | null; at: number; asking: boolean }>();
+  const fromChain = new Map<string, { owner: string | null; moved: boolean | null; at: number; asking: boolean }>();
+
+  function askChain(vault: string, owner: string | null): void {
+    const verdict = { owner, moved: null as boolean | null, at: now(), asking: true };
+    fromChain.set(vault, verdict);
+    const listed = chain.publicKeysOf === undefined ? Promise.resolve(null) : chain.publicKeysOf(vault).catch(() => null);
+    const on = owner === null || chain.hasPublicKey === undefined ? Promise.resolve(null) : chain.hasPublicKey(vault, owner).catch(() => null);
+    void Promise.all([listed, on]).then(([keys, ownerOn]) => {
+      if (fromChain.get(vault) !== verdict) return;
+      const none = Array.isArray(keys) && keys.length === 0;
+      verdict.moved = (Array.isArray(keys) && keys.length > 0) || ownerOn === false ? true : none && ownerOn === true ? false : null;
+      verdict.at = now();
+      verdict.asking = false;
+    });
+  }
+
+  // The chain alone, with the owner key's public half once an open has read it.
+  function chainSays(vault: string): boolean {
+    const owner = opts.owner?.() ?? null;
+    const verdict = fromChain.get(vault);
+    if (verdict?.moved === true) return true;
+    if (verdict === undefined || verdict.owner !== owner) {
+      askChain(vault, owner);
+      return true;
+    }
+    if (!verdict.asking && (verdict.moved === null || now() - verdict.at > MARKER_RECHECK_MS)) askChain(vault, owner);
+    return verdict.moved !== false;
+  }
 
   function ask(vault: string, markers: ChipMarkerSeen[], key: string): void {
     const verdict = { markers: key, moved: verdicts.get(vault)?.markers === key ? (verdicts.get(vault)?.moved ?? null) : null, at: now(), asking: true };
@@ -229,9 +262,10 @@ export function ownerKeyGate(
 
   return (vault) => {
     if (ownerKeyOut(prefs(), vault)) return true;
+    const account = vault.toLowerCase();
+    if (relay.chipMarkersKnown?.() === false) return chainSays(account);
     const markers = relay.chipMarkers(vault);
     if (markers.length === 0) return false;
-    const account = vault.toLowerCase();
     const key = JSON.stringify(markers);
     const verdict = verdicts.get(account);
     if (verdict?.moved === true && verdict.markers === key) return true;

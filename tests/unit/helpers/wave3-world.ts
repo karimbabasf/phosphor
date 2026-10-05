@@ -149,7 +149,7 @@ export async function wave3World(
 
   // src/main.ts, in its order: the one gate, the owner touch on it, the trading key plan, the
   // accounts the rails read, the one vault move submitter, the chip vault, the allowance.
-  const gate = ownerKeyGate(() => prefs.get(), relay, chain.verifier);
+  const gate = ownerKeyGate(() => prefs.get(), relay, chain.verifier, { owner: () => keystore.ownerPublicKey() });
   keystore.keepOwnerKeyOutWhen(gate);
   useOwnerTouch(ownerTouchVia({ vault: relay, keystore, ownerOut: gate }));
   keystore.planHlAgentsWith((v) => hlAgentPlan(prefs.get(), v));
@@ -301,12 +301,25 @@ export async function wave3World(
     return (await opts.hook?.(r)) ?? { kind: 'run' };
   });
   // src/main.ts's start: the probe, then the chip markers queued right behind it, whose answer asks
-  // the owner key gate about this wallet's vault before any unlock is answered.
+  // the owner key gate about this wallet's vault before any unlock is answered, and a status that
+  // did not answer asked again until one does (FA-1).
   const probing = relay.ask({ op: 'probe' });
-  const marking = relay.ask({ op: 'chipStatus' }).then(() => {
+  const marking = relay.ask({ op: 'chipStatus' }).then((answer) => {
     const evm = keystore.addresses().evm;
     if (evm !== null) gate(evm);
+    if (!answer.ok && !relay.chipMarkersKnown()) retryMarkers(1);
   });
+  let retrying: NodeJS.Timeout | null = null;
+  const retryMarkers = (attempt: number): void => {
+    retrying = setTimeout(() => {
+      void relay.ask({ op: 'chipStatus' }).then((answer) => {
+        const evm = keystore.addresses().evm;
+        if (evm !== null) gate(evm);
+        if (!answer.ok && !relay.chipMarkersKnown()) retryMarkers(attempt + 1);
+      });
+    }, Math.min(30_000, 1_000 * 2 ** attempt));
+    retrying.unref();
+  };
   const probed = await probing;
   assert.ok(probed.ok, JSON.stringify(probed));
   await marking;
@@ -373,6 +386,7 @@ export async function wave3World(
     },
     settled,
     async close() {
+      if (retrying !== null) clearTimeout(retrying);
       relay.stop();
       await shell.stop();
       await new Promise<void>((r) => server.close(() => r()));

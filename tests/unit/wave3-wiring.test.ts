@@ -214,6 +214,71 @@ test('a start asks the chip markers right behind the probe, as src/main.ts does:
   }
 });
 
+/* fix2a FA-1: after a move, vault.json's chip entry and chip-run.json deleted, and the start's chip
+   status refused, no marker is known. That is not "no marker": the chain alone decides until the
+   service answers, and the owner key stays out until it says the vault never moved. */
+test('with no marker known (the notes deleted, the start\'s status refused), the unlock keeps the owner key out of a moved vault, and a vault that never moved gets it back once NEAR says so', { skip, timeout: 120_000 }, async () => {
+  const refuseStatus = (state: { refuse: boolean }) => (r: Request): Hook | undefined =>
+    r.op === 'chipStatus' && state.refuse ? { kind: 'answer', answer: { ok: false, error: 'keychain_unavailable', message: 'the keychain did not answer' } } : undefined;
+
+  // A moved vault.
+  const w = await wave3World({ papers: [PAPER] });
+  let first: Wave3World | null = w;
+  let again: Wave3World | null = null;
+  try {
+    const { vault } = await moved(w);
+    await w.close();
+    first = null;
+    const file = path.join(w.dataDir, 'vault.json');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete doc.chip;
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    fs.rmSync(path.join(w.dataDir, 'chip-run.json'));
+    const service = { refuse: true };
+    again = await wave3World({ chain: w.chain, mac: w.mac, dataDir: w.dataDir, hook: refuseStatus(service) });
+    assert.equal(again.relay.chipMarkersKnown(), false, 'the start\'s status was refused: no marker is known');
+    assert.deepEqual(again.relay.chipMarkers(vault), []);
+    assert.equal((await again.post('/api/vault/unlock')).json.ok, true);
+    const moved1 = again;
+    assert.throws(() => moved1.keystore.evmPrivateKey(), /owner_touch_required|Touch ID/, 'the chain alone keeps the owner key out');
+    // NEAR's answer (keys listed, the owner key off) keeps it out, and the service answering later changes nothing.
+    await new Promise((r) => setTimeout(r, 50));
+    assert.equal(moved1.gate(vault), true);
+    service.refuse = false;
+    assert.ok((await moved1.relay.ask({ op: 'chipStatus' })).ok);
+    assert.equal(moved1.relay.chipMarkersKnown(), true);
+    assert.ok(moved1.relay.chipMarkers(vault).length > 0);
+    assert.equal(moved1.gate(vault), true);
+  } finally {
+    await first?.close();
+    await again?.close();
+  }
+
+  // A vault that never moved: the same refused start; the first unlock asks NEAR with the owner key
+  // it opened, and the next unlock, once NEAR said no key listed and the owner key on, holds it.
+  const n = await wave3World();
+  let before: Wave3World | null = n;
+  let after: Wave3World | null = null;
+  try {
+    const { vault } = await n.wallet();
+    await n.close();
+    before = null;
+    after = await wave3World({ chain: n.chain, mac: n.mac, dataDir: n.dataDir, hook: refuseStatus({ refuse: true }) });
+    const open = after;
+    assert.equal(open.relay.chipMarkersKnown(), false);
+    assert.equal((await open.post('/api/vault/unlock')).json.ok, true);
+    assert.throws(() => open.keystore.evmPrivateKey(), /owner_touch_required|Touch ID/, 'out until NEAR has answered');
+    for (let i = 0; i < 100 && open.gate(vault); i += 1) await new Promise((r) => setTimeout(r, 10));
+    assert.equal(open.gate(vault), false, 'NEAR: no key listed, the owner key on');
+    open.keystore.lock();
+    assert.equal((await open.post('/api/vault/unlock')).json.ok, true);
+    assert.match(open.keystore.evmPrivateKey(), /^0x[0-9a-f]{64}$/, 'the owner key is back in the session');
+  } finally {
+    await before?.close();
+    await after?.close();
+  }
+});
+
 /* A vault moved here, then vault.json's chip entry deleted (and `alsoRecord`: the move's run record
    too) and the app started again, its first chipStatus answered by `firstStatus` when given. What the
    Vault tab said from the first read until it read moved, and vault.json's chip then. `late`: the

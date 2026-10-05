@@ -235,7 +235,7 @@ test('the same withdrawal with vault.json\'s word alone handed to the touch asks
 
 test('src/main.ts gives the accounts the service\'s chip status through the relay, and asks it once at start behind the markers', () => {
   const source = main();
-  const markers = source.indexOf("  void vault.ask({ op: 'chipStatus' }).then(() => {");
+  const markers = source.indexOf("    void vault.ask({ op: 'chipStatus' }).then((answer) => {");
   const made = source.indexOf('const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });');
   const used = source.indexOf("useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);");
   const asked = source.indexOf('void accounts.refresh();');

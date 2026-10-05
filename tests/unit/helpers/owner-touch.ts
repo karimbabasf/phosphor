@@ -105,6 +105,12 @@ export function chipVault(old: string, opts: { moved?: boolean; keystore?: (stor
     async attach() {
       assert.equal(await relay.next(0), null);
       assert.equal(relay.attached(), true);
+      // The app's start reads every chip marker before any unlock (src/main.ts): none here.
+      const status = relay.ask({ op: 'chipStatus' });
+      const request = await relay.next(1_000);
+      assert.ok(request !== null && request.op === 'chipStatus');
+      relay.answer({ id: request.id, ok: true, keychainHome: true, chips: [] });
+      assert.ok((await status).ok);
     },
     open() {
       const request = store.enclaveRequest();

@@ -255,11 +255,17 @@ if (transportKey !== null) {
   /* The chip markers on this Mac, queued right behind the probe: the relay hands requests out in the
      order asked, so no unlock the window asks for is answered before them. The owner key gate below
      then asks the chain about any marker naming this wallet's vault (src/vault/chip.ts), while the
-     person is still at the Touch ID. */
-  void vault.ask({ op: 'chipStatus' }).then(() => {
-    const evm = keystore.addresses().evm;
-    if (evm !== null) ownerKeyStaysOut(evm);
-  });
+     person is still at the Touch ID. A status that did not answer is asked again until one does
+     (fix2a FA-1): until then no marker is known, and the gate asks the chain alone. */
+  const askMarkers = (attempt: number): void => {
+    void vault.ask({ op: 'chipStatus' }).then((answer) => {
+      const evm = keystore.addresses().evm;
+      if (evm !== null) ownerKeyStaysOut(evm);
+      if (answer.ok || vault.chipMarkersKnown()) return;
+      setTimeout(() => askMarkers(attempt + 1), Math.min(30_000, 1_000 * 2 ** attempt)).unref();
+    });
+  };
+  askMarkers(0);
 }
 
 const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret, handSecret: handSeatSecret });
@@ -279,7 +285,7 @@ const vaultPrefs = createVaultPrefs(cfg.dataDir);
    marker for the vault, once the chain shows the vault moved to it, keeps it out too, so deleting
    vault.json's chip entry alone cannot bring it back (src/vault/chip.ts). Anything else that asks
    whether the owner key is out asks this same gate. */
-const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier());
+const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier(), { owner: () => keystore.ownerPublicKey() });
 keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
 // The touch each of those owner actions asks for, read for the same vault by the same gate.
 useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));

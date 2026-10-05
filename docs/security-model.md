@@ -1265,7 +1265,12 @@ naming the vault keeps the EVM key out once the chain shows the vault moved (the
 or the paper key it pins, is on the vault), even after a program running as you removes the chip
 entry (`ownerKeyGate`, `src/vault/chip.ts`). A marker alone does not count, because that program can
 have the service pin a fresh chip key to any account with no dialog; the chain decides, and the key
-stays out until it has answered. The Hyperliquid owner touch reads the same gate (`src/main.ts`), so
+stays out until it has answered. No marker known is not no marker: until the service has answered
+for every chip on this Mac (its status refused at the start, say, after a program deleted both of
+the app's notes of the move), the chain alone decides. The vault counts as moved when NEAR lists any
+key on it or reads the EVM key off it, the key comes in only when NEAR lists none and reads the EVM
+key on, and with no answer it stays out; the start asks the service again until it answers
+(`vault-chip.test.ts`, `wave3-wiring.test.ts`). The Hyperliquid owner touch reads the same gate (`src/main.ts`), so
 a withdrawal is one Touch ID either way. A vault whose chip key is gone and whose paper key was
 retired falls back to vault.json alone, where removing the entry puts the EVM key back in the next
 session: it reaches Hyperliquid's owner actions there, not the vault, whose keys on chain no longer

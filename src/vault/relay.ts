@@ -107,6 +107,10 @@ export type VaultRelay = {
    *  have shown them (no op deletes a marker): each one's chip key (null once the key is gone) and the
    *  paper key it pins. Empty until an answer that read the keychain home names one. */
   chipMarkers(account: string): ChipMarkerSeen[];
+  /** Whether chipMarkers is the whole answer: a chipStatus for every chip (no keyRef) has answered in
+   *  this process, or there is no shell to ask, and so no chip this process can use. False while a
+   *  marker may exist that this process was never told about (FA-1). */
+  chipMarkersKnown(): boolean;
   /** attached, and the shell reported an enclave the person can authenticate to, on a relay that makes keys. */
   enclaveReady(): boolean;
   ask(request: Omit<VaultRequest, 'id'> & { id?: string }): Promise<VaultResult>;
@@ -173,8 +177,9 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
   let lastPoll = 0;
   let capability: Capability | null = null;
   let bound: boolean | null = null;
-  // The chip markers seen, by the lowercase 0x account each names.
+  // The chip markers seen, by the lowercase 0x account each names, and whether a status of every chip answered.
   const chipMarkersSeen = new Map<string, ChipMarkerSeen[]>();
+  let markersRead = false;
   let stopped = false;
 
   function attached(): boolean {
@@ -371,6 +376,8 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
           return { ok: true };
         }
         if (status.keychainHome) for (const chip of status.chips) if (chip.marker !== null) noteMarker(chip.marker, chip.publicKey === '' ? null : chip.publicKey);
+        // Every chip's status: what the markers are is known now (none can exist with no keychain home).
+        if (asked === undefined) markersRead = true;
         settle(entry, { ok: true, op: 'chipStatus', status });
         return { ok: true };
       }
@@ -460,6 +467,7 @@ export function createVaultRelay(opts: { transportKey: Buffer | null; secret?: s
     capability: () => capability,
     bound: () => bound,
     chipMarkers: (account) => (typeof account === 'string' ? [...(chipMarkersSeen.get(account.toLowerCase()) ?? [])] : []),
+    chipMarkersKnown: () => transport === null || markersRead,
     enclaveReady: () => makesKeys && attached() && capability !== null && capability.secureEnclave && capability.canAuthenticate,
     ask,
     waiting,

@@ -579,19 +579,68 @@ test('the gate counts a marker whose chip key is gone by the paper key it pins, 
   relay.stop();
 });
 
+test('no marker known is not no marker: until a status of every chip answers, the chain alone decides, and only no key listed with the owner key on lets the key in (FA-1)', async () => {
+  const vault = `0x${'ab'.repeat(20)}`;
+  const OWNER = `secp256k1:${base58Encode(Buffer.alloc(64, 0x17))}`;
+  const settle = () => new Promise((resolve) => setImmediate(resolve));
+  // A chain that answers `keys` for the vault's list and `ownerOn` for the owner key; null is no answer.
+  const chainOf = (keys: string[] | null, ownerOn: boolean | null) => ({
+    publicKeysOf: async () => (keys === null ? Promise.reject(new Error('no answer')) : keys),
+    hasPublicKey: async () => (ownerOn === null ? Promise.reject(new Error('no answer')) : ownerOn),
+  });
+  const judged = async (keys: string[] | null, ownerOn: boolean | null, owner: string | null = OWNER): Promise<boolean> => {
+    const relay = liveRelay();
+    const gate = ownerKeyGate(() => ({ chip: null }), relay, chainOf(keys, ownerOn), { owner: () => owner });
+    assert.equal(relay.chipMarkersKnown(), false, 'no status has answered: the markers are not known');
+    assert.equal(gate(vault), true, 'out while the chain is asked');
+    await settle();
+    const verdict = gate(vault);
+    relay.stop();
+    return verdict;
+  };
+  assert.equal(await judged([], true), false, 'no key listed and the owner key on: the key comes in');
+  assert.equal(await judged([PAPER], true), true, 'a key listed: the vault moved');
+  assert.equal(await judged([], false), true, 'the owner key off: the vault moved');
+  assert.equal(await judged(null, true), true, 'no list: out until there is one');
+  assert.equal(await judged([], null), true, 'no word on the owner key: out');
+  assert.equal(await judged([], true, null), true, 'the owner key not read by any open yet: out');
+
+  // A status for one chip says nothing of the others; a status of every chip makes them known, and
+  // the gate goes back to the markers, exactly as before.
+  const relay = liveRelay();
+  const gate = ownerKeyGate(() => ({ chip: null }), relay, chainOf([PAPER], false), { owner: () => OWNER });
+  await askAnswered(relay, { op: 'chipStatus', keyRef: KEY_REF }, () => ({ ok: true, keychainHome: true, chips: [] }));
+  assert.equal(relay.chipMarkersKnown(), false);
+  await askAnswered(relay, { op: 'chipStatus' }, () => ({ ok: false, error: 'keychain_unavailable', message: 'locked' }));
+  assert.equal(relay.chipMarkersKnown(), false, 'a refused status leaves them unknown');
+  await askAnswered(relay, { op: 'chipStatus' }, () => ({ ok: true, keychainHome: true, chips: [] }));
+  assert.equal(relay.chipMarkersKnown(), true);
+  assert.equal(gate(vault), false, 'no marker for this vault, known: the key opens as before');
+  relay.stop();
+  // A backend the shell did not start has no chip to use: nothing to wait for.
+  assert.equal(createVaultRelay({ transportKey: null }).chipMarkersKnown(), true);
+});
+
 test('src/main.ts wires the gate with the service\'s marker and reads the markers at start, before the server', () => {
   const main = fs.readFileSync(path.join(ROOT, 'src', 'main.ts'), 'utf8');
-  const made = main.indexOf('const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier());');
+  // The gate reads the owner key's public half from the keystore, for the chain alone to judge by
+  // while no marker is known (FA-1).
+  const made = main.indexOf('const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier(), { owner: () => keystore.ownerPublicKey() });');
   const gate = main.indexOf('keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);');
   assert.ok(made > 0 && made < gate, 'one gate, made beside the keystore and handed to it');
-  const status = main.indexOf("  void vault.ask({ op: 'chipStatus' }).then(() => {");
+  const status = main.indexOf("    void vault.ask({ op: 'chipStatus' }).then((answer) => {");
   const probe = main.indexOf("void vault.ask({ op: 'probe' })");
-  assert.ok(gate > 0 && status > 0 && probe > 0);
+  const first = main.indexOf('  askMarkers(0);');
+  assert.ok(gate > 0 && status > 0 && probe > 0 && first > status);
   assert.ok(gate < main.indexOf('const server = createServer('));
   // Queued at start right behind the probe, not once it answers: nothing the window asks can come first.
   assert.ok(status > probe && !main.slice(probe + "void vault.ask({ op: 'probe' })".length, status).includes('vault.ask({'), 'the next ask after the probe');
-  // Its answer has the gate ask the chain about this wallet's vault before any unlock is answered.
-  assert.ok(main.slice(status, status + 400).includes('ownerKeyStaysOut(evm)'));
+  assert.ok(!main.slice(status + 10, first).includes('vault.ask({'), 'and asked at once, before anything else');
+  // Its answer has the gate ask the chain about this wallet's vault before any unlock is answered,
+  // and a status that did not answer is asked again until one does.
+  const answered = main.slice(status, first);
+  assert.ok(answered.includes('ownerKeyStaysOut(evm)'));
+  assert.ok(answered.includes('if (answer.ok || vault.chipMarkersKnown()) return;') && answered.includes('askMarkers(attempt + 1)'));
 });
 
 test('the relay hands the chip markers out ahead of an unlock asked a moment later, so the gate knows them at the open', async () => {
