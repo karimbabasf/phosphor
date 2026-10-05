@@ -93,6 +93,15 @@ export function watchParent(deps: ParentWatch & { onGone: (why: string) => void 
   const read = deps.ppid ?? ((): number => process.ppid);
   const alive = deps.alive ?? pidIsAlive;
   const started = read();
+  /* A parent of 1 at install means the process that started this one was gone before the watch
+     began: on a slow start its parent can exit first (CI's macos-15 runner, 2026-10-05). It is
+     launchd or init now, which never changes and always answers, so the poll below would never
+     fire. Said once, on the next tick. */
+  if (started === 1) {
+    const why = 'the process that started phosphor was gone before this one could watch it (its parent is pid 1)';
+    const tick = setImmediate(() => deps.onGone(why));
+    return () => clearImmediate(tick);
+  }
   let fired = false;
 
   const timer = setInterval(() => {

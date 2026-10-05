@@ -19,7 +19,65 @@ on its own line that opens the Trade tab, where everything about Hyperliquid liv
   trading account to back positions. It comes from the intents balance and goes back to it.
 
 Nothing else holds money. The app signs no transaction on any chain: every move is an intent or
-a venue action signed by the one key in your wallet, and the bridge does the chain work.
+a venue action signed by the one key in your wallet, and the bridge does the chain work. Once your
+vault moves to Touch ID (below), other keys sign, and the gas account holds and spends a little
+NEAR.
+
+### Once your vault moves to Touch ID
+
+Moving your vault to this Mac's Touch ID key splits your NEAR Intents balance in two. Until you
+move it, nothing on this page changes: one account holds everything and every move spends from it.
+
+- Your vault is your wallet's own address, the same one as before. Deposits, invite claims, the
+  trading account and every Hyperliquid withdrawal land here. Money leaves it only through a step
+  you confirm with Touch ID.
+- Your allowance is a second account inside NEAR Intents, with a key the app derives from your
+  wallet key at every unlock and never writes down. Every swap, send, payout and Hyperliquid
+  deposit spends from it, under the same clicks as before, and a refund goes back to it.
+
+"All" of a coin means all the allowance holds. Until this process has opened your wallet once,
+the app cannot name the allowance, so nothing is proposed before your first unlock.
+
+Your assistant sees the two apart: its wallet read shows `spendable`, the allowance, and
+`savings`, the vault. A swap bigger than the allowance needs the shortfall moved from the vault
+first, a top-up you confirm with Touch ID, and the swap quote says how much before anything is
+proposed.
+
+### Top-ups and the sweep
+
+The allowance has a size, $100 until you pick another in the Vault tab. Two moves keep it near
+that size, both inside NEAR Intents, both sent by your gas account (a small NEAR account the app
+derives from your wallet key, about 0.0005 NEAR a move):
+
+- **A top-up** moves USDC from your vault to your allowance. You ask for it in the Vault tab, or
+  the window offers one when the allowance falls under a quarter of its size. It always waits
+  for your click, whatever the amount, and then asks one Touch ID whose sentence names the amount:
+  "move 20.00 USDC from your vault to your allowance". The vault's Touch ID key signs it; your
+  assistant has no way to ask for one. A top-up never takes the allowance past its size plus 10 %
+  (more would only come straight back), and it does not count against the day's limits: the
+  money stays yours, in your other account.
+- **A move bigger than the allowance** waits for your click, whatever its size, and its card says
+  how much comes from the vault. Approving it asks the move's own Touch ID, then one Touch ID for
+  a top-up of exactly the difference, of the coin the move spends. Cancel either one and nothing
+  is signed for the move. The vault never adds more than the card said: if the allowance was
+  spent while the card waited and the move now needs more, nothing is signed and the card comes
+  back with the new amount for another click. A move nobody clicked never touches the vault: if
+  the allowance turns out short when it runs, it stops, and nothing is signed.
+- **The sweep** sends money home. When the allowance is worth more than its size plus 10 %,
+  everything over the size goes back to the vault with no click and no Touch ID: USDC first, then
+  the other coins from the largest dollar value down, and the allowance keeps at least its size.
+  It looks after every settled move that touched the allowance, every ten minutes while your
+  wallet is open, when you unlock, and when you change the size. A coin the app has no price for
+  never moves this way, and with no price at all nothing does. While moves are approved,
+  waiting on a Touch ID or running, the coins they will spend stay: the sweep keeps the larger of
+  the size and their spend, and sends home only what is over that plus 10 %, so a big move you
+  approved keeps its money and a move an agent's rules hold back keeps no more than its own. A
+  move whose spend the app cannot read holds the sweep back, and Freeze stops it. Each sweep
+  writes one line in the log, `allowance_swept`, naming every coin and amount.
+
+A size of $0 sends everything priced home at the next sweep. What a Mac running someone else's
+code could spend with no Touch ID is the allowance (its size plus 10 %, $110 at the default, more
+while a move is under way) and the gas account; the vault needs your finger.
 
 ## Deposit
 
@@ -393,7 +451,8 @@ agent attaches to a receiver is kept as data and never drawn as a name.
 
 `propose_hl_deposit` moves USDC from your intents balance into your Hyperliquid account so a plan
 has collateral. One signed intent, nothing sent on any chain, and the account credited is your
-own. The card is titled Fund trading. Under the click threshold it runs on its own, with the same
+own. Once your vault has moved, the allowance pays and the vault's trading account is credited; a
+deposit that fails refunds to the allowance. The card is titled Fund trading. Under the click threshold it runs on its own, with the same
 exceptions as a swap: an assistant that read outside text, or one started outside Phosphor and
 not allowed yet, waits for your click.
 

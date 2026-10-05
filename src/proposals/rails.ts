@@ -39,12 +39,15 @@ import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
 import { amountAsk, baseUnitsToDecimal, canonicalSymbol, decimalToBaseUnits, heldSymbol, oneLine } from '../intents.ts';
 import type { AmountAsk } from '../intents.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { reasonOf } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
 import { ourEvmAddress, ourIntentsAddress, presimulate, pricing, proposeRail, refuseDraft, usdOf } from './draft.ts';
 import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 import { RELAY_DEADLINE_GRACE_MS } from './reconcile.ts';
+import { vaultShortfall } from './execute.ts';
+import type { CardShortfall } from './execute.ts';
 import { draftSymbolOf, pickSwapSides } from './swap-reads.ts';
 import type { SidePick, SwapSide } from './swap-reads.ts';
 import { oneClickRoute } from './swap-route.ts';
@@ -63,13 +66,16 @@ export type PreparedSwap = {
   simulation: SimulationResult | null;
   // Why this swap waits for a click whatever its size, when the builder found a reason.
   ask?: string | null;
+  // The line saying the difference over the allowance moves from the vault first (a click, then
+  // Touch ID), and that difference, which the row keeps as the most the vault adds for it.
+  topUp?: CardShortfall | null;
 };
 
 export function decideSwap(ctx: PCtx, prepared: PreparedSwap): Promise<Proposal> {
   const { params, draft, refusal } = prepared;
   if (refusal !== null) return refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code);
   // Both, when both hold: a listed price never hides an earlier swap that may still go through.
-  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, [prepared.ask, earlierSwapMayRun(ctx, draft)]);
+  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, [prepared.ask, prepared.topUp?.line, earlierSwapMayRun(ctx, draft)], prepared.topUp?.shortfall);
 }
 
 /* AN EARLIER SWAP OF THE SAME COIN THAT MAY STILL GO THROUGH. An open swap that signed a transfer (a
@@ -194,12 +200,23 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
      67,589,776 yocto larger than it was: three signed transfers that could never run. */
   // The coin spent, by id, once the rail has named it: what it is priced by when only 1Click prices it.
   let spentAsset: string | undefined;
+  // Set when the swap spends more than the allowance holds and the vault covers the rest.
+  let topUp: CardShortfall | null = null;
   if (problems.length === 0 && ask !== null) {
     if (rail !== null && typeof rail.spend === 'function') {
       try {
         const spent = await rail.spend(draft);
         spentAsset = spent.assetId;
-        const exact = exactSpend(ask, spent, fromSymbol);
+        let exact = exactSpend(ask, spent, fromSymbol);
+        /* Once the vault has moved to the chip, an amount over the allowance and inside what the
+           vault adds is a swap that waits for a click, then takes the difference from the vault
+           behind its own Touch ID (src/proposals/execute.ts, the shortfall step). "All" stays the
+           allowance's. */
+        if ('why' in exact && exact.cause === 'insufficient_balance' && !ask.all) {
+          const base = decimalToBaseUnits(ask.text, spent.decimals);
+          topUp = await vaultShortfall(ctx, { asset: spent.assetId, symbol: fromSymbol, decimals: spent.decimals }, base, spent.heldBase);
+          if (topUp !== null) exact = { base };
+        }
         if ('why' in exact) refuse(exact.why, exact.cause);
         else {
           draft.amountInExact = baseUnitsToDecimal(exact.base, spent.decimals);
@@ -260,7 +277,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
       unchecked = `This swap spends ${fromSymbol} at 1Click's listed price, and nothing in its quote can check that price, so it waits for your OK.`;
     }
   }
-  return { params, draft, refusal: null, simulation, ask: unchecked };
+  return { params, draft, refusal: null, simulation, ask: unchecked, topUp };
 }
 
 // A rail's price with no floor in the question: a number, null when nobody offers one, or what went wrong.
@@ -406,7 +423,11 @@ function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, ver
     .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   if (held.length === 0) {
-    problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
+    // A payout's card says it as a person reads it: the gas account's NEAR comes this way.
+    const whose = railAccounts(ctx.cfg.keysPath).kind === 'key' ? 'vault' : 'allowance';
+    problems.push(verb === 'pay out'
+      ? `Your ${whose} holds no ${symbol === heldSymbol('NEAR') ? 'NEAR' : symbol}, so nothing was sent and nothing moved.`
+      : `intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
     return { assetId: '' };
   }
   if (held[0].amount < amount) {

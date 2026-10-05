@@ -9,13 +9,21 @@
 // What is here is exactly what touches the key and what shapes its output. Nothing here
 // builds a payload, checks one, or talks to a venue: a signer that also decided what to sign
 // would be the second copy of every check that guards the key.
+//
+// WHICH KEY, since Phase 2 (PHASE2-PLAN.md C6). A wallet whose vault has not moved (kind `key`)
+// signs with the owner key for VAULT, exactly as 0.10.15 did. Once the vault has moved to the
+// chip (kind `chip`, and `broken` while the chip service has not vouched for it), the owner key
+// is out of the session and every rail spends ALLOWANCE, signed with the allowance key the
+// keystore derives (src/keystore/derived.ts). VAULT stays the account deposits, invites and the
+// Hyperliquid account name in every kind; it moves only behind a touch, never through here.
 
 import { hexToBytes } from 'viem';
 import type { Address, Hex } from 'viem';
 import { privateKeyToAccount } from 'viem/accounts';
+import type { PrivateKeyAccount } from 'viem/accounts';
 
 import { base58Encode } from './chain/near.ts';
-import { evmAddress, evmPrivateKey } from './keystore/index.ts';
+import { allowanceKey, evmAddress, evmPrivateKey } from './keystore/index.ts';
 
 // The signing standard, as the relay and 1Click both spell it. erc191 is plain personal_sign
 // over the EVM key the app already holds, which is why no rail needs a NEAR key.
@@ -46,16 +54,75 @@ export type IntentsSignerPort = {
   signErc191(keysPath: string, payload: string): Promise<string>;
 };
 
+/* The accounts the rails work with (src/vault/accounts.ts holds the rule): `vault` is where
+   deposits, invites and the Hyperliquid account land, `spend` is what the rails sign for. Equal
+   under kind `key`; ALLOWANCE under `chip` and `broken`, and null there until this process has
+   opened the wallet once, since only an open derives it. */
+export type RailAccounts = { kind: 'key' | 'chip' | 'broken'; vault: string | null; spend: string | null };
+
+let installed: (() => RailAccounts) | null = null;
+
+/* src/main.ts installs the app's accounts at boot (the demo's own in demo mode). With none
+   installed, as in a test or a script, every wallet is kind `key`: the old behaviour. */
+export function useRailAccounts(fn: (() => RailAccounts) | null): void {
+  installed = fn;
+}
+
+export function railAccounts(keysPath: string): RailAccounts {
+  if (installed !== null) return installed();
+  let vault: string | null = null;
+  try {
+    vault = evmAddress(keysPath);
+  } catch {
+    // No wallet yet: nothing to spend from, and no account to name.
+  }
+  return { kind: 'key', vault, spend: vault };
+}
+
+// An allowance nobody can name yet is a wallet this process has not opened: it is the lock, and it
+// says so the way the keystore does, so a move asking for it waits for the unlock.
+export const ALLOWANCE_UNKNOWN = 'the wallet is locked: unlock it once in the app window so the app knows your allowance account';
+
+/* The account a payload names as its signer, or null for anything that is not one JSON object
+   with one signer_id. */
+function signerIdOf(payload: string): string | null {
+  try {
+    if (duplicateJsonKey(payload) !== null) return null;
+    const body = JSON.parse(payload) as unknown;
+    if (body === null || typeof body !== 'object' || Array.isArray(body)) return null;
+    const id = (body as Record<string, unknown>)['signer_id'];
+    return typeof id === 'string' ? id.toLowerCase() : null;
+  } catch {
+    return null;
+  }
+}
+
 /* One door, src/keystore, and the property it adds is the one a duplicate reader could not
    have: a locked wallet has no key to hand out, so this signer fails by name rather than
    opening a file that is not there any more. */
 export const liveIntentsSigner: IntentsSignerPort = {
   address(keysPath: string): Address {
+    const now = railAccounts(keysPath);
     // The ADDRESS, so it comes from the keystore header and works while locked.
-    return evmAddress(keysPath);
+    if (now.kind === 'key') return evmAddress(keysPath);
+    if (now.spend === null) throw new Error(ALLOWANCE_UNKNOWN);
+    return now.spend as Address;
   },
   async signErc191(keysPath: string, payload: string): Promise<string> {
-    const account = privateKeyToAccount(evmPrivateKey(keysPath));
+    let account: PrivateKeyAccount;
+    if (railAccounts(keysPath).kind === 'key') {
+      account = privateKeyToAccount(evmPrivateKey(keysPath));
+    } else {
+      // A hex copy of the key for viem, as evmPrivateKey() hands one for the owner key.
+      account = privateKeyToAccount(`0x${allowanceKey().toString('hex')}`);
+      /* THE ALLOWANCE KEY SIGNS ONLY FOR ITS OWN ACCOUNT. Every rail checked the payload against
+         the address it read; this holds when the vault moved between that read and this
+         signature, and it keeps a key that signs with no click to the one account it is for. */
+      const named = signerIdOf(payload);
+      if (named !== account.address.toLowerCase()) {
+        throw new Error(`refusing to sign: the payload is for ${named ?? 'no single signer'}, and the allowance key signs only for ${account.address.toLowerCase()}`);
+      }
+    }
     // viem's signMessage is EIP-191 personal_sign: it prefixes the payload and hashes it the
     // way the verifier expects for the erc191 standard.
     const signature = await account.signMessage({ message: payload });

@@ -176,6 +176,11 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, base58, tests/unit/near-chain.test.ts'],
   ['ed25519:49W385L4rePHy6PAaQUovbD2aacgN4HsKXSMeUzRg4fmwXszN91JuMFrQRj3vMDpZuRF3ZknQBuRBoWQJEfXstMw', 'RFC 8032 ed25519 test vector 1 secret, NEAR prefixed form'],
   ['ed25519:FVen3X669xLzsi6N2V91DoiyzHzg1uAgqiT8jZ9nS96Z', 'RFC 8032 ed25519 test vector 1 public key, NEAR prefixed form'],
+  // near-api-js's published test secret for its signed transfer ("serialize and sign transfer tx",
+  // @near-js/transactions@1.3.0 test/serialize.test.ts), which tests/unit/near-tx.test.ts signs with
+  // to reproduce the published signature. Prefixed as published, and the bare base58 inside it.
+  ['ed25519:3hoMW1HvnRLSFCLZnvPzWeoGwtdHzke34B2cTHM8rhcbG3TbuLKtShTv3DvyejnXKXKBiV7YPkLeqUHN1ghnqpFv', 'near-api-js published test secret, tests/unit/near-tx.test.ts'],
+  ['3hoMW1HvnRLSFCLZnvPzWeoGwtdHzke34B2cTHM8rhcbG3TbuLKtShTv3DvyejnXKXKBiV7YPkLeqUHN1ghnqpFv', 'the same near-api-js test secret without its prefix'],
   // sha256 of the empty string, the NIST vector. src/chain/near.ts asserts it on every boot to
   // prove the hash in use is really sha256, the same way keygen proves keccak256.
   ['e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855', 'NIST sha256 of the empty string, src/chain/near.ts self check'],
@@ -356,6 +361,11 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['LaoihSchWpZatv2FMDT22viNx84CWekqNaM4UDhLMpSSc5UJV6n2nJSvXi1PKrssfe9peAwmp1HCUX19zxS4xCf', 'a Fogo signature in a mocked RPC answer, tests/unit/chainscan-families.test.ts'],
   // The order of the secp256k1 group, a curve constant published in SEC 2.
   ['fffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141', 'secp256k1 group order n, src/invite/code.ts (invite branch)'],
+  // The order of the P-256 group, the same kind of constant, and a run of 87 hex digits with no 0 in
+  // one of spike2's Secure Enclave signatures (keys never stored, gone with their process), which
+  // the base58 pattern reads as a key.
+  ['ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551', 'P-256 group order n, tests/unit/intent-grammar.test.ts'],
+  ['581b8bed9d27df3b4332b9f26e42e4586373c7f328489fd4ab87bd99362c37f44f71aef24d261f3df76f58f', 'part of a spike2 chip signature, tests/fixtures/intent-grammar/chip-der.json'],
   // HMAC-SHA256 test vectors. RFC 4231 test case 2 ("Jefe"), and the identity proof of the made-up
   // nonce "a1b2c3d4" x 8 for the challenge "0123456789abcdef" x 4, which pins the shell and the
   // backend to the same MAC. Neither keys anything.
@@ -364,6 +374,58 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   // The read key of the made-up token "f00d" x 16, which pins the shell's read key to the one
   // src/http/auth.ts derives. Keys nothing.
   ['6c06cb123fcf6903ddd78df2a8ab62b9b5a4cfb58bb031186751a07701b97eb1', 'read key test vector, src-tauri/src/backend.rs'],
+  // The published vectors of the keys derived from the owner key (src/keystore/derived.ts), from
+  // two owner keys already above: the canonical Ethereum test key and the hyperliquid-python-sdk
+  // fixture. Each is an ALLOWANCE key, a GAS seed or a GAS account derived from a public test key,
+  // so it holds nothing and anyone can derive it again (tests/fixtures/derived-keys.ts).
+  ['c96e3431c7fe5789854eb223ffab755b902c08bb34fdf40bfcb9839589d3faa1', 'ALLOWANCE key derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['f393907ec2ad1db656b6bd3d8e4804ad70d12ed136c76f46dac1549606a6c64d', 'GAS seed derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['e4d620800228e29d21a180cc305b9541c170631df3b5b513b795947a27520108', 'GAS account derived from the canonical Ethereum test key, tests/fixtures/derived-keys.ts'],
+  ['7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a', 'ALLOWANCE key derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  ['fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879', 'GAS seed derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  ['ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7', 'GAS account derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  // The Hyperliquid trading keys derived from the same two public test keys, versions 1 and 2
+  // (src/keystore/derived.ts, HL-AGENT): published vectors, keyed to nothing (tests/fixtures/hl-agent-keys.ts).
+  ['9bd79f6143f38e7148895138bc777a7f1713871b372118ee6fd1905ab541cdcc', 'trading key v1 derived from the canonical Ethereum test key, tests/fixtures/hl-agent-keys.ts'],
+  ['b019392723d9eff17f3a6e27b6ee0fb604d2867b076c996e225da6bcb30aa966', 'trading key v2 derived from the canonical Ethereum test key, tests/fixtures/hl-agent-keys.ts'],
+  ['15e2354fbbd2692b68388e3bde1fff440cf9ba7033b26ca7483970a5cca118c6', 'trading key v1 derived from the hyperliquid-python-sdk test key, tests/fixtures/hl-agent-keys.ts'],
+  ['883dae3c8b464ef6a145bc1033d034d8dea7bf0632c2d455eff327a21f0e8bf2', 'trading key v2 derived from the hyperliquid-python-sdk test key, tests/fixtures/hl-agent-keys.ts'],
+  // The two halves of the canonical test key's approval of trading key v1 for 90 days, checked with
+  // foundry's `cast wallet sign --data`: a signature over public data by a public key.
+  ['c69b4759bde4d0e04b326f5db34d1cbb4e4753f7e11c9108290b51d1e9d1c88e', 'approveAgent signature half (r), canonical Ethereum test key, tests/unit/hl-agent-allow.test.ts'],
+  ['31c689da930e4f5180e8baa6856b930b0d14f950e6632edd80f92a9706eb462a', 'approveAgent signature half (s), canonical Ethereum test key, tests/unit/hl-agent-allow.test.ts'],
+  // The order n of the P-256 group, a curve constant published in SEC 2. src/vault/webauthn.ts
+  // folds a signature's S below n / 2 with it, the only form the NEAR Intents verifier accepts.
+  ['ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551', 'P-256 group order n, src/vault/webauthn.ts'],
+  // simulate_intents answers recorded live against the deployed verifier on 2026-10-04, kept
+  // whole as the chip vault's fixture. Public keys and signatures of keys made for that run and
+  // thrown away: the secp256k1 keys lived in memory only, the P-256 keys inside a Secure Enclave
+  // and were never stored. They hold nothing and sign for no account.
+  ['5WuawsxE5gsuyvotVXSapBJB5mq6KufujFdaeugXVR9PXuuZbunAkSmshNyCmp5cZ1XorUs8YKJCWfxw5smXwB64', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3AomBcGG1HZkx73RBXLZaDNYfFK8D5w98JiP8GxMpXVj6mm9LNbiJK7tbo4BTLBoEBsdGMFd5J9hs2Xp4qAj57wU', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5QiqLU12BYv5UM1CMAo9C1da3iWPYmjp4gXuHTWBTF51ukmffkPVAUigEm5i4iZQGtG4FTDm4j2AxftkaMbHC86e', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5FYEWeTaeHk1d7RM7u24jpZFdrfT2y8syvZZbqpGJS5DGeoTzvNwp3cT25tin8SPumzbWZviPu3KoMCkDFU47XMa', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3AomBcGG1HZkx73RBXLZaDNYfFK8D5w98JiP8GxMpXVjLjYHeQpB749dYvp8hipnruJ24zbvGC9NTpWK4ecPMkMF', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5AGcHbjAXzm4KSBjRNftiW98QVb2s68GB6hQLfaPYwpKkvNWMZegY6M9sirGBQW4SrdL2LBjHhsZ6EpYQsB1zaJr', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2wxqGkvvttAqDhcQbTzaYoRhUx7jq4P8BVinhVF443cdXDPTKaUFk6gPqMUCK8qAdVQNSXskdNd2QqiuavaZXe9i', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2k3f16qsrqLFAaA1sBHL2QkggKNqareVVCYSF7Y6LsLvFU4PwBWhDGRD4rsTRUUhacy6fcprf6bTUyWA3aLjJ6sX', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4vWDR2G32pGtTpE24Q85o8zEQ6HJ4jktMw7QGqoYaeWA4Q4KBbDaGEPTqYKJwejkuDpsbnMT6DxRW6kgXyK7Qy3z', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4wD6CM6Uwce9Lqk3vuzafHe2MJMgKYbAWeGKqVWBgZn6Jb9utUZPvmSGJcrcMszb43BRvdSH6aDq5uPwxPeL3V7B', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['enXHbd2CFcq2WtAJwscdzxf71BsFCrGbKRu9i7xYZPE2fTD3mCYFTWjGrfCo1FKy7kNhhe59b6jV8cEjqj9QUpd', 'a throwaway secp256k1 public key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['538wkA6uVV7ZR4g3j3kd2KANkfThyrMpNUSmdQV9T1VcFpctq7ttMYmiH6mfvDagTPQjLirdXCREzv7ny67PkGFq', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 1), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3ipJdQBSAUkyEWBUiszTzPdCkaLwdfi4HyvtVgyP6q8gMSZuXmts9fPbQEVMwVZUSDFwqzgZSemDSxaQ7xtkzVM8', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3mrmGkKVSvqG9P3GmGmpA2JTcQq9HMc6FX3vcV1MHrQhYQdcQCmnK7VgyRD3MVpP3nDSigQf2EQSpzsn7uwoSQa5', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['4g12EaqVtAmRKk5iXY5UbAJbpQvRnY57UGT6CfrcT7A5HC54deC9td5X2yDF162bXgMsaN1eR7oKs8g83iH1XNgd', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['41dQd2hdKXSMSGXhYnoh8v6b5qcqHh55SYb9Dg3D4kadzsfKbpeWYrBd2TnkbttJRxZkGiHhia1rQacNwj2tNeD1', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3mrmGkKVSvqG9P3GmGmpA2JTcQq9HMc6FX3vcV1MHrQhajkM5h5feGuUp7gqpFoUt1iKHNymTovokK3aWHwFjZgA', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2JGJ2rZP3jgd3PbZWGenoHMFDnP3XcxqmJuEFJteyuryzrgXt5L6FKYGsccgwDSbCiNYxr86F7kEjmCVA8FQq7T8', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['5SmcrBicueeC3cK6inShCEg8vD9vYaC4agXwbdrL5Ro9zhCFBUnBRjekwPU5p44M8FffrVU2MojVqZRq2XPdFUQL', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2jDpBkTuKQM8w3zMc4ZxfeAWH2cGDEQNnJTEbW7WAwxr9vxY4GZaZHT79dCptEg4zHg2K8DsKsy4d35jxRuDCERh', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['DNKNuwXFjyhYxjHBL72mHsdiUUUrhQ7jC2z1zDrD9gC6qApiodNMyNZuV16K2zTJRnVo5EGEN3Jb6UmL6DmXaNU', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['3H638KALmLxevCpXzDj8dgxEZdV56z3ubYLoxgtb4fQV6fDurM5dsyzAvc67uCBR9kt23PJdB9Li1p6np3UrsJCk', 'a throwaway Secure Enclave P-256 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2REktiAKbn5tivXje8ft42YGY4k45VKaMstFFphFn3pm2MfeBuEn1hwZnWJ4dm3QxrEUCpB93pcSQRUSQnQLd4tT', 'a throwaway secp256k1 public key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2gQC9rghKPCRzZZk2Dypoorz9NhND4BdYfWj3NwLx8Fg5zEHLtxbFLLnMHuUvdcX72Hmgm1JP7nHud2eK6WFPQFX', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
+  ['2ecfPZ65SiMmqiAwQf5zAFbYVK9hASxzTpY54zLfQSgKMn61xN8s3Wvpnj2Qw7wPDXM4wSZKte4jbuTnAhDCgEgv', 'a P-256 signature by a throwaway Secure Enclave key, recorded simulate answers (run 2), tests/fixtures/verifier/simulate-0.4.4.json'],
 ]);
 
 // Machine-written copies of public data carry digests and addresses by the hundred, and the

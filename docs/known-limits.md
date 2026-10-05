@@ -33,16 +33,22 @@ or shown again, after five wrong tries, after half an hour with the Mac awake, o
 quits. It keeps only the three positions it asks for and one slow hash of those three words, the
 same hash that guards the wallet file's password, so a program that reads memory has 8.6 billion
 guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
-with no phrase backs up its private key instead, and its whole copy typed back is the proof, so
-nothing of the key is kept for it.
+with no phrase backs up its private key instead, and I saved it somewhere safe, clicked just after
+the key was shown, is the proof, so nothing of the key is kept for it: only the wallet it opens,
+for half an hour. Copy puts your key on the clipboard, where any app running as you can read it,
+until you click I saved it somewhere safe, Hide, Close or Done. If you leave without one of those
+clicks, the key stays there until you copy something else.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right
 to attach to another process, which the hardened runtime is there to refuse. Keep the vault open
 only while you are using it.
 
-What closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself so that
-key never exists as bytes, or a hardware signer. Neither ships here.
+What closes it for the vault: the move to the chip in the Vault tab. After it the vault answers
+only to this Mac's Touch ID key and your paper key, and the open session holds the allowance key,
+the gas key and the trading key, never the owner key. What it does not close: those three keys are
+in memory while the wallet is open, so the allowance, the gas account and trading stay as exposed as
+described here.
 
 ## Two seconds after the backend stops
 
@@ -142,9 +148,9 @@ password file: this step does not change it, and anyone with the file and the pa
 anywhere.
 
 What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
-Touch ID dialog only for something you started in Phosphor. What closes it: moving the wallet to
-new keys that never existed outside Phosphor's reach, so an old copy holds nothing. The chip vault
-plans that; it is not built.
+Touch ID dialog only for something you started in Phosphor. What closes it for the vault: the move
+to the chip, after which the old key is no key of the vault. An old copy still holds the allowance,
+the gas account and Hyperliquid.
 
 ## A readable key file is trusted only on a Mac known to have no Phosphor-only wallet
 
@@ -176,6 +182,140 @@ on 1Click delivering it.
 What it means: a move whose card says Taking longer, or that reads Not confirmed, is money in
 the venue's hands, not lost and not the app's to recover by itself. Do not send it again.
 [Troubleshooting](troubleshooting.md#a-move-is-late-or-not-confirmed) says what to do.
+
+## The paper is the only key that opens the vault away from this Mac
+
+After the move to the chip, the vault answers to this Mac's Touch ID key and to the 24 words you
+wrote by hand, and to nothing else. The key backup alone no longer reaches the vault. A restore on a
+new Mac needs both: the key backup brings back the vault's address, the allowance, the gas account
+and Hyperliquid, and the paper brings back the vault. Phosphor has you type three of the words back
+before anything moves, so a slip in another word is caught only when you restore, and the paper
+signs a proof on chain in the same call that adds it, but nothing can check the paper itself. Check
+each word as you write it.
+
+What it means: if this Mac is lost and the paper is lost or wrong, the money in the vault is lost.
+Keep the paper like cash, apart from the key backup. The paper is an ordinary EVM key, so it also
+signs for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
+
+## The key backup also controls the allowance and the gas account
+
+The allowance key and the gas account's key are derived from the owner key, never stored, so the
+backup you already have brings both back. The cost: whoever holds that backup also holds the
+allowance (its size plus 10 percent, $110 at the default, more while a move is under way), the gas
+account (about 0.5 NEAR) and Hyperliquid, even after the vault has moved.
+
+What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the two
+keys is what keeps one backup instead of three.
+
+## After the move, your wallet's words still open the allowance, the gas account and Hyperliquid
+
+The move takes your wallet's key off the vault, not out of use. The Vault tab still shows your
+recovery phrase, or your private key, after the move, behind the same Touch ID, and says beside
+them what follows. Those words no longer open the vault, but the allowance key and the gas key are
+derived from them, and they still own your Hyperliquid account.
+
+What it means: whoever reads those words can spend the allowance, the gas account's NEAR and your
+Hyperliquid collateral, though never the vault. Show them only to write your backup. What closes
+it: nothing planned.
+
+## NEAR Intents' admins can switch predecessor auth back on
+
+The move turns auth by predecessor id off for your vault: the NEAR door in the Vault tab, a way for
+your wallet's key to act for the vault through its NEAR account. The verifier's admins can turn it
+back on for any account, which would let that key reach a moved vault again.
+
+What it means: the Vault tab reads the flag from the chain and says when the door is open. If it
+does, keep your key backup like cash; if anyone else may have it, send your money to a wallet only
+you control. What closes it: nothing Phosphor controls; the switch is the verifier's.
+
+## A backend compromised after the move writes every dialog but the chip's
+
+The owner key's unwrap and the presence ask carry sentences the backend writes. A backend someone
+broke into after the move can word those dialogs as it likes, and can ask for your paper on a
+screen of its own.
+
+What it means: only a chip dialog moves money out of the vault, and the vault service writes that
+sentence from the payload it read, never the backend. Phosphor asks for words of your paper only in
+a move or a restore you started: type them nowhere else. What closes it: nothing in this build.
+
+## This Mac's login password answers the chip's dialog
+
+The vault's Touch ID key asks for you on every use, by Touch ID or this Mac's login password.
+
+What it means: a stolen Mac and its login password move the vault. Keep the password strong and the
+Mac locked when you leave it. What closes it: nothing in this build.
+
+## Every chain read trusts one NEAR RPC
+
+The app reads NEAR through one provider, FastNEAR. Phosphor checks what it can: a move is called
+done only when the whole move reads right at one block, and a top-up the RPC turned down after it
+saw the signed bundle waits on NEAR rather than reading as nothing moved. Three gaps stay. A lying
+RPC can make a top-up whose call landed look dead, because the check that calls a bundle dead
+trusts a final block whose time is not tied to its hash and asks no second RPC; it can make a
+stopped move look done, by lying about the whole move at one block; and it can hide a forced
+switch of the NEAR door from the Vault tab.
+
+What it means: in the first case your next approval of the same top-up moves the money a second
+time, still inside your own accounts, and the sweep sends what is over the size back to the vault.
+What closes it: a second RPC asked before such a verdict, and a final height recorded at the send.
+
+## The chip's sentence must fit the dialog
+
+The vault service refuses any payload whose sentence would run past 120 characters, but no real
+Touch ID dialog has been read in a test yet.
+
+What it means: if a dialog ever looks cut short, cancel it. What closes it: a session on a real Mac
+that reads each sentence in the system dialog.
+
+## An unlock can keep your owner key out for the session
+
+At an unlock the app asks NEAR whether your vault moved when this Mac holds a chip marker for it
+from a move that stopped, or when it could not read the markers at its start. If NEAR answers
+after the unlock, a wallet that never moved opens without its owner key.
+
+What it means: moves from the vault are refused, saying the vault moved, until you lock and unlock
+again; nothing is signed and nothing moves. What closes it: asking NEAR before the unlock is
+answered.
+
+## The trading key's counter can be rolled back
+
+vault.json counts the trading keys the Vault tab has approved on Hyperliquid. A program running as
+you that rolls the counter back makes the next Allow trading approve an address the venue approved
+before.
+
+What it means: that key's signed actions inside the venue's nonce window, about two days, could
+replay. It cannot trade with or approve a key someone else holds: every trading key comes from your
+owner key. What closes it: deriving each trading key under its approval's own nonce.
+
+## A signed test session leaves a signing window open
+
+A maintainer's signed run of the release harness unlocks a throwaway keychain for that run, and its
+key trusts codesign, so a program running as the maintainer could sign with the Developer ID in that
+window.
+
+What it means: nothing for a copy you install; it is about the maintainer's Mac, where such a
+program could already read the signing key's file. What closes it: moving the signing keys off the
+maintainer's Mac first, and that session waits for it.
+
+## A program running as you during the move
+
+The owner key and the paper sign the call that changes the vault's keys inside the app, not in the
+chip. A program running as you while the move runs could read the paper's words as you type them,
+pin a wrong allowance, or add a key of its own in that call. Afterwards it cannot: the chip refuses
+to add a key, and the paper's key is gone from memory once it signs.
+
+What it means: move the vault on a Mac you trust, with nothing else running that you did not start.
+The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault tab
+reads the vault's keys from the chain. What closes it: an audit by a third party, which is planned
+and not done, and a signer that builds that call itself.
+
+## A Touch ID sentence names a coin by its ticker
+
+The vault's Touch ID says "move 5.00 USDC from your vault to your allowance", not which USDC: USDC
+on NEAR and USDC bridged from Ethereum share the ticker, and a payload names each ticker once.
+
+What it means: the value is the same either way, inside NEAR Intents. What closes it: nothing
+planned.
 
 ## Hyperliquid, and what a withdrawal needs
 
@@ -250,7 +390,8 @@ your daily limit.
 
 Releases are built in a job that holds no secret, and signed in another job that installs and
 builds nothing. Before signing, the release checks that the payload's own files match the tagged
-source and that every program inside carries only the committed entitlements. Nothing checks
+source, that every program inside carries only the committed entitlements, and that the vault
+service carries the five chip ops and the grammar's newest rule. Nothing checks
 what else the build put on the disk image beside the app. It cannot vouch for the compiled
 programs (the shell, the bundled Node, the Secure Enclave service) or for the installed packages,
 and the release build does not repeat CI's check of each package's registry signature.

@@ -14,6 +14,7 @@ import { oneLine } from '../intents.ts';
 import { sameOrigin } from './auth.ts';
 import { asRecord, capLabel, capStrings, fail, oversizeString, readBody, rewordAnswer, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
+import { AGENTS_WAIT_SAID, agentsWait } from '../proposals/lifecycle.ts';
 
 // The longest string any op on this door takes, and the longest one the audit line keeps. The
 // propose door caps its own fields lower (src/http/propose.ts); a chart label, a search query
@@ -412,6 +413,13 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
     return;
   }
   if (op === 'propose') {
+    // While the vault moves to this Mac's Touch ID key, nothing is drafted, priced or written, and
+    // the agent is told when to ask again (src/proposals/lifecycle.ts agentsWait).
+    if (agentsWait(ctx)) {
+      ctx.audit.append('agent_rejected', 'a propose was refused: the vault is moving to its Touch ID key', { kind: oneLine(body.kind ?? '?', 80) });
+      fail(res, 409, AGENTS_WAIT_SAID, { paused: 'vault_moving' });
+      return;
+    }
     await handlePropose(ctx, body, res);
     return;
   }

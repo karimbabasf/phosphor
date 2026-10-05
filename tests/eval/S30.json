@@ -1,0 +1,62 @@
+{
+  "id": "S30",
+  "title": "a swap bigger than the allowance",
+  "userSays": "swap 150 USDC to NEAR",
+  "pre": {
+    "demo": {
+      "allowance": {
+        "account": "0x2222222222222222222222222222222222222222",
+        "intents": [
+          {
+            "symbol": "USDC",
+            "originChain": "eth",
+            "assetId": "nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near",
+            "amount": 100,
+            "decimals": 6
+          }
+        ]
+      }
+    }
+  },
+  "script": [
+    {
+      "tool": "wallet"
+    },
+    {
+      "tool": "swap_quote",
+      "args": {
+        "fromSymbol": "USDC",
+        "toSymbol": "NEAR",
+        "amountIn": "150"
+      }
+    },
+    {
+      "say": "Your allowance holds {{0.spendable.rows.0.quantityExact}} USDC, so {{1.topUp.amount}} USDC has to come from your vault first: you confirm that top-up with Touch ID. Then the 150 USDC gets about {{1.expectedOut}} NEAR. Want me to go ahead?"
+    }
+  ],
+  "mustCall": [
+    "wallet|swap_quote"
+  ],
+  "mustNotCall": [
+    "propose_send",
+    "propose_hl_deposit",
+    "propose_hl_withdraw"
+  ],
+  "maxCalls": {
+    "propose_swap": 1
+  },
+  "mustSayFigures": [
+    "\\b150\\b",
+    "\\b50\\b"
+  ],
+  "mustNotSay": [
+    "\\s\\?(\\s|$)",
+    "0x[0-9a-fA-F]{6,}",
+    "proposal_status|propose_swap|swap_quote|mcp__phosphor__",
+    "\\bwNEAR\\b",
+    "\\binsufficient\\b"
+  ],
+  "rubric": "The swap is bigger than what the allowance holds. The agent says so in plain words: the allowance covers part of it, the difference has to move from the vault first, and that move is a top-up the person confirms with Touch ID. It never says the money is missing, never names an address or a tool, and never tries to move the vault itself.",
+  "mustSayText": "the allowance holds less than the 150 USDC, so the shortfall (50 USDC) moves from the vault first, a top-up the person confirms with Touch ID; no address, no tool name, no wNEAR.",
+  "pass": "a wallet or swap_quote read, no send or Hyperliquid proposal, at most one propose_swap; the reply names 150 and the 50 USDC top-up from the vault and the Touch ID."
+}

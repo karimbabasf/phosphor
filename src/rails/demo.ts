@@ -201,12 +201,14 @@ export function demoRails(deps: DemoRailDeps): RailRegistry {
    own, the balance the wallet reads, and the ledger rows this run's moves wrote. Without it
    swap_assets, swap_quote and swap_check said no swap venue was wired while propose_swap still
    walked the demo swap rail, and an agent that quotes before it swaps told the person swaps were
-   off. The fixture holds one account, this app's own, so the account asked about is not looked at. */
+   off. The fixture holds one account, this app's own, so the account asked about is not looked at,
+   unless the fixture stands in for a vault that moved to the chip: then the allowance it names is
+   read apart from the vault (src/ledger/demo.ts). */
 export function demoSwapLookup(): SwapLookup {
   return {
     tokens: async () => demoTokenList(),
     listed: () => demoTokenList(),
-    balance: async (_account, assetId) => heldBaseOf(assetId),
+    balance: async (account, assetId) => heldBaseOf(assetId, account),
     activity: async (account, limit) => demoActivity(account, limit),
   };
 }
@@ -237,9 +239,12 @@ function contractOf(assetId: string): string {
   return /-(0x[0-9a-fA-F]{40})\./.exec(account)?.[1] ?? account;
 }
 
-// What the fixture holds of one asset in base units, off the same read the wallet shows.
-function heldBaseOf(assetId: string): bigint {
-  const held = loadDemoReads().intents.holdings.find((h) => h.assetId === assetId)?.amountBase;
+// What the fixture holds of one asset in base units, off the same read the wallet shows: the
+// allowance's when that is the account asked about, else the vault's.
+function heldBaseOf(assetId: string, account = ''): bigint {
+  const { split } = loadDemoReads();
+  const read = split.spend.account === account.toLowerCase() ? split.spend.read : split.vault.read;
+  const held = read?.holdings.find((h) => h.assetId === assetId)?.amountBase;
   return held === undefined ? 0n : BigInt(held);
 }
 

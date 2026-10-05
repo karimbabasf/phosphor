@@ -58,6 +58,9 @@ export type SwapQuoteReply = {
   candidates?: SwapSide[]; // on ambiguous_asset: name one of these by its assetId
   picked?: string; // the version of the bought coin the app took, when its name fits several
   preview?: true; // the balance holds none of the coin sold yet: its price if it did, nothing to file
+  // Once the vault has moved: the part of amountIn the allowance does not hold, which moves from
+  // the vault first, behind a Touch ID (PHASE2-PLAN.md C6). Exact, in the sold coin's units.
+  topUp?: { amount: string; symbol: string };
 };
 
 export type SwapLedgerMove = { amount: string; at: string | null; counterparty: string | null; hash: string };
@@ -84,16 +87,17 @@ function sideOf(t: OneClickToken): SwapSide | null {
   return { symbol: oneLine(t.symbol, 24), network: net.id, assetId: t.assetId, decimals: t.decimals };
 }
 
-// What the balance holds, by asset id, as exact decimals. Empty when the ledger has no read.
+// What the balance holds, by asset id, as exact decimals. Empty when the ledger has no read. Once
+// the vault has moved, the vault's and the allowance's together: a coin held in either is held.
 function heldOf(ctx: PCtx): Map<string, string> {
-  const out = new Map<string, string>();
+  const sums = new Map<string, { base: bigint; decimals: number }>();
   const read = ctx.ledger.intents();
-  if (read === undefined || !read.ok) return out;
+  if (read === undefined || !read.ok) return new Map();
   for (const h of read.holdings) {
     if (h.amountBase === undefined || !/^\d+$/.test(h.amountBase) || BigInt(h.amountBase) === 0n) continue;
-    out.set(h.assetId, baseUnitsToDecimal(BigInt(h.amountBase), h.decimals));
+    sums.set(h.assetId, { base: (sums.get(h.assetId)?.base ?? 0n) + BigInt(h.amountBase), decimals: h.decimals });
   }
-  return out;
+  return new Map([...sums].map(([assetId, { base, decimals }]) => [assetId, baseUnitsToDecimal(base, decimals)]));
 }
 
 export type SidePick =
@@ -551,6 +555,22 @@ function coinWord(side: SwapSide): string {
   return side.symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : side.symbol;
 }
 
+/* What a quote says once the vault has moved to the chip and the allowance holds less than the
+   swap spends: the shortfall comes from the vault first, as a top-up the person confirms with
+   Touch ID (PHASE2-PLAN.md C6). The agent says it; it has no way to move the vault itself. */
+const OVER_ALLOWANCE = {
+  topUp: (held: string, short: string, coin: string): string =>
+    `Your allowance holds ${held} ${coin}, less than this swap spends, so ${short} ${coin} moves from your vault first; you confirm that move with Touch ID.`,
+  allNone: (coin: string): string =>
+    `Your allowance holds no ${coin}; what your vault holds moves only through a top-up you confirm with Touch ID, so name an amount instead.`,
+};
+
+/* The vault's account when it is not the one the moves spend from (kind chip), else null. */
+function savingsAccount(ctx: PCtx, spend: string): string | null {
+  const vault = ctx.ledger.reads?.()?.vault?.account ?? null;
+  return vault === null || vault === spend.toLowerCase() ? null : vault;
+}
+
 export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<SwapQuoteReply> {
   const none = { ok: false, amountIn: null, expectedOut: null, minOut: null, feeUsd: null, etaSeconds: null, details: null } as const;
   const lookup = ctx.rails.swap;
@@ -621,20 +641,29 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
 
   const problems: string[] = [];
   const account = ourIntentsAddress(ctx, problems);
-  if (problems.length > 0) return { ...none, from, to, reason: 'not_available', sentence: 'Make a wallet first, then ask again.' };
+  if (problems.length > 0) {
+    return { ...none, from, to, reason: 'not_available', sentence: /^Make a wallet/.test(problems[0] ?? '') ? 'Make a wallet first, then ask again.' : problems.join(' ') };
+  }
   const draft = draftFor(ctx, from, to, account);
   const words = wordsDraft(draft, from, to);
   if (from.assetId === to.assetId) return { ...none, from, to, reason: 'invalid_request', sentence: 'Those are the same coin, so there is nothing to swap.' };
   const ask = amountAsk(params.amountIn);
   if (ask === null) return { ...none, from, to, reason: 'invalid_request', sentence: 'The amount has to be "all" or a number above zero, like 1.5.' };
 
-  // The exact amount, the same way a propose sets it: "all" is the balance to the last unit.
-  const heldBase = await lookup.balance(account.toLowerCase(), from.assetId);
+  // The exact amount, the same way a propose sets it: "all" is the balance to the last unit. Once
+  // the vault has moved, "all" is the allowance's (what a move can spend), and the vault's is read
+  // beside it for what a top-up could add.
+  const vault = savingsAccount(ctx, account);
+  const [heldBase, savedBase] = await Promise.all([
+    lookup.balance(account.toLowerCase(), from.assetId),
+    vault === null ? Promise.resolve(0n) : lookup.balance(vault, from.assetId),
+  ]);
   // None of it held: by the live read, or by the ledger's when the live read fails for a coin picked as unheld.
-  const preview = heldBase === 0n || (unheld !== null && heldBase === null);
+  const preview = (heldBase === 0n && savedBase === 0n) || (unheld !== null && heldBase === null);
   let base: bigint;
   if (ask.all) {
     if (heldBase === null) return { ...none, from, to, reason: 'balance_unread', sentence: reasonSentence('balance_unread', words) };
+    if (heldBase === 0n && savedBase !== 0n && vault !== null) return { ...none, from, to, reason: 'insufficient_balance', sentence: OVER_ALLOWANCE.allNone(coinWord(from)) };
     if (heldBase === 0n) return { ...none, from, to, reason: 'insufficient_balance', sentence: NOT_HELD.all(coinWord(from)), details: NOT_HELD.allNext };
     base = heldBase;
   } else {
@@ -650,17 +679,31 @@ export async function swapQuote(ctx: PCtx, params: SwapQuoteParams): Promise<Swa
     const facts = await routedFacts(ctx, priced, rail);
     remember(ctx, to.assetId, 'yes');
     // A quote for more than is held is still a price, and the reason says the swap could not run.
-    const short = heldBase !== null && base > heldBase;
+    const over = heldBase !== null && base > heldBase;
+    // Over the allowance and inside what the vault adds: it runs after a top-up of the difference.
+    const topUp = over && !preview && vault !== null && savedBase !== null && base <= heldBase + savedBase ? base - heldBase : null;
+    // The vault unread: whether a top-up covers it is not known, and the answer says that.
+    const unknown = over && !preview && vault !== null && savedBase === null;
+    const short = over && topUp === null && !unknown;
     return {
       ok: true,
       from,
       to,
       ...facts,
-      reason: short || preview ? 'insufficient_balance' : null,
-      sentence: preview ? NOT_HELD.preview(coinWord(from)) : short ? reasonSentence('insufficient_balance', words) : null,
+      reason: short || preview ? 'insufficient_balance' : unknown ? 'balance_unread' : null,
+      sentence: preview
+        ? NOT_HELD.preview(coinWord(from))
+        : topUp !== null && heldBase !== null
+          ? OVER_ALLOWANCE.topUp(baseUnitsToDecimal(heldBase, from.decimals), baseUnitsToDecimal(topUp, from.decimals), coinWord(from))
+          : short
+            ? reasonSentence('insufficient_balance', words)
+            : unknown
+              ? reasonSentence('balance_unread', words)
+              : null,
       details: null,
       ...(preview ? { preview: true as const } : {}),
       ...(picked === null ? {} : { picked }),
+      ...(topUp === null ? {} : { topUp: { amount: baseUnitsToDecimal(topUp, from.decimals), symbol: coinWord(from) } }),
     };
   } catch (err) {
     const code = reasonOf(err) ?? 'simulation_failed';

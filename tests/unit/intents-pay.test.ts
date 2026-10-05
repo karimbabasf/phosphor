@@ -29,6 +29,8 @@ import { depositFloorOf, ownDepositChain, readsOwnDeposit } from '../../src/rail
 import type { DepositFloor } from '../../src/rails/pay-rules.ts';
 import { parsePoaTokens } from '../../src/rails/intents-address.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { liveIntentsSigner } from '../../src/intents-sign.ts';
+import { KINDS, signerOf, useKind } from './helpers/rail-kinds.ts';
 import { STATUS_DATA_LABEL } from '../../src/preflight/route-health.ts';
 import type { RouteAsk, RouteHealth, RouteState } from '../../src/preflight/route-health.ts';
 
@@ -194,6 +196,8 @@ type Overrides = {
   quoteFails?: Error;
   generateThrows?: string;
   signerThrows?: string;
+  // The signer itself: the both-kinds tests hand in the live one.
+  signer?: IntentsSignerPort;
   preflightThrows?: string;
   // The receiver's holdings as the chain answers them, before and after; null is "would not answer".
   receiver?: Array<AddressSummary | null>;
@@ -265,7 +269,7 @@ function railOf(over: Overrides = {}) {
     keysPath: '/nonexistent/keys.json',
     tokens: registry,
     api,
-    signer: over.signerThrows === undefined ? signer : { ...signer, signErc191: async () => Promise.reject(new Error(over.signerThrows)) },
+    signer: over.signer ?? (over.signerThrows === undefined ? signer : { ...signer, signErc191: async () => Promise.reject(new Error(over.signerThrows)) }),
     now: () => NOW,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
@@ -825,3 +829,28 @@ test('a payout approved before its coins were pinned is not run', async () => {
   await assert.rejects(() => rail.execute(unpinned), /approved before Phosphor pinned the coins it moves/);
   assert.equal(calls.quotes.length, 0);
 });
+
+// ---------- both kinds of wallet (PHASE2-PLAN.md C6) ----------
+
+// A throwaway key: the live signer needs a real one, and the fixtures' 0x1111... account has none.
+const KIND_KEY = `0x${'33'.repeat(32)}` as const;
+
+for (const kind of KINDS) {
+  test(`kind ${kind}: the live signer signs the payout once, for the account it spends, and the refund goes back to that account`, async () => {
+    const run = useKind(kind, KIND_KEY);
+    try {
+      const account = run.spend.toLowerCase();
+      const { rail, calls } = railOf({ signer: liveIntentsSigner, echo: { refundTo: account }, payload: payloadOf({ signer_id: account }) });
+      const result = await rail.execute(draftOf({ from: account }));
+      assert.equal(result.ok, true, result.detail);
+      assert.equal(calls.quotes[0]?.account, account, 'quoted for the account the move spends: 1Click refunds to it');
+      assert.deepEqual(calls.generated, [{ signerId: account, depositAddress: HANDLE }]);
+      assert.equal(calls.submitted.length, 1);
+      const { payload, signature } = calls.submitted[0]!;
+      assert.equal(await signerOf(payload, signature), run.spend);
+      assert.deepEqual(run.asks, kind === 'key' ? { owner: 1, allowance: 0 } : { owner: 0, allowance: 1 }, 'one key, the one its kind uses, once');
+    } finally {
+      run.restore();
+    }
+  });
+}

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, SCREENS, TRADING, VOICE, WINDOW, WORDS, handshakeInstructions } from '../../src/persona.ts';
+import { ALWAYS_CLICK_TOOLS, CHAT_WITHHELD, CHECK, IDENTITY, MONEY, OPERATING_RULES, SCREENS, TRADING, VAULT, VAULT_RULES, VOICE, WINDOW, WORDS, handshakeInstructions } from '../../src/persona.ts';
 import { buildRole } from '../../src/role.ts';
 import { CAPABILITIES, buildGreeting } from '../../src/greeting.ts';
 
@@ -49,7 +49,7 @@ test('both surfaces open with the same identity', () => {
 
 test('both surfaces carry the voice, the words, the money, the checks and the rules, whole', () => {
   for (const [name, text] of surfaces()) {
-    for (const line of [...WINDOW, ...VOICE, ...WORDS, ...MONEY, ...TRADING, ...CHECK]) {
+    for (const line of [...WINDOW, ...VOICE, ...WORDS, ...MONEY, ...TRADING, ...VAULT, ...VAULT_RULES, ...CHECK]) {
       assert.ok(text.includes(line), `${name} is missing: ${line.slice(0, 60)}`);
     }
     for (const rule of OPERATING_RULES) assert.ok(text.includes(rule), `${name} is missing the rule: ${rule.slice(0, 60)}`);
@@ -161,6 +161,57 @@ test('the start answer no longer repeats the rules the handshake carries', () =>
   ) as unknown as Record<string, unknown>;
   assert.equal('rules' in greeting, false);
   assert.ok(!String(greeting.banner).includes('the person with the key'));
+});
+
+/* What is new in 0.10.15 and 0.10.16, Karim's ask of 2026-10-05: the agent explains the wallet and
+   the vault if asked. Pinned by meaning, one fact a person asks about per line. */
+test('both surfaces explain the wallet and the vault as 0.10.15 and 0.10.16 left them', () => {
+  for (const [name, text] of surfaces()) {
+    const at = text.indexOf('HOW THEIR WALLET AND VAULT WORK.');
+    assert.ok(at > text.indexOf('THE MONEY.') && at < text.indexOf('RESEARCH.'), `${name}: the section sits with the money`);
+    for (const fact of [
+      /Phosphor-only: their Touch ID wallet opens for Phosphor alone/,
+      /write a 24-word paper key by hand/,
+      /The paper key is the only key that opens the vault away from this Mac[^.]*: keep it like cash/,
+      /still controls the allowance, the gas account and Hyperliquid/,
+      /\$100 unless they pick another size or turn it off/,
+      /over its size plus 10 percent goes back to the vault on its own/,
+      /you spend only from the allowance/,
+      /a top-up from the vault is theirs to ask for in the Vault tab, with one Touch ID/,
+      /Approve then asks two Touch IDs: the move's own first, then one that moves exactly the difference/,
+      /The gas account[^.]*about 0\.5 NEAR/,
+      /Allow trading on Hyperliquid[^.]*for 90 days with one Touch ID/,
+      /The move shuts the NEAR door/,
+      /Restore your vault in the Vault tab: write a new paper key, type the old paper's 24 words/,
+      /While the vault moves or is restored, your moves wait/,
+      /docs\/verify\.md/,
+      /node scripts\/vault-check\.ts/,
+    ]) {
+      assert.match(text, fact, name);
+    }
+  }
+});
+
+test('both surfaces keep the agent away from the paper key, the vault and the person\'s own steps', () => {
+  for (const [name, text] of surfaces()) {
+    assert.match(text, /Never ask for, accept or repeat their paper key, recovery phrase or private key/, name);
+    assert.match(text, /If they type one here anyway, do not repeat or use it/, name);
+    assert.match(text, /You cannot move vault money: no tool you hold reaches it, and every move out of the vault needs their Touch ID/, name);
+    assert.match(text, /theirs to do in the Vault tab: say so plainly, name the row, and never say you did it or will/, name);
+  }
+});
+
+/* The paper key check goes from all 24 words to a few, and the private key backup from typing it
+   back to Copy and "I saved it" (fix2e). The section says what the person does, so it stays true
+   either way; a restore still types the old paper whole. Every session pays for it, so it has a
+   ceiling: 4,154 characters as written. */
+test('the vault section stays true while the backup checks change, and stays short', () => {
+  const section = [...VAULT, ...VAULT_RULES].join('\n');
+  for (const stale of [/type (all|the) 24 words back/i, /typed back whole/i, /\bprint(ed)? sheet\b/i, /type the whole key back/i, /prove the copy/i]) {
+    assert.doesNotMatch(section, stale);
+  }
+  assert.match(section, /Phosphor checks what they wrote/);
+  assert.ok(section.length < 4_300, `the vault section is ${section.length} characters`);
 });
 
 /* A payout carries no memo (src/rails/pay-rules.ts, 2026-09-26): both surfaces and the tool index

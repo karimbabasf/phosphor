@@ -3,8 +3,8 @@
 The Trade tab is the [Hyperliquid](https://hyperliquid.xyz) perpetuals surface: the chart, your
 positions, your orders and your plans. A perpetual is a futures contract with no expiry date, so
 you can hold a long or a short for as long as your collateral lasts. This page explains what a
-proposed trade is, when it needs your click, what an armed plan may do on its own, and what stops
-when the wallet locks.
+proposed trade is, when it needs your click, what an armed plan may do on its own, what stops
+when the wallet locks, and what Touch ID asks for once your vault has moved to it.
 
 ## Trade mode
 
@@ -99,6 +99,10 @@ stay in memory until it is reused; see [Known limits](known-limits.md).) A plan 
 key until that session ends, so a bot that outlives a lock holds trading authority, not custody.
 It can place the entry it was armed for and its exits; it cannot move money out.
 
+Once your vault has moved to Touch ID, a withdrawal is the one exception: it never used the key the
+lock wipes, and it asks for a Touch ID of its own whether the app is locked or not (see
+[below](#the-owner-key-after-the-move-to-touch-id)).
+
 A plan whose session has ended while the wallet is locked waits as Needs unlock and re-arms when
 you unlock. Only Unlock re-arms it: showing an address, revealing the phrase or approving a move
 with Touch ID does not, not even while the app is starting. If the prices behind the watcher stop coming in, the plan says Waiting for prices and
@@ -114,6 +118,78 @@ wallet locked and no plan running, or no trading key for the account) nothing on
 be closed, the freeze still stops everything else, and the window says the positions are still
 open.
 See [Getting started](getting-started.md#freeze-everything).
+
+## The owner key after the move to Touch ID
+
+Moving your vault to this Mac's Touch ID key takes the wallet's original key, the owner key, out of
+memory for good. On Hyperliquid that key still owns the trading account, so each thing only it can
+sign asks for a Touch ID of its own:
+
+- sending USDC out of the account, which is what a withdrawal does;
+- moving USDC between the account's spot and perp sides (a standard account only; a unified account
+  has one balance);
+- approving a new trading key for the account (Allow trading, [below](#the-trading-key-after-the-move-to-touch-id)).
+
+The dialog names the action, the amount and where the money goes, for example "Send 25.00 USDC from
+your Hyperliquid account to 0xaf4fda38...3184d954". The app writes that sentence from the exact
+action it is about to sign, and it never asks for an action it cannot name in full. The touch opens
+the owner key for that one signature, and the key is wiped as soon as the signature is made. Nothing
+stays open: the next action asks again.
+
+A withdrawal asks once. Your click on the card approves it, and the Touch ID comes when the send is
+signed, after 1Click has made the address the money goes to: that is the address in the dialog. A
+standard account that first has to move collateral from perp to spot asks twice, once per step, and
+the card says so. If Hyperliquid does not answer a send, the app posts the same signed send again,
+so one send never asks twice. Cancel the Touch ID and nothing is signed; the card says you said no.
+
+Funding the account works like any other move from your allowance: it follows your rules, and the
+owner key plays no part. On a standard account, moving what lands from spot to perp asks for a Touch
+ID of its own.
+
+One touch gives one owner action. Read the dialog before you touch it: an app that has been taken
+over could ask for a touch that looks right and use the key for something else, and one touch is
+then enough to move everything on Hyperliquid. Your vault is out of its reach, because after the move
+this key no longer signs for the vault. Keep only your trading margin on Hyperliquid.
+
+## The trading key after the move to Touch ID
+
+Plans trade with a trading key: a Hyperliquid API wallet that can place and cancel orders and cannot
+withdraw, transfer or approve another key. Before the move, the trading key is the one
+`scripts/hl-agent.ts` wrote into your wallet file, and that does not change for a wallet that has not
+moved. After the move, your wallet file takes no new key, so Phosphor makes the trading key from the
+owner key instead, every time the wallet opens, beside your allowance and gas keys. It is never
+written anywhere, and the lock wipes it. A key made this way reaches nothing new: the owner key
+already owns the trading account.
+
+Allow trading on Hyperliquid approves that key with one Touch ID. The dialog names the key and how
+long it may trade, for example "Let 0xca9aad7b...c52f1e04 trade on your Hyperliquid account for 90
+days", and the app writes that sentence from the exact approval it signs. The owner key opens for that
+one signature and is wiped once it is made. Your plans trade with the new key from that moment, with
+no second touch. Until you approve one, the key your wallet file already held keeps trading.
+
+- **90 days.** Hyperliquid retires the key on its own after that. Allow trading again before then to
+  renew it: the same one Touch ID, for a new key.
+- **One key at a time.** The new key takes the name Phosphor's trading keys have on Hyperliquid, so
+  the key it replaces stops working the same moment. A plan that holds the old key has to finish or
+  be cancelled first, and the window says so.
+- **Never the same key twice.** Each approval is a new key, numbered in `state/vault.json`. Hyperliquid
+  forgets the history of a retired key, and approving it again would let its old orders be replayed,
+  so the number only goes up. An approval that never reached Hyperliquid (a cancel, a refusal) is
+  tried again with the same key, since that key never signed anything.
+- **Open first.** The next key is made when the wallet opens, so a locked wallet is asked to open
+  before it can allow trading. If you approved a key and want another in the same session, lock and
+  open the wallet once more.
+- If Hyperliquid does not answer, Phosphor reads its list of keys for your account before saying
+  anything, and never signs the approval twice. If the list cannot say either, allow trading again.
+
+The trading key is HKDF-SHA256 of the owner key's 32 bytes, salt `phosphor`, info
+`phosphor/hl-agent/v<n>` for key number n, read as a secp256k1 key (redrawn under `/1`, `/2` in the
+rare case it is not one). Anyone rebuilding it by hand can check against this: the public test key
+`4c0883a6...f362318` gives key 1 `9bd79f61...b541cdcc`, address
+`0xCa9AAd7B7e6D078718298039b40ef289C52F1E04`, and key 2 `b0193927...b30aa966`, address
+`0x4b1495fD164fE42D80718ece02b34019fbc3aF0d` (the full vectors are in
+`tests/fixtures/hl-agent-keys.ts`). Whoever holds the owner key, or its backup, can make this key too,
+which reaches nothing the owner key does not.
 
 ## Reading the account
 

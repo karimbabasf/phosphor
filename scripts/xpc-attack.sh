@@ -2,10 +2,13 @@
 # Plays the 2026-09-14 pen test's local process against a built bundle: can anything but the
 # Phosphor shell get the Secure Enclave helper to answer?
 #
-#   sh scripts/xpc-attack.sh [path/to/Phosphor.app]
+#   sh scripts/xpc-attack.sh [path/to/Phosphor.app] [request]
 #
 # Every request is {"op":"probe"}: it reads no key and raises no dialog, and an answer to it is
 # exactly as much proof of reach as an answer to an unwrap. Nothing here reads ~/.phosphor.
+# An optional second argument is the JSON request every stranger (steps 2 to 4) sends in place of
+# the probe, so a case can ask for a chip op (tests/attack/cases/30-xpc-sign-intent.ts). Step 5,
+# the shell's own --enclave-probe, always sends the probe.
 #
 # Nothing here changes the bundle it is given or runs code from a changed copy of it. macOS checks
 # a notarized bundle's seal when code inside it first runs, and a broken seal is a "damaged" alert
@@ -34,6 +37,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 app="${1:-src-tauri/target/release/bundle/macos/Phosphor.app}"
+request="${2:-}"
 service_name="com.karimbabasf.phosphor.vault"
 host_id="com.karimbabasf.phosphor"
 service="$app/Contents/XPCServices/$service_name.xpc"
@@ -137,9 +141,10 @@ static pid_t own_service(void) {
         if (pids[i] > 0 && proc_pidpath(pids[i], other, sizeof other) > 0 && strncmp(other, prefix, strlen(prefix)) == 0) return pids[i];
     return 0;
 }
-int main(void) {
+int main(int argc, char **argv) {
     const char *error = NULL;
-    char *answer = phosphor_xpc_call("com.karimbabasf.phosphor.vault", "{\"op\":\"probe\"}", 10, &error);
+    const char *request = argc > 1 ? argv[1] : "{\"op\":\"probe\"}";
+    char *answer = phosphor_xpc_call("com.karimbabasf.phosphor.vault", request, 10, &error);
     if (answer) { printf("ANSWERED %s\n", answer); free(answer); return 0; }
     pid_t service = own_service();
     if (service) printf("REFUSED %s by the service: it ran (pid %d) and dropped this caller\n", error, service);
@@ -172,7 +177,7 @@ EOF
 }
 
 say "2. a plain process, and a stranger beside the shell"
-limited "$work/host"
+limited "$work/host" ${request:+"$request"}
 out="$(said)"
 case "$out" in
   REFUSED*) say "   ok    plain process: $out" ;;
@@ -180,7 +185,7 @@ case "$out" in
 esac
 runtime_id="$(codesign -dv "$app/Contents/MacOS/node" 2>&1 | sed -n 's/^Identifier=//p')"
 inside="$(host_app "$host_id" "$runtime_id")"
-limited "$inside/Contents/MacOS/intruder"
+limited "$inside/Contents/MacOS/intruder" ${request:+"$request"}
 out="$(said)"
 case "$out" in
   REFUSED*) say "   ok    in a bundle named $host_id, signed as the runtime ($runtime_id): $out" ;;
@@ -206,7 +211,7 @@ say "3. a foreign app hosting a copy of the service"
 foreign="$(host_app com.example.foreign)"
 cmp -s "$foreign/Contents/XPCServices/$service_name.xpc/Contents/MacOS/se-helper" "$service/Contents/MacOS/se-helper" \
   && say "   ok    its service is byte-identical to the shipped one"
-limited "$foreign/Contents/MacOS/host"
+limited "$foreign/Contents/MacOS/host" ${request:+"$request"}
 out="$(said)"
 case "$out" in
   REFUSED*) say "   ok    $out" ;;
@@ -215,7 +220,7 @@ esac
 
 say "4. the same foreign app claiming $host_id"
 impostor="$(host_app "$host_id")"
-limited "$impostor/Contents/MacOS/host"
+limited "$impostor/Contents/MacOS/host" ${request:+"$request"}
 out="$(said)"
 case "$out" in
   REFUSED*) say "   ok    $out" ;;

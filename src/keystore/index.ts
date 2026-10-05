@@ -14,11 +14,13 @@
 import fs from 'node:fs';
 import { privateKeyToAccount } from 'viem/accounts';
 
+import type { DerivedAccounts } from './derived.ts';
 import { apiWalletOf } from './store.ts';
 import type { ApiWallet, Keystore, KeysPayload, StoredAddresses } from './store.ts';
 
-export { createKeystore, keystorePathFor, readHeader, backupCopies, KEYSTORE_FILENAME } from './store.ts';
+export { createKeystore, keystorePathFor, readHeader, backupCopies, KEYSTORE_FILENAME, OWNER_TOUCH_REQUIRED, OwnerTouchRequired, isOwnerTouchRequired } from './store.ts';
 export type { ApiWallet, Keystore, KeysPayload, KeystoreHeader, LockState, StoredAddresses, UnlockResult } from './store.ts';
+export type { DerivedAccounts } from './derived.ts';
 
 let active: Keystore | null = null;
 
@@ -64,6 +66,27 @@ export function evmPrivateKey(keysPath: string): `0x${string}` {
 export function apiWallet(keysPath: string): ApiWallet | null {
   if (active !== null) return active.apiWallet();
   return apiWalletOf(keyMaterial(keysPath));
+}
+
+/* Phase 2's two derived keys (src/keystore/derived.ts): the ALLOWANCE key every rail signs with
+   once the vault has moved to the chip, and the GAS seed that signs execute_intents. Both are the
+   session's own buffers: read them for one signature in the same turn, never keep or change them,
+   and the lock zeroes them. Signers, so they fail while locked, and they have no plaintext
+   fallback: a wallet still in a plaintext file derives neither. */
+export function allowanceKey(): Buffer {
+  if (active === null) throw new Error('no wallet yet. Create one in the app window.');
+  return active.allowanceKey();
+}
+
+export function gasSeed(): Buffer {
+  if (active === null) throw new Error('no wallet yet. Create one in the app window.');
+  return active.gasSeed();
+}
+
+// The accounts those two keys sign for: a reader, so it answers while locked, with null until this
+// process has opened the wallet once.
+export function derivedAccounts(): DerivedAccounts | null {
+  return active === null ? null : active.derivedAccounts();
 }
 
 /* The EVM ADDRESS, which is not signing material and must not behave like it. It is the

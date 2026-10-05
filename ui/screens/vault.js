@@ -11,6 +11,11 @@
                       limits, beside the assistant when the Vault is wide
      Your wallet      the keys, restore, the addresses, forget
 
+   Once this copy of Phosphor can move the vault to this Mac's Touch ID key, a
+   fourth, Your vault, sits between Safety and the wallet: the move, the
+   allowance, the gas account and the trading key (ui/screens/chip.js and
+   ui/screens/allowance.js draw its rows with this page's own pieces, `kit`).
+
    Every row is a tile: its name and one line on the left, its value or its
    one action on the right, and anything it opens (a confirm, a flow) grows
    in place under the words, never a dialog. The only red on the page is the
@@ -94,9 +99,12 @@
     mounted = true;
     store.subscribe(render);
     store.select('lock', function () {
-      /* A locked window is not a place for the phrase or the key. */
+      /* A locked window is not a place for the phrase, the key or a paper key. */
       var state = store.get() || {};
-      if (state.lock && state.lock.state !== 'unlocked') wipePhrase();
+      if (state.lock && state.lock.state !== 'unlocked') {
+        wipePhrase();
+        wipePaper();
+      }
     });
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
@@ -106,6 +114,7 @@
         mountAgents();
       } else {
         wipePhrase();
+        wipePaper();
         closeFreeze(false);
         closeForget(false);
       }
@@ -125,6 +134,8 @@
       } else if (refs.askEdit && !refs.askEdit.hidden) {
         event.preventDefault();
         closeAsk(true);
+      } else if (window.PhosphorAllowance && typeof window.PhosphorAllowance.escape === 'function' && window.PhosphorAllowance.escape()) {
+        event.preventDefault();
       }
     });
     render();
@@ -146,7 +157,7 @@
   /* A row is a tile: its glyph on a small raised tile before its name, as
      an agent's row leads with its mark, one line under the name, its value
      or its action on the right, and anything it opens under both. */
-  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash' };
+  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash', chip: 'mac', allowance: 'swap', gas: 'send', trading: 'long' };
 
   function row(title, surface) {
     var node = dom.el('div', 'vault-row');
@@ -305,6 +316,8 @@
     buildAddresses(wallet.body);
     buildForget(wallet.body);
     page.appendChild(wallet.node);
+    refs.page = page;
+    refs.walletSec = wallet.node;
 
     host.appendChild(page);
   }
@@ -553,10 +566,10 @@
      goes into the conversation.
 
      A wallet brought in as a key has no phrase, so the same row backs up its
-     private key: the key in sixteen groups of four, then the whole copy typed
-     back once. A phrase has a checksum and three words show a copy that
-     reads; a key has none, and one wrong character is simply another wallet,
-     so nothing short of the whole copy proves it. */
+     private key the way every wallet does: behind the same Touch ID, masked
+     until Show, with Copy, then I saved it somewhere safe. A key has no words
+     to ask three of, so that click, on the window's own route and only just
+     after the key was shown, is the proof. */
   function buildBackup(host) {
     var r = row('Recovery phrase', 'backup');
     refs.backupRow = r.node;
@@ -580,7 +593,7 @@
     refs.checkCopy = button('Check my copy', 'btn-quiet btn-sm');
     refs.checkCopy.hidden = true;
     r.act.appendChild(refs.checkCopy);
-    dom.on(refs.checkCopy, 'click', function () { startCheck(false); });
+    dom.on(refs.checkCopy, 'click', startCheck);
     refs.phraseFlow = dom.el('div', 'vault-flow');
     refs.phraseFlow.hidden = true;
     r.body.appendChild(refs.phraseFlow);
@@ -598,7 +611,7 @@
       ? 'There is nothing to back up until a wallet exists.'
       : backed
         ? (noWords
-          ? 'Backed up' + (when ? ' on ' + when : '') + '. Your whole copy matched.'
+          ? 'Backed up' + (when ? ' on ' + when : '') + '. You saved your key.'
           : 'Backed up. You proved your copy' + (when ? ' on ' + when : '') + '.')
         : noWords
           ? 'Not backed up yet. This wallet has no recovery phrase, so its key is the only way back if this Mac is lost.'
@@ -623,6 +636,7 @@
   function wipePhrase() {
     phrase = null;
     shownKey = null;
+    clearClip();
     if (!refs.phraseFlow) return Promise.resolve();
     var closing = Promise.resolve();
     if (!refs.phraseFlow.hidden || refs.phraseFlow.childNodes.length) {
@@ -843,6 +857,34 @@
     grow(refs.backupRow, function () { drawWords(note); }, refs.phraseFlow);
   }
 
+  /* Once the vault has moved to a Touch ID key, what this row shows no longer
+     opens the vault, and the allowance, the gas account and Hyperliquid are
+     still its own (docs/known-limits.md says the same), so the reveal and its
+     sheet say so. NEAR's reading of the wallet's key decides; with none in, a
+     vault this Mac moved does. A NEAR door NEAR reads open lets the words
+     reach the vault again, and then nothing here says otherwise. */
+  function vaultMoved() {
+    var vault = (store.get() || {}).vault || {};
+    var chip = vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
+    return !!chip && chip.predecessorAuth !== true && (chip.oldOnChain === false || (chip.oldOnChain !== true && chip.state === 'done'));
+  }
+
+  function movedLine(what) {
+    if (!vaultMoved()) return null;
+    return text('vault-text', what === 'key'
+      ? 'Your vault moved to a Touch ID key, so this key no longer opens it.'
+      : 'Your vault moved to a Touch ID key, so these words no longer open it.');
+  }
+
+  /* The lock line beside the words or the key: what whoever has them can
+     take. The words stay on this screen; the key can go to a password
+     manager, so its line says who it is for instead. */
+  function takes(what) {
+    var take = vaultMoved() ? 'what your allowance, the gas account and Hyperliquid hold.' : 'your money.';
+    if (what === 'key') return 'Anyone who has this key can take ' + take + ' Keep it where only you can reach it.';
+    return 'On this screen only. Anyone who reads these words can take ' + take;
+  }
+
   function drawWords(note) {
     var flow = refs.phraseFlow;
     dom.clear(flow);
@@ -852,8 +894,10 @@
 
     var warn = dom.el('p', 'vault-warn');
     append(warn, icon('lock', 'icon-16'));
-    warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads these words can take your money.'));
+    warn.appendChild(dom.el('span', '', takes('words')));
     flow.appendChild(warn);
+    var movedWords = movedLine('words');
+    if (movedWords) flow.appendChild(movedWords);
 
     if (note) {
       var again = problem();
@@ -899,7 +943,7 @@
     if (!words || !words.length) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has the money. Keep this sheet away from your Mac.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has ' + (vaultMoved() ? 'your allowance, the gas account and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', '');
     for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
     sheet.appendChild(list);
@@ -965,12 +1009,17 @@
       input.autocomplete = 'off';
       input.spellcheck = false;
       input.setAttribute('autocapitalize', 'off');
+      input.setAttribute('autocorrect', 'off');
       input.dataset.index = String(at);
       field.appendChild(input);
       fields.appendChild(field);
       inputs.push(input);
     });
     flow.appendChild(fields);
+    var hint = text('vault-sub');
+    hint.hidden = true;
+    flow.appendChild(hint);
+    noPaste(inputs, hint);
 
     var error = problem();
     flow.appendChild(error);
@@ -1013,7 +1062,8 @@
                 showWords('Two tries did not match. Check your copy, then try again.');
                 return;
               }
-              say(error, 'Those words do not match. Look at your copy again.');
+              var slip = wordSlip(words);
+              say(error, slip ? 'Word ' + slip + ' does not match. Check it on your copy, then try again.' : 'Those words do not match. Look at your copy again.');
               return;
             }
             say(error, refusalWords(answer));
@@ -1027,12 +1077,41 @@
     if (inputs[0] && inputs[0].focus) inputs[0].focus();
   }
 
+  /* A field that proves a copy takes typing only: a paste or a drop is a
+     copy of the screen, not of the paper, so it is refused and the line
+     under the fields says why. */
+  function noPaste(inputs, hint) {
+    inputs.forEach(function (input) {
+      dom.on(input, 'paste', function (event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        dom.setText(hint, 'Type each word from your copy. Pasting is off here.');
+        hint.hidden = false;
+      });
+      dom.on(input, 'drop', function (event) {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+      });
+    });
+  }
+
+  // The first answer that differs from the words still in this row, by its number, or 0.
+  function wordSlip(answers) {
+    if (!phrase || !Array.isArray(phrase.words)) return 0;
+    for (var i = 0; i < answers.length; i += 1) {
+      if (answers[i].word !== phrase.words[answers[i].index]) return answers[i].index + 1;
+    }
+    return 0;
+  }
+
   /* ---------- safety: the private key, for a wallet with no phrase ----------
 
-     The phrase's flow, with the proof a key needs: the key once, numbered in
-     groups of four so it can be copied by hand or printed, then the whole
-     copy typed back once and checked against this wallet by the app
-     (POST /api/vault/key-proven). Print, never Copy. */
+     The key once, behind the Touch ID that showed it, masked until Show: the
+     panel holds no character of it until then, and Hide takes them out again.
+     Copy puts the whole key on the clipboard, for a password manager. I saved
+     it somewhere safe is the proof (POST /api/vault/key-proven), and it
+     carries nothing of the key. */
+
+  // The key's place while it is masked: sixteen groups of four, none of them its own.
+  var KEY_MASK = new Array(KEY_GROUPS + 1).join('\u2022\u2022\u2022\u2022 ').trim();
 
   function showKey(note) {
     if (!shownKey) return;
@@ -1046,6 +1125,10 @@
     return lock.addresses && typeof lock.addresses.evm === 'string' ? lock.addresses.evm : null;
   }
 
+  function setLabel(node, words) {
+    dom.setText(node.querySelector('.btn-label'), words);
+  }
+
   function drawKey(note) {
     var flow = refs.phraseFlow;
     dom.clear(flow);
@@ -1055,8 +1138,10 @@
 
     var warn = dom.el('p', 'vault-warn');
     append(warn, icon('lock', 'icon-16'));
-    warn.appendChild(dom.el('span', '', 'On this screen only. Anyone who reads this key can take your money.'));
+    warn.appendChild(dom.el('span', '', takes('key')));
     flow.appendChild(warn);
+    var movedKey = movedLine('key');
+    if (movedKey) flow.appendChild(movedKey);
 
     if (note) {
       var again = problem();
@@ -1064,74 +1149,139 @@
       say(again, note);
     }
 
-    var grid = dom.el('ol', 'words vault-words vault-key');
-    grid.setAttribute('aria-label', 'Your private key, in sixteen groups of four');
-    for (var i = 0; i < shownKey.groups.length; i += 1) {
-      var item = dom.el('li', 'word');
-      item.appendChild(dom.el('span', 'meta num', String(i + 1)));
-      item.appendChild(dom.el('span', 'body word-text key-text', shownKey.groups[i]));
-      grid.appendChild(item);
-    }
-    flow.appendChild(grid);
+    var secret = dom.el('div', 'vault-secret');
+    var box = dom.el('p', 'vault-mono vault-secret-text');
+    secret.appendChild(box);
+    var side = dom.el('div', 'vault-secret-tools');
+    var show = button('Show', 'btn-ghost btn-sm');
+    var copy = button('Copy', 'btn-ghost btn-sm');
+    side.appendChild(show);
+    side.appendChild(copy);
+    secret.appendChild(side);
+    flow.appendChild(secret);
+
+    var open = false;
+    var paintSecret = function () {
+      dom.setText(box, open && shownKey ? shownKey.groups.join(' ') : KEY_MASK);
+      dom.setAttr(box, 'data-masked', open ? null : 'true');
+      setLabel(show, open ? 'Hide' : 'Show');
+      dom.setAttr(show, 'aria-pressed', open ? 'true' : 'false');
+    };
+    paintSecret();
 
     var wallet = keyWallet();
     if (wallet) flow.appendChild(text('vault-sub', 'It opens the wallet ' + shortWallet(wallet) + '.'));
 
+    var error = problem();
+    flow.appendChild(error);
+
+    var backed = ((store.get() || {}).vault || {}).backedUp === true;
     var tools = dom.el('div', 'vault-actions');
-    var wrote = button('I wrote it down', 'btn-sm');
-    var print = button('Print', 'btn-ghost btn-sm');
-    var done = button('Hide key', 'btn-quiet btn-sm');
-    tools.appendChild(wrote);
-    tools.appendChild(print);
-    tools.appendChild(done);
+    var saved = backed ? null : button('I saved it somewhere safe', 'btn-sm', 'Saving');
+    var close = button(backed ? 'Done' : 'Close', 'btn-quiet btn-sm');
+    if (saved) tools.appendChild(saved);
+    tools.appendChild(close);
     flow.appendChild(tools);
 
-    dom.on(print, 'click', function () { printKey(shownKey ? shownKey.groups : [], keyWallet()); });
-    dom.on(wrote, 'click', function () { startCheck(true); });
-    dom.on(done, 'click', wipePhrase);
-    if (wrote.focus) wrote.focus();
+    dom.on(show, 'click', function () {
+      // Hide is a click, so the clear inside it is one WebKit lets through.
+      if (open) clearClip();
+      open = !open;
+      paintSecret();
+    });
+    dom.on(copy, 'click', function () { copyKey(copy, error, backed ? 'Done' : 'I saved it'); });
+    if (saved) dom.on(saved, 'click', function () { keySaved(saved, error); });
+    dom.on(close, 'click', wipePhrase);
+    var first = saved || show;
+    if (first.focus) first.focus();
   }
 
-  /* The phrase's sheet, for the key: the numbered groups, the wallet they
-     open, and nothing else from the window. */
-  function printKey(groups, wallet) {
-    if (!groups || groups.length !== KEY_GROUPS) return;
-    var sheet = dom.el('div', 'print-sheet');
-    sheet.appendChild(dom.el('h1', '', 'Phosphor private key'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has this key has the money. Keep this sheet away from your Mac.'));
-    var list = dom.el('ol', 'print-key');
-    for (var i = 0; i < groups.length; i += 1) list.appendChild(dom.el('li', '', groups[i]));
-    sheet.appendChild(list);
-    if (wallet) sheet.appendChild(dom.el('p', '', 'It opens the wallet ' + wallet + '.'));
-    sheetFoot(sheet, 'the sixteen groups');
-    document.body.appendChild(sheet);
+  /* The whole key, as a wallet imports it, onto the clipboard. The button
+     says Copied for a moment; nothing else on screen repeats the key. */
+  function copyKey(copy, error, nextClick) {
+    if (!shownKey) return;
+    say(error, '');
+    var clip = window.navigator ? window.navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') {
+      say(error, 'This window cannot reach the clipboard. Show the key and write it down instead.');
+      return;
+    }
+    clip.writeText('0x' + shownKey.groups.join(''))
+      .then(function () {
+        clipHeld = copy;
+        setLabel(copy, 'Copied. Phosphor clears it when you click ' + nextClick + '.');
+        if (clipTimer !== null) window.clearTimeout(clipTimer);
+        clipTimer = window.setTimeout(clearClip, CLIP_CLEAR_MS);
+      })
+      .catch(function () { say(error, 'The key did not reach the clipboard. Try Copy again, or show it and write it down.'); });
+  }
+
+  /* The key leaves the clipboard at the panel's next click (I saved it
+     somewhere safe, Hide, Close or Done), which WebKit allows because a
+     person clicked; else 30 seconds after Copy, or at once when the wallet
+     locks or the tab is left, which WebKit may refuse with no click behind
+     them: then the key stays until something else is copied
+     (docs/known-limits.md). Never when Copy was not pressed. `clipHeld` is
+     the Copy button whose key is on the clipboard, or false. */
+  var CLIP_CLEAR_MS = 30000;
+  var clipTimer = null;
+  var clipHeld = false;
+
+  function clearClip() {
+    if (clipTimer !== null) window.clearTimeout(clipTimer);
+    clipTimer = null;
+    if (!clipHeld) return;
+    setLabel(clipHeld, 'Copy');
+    clipHeld = false;
+    var clip = window.navigator ? window.navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') return;
     try {
-      window.print();
-    } finally {
-      if (sheet.parentNode) sheet.parentNode.removeChild(sheet);
+      clip.writeText('').catch(function () { /* best effort, as above */ });
+    } catch (err) {
+      // best effort, as above
     }
   }
 
-  /* Check your copy: the whole key, typed from the copy, against this wallet,
-     with no Touch ID. Straight after the key was shown (`proving`) a match is
-     the proof and marks the key backed up; on a key already proven it is
-     Check my copy, which writes nothing. Never through Restore, which would
-     replace this wallet with whatever a slip makes. */
-  function startCheck(proving) {
-    grow(refs.backupRow, function () { drawCheck(proving === true && !!shownKey); }, refs.phraseFlow);
+  /* The proof: the person's word, just after the key was shown. A proof the
+     app can no longer tie to that reveal (half an hour on, or a restart)
+     closes the key and asks for it to be shown again. */
+  function keySaved(saved, error) {
+    // Here, in the click, where WebKit lets the clipboard be written, and not after the answer.
+    clearClip();
+    say(error, '');
+    window.PhosphorShell.setPending(saved, true);
+    api.vaultKeyProven()
+      .then(function (answer) {
+        if (answer && answer.ok === true) return proven();
+        if (answer && answer.code === 'reveal_again') {
+          shownKey = null;
+          clearClip();
+          flowProblem(answer.error || 'Show your key once more with Back it up, then save it.');
+          return null;
+        }
+        say(error, refusalWords(answer));
+        return null;
+      })
+      .catch(function (err) { say(error, net.readable(err)); })
+      .finally(function () { window.PhosphorShell.setPending(saved, false); });
   }
 
-  function drawCheck(proving) {
+  /* Check my copy: the whole key, typed or pasted from a copy kept later,
+     against this wallet, with no Touch ID and nothing written. Never through
+     Restore, which would replace this wallet with whatever a slip makes. */
+  function startCheck() {
+    grow(refs.backupRow, drawCheck, refs.phraseFlow);
+  }
+
+  function drawCheck() {
     var flow = refs.phraseFlow;
     dom.clear(flow);
     flow.hidden = false;
-    flow.dataset.step = proving ? 'prove' : 'check';
+    flow.dataset.step = 'check';
     render();
 
     flow.appendChild(dom.el('p', 'vault-flow-title', 'Check your copy'));
-    flow.appendChild(text('vault-sub', proving
-      ? 'Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'
-      : 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
+    flow.appendChild(text('vault-sub', 'Type the whole key from your copy. It is checked against this wallet, kept nowhere, and nothing changes.'));
 
     var field = dom.el('div', 'field');
     field.appendChild(dom.el('label', 'label', 'Private key'));
@@ -1157,23 +1307,18 @@
 
     var tools = dom.el('div', 'vault-actions');
     var check = button('Check', 'btn-sm', 'Checking');
-    var other = proving ? button('Show the key again', 'btn-quiet btn-sm') : button('Done', 'btn-quiet btn-sm');
+    var other = button('Done', 'btn-quiet btn-sm');
     tools.appendChild(check);
     tools.appendChild(other);
     flow.appendChild(tools);
 
-    var misses = 0;
-    dom.on(other, 'click', function () {
-      if (proving) showKey();
-      else wipePhrase();
-    });
+    dom.on(other, 'click', wipePhrase);
     dom.on(input, 'input', function () {
       say(error, '');
       right.hidden = true;
     });
     dom.on(check, 'click', function () {
       var read = window.PhosphorCustody.readKey(input.value);
-      var hex = read.hex;
       right.hidden = true;
       /* Said here so a slip of the keyboard is caught before anything is
          sent, and named by its group (ui/core/custody.js). */
@@ -1183,46 +1328,23 @@
       }
       say(error, '');
       window.PhosphorShell.setPending(check, true);
-      (proving ? api.vaultKeyProven('0x' + hex) : api.vaultKeyCheck('0x' + hex))
+      api.vaultKeyCheck('0x' + read.hex)
         .then(function (answer) {
-          if (answer && answer.ok === false && answer.code !== 'wrong_copy') {
+          if (answer && answer.ok === false) {
             say(error, answer.code === 'bad_key' ? 'That key is not right. Check every character against your copy.' : refusalWords(answer));
             return;
           }
-          if (answer && (answer.ok === true && (proving || answer.matches === true))) {
+          if (answer && answer.ok === true && answer.matches === true) {
             input.value = '';
-            if (proving) return proven();
             right.hidden = false;
             return;
           }
-          /* Another wallet. Straight after the key was shown, the app still
-             holds it here, so the line can name the group to look at; two
-             misses show the key again. */
-          misses += 1;
-          if (proving && misses >= 2) {
-            showKey('Two tries did not match. Check your copy group by group, then try again.');
-            return;
-          }
-          var off = proving ? firstSlip(hex) : -1;
-          say(error, off >= 0
-            ? 'Group ' + (off + 1) + ' does not match the key Phosphor showed you. Check it on your copy, then try again.'
-            : 'That copy opens a different wallet. Show your key and check it group by group.');
+          say(error, 'That copy opens a different wallet. Show your key and check it group by group.');
         })
         .catch(function (err) { say(error, net.readable(err)); })
         .finally(function () { window.PhosphorShell.setPending(check, false); });
     });
     if (input.focus) input.focus();
-  }
-
-  /* The first group of what was typed that differs from the key on screen a
-     moment ago, or -1. Compared here, in the window that already holds the
-     key; nothing about it is sent. */
-  function firstSlip(hex) {
-    if (!shownKey || !Array.isArray(shownKey.groups)) return -1;
-    for (var i = 0; i < shownKey.groups.length; i += 1) {
-      if (hex.slice(i * 4, i * 4 + 4) !== shownKey.groups[i]) return i;
-    }
-    return -1;
   }
 
   /* ---------- safety: your limits ---------- */
@@ -1722,12 +1844,24 @@
     /* A password wallet has a second copy of itself: the file, encrypted
        under the same password. */
     refs.exportPassword = button('Save an encrypted copy', 'btn-quiet btn-sm');
+    /* A vault on a Touch ID key comes back on a new Mac in two steps, both
+       here: the wallet from its backup, then the vault from the paper key
+       (ui/screens/chip.js draws that restore in the vault's own row). */
+    refs.recoveryVault = text('vault-sub');
+    refs.recoveryVault.hidden = true;
+    r.main.appendChild(refs.recoveryVault);
+    refs.restoreVault = button('Restore your vault', 'btn-ghost btn-sm');
+    refs.restoreVault.hidden = true;
     var actions = dom.el('div', 'vault-actions');
     refs.restoreActions = actions;
     actions.appendChild(refs.restore);
     actions.appendChild(refs.restoreKey);
     actions.appendChild(refs.exportPassword);
+    actions.appendChild(refs.restoreVault);
     r.main.appendChild(actions);
+    dom.on(refs.restoreVault, 'click', function () {
+      if (window.PhosphorChip && typeof window.PhosphorChip.startRestore === 'function') window.PhosphorChip.startRestore();
+    });
     /* Not backed up, this button is Back up first: a password wallet shows its
        backup straight here, a Touch ID wallet goes to its backup row, whose
        line says why before its own Touch ID. */
@@ -1776,6 +1910,18 @@
     dom.setHidden(refs.restore, !canRestore || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.restoreKey, !canRestore || guarded || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.exportPassword, !has || enclave || !refs.recoveryFlow.hidden);
+
+    /* A vault that moved to a Touch ID key: on a new Mac the wallet comes back
+       from its backup first, then the vault from the paper key. While the
+       vault waits for its paper here, its restore sits beside the wallet's. */
+    var chip = has && vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
+    var moved = !!chip && (chip.state === 'done' || chip.state === 'broken');
+    var waits = !!chip && chip.state === 'broken' && !!window.PhosphorChip;
+    dom.setText(refs.recoveryVault, waits
+      ? 'Your wallet is back. Your vault comes back with your paper key.'
+      : 'On a new Mac your vault comes back after the wallet, with your paper key.');
+    dom.setHidden(refs.recoveryVault, !moved);
+    dom.setHidden(refs.restoreVault, !waits || !refs.recoveryFlow.hidden);
   }
 
   function closeRecovery() {
@@ -2532,6 +2678,55 @@
       .finally(function () { window.PhosphorShell.setPending(refs.forget, false); });
   }
 
+  /* ---------- your vault ----------
+
+     The move to this Mac's Touch ID key, the allowance, the gas account and
+     the trading key. The section is drawn the first time the state carries a
+     vault slice this copy of Phosphor can act on (src/http/chip.ts
+     chipVaultSlice), between Safety and the wallet, and its two screens
+     paint it on every render after that. A copy that cannot move a vault (a
+     demo with no chain, a build with no keychain home, a Mac with no Touch
+     ID) shows nothing: a worry with nothing to do is not said at all. */
+  function vaultSlice(vault) {
+    var chip = vault && vault.chip;
+    if (!chip || typeof chip !== 'object' || !vault.custody) return null;
+    var needs = Array.isArray(chip.needs) ? chip.needs : [];
+    if (chip.state === 'done' || chip.state === 'broken' || chip.state === 'moving' || chip.state === 'checking' || chip.run) return chip;
+    if (chip.state !== 'ready' && chip.state !== 'none') return null;
+    if (chip.state === 'none' && !needs.length) return null;
+    if (needs.indexOf('keychain') >= 0) return null;
+    if (vault.custody !== 'secure-enclave' && !(vault.enclave && vault.enclave.ready === true)) return null;
+    return chip;
+  }
+
+  function renderVault(state) {
+    var Chip = window.PhosphorChip;
+    var Allowance = window.PhosphorAllowance;
+    if (!Chip || !Allowance || !refs.page) return;
+    var chip = vaultSlice(state.vault || {});
+    if (!refs.vaultSec) {
+      if (!chip) return;
+      var sec = section('Your vault', 'chip');
+      sec.body.className += ' vault-grid';
+      refs.vaultSec = sec.node;
+      refs.page.insertBefore(sec.node, refs.walletSec);
+      Chip.mount(sec.body, kit);
+      Allowance.mount(sec.body, kit);
+      Chip.mountTrading(sec.body);
+    }
+    dom.setHidden(refs.vaultSec, !chip);
+    Chip.render(state, chip);
+    Allowance.render(state, chip);
+  }
+
+  /* The paper key leaves the window with the phrase: at a lock, and when the
+     tab is left. The lines a top-up or a refill left under their rows go
+     with it: back on the tab, the rows say what is true now. */
+  function wipePaper() {
+    if (window.PhosphorChip && typeof window.PhosphorChip.wipe === 'function') window.PhosphorChip.wipe();
+    if (window.PhosphorAllowance && typeof window.PhosphorAllowance.rest === 'function') window.PhosphorAllowance.rest();
+  }
+
   /* ---------- render ---------- */
 
   function render() {
@@ -2542,6 +2737,7 @@
     renderIdle(vault, state.lock);
     renderBackup(vault);
     renderLimits(state);
+    renderVault(state);
     renderCustody(vault);
     renderBind(vault);
     renderRecovery(vault);
@@ -2685,6 +2881,30 @@
     if (refs.backupGo && !refs.backupGo.hidden && refs.backupGo.focus) refs.backupGo.focus();
   }
 
+  /* This page's own pieces, for the two screens that draw Your vault: their
+     rows, flows, errors and motion are this page's, not copies of it. */
+  var kit = {
+    row: row,
+    grow: grow,
+    shrink: shrink,
+    text: text,
+    icon: icon,
+    append: append,
+    problem: problem,
+    say: say,
+    note: note,
+    sayRefusal: sayRefusal,
+    refusalWords: refusalWords,
+    pop: pop,
+    dateWords: dateWords,
+    usdShort: usdShort,
+    bringIntoView: bringIntoView,
+    focusRecovery: focusRecovery,
+    openMigrate: openMigrate,
+    visible: function () { return visible; },
+    CANCELLED: CANCELLED
+  };
+
   window.PhosphorVault = {
     boot: boot,
     render: render,
@@ -2694,6 +2914,7 @@
     focusRecovery: focusRecovery,
     openMigrate: openMigrate,
     printPhrase: printPhrase,
-    wipePhrase: wipePhrase
+    wipePhrase: wipePhrase,
+    kit: kit
   };
 })();

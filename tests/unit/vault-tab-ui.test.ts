@@ -3,8 +3,10 @@
 // What matters most here is the phrase: it is shown once, in its own row, behind a
 // route that asks for a Touch ID or behind the password typed into that row (never a
 // dialog, never a card in the conversation), with Print and never Copy; "backed up"
-// clears only when three words typed back are accepted by the backend, for either kind
-// of wallet; Done, a lock, or leaving the tab wipes it. Then the safety rows the bar no
+// clears only when three words typed back are accepted by the backend; Done, a lock, or
+// leaving the tab wipes it. A wallet with no phrase backs up its key as every wallet
+// does: masked until Show, with Copy, then I saved it somewhere safe; and neither the
+// words nor the key appear anywhere but their own panel. Then the safety rows the bar no
 // longer carries: Freeze confirms in place, says what it really does, and its confirm
 // is the only red on the page; the lock timer is one radio group the arrows walk; the
 // phrase's row says the truth; and the limits are the server's own figures, with the
@@ -86,10 +88,13 @@ function makeNode(tagName: string): Any {
     getAttribute(name: string) { return name in attrs ? attrs[name] : null; },
     hasAttribute(name: string) { return name in attrs; },
     removeAttribute(name: string) { delete attrs[name]; },
+    attributes: attrs,
     addEventListener(type: string, fn: (event: Any) => void) { (listeners[type] ||= []).push(fn); },
     removeEventListener() {},
     dispatch(type: string, event: Any = {}) {
-      for (const fn of listeners[type] ?? []) fn(Object.assign({ target: node, currentTarget: node, preventDefault() {} }, event));
+      let prevented = false;
+      for (const fn of listeners[type] ?? []) fn(Object.assign({ target: node, currentTarget: node, preventDefault() { prevented = true; } }, event));
+      return prevented;
     },
     click() { node.dispatch('click'); },
     focus() {},
@@ -147,6 +152,12 @@ function textOf(node: Any): string[] {
 const buttonNamed = (root: Any, label: string): Any => find(root, 'button').find((b: Any) => b.textContent === label) as Any;
 const flush = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
 
+function everyNode(root: Any): Any[] {
+  const out: Any[] = [root];
+  for (const child of root.childNodes) out.push(...everyNode(child));
+  return out;
+}
+
 /* ---------- the window ---------- */
 
 const WORDS = ('abandon ability able about above absent absorb abstract absurd abuse access accident '
@@ -181,9 +192,12 @@ type World = {
   calls: Any[];
   toasts: string[];
   confirms: Any[];
+  logs: string[];
+  clipboard: string[];
   put: (patch: Any) => void;
   answer: Any;
   key: (key: string) => boolean;
+  leave: () => void;
 };
 
 function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; sentences?: string[]; dailyLimit?: Any } = {}): World {
@@ -195,11 +209,13 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
   const calls: Any[] = [];
   const toasts: string[] = [];
   const confirms: Any[] = [];
+  const logs: string[] = [];
+  const clipboard: string[] = [];
   const answer: Any = {
     reveal: { ok: true, words: WORDS.slice(), paths: { evm: "m/44'/60'/0'/0/0" }, prove: PROVE.slice() },
     proven: (words: Any[]) => (words.every((w) => WORDS[w.index] === w.word) ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'Those words do not match. Look again.', code: 'wrong_words' }),
     revealKey: { ok: true, groups: GROUPS.slice(), address: EVM } as Any,
-    keyProven: (key: string) => (key === '0x' + GROUPS.join('') ? { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } : { ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' }),
+    keyProven: { ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' } as Any,
     restoreKey: { ok: true, addresses: { evm: EVM } } as Any,
     keyCheck: { ok: true, matches: true } as Any,
     forget: { ok: true },
@@ -222,8 +238,10 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     addEventListener(type: string, fn: (event: Any) => void) { (docListeners[type] ||= []).push(fn); },
   };
   const viewListeners: Array<(event: Any) => void> = [];
+  const record = (level: string) => (...args: unknown[]) => { logs.push(level + ' ' + args.map((a) => (typeof a === 'string' ? a : JSON.stringify(a))).join(' ')); };
   const sandbox: Any = {
-    console,
+    console: { log: record('log'), info: record('info'), warn: record('warn'), error: record('error'), debug: record('debug') },
+    navigator: { clipboard: { writeText: (text: string) => { clipboard.push(text); return answer.clipboardFails ? Promise.reject(new Error('denied')) : Promise.resolve(); } } },
     document: doc,
     setTimeout: (fn: () => void) => { setTimeout(fn, 0); return 1; },
     clearTimeout() {},
@@ -272,7 +290,7 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     vaultReveal: () => { calls.push({ route: '/api/vault/reveal' }); return Promise.resolve(answer.reveal); },
     vaultBackupProven: (words: Any[]) => { calls.push({ route: '/api/vault/backup-proven', words }); return Promise.resolve(answer.proven(words)); },
     vaultRevealKey: () => { calls.push({ route: '/api/vault/reveal-key' }); return Promise.resolve(answer.revealKey); },
-    vaultKeyProven: (key: string) => { calls.push({ route: '/api/vault/key-proven', key }); return Promise.resolve(answer.keyProven(key)); },
+    vaultKeyProven: (...args: unknown[]) => { calls.push({ route: '/api/vault/key-proven', args }); return Promise.resolve(answer.keyProven); },
     vaultRestoreKey: (key: string) => { calls.push({ route: '/api/vault/restore', key }); return Promise.resolve(answer.restoreKey); },
     vaultKeyCheck: (key: string) => { calls.push({ route: '/api/vault/key-check', key }); return Promise.resolve(answer.keyCheck); },
     vaultForget: () => { calls.push({ route: '/api/vault/forget' }); return Promise.resolve(answer.forget); },
@@ -317,8 +335,11 @@ function build(options: { vault?: Any; lock?: Any; policy?: Any; receive?: Any; 
     calls,
     toasts,
     confirms,
+    logs,
+    clipboard,
     answer,
     put: (patch: Any) => store.put(Object.assign({}, store.get(), patch)),
+    leave: () => { for (const fn of viewListeners) fn({ detail: { view: 'basic' } }); },
     key: (key: string) => {
       let prevented = false;
       for (const fn of docListeners.keydown ?? []) fn({ key, defaultPrevented: prevented, preventDefault() { prevented = true; } });
@@ -348,9 +369,15 @@ test('no string reaches the DOM as markup, and no Copy is offered on the phrase'
   assert.equal(/\.innerHTML\s*=/.test(SOURCE), false, 'vault.js assigns innerHTML');
   assert.equal(/insertAdjacentHTML|outerHTML|document\.write/.test(SOURCE), false);
   // The phrase is printed or written down. A clipboard is a place other
-  // processes read, so the reveal never writes one: the tab's only copy is the
-  // address rows', and that goes through the deposit card's read-back.
-  assert.equal(/navigator\.clipboard|writeText/.test(SOURCE), false, 'vault.js writes the clipboard itself');
+  // processes read, so the phrase's reveal never writes one. The clipboard
+  // writes here are the private key's Copy, as every wallet offers it, and the
+  // empty string that clears it; the address rows' copy goes through the
+  // deposit card's read-back.
+  assert.equal((SOURCE.match(/\.writeText\(/g) ?? []).length, 2, 'another clipboard write in vault.js');
+  assert.match(SOURCE, /function copyKey\(copy, error, nextClick\) \{[\s\S]*?clip\.writeText\('0x' \+ shownKey\.groups\.join\(''\)\)/);
+  assert.match(SOURCE, /function clearClip\(\) \{[\s\S]*?clip\.writeText\(''\)/);
+  // Nothing about a backup goes to the title or a notification.
+  assert.equal(/document\.title|Notification/.test(SOURCE), false, 'vault.js writes the title or a notification');
   // No dialog of any kind asks for the password or shows the words: both happen in the row.
   assert.equal(/PhosphorPassword|PhosphorDecision|showModal|PhosphorConfirm/.test(SOURCE), false, 'a dialog or a thread card on the phrase path');
 });
@@ -726,6 +753,10 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   const positions = inputs.map((i: Any) => Number(i.dataset.index));
   assert.deepEqual(positions, PROVE, 'the window asked other positions than the three the app named');
   assert.ok(textOf(panel).some((t) => t === 'Word ' + (positions[0] + 1)), 'the field is not labelled by its number');
+  // Typed only: a paste or a drop is refused, and the line under the fields says why.
+  assert.equal(inputs[0].dispatch('paste'), true, 'a paste went through');
+  assert.equal(inputs[1].dispatch('drop'), true, 'a drop went through');
+  assert.ok(textOf(panel).includes('Type each word from your copy. Pasting is off here.'));
 
   // Wrong words: the backend refuses, the row stays, nothing is cleared.
   for (const input of inputs) input.value = 'wrong';
@@ -739,7 +770,8 @@ test('the Prove step posts three positions, and only a right answer clears "not 
   assert.deepEqual(Array.from(first.words, (w: Any) => w.index), positions);
   assert.ok(first.words.every((w: Any) => w.word === 'wrong'));
   assert.equal(world.calls.some((c) => c.route === 'refresh'), false, 'a wrong answer refreshed as if it had cleared');
-  assert.ok(textOf(panel).some((t) => t.includes('do not match')), 'the refusal is not on screen');
+  // The slip is named by its number, from the words this row still holds, and never by the word.
+  assert.ok(textOf(panel).includes(`Word ${PROVE[0] + 1} does not match. Check it on your copy, then try again.`), String(textOf(panel)));
   assert.ok(backup(world).startsWith('Not backed up yet.'));
 
   // A second miss: the words again, with the line that says why.
@@ -859,10 +891,78 @@ test('a cancelled Touch ID on the reveal shows nothing and says nothing', async 
 
 /* ---------- a wallet with no phrase: its private key, in the same row ---------- */
 
-const keyText = (world: World): string[] => find(flow(world), '.word').map((w: Any) => w.childNodes[1].textContent);
+test('after the vault moved, the reveal still shows the words and says they open the allowance, the gas account and Hyperliquid, and no longer the vault', async () => {
+  const WORDS_LINE = 'Your vault moved to a Touch ID key, so these words no longer open it.';
+  const KEY_LINE = 'Your vault moved to a Touch ID key, so this key no longer opens it.';
+  const WORDS_TAKE = 'On this screen only. Anyone who reads these words can take what your allowance, the gas account and Hyperliquid hold.';
+  const MONEY = 'On this screen only. Anyone who reads these words can take your money.';
+  const opened = async (vault: Any): Promise<World> => {
+    const world = build({ vault });
+    buttonNamed(row(world, 'backup'), 'Back it up').click();
+    await flush();
+    return world;
+  };
+  const revealed = async (vault: Any): Promise<string[]> => textOf(flow(await opened(vault)));
+  // Not moved: no such line, and the words take the money.
+  assert.equal((await revealed({ chip: { state: 'ready', oldOnChain: true } })).includes(WORDS_LINE), false);
+  assert.ok((await revealed({ chip: { state: 'ready', oldOnChain: true } })).includes(MONEY));
+  assert.equal((await revealed({})).includes(WORDS_LINE), false, 'a build with no vault slice says nothing of a move');
+  // Moved, by NEAR's reading of the wallet's key, by this Mac's move while NEAR is unread, or to another Mac:
+  // the lock line says what the words still take, and the line beside it that they no longer open the vault.
+  for (const chip of [{ state: 'done', oldOnChain: false }, { state: 'done', oldOnChain: null }, { state: 'broken', oldOnChain: false }]) {
+    const text = await revealed({ chip });
+    assert.ok(text.includes(WORDS_LINE), JSON.stringify(chip));
+    assert.ok(text.includes(WORDS_TAKE), JSON.stringify(chip));
+    assert.equal(text.includes(MONEY), false, `${JSON.stringify(chip)}: the lock line says the words take money the row says they no longer open`);
+  }
+  // NEAR still reads the wallet's key on the vault, or the NEAR door open: the words still reach it.
+  for (const chip of [{ state: 'done', oldOnChain: true }, { state: 'done', oldOnChain: false, predecessorAuth: true }]) {
+    const text = await revealed({ chip });
+    assert.equal(text.includes(WORDS_LINE), false, JSON.stringify(chip));
+    assert.ok(text.includes(MONEY), JSON.stringify(chip));
+  }
+  // A wallet with no phrase: its key, said the same way.
+  const key = await revealed({ hasMnemonic: false, chip: { state: 'done', oldOnChain: false } });
+  assert.ok(key.includes(KEY_LINE));
+  assert.ok(key.includes('Anyone who has this key can take what your allowance, the gas account and Hyperliquid hold. Keep it where only you can reach it.'));
+  // The printed sheet says the same.
+  const world = await opened({ chip: { state: 'done', oldOnChain: false } });
+  buttonNamed(flow(world), 'Print').click();
+  const printed = world.calls.find((c) => c.route === 'print');
+  assert.ok(printed && textOf(printed.sheet).includes('Anyone who has these words has your allowance, the gas account and Hyperliquid. Keep this sheet away from your Mac.'));
+});
 
-test('a wallet with no phrase backs up its key in the same row: one line says why Touch ID, and Back it up posts the key reveal', async () => {
+const KEY_HEX = GROUPS.join('');
+// Any run of the key a screen, a field or a request could carry: the whole of it, or its first four groups, spaced or not.
+const keyIn = (text: string): boolean => {
+  const t = String(text).toLowerCase();
+  return t.includes(KEY_HEX.slice(0, 16)) || t.includes(GROUPS.slice(0, 4).join(' ')) || t.includes(GROUPS.slice(-4).join(' ')) || t.includes(KEY_HEX.slice(-16));
+};
+const inSecret = (n: Any): boolean => {
+  for (let at = n; at; at = at.parentNode) if (String(at.className).split(' ').includes('vault-secret-text')) return true;
+  return false;
+};
+const secretBox = (world: World): Any => find(flow(world), '.vault-secret-text')[0];
+
+/* The key is on the page only inside its own box, and only after Show; never in another node, an
+   attribute, a field, the state, a toast, the console, or any request. */
+function keyOnlyInItsBox(world: World, step: string): void {
+  const outside = everyNode(world.view).filter((n: Any) => n.childNodes.length === 0 && !inSecret(n)).map((n: Any) => n.textContent).join(' ');
+  assert.equal(keyIn(outside), false, `${step}: the key outside its box`);
+  for (const node of everyNode(world.view)) {
+    const attributes = JSON.stringify(node.attributes ?? {}) + JSON.stringify(node.dataset) + String(node.name || '') + String(node.title || '') + String(node.pendingLabel || '');
+    assert.equal(keyIn(attributes), false, `${step}: the key in an attribute`);
+    assert.equal(keyIn(String(node.value || '')), false, `${step}: the key in a field`);
+  }
+  assert.equal(keyIn(JSON.stringify(world.store.get())), false, `${step}: the key in the state`);
+  assert.equal(keyIn(world.toasts.join(' ')), false, `${step}: the key in a toast`);
+  assert.equal(keyIn(world.logs.join(' ')), false, `${step}: the key in the console`);
+  for (const call of world.calls) assert.equal(keyIn(JSON.stringify(call)), false, `${step}: the key in ${call.route}`);
+}
+
+test('a wallet with no phrase backs up its key in the same row: one line says why Touch ID, and the key comes masked, with Show and Copy', async () => {
   const world = build({ vault: { hasMnemonic: false } });
+  keyOnlyInItsBox(world, 'before');
   const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent === 'Showing it takes Touch ID, so only you can see it.') as Any;
   assert.ok(why && !why.hidden, 'the row does not say why the key takes a Touch ID');
   buttonNamed(row(world, 'backup'), 'Back it up').click();
@@ -871,114 +971,253 @@ test('a wallet with no phrase backs up its key in the same row: one line says wh
   assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal'), false, 'the phrase was asked of a wallet with none');
   const panel = flow(world);
   assert.equal(panel.dataset.step, 'key');
-  assert.deepEqual(keyText(world), GROUPS, 'the sixteen groups are not on screen in order');
-  assert.deepEqual(find(panel, '.word').map((w: Any) => w.childNodes[0].textContent), GROUPS.map((_, i) => String(i + 1)), 'the groups are not numbered');
-  assert.ok(String(find(panel, 'ol')[0].className).split(' ').includes('vault-key'), 'the key is not set as a key');
-  assert.ok(textOf(panel).includes('On this screen only. Anyone who reads this key can take your money.'));
+  // Masked: sixteen groups of dots, and not one character of the key anywhere on the page.
+  const box = secretBox(world);
+  assert.equal(box.textContent, Array.from({ length: 16 }, () => '\u2022'.repeat(4)).join(' '));
+  assert.equal(box.getAttribute('data-masked'), 'true');
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'the key is on the page while masked');
+  keyOnlyInItsBox(world, 'masked');
+  assert.ok(textOf(panel).includes('Anyone who has this key can take your money. Keep it where only you can reach it.'));
   assert.ok(textOf(panel).includes('It opens the wallet 0x7d4e...0e1d.'), String(textOf(panel)));
   const labels = find(panel, 'button').map((b: Any) => b.textContent);
-  // Hide key, not Done: a first-timer reads Done as "I am done backing up".
-  assert.deepEqual(labels, ['I wrote it down', 'Print', 'Hide key']);
-  assert.equal(labels.some((l: string) => /copy/i.test(l)), false, 'a Copy button on the key');
+  assert.deepEqual(labels, ['Show', 'Copy', 'I saved it somewhere safe', 'Close']);
+  assert.equal(labels.some((l: string) => /print/i.test(l)), false, 'a Print on the key');
+  assert.equal(find(panel, 'textarea').length + find(panel, 'input').length, 0, 'a field asks for the key back');
   assert.equal(buttonNamed(row(world, 'backup'), 'Back it up').hidden, true, 'Back it up stayed beside the key');
   assert.equal(why.hidden, true, 'the Touch ID line stayed once the key was on screen');
   assert.equal(find(panel, '.banner').length, 0);
+
+  // Show puts the sixteen groups in the box, and only there; Hide takes them out again.
+  buttonNamed(panel, 'Show').click();
+  assert.equal(box.textContent, GROUPS.join(' '));
+  assert.equal(box.hasAttribute('data-masked'), false);
+  assert.equal(buttonNamed(panel, 'Hide').getAttribute('aria-pressed'), 'true');
+  keyOnlyInItsBox(world, 'shown');
+  buttonNamed(panel, 'Hide').click();
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'Hide left the key on the page');
+  keyOnlyInItsBox(world, 'hidden again');
 });
 
-/* A key has no checksum, and three groups of sixteen pass a copy with one slipped group 13 times
-   in 16, so the key is proven by the whole copy, typed once from the paper. */
-test('I wrote it down asks for the whole copy once; a slip is named by its group, and only a whole match marks it backed up', async () => {
+/* A key has no words to ask three of, so its backup is the person's word, just after the key was
+   shown, as every wallet does it: the click carries nothing of the key. */
+test('I saved it somewhere safe proves the key: one post that carries nothing of it, the row marked, and the key gone from the page', async () => {
   const world = build({ vault: { hasMnemonic: false } });
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
-  buttonNamed(flow(world), 'I wrote it down').click();
-  let panel = flow(world);
-  assert.equal(panel.dataset.step, 'prove');
-  assert.equal(find(panel, 'input').length, 0, 'groups asked one by one');
-  assert.equal(find(panel, 'textarea').length, 1, 'one field takes the whole copy');
-  assert.ok(textOf(panel).includes('Check your copy'));
-  assert.ok(textOf(panel).includes('Type the whole key from your copy. One wrong character opens a different wallet, so every one is checked against this wallet now, before you need it.'));
-  assert.equal(keyText(world).length, 0, 'the key stayed on screen while its copy is typed');
-
-  let input = find(panel, 'textarea')[0];
-  input.value = GROUPS.slice(0, 15).join(' ');
-  buttonNamed(panel, 'Check').click();
-  assert.ok(textOf(panel).includes('That is 60 characters. A private key is 64.'));
-  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-proven'), false, 'a copy that cannot be right was sent');
-
-  // One slipped group: the app answers another wallet, and the window, still holding the key it
-  // showed a moment ago, names the group to look at. Two misses show the key again.
-  world.answer.keyProven = () => ({ ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' });
-  input.value = GROUPS.map((g, i) => (i === 5 ? 'ffff' : g)).join(' ');
-  buttonNamed(panel, 'Check').click();
+  buttonNamed(flow(world), 'Show').click();
+  let scrolled = 0;
+  row(world, 'backup').scrollIntoView = () => { scrolled += 1; };
+  // While it saves, the button says so, and the page holds the key nowhere but its box.
+  let release: (value: Any) => void = () => {};
+  world.answer.keyProven = new Promise((resolve) => { release = resolve; });
+  buttonNamed(flow(world), 'I saved it somewhere safe').click();
   await flush();
-  assert.ok(textOf(panel).includes('Group 6 does not match the key Phosphor showed you. Check it on your copy, then try again.'), String(textOf(panel)));
-  buttonNamed(panel, 'Check').click();
+  const saved = buttonNamed(flow(world), 'I saved it somewhere safe');
+  assert.equal(saved.disabled, true, 'no pending state while it saves');
+  keyOnlyInItsBox(world, 'saving');
+  release({ ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' });
   await flush();
-  assert.equal(flow(world).dataset.step, 'key', 'two misses did not show the key again');
-  assert.ok(textOf(flow(world)).includes('Two tries did not match. Check your copy group by group, then try again.'));
-
-  // The whole copy, as a person copies it: upper case, a line break, 0x in front.
-  world.answer.keyProven = () => ({ ok: true, backedUpAt: '2026-09-14T10:00:00.000Z' });
-  buttonNamed(flow(world), 'I wrote it down').click();
-  panel = flow(world);
-  input = find(panel, 'textarea')[0];
-  input.value = '0X' + GROUPS.slice(0, 8).join(' ').toUpperCase() + '\n' + GROUPS.slice(8).join(' ');
-  buttonNamed(panel, 'Check').click();
   await flush();
   const posts = world.calls.filter((c) => c.route === '/api/vault/key-proven');
-  assert.equal(posts.length, 3);
-  assert.equal(posts[2].key, '0x' + GROUPS.join(''), 'the copy is sent whole, as one key');
-  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-check'), false, 'the proof went through the check that writes nothing');
+  assert.equal(posts.length, 1);
+  assert.deepEqual(Array.from(posts[0].args), [], 'the proof carries something');
+  assert.equal(world.calls.some((c) => c.route === '/api/vault/key-check' || c.route === '/api/vault/restore'), false, 'the proof went through a route that checks or restores');
   assert.ok(world.calls.some((c) => c.route === 'refresh'));
   assert.equal(flow(world).hidden, true);
-  assert.equal(find(flow(world), '.word').length, 0, 'the key survived the wipe');
+  assert.equal(find(flow(world), '.vault-secret-text').length, 0, 'the key survived the proof');
+  assert.equal(keyIn(textOf(world.view).join(' ')), false);
+  keyOnlyInItsBox(world, 'proven');
   world.put({ vault: vaultState({ hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' }) });
-  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. Your whole copy matched.`);
+  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. You saved your key.`);
   assert.equal(find(row(world, 'backup'), '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the tick did not pop');
+  assert.ok(scrolled > 0, 'the done line was left out of view');
   assert.deepEqual(world.toasts, [], 'a toast said what the row says');
+
+  // A proof the app can no longer tie to the reveal: the key leaves the page and the row asks for it again.
+  const late = build({ vault: { hasMnemonic: false } });
+  late.answer.keyProven = { ok: false, error: 'Show your key once more with Back it up, then save it.', code: 'reveal_again' };
+  buttonNamed(row(late, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(late), 'Show').click();
+  buttonNamed(flow(late), 'I saved it somewhere safe').click();
+  await flush();
+  assert.ok(textOf(flow(late)).includes('Show your key once more with Back it up, then save it.'));
+  assert.equal(keyIn(textOf(late.view).join(' ')), false, 'the key stayed on a refused proof');
+  keyOnlyInItsBox(late, 'refused');
+  assert.deepEqual(late.toasts, []);
 });
 
-test('proven, the key row reads as done: the tick, the day, Show my key, and no Touch ID line', () => {
+test('proven, the key row reads as done: the tick, the day, Show my key, and no Touch ID line; its reveal ends in Done', async () => {
   const world = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
   assert.equal(find(row(world, 'backup'), '.vault-row-title')[0].textContent, 'Private key');
-  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. Your whole copy matched.`);
+  assert.equal(backup(world), `Backed up on ${day('Sep 14, 2026')}. You saved your key.`);
   assert.equal(find(row(world, 'backup'), '.vault-text')[0].getAttribute('data-backed'), 'true');
   assert.equal(buttonNamed(row(world, 'backup'), 'Show my key').hidden, false);
   assert.equal(buttonNamed(row(world, 'backup'), 'Back it up') === undefined, true, 'Back it up on a proven key');
   const why = find(row(world, 'backup'), '.vault-sub').find((p: Any) => p.textContent.startsWith('Showing it takes Touch ID')) as Any;
   assert.equal(why.hidden, true);
+  buttonNamed(row(world, 'backup'), 'Show my key').click();
+  await flush();
+  assert.deepEqual(find(flow(world), 'button').map((b: Any) => b.textContent), ['Show', 'Copy', 'Done']);
+  buttonNamed(flow(world), 'Done').click();
+  assert.equal(flow(world).hidden, true);
 });
 
-test('Print prints the numbered groups and the wallet they open, and takes the sheet away after', async () => {
+/* Fake timers on the window: setTimeout keeps its delay and runs only when the test moves the clock. */
+function fakeClock(world: World): { tick: (ms: number) => void } {
+  let now = 0;
+  let next = 0;
+  const timers = new Map<number, { at: number; fn: () => void }>();
+  world.sandbox.setTimeout = (fn: () => void, ms?: number) => {
+    next += 1;
+    timers.set(next, { at: now + Number(ms || 0), fn });
+    return next;
+  };
+  world.sandbox.clearTimeout = (id: number) => { timers.delete(id); };
+  return {
+    tick(ms: number) {
+      now += ms;
+      for (const [id, timer] of [...timers].sort((a, b) => a[1].at - b[1].at)) {
+        if (timer.at > now || !timers.has(id)) continue;
+        timers.delete(id);
+        timer.fn();
+      }
+    },
+  };
+}
+
+const COPIED = 'Copied. Phosphor clears it when you click I saved it.';
+
+test('Copy puts the whole key on the clipboard as a wallet imports it, says when Phosphor clears it, and repeats the key nowhere', async () => {
+  const world = build({ vault: { hasMnemonic: false } });
+  const clock = fakeClock(world);
+  buttonNamed(row(world, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(world), 'Copy').click();
+  await flush();
+  assert.deepEqual(world.clipboard, ['0x' + KEY_HEX]);
+  assert.ok(buttonNamed(flow(world), COPIED), 'the button does not say when the key leaves the clipboard');
+  assert.equal(secretBox(world).getAttribute('data-masked'), 'true', 'Copy unmasked the key');
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'Copy put the key on the page');
+  keyOnlyInItsBox(world, 'copied');
+  // Thirty seconds on, the clipboard is emptied and the button reads Copy again.
+  clock.tick(29_999);
+  assert.deepEqual(world.clipboard, ['0x' + KEY_HEX], 'the key left the clipboard early');
+  clock.tick(1);
+  assert.deepEqual(world.clipboard, ['0x' + KEY_HEX, ''], 'the key stayed on the clipboard past 30 seconds');
+  assert.ok(buttonNamed(flow(world), 'Copy'), 'the button still says Copied after the clear');
+  clock.tick(60_000);
+  assert.deepEqual(world.clipboard, ['0x' + KEY_HEX, ''], 'the clipboard was written again');
+  keyOnlyInItsBox(world, 'cleared');
+
+  // A clipboard that refuses is said in the row, with the way round it.
+  const refused = build({ vault: { hasMnemonic: false } });
+  refused.answer.clipboardFails = true;
+  buttonNamed(row(refused, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(refused), 'Copy').click();
+  await flush();
+  assert.ok(textOf(flow(refused)).includes('The key did not reach the clipboard. Try Copy again, or show it and write it down.'));
+  keyOnlyInItsBox(refused, 'copy refused');
+});
+
+test('the copied key leaves the clipboard inside the panel\'s next click, at once on a lock or the tab left, and never without a Copy', async () => {
+  const copied = async (): Promise<{ world: World; clock: { tick: (ms: number) => void } }> => {
+    const world = build({ vault: { hasMnemonic: false } });
+    const clock = fakeClock(world);
+    buttonNamed(row(world, 'backup'), 'Back it up').click();
+    await flush();
+    buttonNamed(flow(world), 'Copy').click();
+    await flush();
+    assert.deepEqual(world.clipboard, ['0x' + KEY_HEX]);
+    return { world, clock };
+  };
+  const locked = await copied();
+  locked.world.put({ lock: { state: 'locked', idleLocksInSec: null } });
+  assert.deepEqual(locked.world.clipboard, ['0x' + KEY_HEX, ''], 'a lock left the key on the clipboard');
+  locked.clock.tick(30_000);
+  assert.deepEqual(locked.world.clipboard, ['0x' + KEY_HEX, ''], 'the timer cleared it a second time');
+
+  const left = await copied();
+  left.world.leave();
+  assert.deepEqual(left.world.clipboard, ['0x' + KEY_HEX, ''], 'leaving the tab left the key on the clipboard');
+
+  // The panel's clicks clear it inside the click itself, before anything is awaited: a write with a
+  // click behind it is one WebKit allows.
+  const closed = await copied();
+  buttonNamed(flow(closed.world), 'Close').click();
+  assert.deepEqual(closed.world.clipboard, ['0x' + KEY_HEX, ''], 'Close left the key on the clipboard');
+
+  const saved = await copied();
+  saved.world.answer.keyProven = new Promise(() => {});
+  buttonNamed(flow(saved.world), 'I saved it somewhere safe').click();
+  assert.deepEqual(saved.world.clipboard, ['0x' + KEY_HEX, ''], 'the proof cleared the clipboard only after its answer, or not at all');
+  assert.ok(buttonNamed(flow(saved.world), 'Copy'), 'the button still says Copied after the clear');
+  saved.clock.tick(30_000);
+  assert.deepEqual(saved.world.clipboard, ['0x' + KEY_HEX, ''], 'the timer wrote the clipboard after the click had cleared it');
+
+  const hidden = await copied();
+  buttonNamed(flow(hidden.world), 'Show').click();
+  assert.deepEqual(hidden.world.clipboard, ['0x' + KEY_HEX], 'Show cleared the clipboard');
+  buttonNamed(flow(hidden.world), 'Hide').click();
+  assert.deepEqual(hidden.world.clipboard, ['0x' + KEY_HEX, ''], 'Hide left the key on the clipboard');
+  assert.ok(buttonNamed(flow(hidden.world), 'Copy'), 'the button still says Copied after Hide');
+
+  // A key already backed up ends in Done, so the button names Done, and Done clears it.
+  const proven = build({ vault: { hasMnemonic: false, backedUp: true, backedUpAt: '2026-09-14T10:00:00.000Z' } });
+  fakeClock(proven);
+  buttonNamed(row(proven, 'backup'), 'Show my key').click();
+  await flush();
+  buttonNamed(flow(proven), 'Copy').click();
+  await flush();
+  assert.ok(buttonNamed(flow(proven), 'Copied. Phosphor clears it when you click Done.'), 'the button names a click the panel does not offer');
+  buttonNamed(flow(proven), 'Done').click();
+  assert.deepEqual(proven.clipboard, ['0x' + KEY_HEX, ''], 'Done left the key on the clipboard');
+
+  // A clear the clipboard refuses throws nothing into the window.
+  const refusing = await copied();
+  refusing.world.answer.clipboardFails = true;
+  buttonNamed(flow(refusing.world), 'Close').click();
+  await flush();
+  assert.equal(refusing.world.logs.length, 0, 'a refused clear reached the console');
+
+  // No Copy, no write: closing the key, or the phrase, leaves whatever the clipboard holds.
+  const untouched = build({ vault: { hasMnemonic: false } });
+  fakeClock(untouched);
+  buttonNamed(row(untouched, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(untouched), 'Close').click();
+  untouched.put({ lock: { state: 'locked', idleLocksInSec: null } });
+  assert.deepEqual(untouched.clipboard, [], 'the clipboard was written with no Copy');
+  const phrase = build();
+  buttonNamed(row(phrase, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(phrase), 'Hide words').click();
+  assert.deepEqual(phrase.clipboard, [], 'the phrase wrote the clipboard');
+});
+
+test('Close, a lock, or leaving the tab wipes the key, and a cancelled touch shows nothing', async () => {
   const world = build({ vault: { hasMnemonic: false } });
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
-  buttonNamed(flow(world), 'Print').click();
-  const printed = world.calls.find((c) => c.route === 'print');
-  assert.ok(printed && printed.sheet);
-  assert.deepEqual(find(printed.sheet, 'li').map((li: Any) => li.textContent), GROUPS);
-  assert.ok(textOf(printed.sheet).includes(`It opens the wallet ${EVM}.`));
-  assert.ok(textOf(printed.sheet).includes('Phosphor private key'));
-  assert.ok(textOf(printed.sheet).includes('Anyone who has this key has the money. Keep this sheet away from your Mac.'));
-  assert.ok(textOf(printed.sheet).includes('To restore this wallet on any Mac: install Phosphor from phosphor.money, choose I already have a wallet, and type the sixteen groups in order.'));
-  assert.ok(textOf(printed.sheet).some((t) => t.startsWith('Printed on ')));
-  assert.ok(!textOf(printed.sheet).some((t) => /computer/.test(t)), 'the sheet says computer');
-  assert.equal(world.sandbox.document.body.childNodes.includes(printed.sheet), false);
-});
-
-test('Done, a lock, or leaving the tab wipes the key, and a cancelled touch shows nothing', async () => {
-  const world = build({ vault: { hasMnemonic: false } });
-  buttonNamed(row(world, 'backup'), 'Back it up').click();
-  await flush();
-  assert.equal(keyText(world).length, 16);
-  buttonNamed(flow(world), 'Hide key').click();
-  assert.equal(keyText(world).length, 0);
+  buttonNamed(flow(world), 'Show').click();
+  assert.equal(keyIn(textOf(world.view).join(' ')), true, 'Show did not show the key');
+  buttonNamed(flow(world), 'Close').click();
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'Close left the key on the page');
 
   buttonNamed(row(world, 'backup'), 'Back it up').click();
   await flush();
+  buttonNamed(flow(world), 'Show').click();
   world.put({ lock: { state: 'locked', idleLocksInSec: null } });
-  assert.equal(keyText(world).length, 0, 'the key stayed on a locked window');
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'the key stayed on a locked window');
+  keyOnlyInItsBox(world, 'locked');
+
+  const left = build({ vault: { hasMnemonic: false } });
+  buttonNamed(row(left, 'backup'), 'Back it up').click();
+  await flush();
+  buttonNamed(flow(left), 'Show').click();
+  left.leave();
+  assert.equal(keyIn(textOf(left.view).join(' ')), false, 'the key stayed when the tab was left');
 
   const cancelled = build({ vault: { hasMnemonic: false } });
   cancelled.answer.revealKey = { ok: false, error: 'cancelled', code: 'user_cancel' };
@@ -1052,7 +1291,10 @@ test('a password wallet with no phrase shows its key behind the password typed i
   assert.ok(world.calls.some((c) => c.route === '/api/wallet/reveal' && c.what === 'keys'), 'the password reveal did not ask for the key');
   assert.equal(world.calls.some((c) => c.route === '/api/vault/reveal-key'), false, 'Touch ID was asked of a password wallet');
   assert.equal(flow(world).dataset.step, 'key');
-  assert.deepEqual(keyText(world), GROUPS);
+  assert.equal(keyIn(textOf(world.view).join(' ')), false, 'the key came unmasked');
+  buttonNamed(flow(world), 'Show').click();
+  assert.equal(secretBox(world).textContent, GROUPS.join(' '));
+  keyOnlyInItsBox(world, 'password reveal');
 });
 
 /* ---------- restore ---------- */

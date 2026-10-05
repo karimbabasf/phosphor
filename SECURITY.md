@@ -2,6 +2,8 @@
 
 phosphor moves real money on mainnet and has had no third-party audit. Reports are welcome.
 
+To check the wallet's security claims yourself, test by test, see [docs/verify.md](docs/verify.md).
+
 ## Reporting a vulnerability
 
 Do not open a public issue for anything that could move, expose or lose funds.

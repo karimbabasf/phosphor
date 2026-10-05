@@ -19,6 +19,7 @@ const DOM_SOURCE = readFileSync(new URL('../../ui/core/dom.js', import.meta.url)
 const AGENT_SOURCE = readFileSync(new URL('../../ui/screens/agent.js', import.meta.url), 'utf8');
 const MARKDOWN_SOURCE = readFileSync(new URL('../../ui/core/markdown.js', import.meta.url), 'utf8');
 const MARKS_SOURCE = readFileSync(new URL('../../ui/design/marks.js', import.meta.url), 'utf8');
+const ASK_SOURCE = readFileSync(new URL('../../ui/screens/agentask.js', import.meta.url), 'utf8');
 
 type Node = {
   tag: string;
@@ -157,7 +158,7 @@ function all(node: Node, className: string, found: Node[] = []): Node[] {
   return found;
 }
 
-function build(options: { command?: string; driverData?: Record<string, unknown>; frames?: boolean } = {}) {
+function build(options: { command?: string; driverData?: Record<string, unknown>; frames?: boolean; ask?: boolean } = {}) {
   const sends: string[] = [];
   /* The shared receipt card (ui/screens/receipt.js) is somebody else's: the column hands it the
      receipt and places what comes back. The stub records what it was handed and returns one
@@ -275,6 +276,8 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
   runInContext(MARKS_SOURCE, sandbox, { filename: 'ui/design/marks.js' });
   runInContext(MARKDOWN_SOURCE, sandbox, { filename: 'ui/core/markdown.js' });
   runInContext(AGENT_SOURCE, sandbox, { filename: 'ui/screens/agent.js' });
+  // The ask card's own script, for a test that reads its list of the clients it knows by name.
+  if (options.ask) runInContext(ASK_SOURCE, sandbox, { filename: 'ui/screens/agentask.js' });
 
   const agent = win.PhosphorAgent as { mount: (h: unknown, o: unknown) => void; start: () => void };
   agent.mount(host, { composerHost });
@@ -665,6 +668,28 @@ test('an agent put off with Ask each time keeps a row with a Change that asks ag
   /* Allowed (or gone), the key goes with it. */
   world.agents([{ ...outside, ops: 2, later: false, allowed: true }]);
   assert.equal(all(world.host, 'agent-client-change').length, 0);
+});
+
+// fix2d's card says "Claude Code wants to use Phosphor" while the row under it said "claude-code,
+// its moves wait for your OK". The row reads the card's own list (ui/screens/agentask.js), so
+// both name a known client alike; any other name, and a worker's label, stay as they were.
+test('the roster names a client the ask card knows as the card does, and any other by its own word', () => {
+  const world = build({ ask: true });
+  world.emit({ kind: 'status', state: 'off' });
+  world.agents([
+    { session: 'seat-out', client: 'claude-code', label: 'claude-code', role: 'operator', origin: 'outside', askable: true, allowed: false, later: true, ops: 0 },
+    { session: 'd', client: 'claude-ai', label: 'claude-ai', role: 'operator', ops: 2 },
+    { session: 'c', client: 'Codex-MCP-Client', role: 'operator', ops: 1 },
+    { session: 'x', client: 'my-trading-bot', label: 'my-trading-bot', role: 'operator', ops: 1 },
+    { session: 'w', client: 'claude-code', label: 'Analyst 2', role: 'analyst', ops: 4 },
+  ]);
+  assert.deepEqual(all(world.host, 'agent-client-name').map((n) => n.textContent), [
+    'Claude Desktop, can ask',
+    'Codex, can ask',
+    'my-trading-bot, can ask',
+    'Analyst 2, read only',
+    'Claude Code, its moves wait for your OK',
+  ]);
 });
 
 test('a first move on a live column asks its question at once', () => {

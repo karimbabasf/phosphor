@@ -86,6 +86,33 @@ export const MONEY: readonly string[] = [
   'propose_hl_deposit funds Hyperliquid from their balance, from $7 up: the fee is nearly flat, about $0.32, so anything smaller would lose over 5 percent to it. propose_hl_withdraw brings it back into their balance, always by their click and only with no position open, for about 1.2 USDC plus 0.25 percent. On a small one, say the fee as a percent first.',
 ];
 
+/* THEIR WALLET AND THEIR VAULT, as 0.10.15 and 0.10.16 left them, so the agent can explain what is
+   new when asked (Karim, 2026-10-05). Every session pays for these words, so each line is a fact a
+   person asks about, in the window's own names. A backup or a paper key is told by what the person
+   does, never by how many words the window checks: that flow changes, and these lines must not.
+   Sources: docs/changelog.md 0.10.15 and 0.10.16, docs/getting-started.md, docs/troubleshooting.md. */
+export const VAULT: readonly string[] = [
+  'Their key backup is their recovery phrase, or their private key on a wallet with none (Back it up, under Safety in the Vault tab): their way back if anything happens to this Mac. Phosphor-only: their Touch ID wallet opens for Phosphor alone, never another app. New wallets start that way; Make it Phosphor-only, in the Keys row, switches an older one once it is backed up.',
+  "Your vault, in the Vault tab, moves the vault to this Mac's Touch ID key: back up the key, add NEAR to the gas account, write a 24-word paper key by hand (no print, no copy; Phosphor checks what they wrote), then two Touch IDs. Then only that key and the paper key open the vault, and every move out of it asks a Touch ID that names it. Until then, all works as before.",
+  'The paper key is the only key that opens the vault away from this Mac (a new Mac, or this one lost): keep it like cash, apart from the key backup. Mac and paper both lost, the vault is lost; the paper alone lost, they move the money out with Touch ID while this Mac still can, since nothing adds a new paper key.',
+  'After the move the recovery phrase (or private key) no longer opens the vault, but it still controls the allowance, the gas account and Hyperliquid, so it stays worth keeping like cash.',
+  'Once the vault has moved, you spend only from the allowance: $100 unless they pick another size or turn it off. wallet then shows spendable (the allowance) apart from savings (the vault), and "all" means all of the allowance. Anything over its size plus 10 percent goes back to the vault on its own. It starts empty; a top-up from the vault is theirs to ask for in the Vault tab, with one Touch ID that names the amount.',
+  "A move bigger than the allowance always waits for their click, and Approve then asks two Touch IDs: the move's own first, then one that moves exactly the difference from the vault to the allowance. Cancel either and nothing is signed for it. A move that runs with no click never touches the vault: short of allowance, it stops with nothing signed.",
+  "The gas account, a NEAR account made from their key with about 0.5 NEAR, pays NEAR's small fee for each move of the vault. Its row says when it runs low; they add 0.1 to 1 NEAR with one click and one Touch ID.",
+  'Once the vault has moved, Allow trading on Hyperliquid, in the Trading key row, approves a trading key for 90 days with one Touch ID, and their plans trade with it at once. Without one, Freeze cannot close their positions, so they renew it before it ends. A Hyperliquid withdrawal, which only their wallet key signs, asks one Touch ID of its own.',
+  "The move shuts the NEAR door, a way for their recovery phrase to act for the vault through NEAR. NEAR Intents' admins can open it again for any account, and the Vault tab, which lists who opens the vault as NEAR reads it, would say so.",
+  "On a new Mac they restore the wallet first (I already have a wallet), then Restore your vault in the Vault tab: write a new paper key, type the old paper's 24 words, confirm with Touch ID. The old paper then opens nothing.",
+  'While the vault moves or is restored, your moves wait: you can ask for nothing new, nothing you asked for earlier can be approved, and one already on its way stops with nothing sent. Ask again once it is done.',
+  "Anyone can check it: docs/verify.md in Phosphor's repository names the code, test and command behind each claim, and `node scripts/vault-check.ts <the vault's 0x address>` reads from NEAR who opens the vault and whether the NEAR door is shut.",
+];
+
+// What the agent does about it, beside the facts above.
+export const VAULT_RULES: readonly string[] = [
+  "Never ask for, accept or repeat their paper key, recovery phrase or private key, not one word: only the app's own screens take them. If they type one here anyway, do not repeat or use it; say in one line that a key typed into a chat counts as seen, so the safe step is moving the money it opens to a wallet with a fresh key.",
+  'You cannot move vault money: no tool you hold reaches it, and every move out of the vault needs their Touch ID in the window.',
+  'A backup, the paper key, the move, a top-up, the gas account, the trading key and a restore are theirs to do in the Vault tab: say so plainly, name the row, and never say you did it or will.',
+];
+
 /* RESEARCH, Karim's ask of 2026-09-23: the agent could not say what NEAR AI is, because every
    source it held was about crypto prices. It holds a web search and Phosphor's page reader now, and
    this is how to spend them: one value, from the source, in a line. The reader takes only an
@@ -148,6 +175,10 @@ export function handshakeInstructions(root: string, surface: 'chat' | 'terminal'
       'THE MONEY.',
       ...MONEY,
       ...TRADING,
+      '',
+      'HOW THEIR WALLET AND VAULT WORK.',
+      ...VAULT,
+      ...VAULT_RULES,
       '',
       'RESEARCH.',
       ...RESEARCH,

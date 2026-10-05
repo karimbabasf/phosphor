@@ -31,8 +31,16 @@ import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
-import { reasonFor } from '../vault/reason.ts';
+import { ASK_TIMEOUT_MS } from '../vault/relay.ts';
+import { moveSpend } from '../vault/allowance.ts';
+import type { AllowanceService } from '../vault/allowance.ts';
+import { railAccounts } from '../intents-sign.ts';
+import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
+import { evmAddressOf } from '../keystore/derived.ts';
+import { vaultMoveUnderWay, vaultMovedElsewhere } from '../vault/rekey.ts';
+import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
+import type { OwnerTouch } from '../rails/hl-user-signed.ts';
 import { recordRecipient } from '../recipients.ts';
 import type { AddressActivity, ChainNetwork } from '../chainscan/index.ts';
 import type { RailRegistry } from '../rails/index.ts';
@@ -46,6 +54,10 @@ const SESSION_WINDOW_MS = 24 * 60 * 60 * 1000;
 // A registry with no rails in it. Fail closed: a wiring layer that forgets to pass one
 // gets every rail proposal refused with a reason, not a rail picked by guesswork.
 export const NO_RAILS: RailRegistry = { for: () => null, kinds: () => [] };
+
+// The kinds whose every signature is a Hyperliquid owner action: the withdrawal's book move and
+// its send. A deposit spends from the intents balance first, so it is not one.
+const OWNER_ONLY_KINDS: ReadonlySet<WriteDraft['kind']> = new Set(['hl_withdraw']);
 
 export type ProposalDeps = {
   cfg: AppConfig;
@@ -72,6 +84,10 @@ export type ProposalDeps = {
      wallet is opened by password and a click is a click. */
   vault?: VaultRelay;
   keystore?: Keystore;
+  /* The vault's side of the allowance (src/vault/allowance.ts): the shortfall step a move bigger
+     than the allowance takes first, and the sweep after every settled move. Absent on a wallet
+     that has not moved to the chip, in demo mode and in tests, where nothing tops up or sweeps. */
+  allowance?: AllowanceService;
   held?: { retryMs: number; maxMs: number };
   /* The public chain read a send builder makes about the receiver (transaction count, balance,
      whether it is a contract), so the card can say "never used on Ethereum, check it twice".
@@ -174,6 +190,7 @@ export type PCtx = {
   venueCredited?: VenueCredited;
   vault?: VaultRelay;
   keystore?: Keystore;
+  allowance?: AllowanceService;
   recipientActivity?: (network: ChainNetwork, address: string) => Promise<AddressActivity | null>;
   // finishTouch, serialised by the service like approve is, so the continuation of a click
   // never interleaves with another proposal's execution.
@@ -401,6 +418,11 @@ export function selfAddresses(ctx: PCtx): string[] {
   for (const a of ownBook(ctx).evm) set.add(a.toLowerCase());
   const read = ctx.ledger.intents();
   for (const h of read?.holdings ?? []) set.add(h.accountId.toLowerCase());
+  /* The accounts the rails sign for, by name and not only once they hold something: an empty
+     allowance is still ours, and a top-up into it is a move between our own accounts
+     (p2-rails open risk 5). */
+  const rails = railAccounts(ctx.cfg.keysPath);
+  for (const a of [rails.vault, rails.spend, ctx.keystore?.derivedAccounts()?.allowance ?? null]) if (typeof a === 'string' && a !== '') set.add(a.toLowerCase());
   return [...set];
 }
 
@@ -473,8 +495,54 @@ export function requireIntact(ctx: PCtx, id: string, action: string): void {
   throw new Error(`proposal ${id} was changed on disk by something other than this app since it was proposed, so it cannot be decided; propose it again`);
 }
 
+/* AGENTS WAIT WHILE THE VAULT MOVES (PHASE2-PLAN.md risk 7). From the moment a move to the chip or a
+   restore starts until NEAR says how it ended (src/vault/rekey.ts vaultMoveUnderWay), nothing an
+   agent asked for is proposed or signed: the account the rails sign for changes under it, and the
+   owner key it would sign with leaves the vault in the same call. The propose op is refused at the
+   door (src/http/mcp.ts); a row an agent filed is refused at land() and at its signature
+   (src/proposals/execute.ts), and a click on one waits here. Asked again after the move, it runs. */
+export const AGENTS_WAIT_SAID = "Your vault is moving to this Mac's Touch ID key right now, so moves wait until that is done. Nothing was sent. Ask again in a few minutes.";
+
+export function agentsWait(ctx: { keystore?: Keystore }): boolean {
+  return ctx.keystore !== undefined && vaultMoveUnderWay(ctx.keystore);
+}
+
+/* A VAULT THAT MOVED TO ANOTHER MAC SPENDS NOTHING HERE (src/vault/rekey.ts vaultMovedElsewhere).
+   NEAR shows the wallet's own key off the vault while this Mac holds no chip for it, so a swap,
+   send, payout or Hyperliquid deposit from the vault would be signed by a key the vault no longer
+   takes and fail on its card. Each is refused in words before anything is signed: at land(), at a
+   click, and at its rail's last check before the key. With no word from NEAR, nothing is refused
+   here: the chain is the real boundary, and this is only the words. */
+export const VAULT_ELSEWHERE_SAID = "Your vault opens with another Mac's Touch ID key now, so this Mac signed nothing. Restore your vault on this Mac with your paper key to spend from it here.";
+
+export function vaultElsewhere(ctx: { keystore?: Keystore }): boolean {
+  return ctx.keystore !== undefined && vaultMovedElsewhere(ctx.keystore);
+}
+
+// The kinds whose rail signs for the account the rails spend from: the vault, under kind key.
+export function spendsFromVault(draft: WriteDraft): boolean {
+  return draft.kind === 'swap' || draft.kind === 'intents_send' || draft.kind === 'intents_pay' || draft.kind === 'hl_deposit';
+}
+
+// The refusal a vault spend gets once NEAR shows the vault answering to another Mac's keys.
+export function elsewhereVerdict(p: Proposal): Verdict {
+  return { outcome: 'refuse', reasons: [...p.verdict.reasons, VAULT_ELSEWHERE_SAID], rule: 'vault_elsewhere', reasonCodes: ['vault_elsewhere'] };
+}
+
 export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   const p = requirePending(ctx, id, 'approve');
+
+  if (p.by !== undefined && agentsWait(ctx)) {
+    ctx.audit.append('approve_attempt_rejected', `approve for ${id}, an agent's move, while the vault is moving`, { id, action: 'approve', vaultMoving: true });
+    throw new Error("Your vault is moving to this Mac's Touch ID key right now. Approve this once the move is done. Nothing changed.");
+  }
+
+  // A spend from a vault NEAR shows on another Mac's keys: refused in words, before any Touch ID.
+  if (spendsFromVault(p.draft) && vaultElsewhere(ctx)) {
+    const verdict = elsewhereVerdict(p);
+    ctx.audit.append('policy_refused', `${id} refused at approval time: vault_elsewhere`, { id, rule: 'vault_elsewhere', reasons: verdict.reasons });
+    return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+  }
 
   // Re-run the engine at approval time: the policy file, the kill switch and the balances
   // can all have moved since the proposal was created, and the older verdict is only ever a
@@ -485,6 +553,38 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   if (verdict.outcome === 'refuse') {
     ctx.audit.append('policy_refused', `${id} refused at approval time: ${verdict.rule}`, { id, rule: verdict.rule, reasons: verdict.reasons });
     return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+  }
+
+  /* A MOVE ONLY THE OWNER KEY SIGNS ASKS FOR ITS FINGER AT THE SIGNATURE. On a vault that moved to
+     the chip the owner key is out of the session, and each Hyperliquid owner action asks for a
+     Touch ID of its own that names the action, the amount and where it goes (ownerTouchVia,
+     below). A withdrawal is nothing but those actions, so a touch here would open a session it
+     never uses and put a second dialog in front of the one that matters. The click approves it,
+     the lock state does not matter, and the finger comes when the key signs. The gate can also
+     close on a session that still holds the owner key (a chip marker learned while the wallet is
+     open, its chain read not back yet), so the session lets go of the key here: a click that
+     skipped the touch leaves the signature no way but its own. */
+  if (OWNER_ONLY_KINDS.has(p.draft.kind) && ownerTouchRequired()) {
+    ctx.keystore?.dropOwnerKey();
+    const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+    ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; Touch ID asks at each owner signature`, { id, totalUsd: totalUsdOf(p.draft), ownerTouch: true });
+    return ctx.execute(approved);
+  }
+
+  /* A TOP-UP'S FINGER IS THE VAULT'S OWN (PHASE2-PLAN.md C8). The click approves it, and the one
+     Touch ID is the vault's chip key at its signature, whose sentence the vault service writes
+     from the payload ("move 5.00 USDC from your vault to your allowance"); an approval touch here
+     would open the wallet for nothing and put a second dialog in front of the one that matters.
+     The gas account that sends it lives in the open session, so a shut wallet is opened first:
+     the row stays pending and the click can be made again. */
+  if (p.draft.kind === 'vault_top_up') {
+    if (isLocked()) {
+      ctx.audit.append('approve_attempt_rejected', `approve for top-up ${id} while the wallet is shut`, { id, action: 'approve', locked: true });
+      throw new Error('Open your wallet first: the gas account that sends a top-up opens with it. Nothing changed.');
+    }
+    const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+    ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; the vault's Touch ID asks at its signature`, { id, totalUsd: totalUsdOf(p.draft), vaultTouch: true });
+    return ctx.execute(approved);
   }
 
   /* AN ENCLAVE WALLET ASKS FOR A FINGER, every time, open or shut. The click is recorded as
@@ -608,7 +708,7 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
       const row = ctx.store.get(id);
       return row === undefined || !mayStillSign(row);
     },
-    CLOSE_GRACE_MS,
+    CLOSE_GRACE_MS + topUpGraceMs(ctx, current),
   );
   if (!opened.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
@@ -618,6 +718,83 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   rememberRecipient(ctx, approved);
   return ctx.execute(approved);
+}
+
+/* A move on a vault that moved to the chip may take a top-up from the vault first, and that is a
+   Touch ID of its own, a dry run and a send before the move itself signs
+   (src/proposals/execute.ts, the shortfall step). On a wallet opened for this one move the key is
+   held that much longer, still only until the move has signed. */
+function topUpGraceMs(ctx: PCtx, p: Proposal): number {
+  const rails = railAccounts(ctx.cfg.keysPath);
+  const need = moveSpend(p.draft);
+  if (ctx.allowance === undefined || rails.kind !== 'chip' || rails.spend === null || need === null) return 0;
+  // Only where the ledger's last read shows the allowance short of the move, or shows nothing.
+  const read = ctx.ledger.intents();
+  if (read !== undefined && read.ok) {
+    const rows = read.holdings.filter((h) => h.accountId.toLowerCase() === rails.spend!.toLowerCase() && h.assetId === need.asset);
+    if (rows.every((h) => h.amountBase !== undefined) && rows.reduce((sum, h) => sum + BigInt(h.amountBase!), 0n) >= need.base) return 0;
+  }
+  return ASK_TIMEOUT_MS + 90_000;
+}
+
+/* THE OWNER KEY FOR ONE HYPERLIQUID SIGNATURE, BEHIND ONE TOUCH (P2.8). What a rail's signature asks
+   for on a vault that moved to the chip (src/rails/hl-user-signed.ts, OwnerTouch), and src/main.ts
+   installs it. The dialog's sentence is read off the typed data itself (src/vault/reason.ts,
+   ownerReason), so an action it cannot name is never asked about. The live file is unwrapped once
+   under the custody lock, as an approval's touch is, and opened for the owner key alone
+   (Keystore.withOwnerKey): the lock state is left as it was, the key signs inside, and it is
+   zeroed once the signature is made. The last check runs again after the touch, because a dialog
+   can stay up for a minute and Freeze binds at the signature. Nothing stays open: the next action
+   asks again. `ownerOut` is the keystore's gate as src/main.ts wires it, read for the vault in
+   the file. The file's header names that vault and sits outside what its encryption covers, and
+   until this process opens the payload, the rails build a move from it; so the key the touch opens
+   signs only when its own address is the one the move was built for (audit2 AU2-02). */
+export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; ownerOut: (vault: string) => boolean }): OwnerTouch {
+  const { vault, keystore } = deps;
+  return {
+    required() {
+      const evm = keystore.addresses().evm;
+      return evm !== null && deps.ownerOut(evm);
+    },
+    async sign(typed, lastCheck) {
+      const reason = ownerReason(typed);
+      if (reason === null) throw new OwnerTouchRefused('unnamed', 'Touch ID can only be asked for a Hyperliquid action the app can name in full, so nothing was signed');
+      const builtFor = keystore.addresses().evm?.toLowerCase() ?? null;
+      if (builtFor === null) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
+      return custodyLock(keystore).run(async () => {
+        const request = keystore.enclaveRequest();
+        if (request === null) throw new OwnerTouchRefused('no_enclave', 'This wallet has no Touch ID key to ask, so nothing was signed');
+        const answer = await vault.ask({ op: 'unwrap', reason, ...request });
+        if (!answer.ok) throw new OwnerTouchRefused(answer.error, touchSaid(answer.error));
+        if (answer.op !== 'unwrap') throw new OwnerTouchRefused('garbled', 'Touch ID answered something else, so nothing was signed');
+        const signed = keystore.withOwnerKey(answer.dek, (key) => {
+          // A header the decrypt proved edited (reaudit2 RA2-01): a move built before this touch
+          // read the forged address, whatever addresses() says now.
+          if (keystore.addressReport().tampered || evmAddressOf(key).toLowerCase() !== builtFor) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
+          lastCheck?.();
+          return signTypedWith(key, typed);
+        });
+        if (!signed.ok) throw new OwnerTouchRefused(signed.error, `The Touch ID did not open the wallet (${signed.error}), so nothing was signed`);
+        return await signed.value;
+      });
+    },
+  };
+}
+
+const OTHER_ACCOUNT_SAID = 'The key Touch ID opened is not the account this move was built for, so nothing was signed. Unlock your wallet, then try again';
+
+function touchSaid(code: string): string {
+  switch (code) {
+    case 'user_cancel':
+      return 'Touch ID was cancelled, so nothing was signed';
+    case 'timeout':
+      return 'Touch ID was not answered in time, so nothing was signed';
+    case 'no_relay':
+    case 'stopped':
+      return 'Touch ID could not be reached from this window, so nothing was signed';
+    default:
+      return `Touch ID did not answer (${code}), so nothing was signed`;
+  }
 }
 
 /* Everything queued while the wallet was locked, decided now.
@@ -738,6 +915,9 @@ type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
    Under-counting one that succeeded costs the cap itself. */
 function countsAgainstCap(p: Proposal): boolean {
   if (p.kind === 'policy_change') return false;
+  /* A top-up moves money between the person's own accounts and leaves for nobody, and the move a
+     shortfall top-up pays for is charged in full on its own row: charging both would count it twice. */
+  if (p.kind === 'vault_top_up') return false;
   if (p.status === 'executed' || p.status === 'executing') return true;
   // A held row is a person's decision waiting on the chain: the app will move it on its own
   // the moment the checks clear, so the budget holds it while it waits.

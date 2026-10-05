@@ -24,7 +24,7 @@ import { currentSymbol, receiveNetworkOf } from '../rails/intents-address.ts';
 import { addressesFromKeys, keyFrom, keyGroups, keyProblem, mnemonicProblem, normaliseMnemonic, walletFromMnemonic } from '../keystore/derive.ts';
 import type { StagedFile } from '../keystore/store.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
-import { checkPhrase, forgetPhrase, rememberPhrase } from '../vault/phrase-proof.ts';
+import { checkPhrase, forgetPhrase, rememberKeyShown, rememberPhrase, takeKeyShown } from '../vault/phrase-proof.ts';
 import {
   ADDRESS_REASON,
   CREATE_REASON,
@@ -328,7 +328,8 @@ export async function handleVaultReveal(ctx: Ctx, req: http.IncomingMessage, res
 /* The private key of a wallet that has no recovery phrase, the phrase reveal's twin for a wallet
    brought in as a key: its own Touch ID every time, open wallet or not, read through
    readWithDataKey so a locked wallet stays locked, and returned once, in this response, in the
-   sixteen groups of four the window shows; the whole copy typed back proves it (key-proven, below).
+   sixteen groups of four the window shows; I saved it somewhere safe, after it, proves it
+   (key-proven, below).
    The EVM key alone: it is all
    this app signs with and the one key behind every address the app shows (the account, and every
    deposit address the bridge gives that account). An older file can also seal a NEAR and a Solana
@@ -361,6 +362,9 @@ export async function handleVaultRevealKey(ctx: Ctx, req: http.IncomingMessage, 
   if (read.value.key === null) return sendJson(res, 200, refusal('no_private_key'));
   const groups = keyGroups(read.value.key);
   const wallet = ctx.keystore.addresses().evm;
+  // The wallet the shown key itself opens, derived here, so a proof is for the key that was on screen.
+  const opens = addressesFromKeys({ evm: keyFrom(read.value.key) }).evm;
+  if (opens) rememberKeyShown(opens);
   ctx.audit.append('app_start', 'the private key was revealed in the window after a Touch ID; the wallet stays as it was', {});
   ctx.session.touch();
   sendJson(res, 200, {
@@ -419,22 +423,22 @@ function copyAgainstWallet(ctx: Ctx, raw: unknown): { refused: JsonBody } | { ma
   return { matches, wallet };
 }
 
-/* The proof for a wallet with no phrase is the whole copy. A phrase carries a checksum, so three of
-   its words typed back show a copy that reads; a raw key has none, so a slip anywhere in it is
-   simply another wallet, and three groups of sixteen pass a copy with one slipped group 13 times in
-   16. So the key's backup is proven only by the whole copy, typed back once from the paper and
-   opening this very wallet. A copy that opens another wallet clears nothing and says so. */
+/* The proof for a wallet with no phrase is the person's word: I saved it somewhere safe, clicked in
+   the window just after the key was shown, as every wallet backs up a key. A raw key has no words
+   to ask three of, and typing all 64 characters back proved a copy nobody else asks for. The click
+   counts only straight after a reveal of this wallet's key (src/vault/phrase-proof.ts keyShown),
+   and only on this route, which carries the window token and no agent reaches. Nothing of the key
+   is sent, kept or compared. */
 export async function handleVaultKeyProven(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/key-proven', req, res);
   if (body === null) return;
-  const checked = copyAgainstWallet(ctx, body.key);
-  if ('refused' in checked) return sendJson(res, 200, checked.refused);
-  if (!checked.matches) {
-    ctx.audit.append('app_start', 'a copy of the private key was typed back to prove the backup: it opens a different wallet, so nothing changed', {});
-    return sendJson(res, 200, { ok: false, error: 'That copy opens a different wallet. Check it group by group.', code: 'wrong_copy' });
+  const wallet = ctx.keystore.addresses().evm;
+  if (wallet === null) return sendJson(res, 200, refusal('no_wallet'));
+  if (!takeKeyShown(wallet)) {
+    return sendJson(res, 200, { ok: false, error: 'Show your key once more with Back it up, then save it.', code: 'reveal_again' });
   }
-  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, checked.wallet);
-  ctx.audit.append('app_start', 'the private key was proven backed up: the whole copy typed back opens this wallet', {});
+  const prefs = ctx.vaultPrefs.markBackedUp(Date.now, wallet);
+  ctx.audit.append('app_start', 'the private key was marked backed up: I saved it somewhere safe, clicked just after it was shown', {});
   announce(ctx);
   sendJson(res, 200, { ok: true, backedUpAt: prefs.backedUpAt });
 }

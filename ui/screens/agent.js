@@ -288,6 +288,16 @@
   /* Whether the person froze everything (state.policy.killSwitch): the head says so. */
   var frozen = false;
 
+  /* Whether the vault is moving to this Mac's Touch ID key right now: the agent's moves wait
+     meanwhile (src/http/mcp.ts answers 409 paused:'vault_moving'), so the head says so in one calm
+     line. state.vault.chip.moving is the same fact that holds them (src/vault/rekey.ts
+     vaultMoveUnderWay), so the line also stands after a restart mid-move, when no run is in hand. */
+  var moving = false;
+
+  function vaultMoving(vault) {
+    return !!(vault && vault.chip && vault.chip.moving === true);
+  }
+
   /* THE PICK: the agent a new chat runs (GET /api/driver `agent`). One that runs outside this
      window (Codex in a terminal) has no Start here; its sentence says where it runs instead. */
   var pick = null;
@@ -1226,12 +1236,18 @@
     var on = shown && !!name;
     dom.setHidden(refs.who, !on);
     dom.setAttr(refs.who, 'data-frozen', on && frozen ? 'true' : null);
+    dom.setAttr(refs.who, 'data-moving', on && !frozen && moving ? 'true' : null);
     if (!on) return;
     paintNoteMark(refs.whoMark, pick.id);
     /* Frozen, the line says so first: the agent can still read and talk, and nothing moves. */
     if (frozen) {
       dom.setText(refs.whoName, 'Everything is frozen.');
       dom.setText(refs.whoState, ' ' + name + ' can read, but no money moves.');
+      return;
+    }
+    if (moving) {
+      dom.setText(refs.whoName, 'Your vault is moving.');
+      dom.setText(refs.whoState, ' ' + name + '\'s moves wait.');
       return;
     }
     dom.setText(refs.whoName, name);
@@ -2178,7 +2194,15 @@
   }
 
   /* The roster, as the state frame carries it: the clients attached over MCP, named by
-     themselves. Text, never markup. */
+     themselves. Text, never markup. A client the ask card knows reads as the agent it is
+     ("Claude Code", not "claude-code"), by that card's own list (ui/screens/agentask.js). */
+  function rosterName(m) {
+    var said = String(m.label || m.client || m.session || 'an agent');
+    var ask = window.PhosphorAgentAsk;
+    var known = ask && typeof ask.knownName === 'function' ? ask.knownName(said) : null;
+    return known || said;
+  }
+
   function onAgents(slice) {
     var members = slice && Array.isArray(slice.members) ? slice.members : [];
     var next = [];
@@ -2187,7 +2211,7 @@
       var waits = m.origin === 'outside' && m.allowed !== true;
       next.push({
         session: String(m.session || ''),
-        name: String(m.label || m.client || m.session || 'an agent'),
+        name: rosterName(m),
         role: String(m.role || ''),
         calls: typeof m.ops === 'number' ? m.ops : 0,
         // Started outside Phosphor and not allowed yet (ui/screens/agentask.js asks).
@@ -2264,6 +2288,12 @@
         var next = !!(policy && policy.killSwitch);
         if (next === frozen) return;
         frozen = next;
+        renderAll();
+      });
+      store.select('vault', function (vault) {
+        var next = vaultMoving(vault);
+        if (next === moving) return;
+        moving = next;
         renderAll();
       });
     }

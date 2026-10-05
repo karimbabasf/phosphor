@@ -14,7 +14,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
 
-import { createShutdown, installShutdownHandlers, within, SETTLE_CAP_MS } from '../../src/shutdown.ts';
+import { createShutdown, installShutdownHandlers, watchParent, within, SETTLE_CAP_MS } from '../../src/shutdown.ts';
 import { VENUE_WRITE_TIMEOUT_MS } from '../../src/net.ts';
 import { beginDraining, isDraining, resetDrainingForTests } from '../../src/draining.ts';
 import { createSerialiser } from '../../src/proposals/lifecycle.ts';
@@ -302,6 +302,21 @@ test('being reparented is the same answer, because that is what happens when a p
     assert.deepEqual(h.order, ['drain', 'settle', 'close']);
   } finally {
     h.uninstall();
+  }
+});
+
+// CI, 2026-10-05 (macos-15): the parent exited before the child installed its watch, so the parent
+// read at install was already 1 (launchd). It never changed and always answered, so the watch never
+// fired, and the child outlived the process that started it.
+test('a parent already gone when the watch installs (pid 1) stops the backend once, on the next tick', async () => {
+  const why: string[] = [];
+  const stop = watchParent({ ppid: () => 1, alive: () => true, intervalMs: 5, onGone: (w) => why.push(w) });
+  try {
+    await new Promise((r) => setTimeout(r, 40));
+    assert.equal(why.length, 1, why.join(' | '));
+    assert.match(why[0]!, /gone before this one could watch it/);
+  } finally {
+    stop();
   }
 });
 

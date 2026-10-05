@@ -3,13 +3,15 @@
 // Run for real over a small DOM with ui/core/dom.js, a store that hands it state frames and an
 // api that records the answer. What is proven: the card asks only about an outside agent that can
 // be allowed and has not been answered; it sits in the conversation's slot under the roster, in
-// the column's flow, and never floats over the balances or the freeze panel; it says who is
-// asking in the agent's own words, how many more wait, what it can do now and after an Allow
-// (with the person's own approval amount, and that a move already asked for still waits), and
-// why to be careful; a screen reader hears that an agent asks; it moves no focus and holds its
-// answers for a beat; Allow and Ask each time are one round trip each, Escape is Ask each time,
-// a failure keeps it up with the reason, a put-off agent's card comes back when the person asks
-// from its roster row, and nothing it draws is markup or a brand's mark for a name nobody checked.
+// the column's flow and across its measure, and never floats over the balances or the freeze
+// panel; it says in one line which assistant wants to use Phosphor and when it connected, how
+// many more wait, what it can do until an Allow and after one (with the person's own approval
+// amount, $0 included, and that a move already asked for still waits), and why to be careful; a
+// screen reader hears that an agent asks; it moves no focus and holds its answers for a beat at
+// full strength; Allow and Ask each time are one round trip each, Escape is Ask each time, a
+// failure keeps it up with the reason, a put-off agent's card comes back when the person asks
+// from its roster row, and nothing it draws is markup. Only a name the card knows gets a logo, and
+// the card says Phosphor can't check the name; any other name stays the agent's own text.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -93,6 +95,7 @@ function harness(opts: { answer?: (session: string, allow: boolean) => Promise<u
   body.appendChild(conversation);
   const timers: Array<() => void> = [];
   const answers: Array<[string, boolean]> = [];
+  const logos: string[] = [];
   let state: Any = { agents: { members: [] }, policy: { outbound: { humanClickAboveUsd: 25 } } };
   const watchers: Record<string, Array<(slice: unknown) => void>> = {};
   const pending: Array<[Any, boolean]> = [];
@@ -115,6 +118,8 @@ function harness(opts: { answer?: (session: string, allow: boolean) => Promise<u
     },
     PhosphorNet: { readable: (err: Any) => `readable: ${err?.message ?? err}` },
     PhosphorIcons: { svg: (name: string) => { const n = makeNode('svg'); n.dataset.icon = name; return n; } },
+    // ui/design/marks.js agent(): a brand's logo is an <img> of its file.
+    PhosphorMarks: { agent: (id: string) => { logos.push(id); const n = makeNode('span'); n.className = 'logo'; n.appendChild(makeNode('img')); return n; } },
     PhosphorShell: { setPending: (button: Any, on: boolean) => { pending.push([button, on]); button.disabled = on; } },
   };
   createContext(sandbox);
@@ -129,6 +134,9 @@ function harness(opts: { answer?: (session: string, allow: boolean) => Promise<u
   const card = (): Any => all(body, (n) => n.className === 'agent-ask')[0] ?? null;
   const live = (): Any => all(body, (n) => String(n.className).split(' ').includes('agent-ask-live'))[0] ?? null;
   const more = (): Any => all(card(), (n) => n.className === 'agent-ask-more')[0];
+  const part = (cls: string): Any => all(card(), (n) => n.className === cls)[0];
+  // The words as read: the line under the title keeps its no-break spaces out of the comparisons.
+  const says = (cls: string): string => String(part(cls).textContent).replace(/\u00a0/g, ' ');
   const buttons = (): { later: Any; allow: Any } => {
     const list = all(card(), (n) => n.tagName === 'BUTTON');
     return { later: list.find((b) => b.textContent.includes('Ask each time')), allow: list.find((b) => b.textContent.includes('Allow')) };
@@ -137,7 +145,7 @@ function harness(opts: { answer?: (session: string, allow: boolean) => Promise<u
   const tick = async (): Promise<void> => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
   };
-  return { body, slot, ask, push, card, live, more, buttons, timers, runTimers, answers, pending, tick, stateWith: (members: Any[]) => ({ ...state, agents: { members } }) };
+  return { body, slot, ask, push, card, live, more, part, says, buttons, timers, runTimers, answers, logos, pending, tick, stateWith: (members: Any[]) => ({ ...state, agents: { members } }) };
 }
 
 test('no card for an agent the app started, one allowed or put off, or one that sent no key', () => {
@@ -153,22 +161,79 @@ test('no card for an agent the app started, one allowed or put off, or one that 
   }
 });
 
-test('it asks who, in the agent\'s own words, what it can do now and after an Allow, and why to be careful', () => {
+// Karim, 2026-10-05: "this looks like shit, idk what it is". The card said '"claude-code", started
+// outside Phosphor at 07:43' for a session started at 00:12 that connected at 07:43.
+test('it says in one line which assistant wants to use Phosphor, when it connected, what each answer means, and why to be careful', () => {
   const h = harness();
   h.push(h.stateWith([MEMBER]));
   const card = h.card();
   assert.ok(card !== null && card.hidden === false);
   assert.equal(card.getAttribute('role'), 'dialog');
   assert.equal(card.getAttribute('aria-modal'), 'false');
+  assert.equal(card.getAttribute('aria-labelledby'), 'agent-ask-title');
   assert.equal(card.getAttribute('data-motion'), 'pop', 'it grows in and goes out on the window\'s pop');
+  assert.equal(h.part('agent-ask-title').textContent, 'Claude Code wants to use Phosphor');
+  assert.match(h.says('agent-ask-line'), /^An AI assistant on this Mac · connected at \d{2}:\d{2}$/);
   const text = card.textContent;
-  assert.match(text, /Allow this agent\?/);
-  assert.match(text, /"claude-code", started outside Phosphor at \d{2}:\d{2}/);
-  assert.match(text, /Until you allow it/);
-  assert.match(text, /Every move it asks for waits for your OK\./);
+  assert.equal(/started outside|claude-code/.test(text), false, 'the start time it never knew, or the client\'s raw name: ' + text);
+  assert.match(text, /Until you allow itEvery move it asks for waits for your OK\. It can read your wallet\./);
   assert.match(text, /If you allow it/);
-  assert.match(text, /Allow only an agent you started yourself\./);
+  assert.match(text, /Only allow an agent you started yourself\. Phosphor can't check its name or see what it reads elsewhere\./);
+  assert.deepEqual(h.logos, ['claude'], 'Claude Code is drawn with the logo the window shows for it elsewhere');
+  assert.equal(h.part('agent-ask-mark').getAttribute('data-agent'), 'claude');
   assert.equal((globalThis as Any).__focused, undefined, 'the card took the focus');
+});
+
+test('the time is when it connected, and a card with no time says no time', () => {
+  const h = harness();
+  h.push(h.stateWith([{ ...MEMBER, since: '2026-10-05T07:43:00' }]));
+  assert.equal(h.says('agent-ask-line'), 'An AI assistant on this Mac · connected at 07:43');
+  const none = harness();
+  none.push(none.stateWith([{ ...MEMBER, since: 'not a time' }]));
+  assert.equal(none.says('agent-ask-line'), 'An AI assistant on this Mac');
+});
+
+test('a name it does not know is the agent\'s own word beside the link, and no name says so', () => {
+  const h = harness();
+  h.push(h.stateWith([{ ...MEMBER, client: 'my-trading-bot', label: 'my-trading-bot' }]));
+  assert.equal(h.part('agent-ask-title').textContent, 'An AI assistant on this Mac wants to use Phosphor');
+  assert.match(h.says('agent-ask-line'), /^It calls itself my-trading-bot · connected at \d{2}:\d{2}$/);
+  assert.equal(h.part('agent-ask-said').textContent, 'my-trading-bot');
+  assert.equal(h.part('agent-ask-mark').getAttribute('data-agent'), 'mcp');
+  assert.deepEqual(h.logos, [], 'a name nobody knows was drawn with a brand');
+  // The proxy's own name, before a client's lands or for a client that sends none (src/mcp.ts).
+  for (const client of ['phosphor-mcp', '']) {
+    const n = harness();
+    n.push(n.stateWith([{ ...MEMBER, client, label: client }]));
+    assert.equal(n.part('agent-ask-title').textContent, 'An AI assistant on this Mac wants to use Phosphor');
+    assert.match(n.says('agent-ask-line'), /^It gave no name · connected at \d{2}:\d{2}$/);
+    assert.equal(n.part('agent-ask-said').hidden, true);
+  }
+});
+
+test('the known names are the agents\' own clients, said plainly with their logos', () => {
+  for (const [client, name, logo] of [['claude-code', 'Claude Code', 'claude'], ['claude-ai', 'Claude Desktop', 'desktop'], ['codex-mcp-client', 'Codex', 'codex']]) {
+    const h = harness();
+    h.push(h.stateWith([{ ...MEMBER, client, label: client }]));
+    assert.equal(h.part('agent-ask-title').textContent, `${name} wants to use Phosphor`);
+    assert.deepEqual(h.logos, [logo]);
+  }
+});
+
+// The proxy says hello under its own name and renames itself within a beat (src/mcp.ts
+// clientName): the card turns into the agent in place, its answers still held from when it landed.
+test('a name that lands a beat later turns the card in place, with its logo, and asks nothing again', () => {
+  const h = harness();
+  h.push(h.stateWith([{ ...MEMBER, client: 'phosphor-mcp', label: 'phosphor-mcp' }]));
+  assert.equal(h.part('agent-ask-mark').getAttribute('data-agent'), 'mcp');
+  const armedTimers = h.timers.length;
+  h.push(h.stateWith([MEMBER]));
+  assert.equal(h.part('agent-ask-title').textContent, 'Claude Code wants to use Phosphor');
+  assert.equal(h.part('agent-ask-mark').getAttribute('data-agent'), 'claude');
+  assert.equal(h.part('agent-ask-mark').childNodes.length, 1, 'the link stayed beside the logo');
+  assert.equal(h.timers.length, armedTimers, 'a rename armed the card again');
+  h.push(h.stateWith([MEMBER]));
+  assert.deepEqual(h.logos, ['claude'], 'the logo was drawn again on a frame that changed nothing');
 });
 
 // UX review 2026-10-01, finding 19: "like your own assistant's" pointed at the wrong agents, and
@@ -176,11 +241,21 @@ test('it asks who, in the agent\'s own words, what it can do now and after an Al
 test('an Allow is said as the same as Phosphor\'s own chat, and a move already asked for still waits', () => {
   const h = harness();
   h.push(h.stateWith([MEMBER]));
-  assert.match(h.card().textContent, /Moves up to \$25 run without asking you, the same as from Phosphor's own chat\. Moves it already asked for still wait for your OK\./);
+  assert.match(h.card().textContent, /If you allow itMoves up to \$25 run without asking you\. Phosphor's own chat works the same way\. Moves it already asked for still wait for your OK\./);
   assert.equal(h.card().textContent.includes('your own assistant'), false);
-  const none = harness();
-  none.push({ agents: { members: [MEMBER] }, policy: { outbound: { humanClickAboveUsd: 0 } } });
-  assert.match(none.card().textContent, /Small moves run without asking you, the same as from Phosphor's own chat\. Moves it already asked for still wait for your OK\./);
+  const unread = harness();
+  unread.push({ agents: { members: [MEMBER] } });
+  assert.match(unread.card().textContent, /Small moves run without asking you\. Phosphor's own chat works the same way\. Moves it already asked for still wait for your OK\./);
+});
+
+// At $0 the rules ask before every move whoever proposes it (src/policy/engine.ts), so an Allow
+// lets nothing run on its own; the card used to say small moves would.
+test('at a $0 approval amount the card says every move still waits after an Allow', () => {
+  const h = harness();
+  h.push({ agents: { members: [MEMBER] }, policy: { outbound: { humanClickAboveUsd: 0 } } });
+  const text = h.card().textContent;
+  assert.match(text, /If you allow itEvery move still waits for your OK\. Your rules ask you before every move, from any agent\./);
+  assert.equal(/run without asking/.test(text), false, text);
 });
 
 // UX review 2026-10-01, findings 1 and 8: floating under the top bar, the card covered the ring,
@@ -198,6 +273,10 @@ test('the card sits in the conversation\'s slot, in the column\'s flow, never fl
   assert.equal(/z-index/.test(CSS), false, 'a card in the flow needs no layer of its own');
   assert.match(rule, /box-shadow: var\(--raise\)/, 'a card in the thread carries the move card\'s raise, not a popover\'s lift');
   assert.match(rule, /border-radius: var\(--radius-card\)/);
+  // Across the column's measure, the head's and the thread's edges, not a box left at one side.
+  assert.match(rule, /width: 100%/);
+  assert.equal(/max-width/.test(rule), false, 'the card stops short of the column: ' + rule);
+  assert.match(CSS, /\.agent-asks \{[^}]*width: min\(100%, var\(--thread-w\)\)/);
   assert.equal(/border(-left|-right)?:\s*[1-9]/.test(CSS), false, 'a card is lifted, never outlined');
   /* The slot is the conversation's, made by its own file under the roster. */
   assert.match(AGENT, /var clients = dom\.el\('div', 'agent-clients'\);\s*host\.appendChild\(clients\);[\s\S]{0,400}var asks = dom\.el\('div', 'agent-asks'\);\s*asks\.hidden = true;\s*host\.appendChild\(asks\);/);
@@ -222,10 +301,17 @@ test('its answers hold for a beat after it lands, then Allow is one round trip a
   const { later, allow } = h.buttons();
   assert.equal(allow.disabled, true);
   assert.equal(later.disabled, true);
+  // Held at full strength: a hollow key that filled in a moment later read as a flicker.
+  assert.equal(h.card().getAttribute('data-arming'), 'true');
+  const held = /\.agent-ask\[data-arming="true"\] \.agent-ask-actions > \.btn:disabled \{([^}]*)\}/.exec(CSS)?.[1] ?? '';
+  assert.match(held, /background: var\(--btn-bg\)/);
+  assert.match(held, /color: var\(--btn-fg\)/);
+  assert.equal(/opacity/.test(held), false);
   allow.fire('click');
   assert.deepEqual(h.answers, [], 'a click already on its way answered a card nobody read');
   h.runTimers();
   assert.equal(allow.disabled, false);
+  assert.equal(h.card().getAttribute('data-arming'), null);
   allow.fire('click');
   assert.deepEqual(h.answers, [['seat-ask-1', true]]);
   await h.tick();
@@ -244,7 +330,7 @@ test('Ask each time is the other round trip, and Escape inside the card is Ask e
   await h.tick();
   // The next agent waiting is asked about once the first is answered.
   assert.equal(h.card().hidden, false);
-  assert.match(h.card().textContent, /"codex"/);
+  assert.match(h.card().textContent, /It calls itself codex/);
   h.runTimers();
   h.buttons().later.fire('click');
   assert.deepEqual(h.answers, [['seat-ask-1', false], ['seat-ask-2', false]]);
@@ -261,7 +347,7 @@ test('it says how many more agents wait, and the next one is asked about afresh'
   h.runTimers();
   h.buttons().allow.fire('click');
   await h.tick();
-  assert.match(h.card().textContent, /"codex"/);
+  assert.match(h.card().textContent, /It calls itself codex/);
   assert.equal(h.more().textContent, '1 more agent is waiting');
   assert.equal(h.buttons().allow.disabled, true, 'the next card answered before it was read');
   h.push(h.stateWith(three.slice(1, 2)));
@@ -279,12 +365,12 @@ test('a screen reader hears that an agent asks, once for each agent', async () =
   assert.equal(live.getAttribute('aria-live'), 'polite');
   assert.ok(String(live.className).split(' ').includes('sr-only'), 'the line is drawn on screen');
   h.runTimers();
-  assert.equal(live.textContent, 'An agent started outside Phosphor asks to be allowed.');
+  assert.equal(live.textContent, 'Claude Code wants to use Phosphor.');
   h.buttons().later.fire('click');
   await h.tick();
   assert.equal(live.textContent, '', 'the same words again would not be heard again');
   h.runTimers();
-  assert.equal(live.textContent, 'An agent started outside Phosphor asks to be allowed.');
+  assert.equal(live.textContent, 'An AI assistant on this Mac wants to use Phosphor.', 'the next agent is said in its own head line');
   assert.equal((globalThis as Any).__focused, undefined, 'the card took the focus');
 });
 
@@ -293,16 +379,16 @@ test('a screen reader hears that an agent asks, once for each agent', async () =
 test('a put-off agent is asked about again, first and whole, when the person asks from its roster row', async () => {
   const h = harness();
   h.push(h.stateWith([{ ...MEMBER, later: true }, { ...MEMBER, session: 'seat-ask-2', client: 'codex' }]));
-  assert.match(h.card().textContent, /"codex"/);
+  assert.match(h.card().textContent, /It calls itself codex/);
   h.ask.reopen('seat-ask-1');
-  assert.match(h.card().textContent, /"claude-code"/, 'the agent the person asked about is not first');
+  assert.match(h.card().textContent, /Claude Code wants to use Phosphor/, 'the agent the person asked about is not first');
   assert.equal(h.more().textContent, '1 more agent is waiting');
   assert.equal(h.buttons().allow.disabled, true, 'a card brought back answers before it is read');
   h.runTimers();
   h.buttons().allow.fire('click');
   assert.deepEqual(h.answers, [['seat-ask-1', true]]);
   await h.tick();
-  assert.match(h.card().textContent, /"codex"/);
+  assert.match(h.card().textContent, /It calls itself codex/);
 });
 
 test('an answer that did not go through stays up with the reason, and both answers come back', async () => {
@@ -321,11 +407,26 @@ test('an answer that did not go through stays up with the reason, and both answe
   assert.equal(h.buttons().later.disabled, false);
 });
 
-test('nothing it draws is markup, and a name nobody checked never gets a brand\'s mark', () => {
+/* The name is the agent's own word: Phosphor can't check it, and the card says so beside every
+   name. A logo is only ever one of the few names the card knows, by the catalog's id (marks.js
+   draws a fixed file for it); the agent's own text never picks a file, never reaches the title,
+   and is never markup. */
+test('nothing it draws is markup, and a name the card does not know never gets a brand\'s mark or the title', () => {
   assert.equal(/innerHTML|insertAdjacentHTML|outerHTML/.test(ASK), false);
-  assert.equal(/PhosphorMarks/.test(ASK), false, 'a brand mark would vouch for a self-chosen name');
+  assert.match(ASK, /marks\.agent\(id, 40\)/, 'the logo is drawn by the catalog id, never by the agent\'s words');
   const h = harness();
-  h.push(h.stateWith([{ ...MEMBER, client: '<img src=x onerror=alert(1)>' }]));
-  assert.match(h.card().textContent, /"<img src=x onerror=alert\(1\)>"/);
+  h.push(h.stateWith([{ ...MEMBER, client: '<img src=x onerror=alert(1)>', label: '<img src=x onerror=alert(1)>' }]));
+  assert.equal(h.part('agent-ask-said').textContent, '<img src=x onerror=alert(1)>');
+  assert.equal(h.part('agent-ask-title').textContent, 'An AI assistant on this Mac wants to use Phosphor');
   assert.equal(all(h.card(), (n) => n.tagName === 'IMG').length, 0);
+  assert.deepEqual(h.logos, []);
+  // A known agent's own name, said by anybody, is still a name nobody checked, and the card says so.
+  const k = harness();
+  k.push(k.stateWith([MEMBER]));
+  assert.match(k.card().textContent, /Phosphor can't check its name/);
+  for (const near of ['claude code', 'claude-code-', 'Claude', 'anthropic']) {
+    const n = harness();
+    n.push(n.stateWith([{ ...MEMBER, client: near, label: near }]));
+    assert.deepEqual(n.logos, [], `"${near}" was drawn with a brand`);
+  }
 });

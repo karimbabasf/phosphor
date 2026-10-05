@@ -32,8 +32,11 @@ request it sends to NEAR Intents' 1Click service carries the label `phosphor`, w
 public explorer shows. Your keys sit in a sealed file on your own disk: sealed to the Mac's Secure
 Enclave on a Touch ID wallet, with your password on a password wallet. On a signed release a Touch
 ID wallet is Phosphor-only, or becomes so with one Touch ID once it is backed up: no other app on
-the Mac can ask to open it. Any MCP agent
-drives the app (Claude Code, Codex, anything that speaks MCP), or the app runs its own assistant.
+the Mac can ask to open it. The Vault tab can then move your vault to this Mac's Touch ID key and a
+24-word paper key you write by hand: after that only those two keys open it, every move out of it
+asks for a Touch ID that names it, and the agent spends from a small allowance ($100 by default).
+Any MCP agent drives the app (Claude Code, Codex, anything that speaks MCP), or the app runs its
+own assistant.
 The agent reads your money, prices a move and proposes it. The agent can never approve. A send, a
 withdrawal, a rule change and any move above your click threshold wait for your click in the
 window. Smaller swaps, Hyperliquid deposits and trades run on their own, inside a daily limit,
@@ -65,7 +68,7 @@ commit it prints (0.10.2 and later; use the tag of the version you downloaded):
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.15
+  --source-ref refs/tags/v0.10.16
 ```
 
 The app and the disk image are signed with an Apple Developer ID and notarised by Apple, so
@@ -138,12 +141,15 @@ npm run sweep    # the secret sweep CI runs over the tree and the history a push
 npm run attack   # plays a hostile program on this Mac against the app npm run app:build made
 ```
 
+To check the wallet's security claims yourself, test by test, see [docs/verify.md](docs/verify.md).
+
 ## Docs
 
 Read them at [phosphor.money/docs](https://phosphor.money/docs), or in
 [docs/](docs/README.md).
 
-- [Getting started](docs/getting-started.md): download, wallet, backup, the lock and the brake.
+- [Getting started](docs/getting-started.md): download, wallet, backup, the move to Touch ID, the
+  lock and the brake.
 - [Security model](docs/security-model.md): the threat model, the trust boundary, the fail-closed
   rules, the limits.
 - [Known limits](docs/known-limits.md): what this build does not cover.

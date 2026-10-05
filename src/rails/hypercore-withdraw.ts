@@ -61,7 +61,7 @@ import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { nearChainSpec } from '../chain/near.ts';
 import { readTimeout } from '../net.ts';
 import { ONECLICK_COUNTERPARTY } from '../intents.ts';
-import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, maxSendableUsdc, sendAsset, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
+import { HL_ACTIVATION_FEE_USDC, accountSummary, liveSignPort, maxSendableUsdc, ownerTouchRequired, sendAsset, toAmountString, usdClassTransfer } from './hl-user-signed.ts';
 import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERCORE_USDC_ASSET_ID, HYPERCORE_USDC_DECIMALS } from './hypercore-deposit.ts';
 import { INTENTS_SETTLE, watchRise } from '../ledger/settle.ts';
@@ -207,7 +207,9 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
   // The venue account is the key that signs the send, and the intents account credited is
   // that same key lowercased. Both read from the key, never from the draft, and compared
   // against it: this is the check that makes "the agent cannot name a destination" a property
-  // of the rail rather than of the tool schema.
+  // of the rail rather than of the tool schema. The signer's address is the vault's, whichever
+  // kind it is: on a vault that moved to the chip the owner key still names the Hyperliquid
+  // account, and the money coming back lands in the vault, never in the allowance.
   function requireOwner(draft: HlWithdrawDraft): string {
     const owner = (hl.sign ?? liveSignPort).address(keysPath).toLowerCase();
     if (draft.from.toLowerCase() !== owner) {
@@ -519,7 +521,15 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       const priced = priceLines(draft, p, response.quote, response.raw);
       const problems = [...checkQuote(draft, p, response.quote), ...quoteEchoProblems(response.raw, echoWant(draft, p))];
       if (problems.length > 0) return refusal(draft, problems, priced.lines);
-      priced.lines.push('execution signs one sendAsset with the master key to an address 1Click mints for this quote; nothing is sent on any chain');
+      // A vault on the chip signs each owner action behind its own Touch ID, so the card says how many.
+      if (ownerTouchRequired()) {
+        priced.lines.push(
+          'execution signs one sendAsset with the owner key, to an address 1Click mints for this quote, after a Touch ID that names the amount and that address; nothing is sent on any chain',
+        );
+        if (p.moveToSpot > 0) priced.lines.push('the move from perp to spot first asks for a Touch ID of its own, so this asks twice');
+      } else {
+        priced.lines.push('execution signs one sendAsset with the master key to an address 1Click mints for this quote; nothing is sent on any chain');
+      }
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
       if (route.notice !== null) priced.lines.unshift(route.notice);
       return { ok: true, summary: priced.lines.join('\n'), send: priced.facts };
@@ -662,6 +672,7 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
               'Nothing left the account.',
           txids: [],
           ...(moved.ambiguous && moved.nonce !== undefined ? { evidence: { nonce: String(moved.nonce) } } : {}),
+          ...(moved.reason === undefined ? {} : { reason: moved.reason }),
         };
       }
       movedToSpot = true;
@@ -700,12 +711,16 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
       ledger = await ledgerHash(owner, first.nonce, depositAddress, toAmountString(draft.amount));
       if (ledger === null) {
         /* NOTHING THROWS AFTER THE SIGNATURE (the two-phase contract at the top of
-           intents-spend.ts). The retry re-reads the account before it re-signs, and that read
+           intents-spend.ts). The retry re-reads the account before it posts again, and that read
            fails the way any read does; a throw out of here reached the executor as "rail
            threw", which it writes as failed with no nonce on the row. A retry that could not
-           run is the same fact as a retry that got no answer: unconfirmed, same nonce. */
+           run is the same fact as a retry that got no answer: unconfirmed, same nonce.
+           The retry posts the first attempt's own action and signature (sendAsset's `resend`):
+           the same bytes, so it can only be the same send, and one send is one signature, which
+           on a vault on the chip is one Touch ID. */
+        const resend = first.action?.type === 'sendAsset' && first.signature !== undefined ? { action: first.action, signature: first.signature } : undefined;
         try {
-          sent = await sendAsset(signing, { destination: depositAddress, amount: draft.amount, nonce: first.nonce });
+          sent = await sendAsset(signing, { destination: depositAddress, amount: draft.amount, nonce: first.nonce, ...(resend === undefined ? {} : { resend }) });
         } catch (err) {
           sent = { ok: false, ambiguous: true, nonce: first.nonce, detail: `the retry with the same nonce could not run: ${oneLine(errText(err), 160)}` };
         }
@@ -742,6 +757,8 @@ export function hypercoreWithdrawRail(deps: HypercoreWithdrawDeps): HypercoreWit
           (movedToSpot ? 'The collateral was moved to the spot side and stays there; nothing was sent out.' : 'Nothing was sent.'),
         txids: [],
         evidence: { quote: signedQuote },
+        // A cancelled Touch ID is the person saying no, and the card says so.
+        ...(sent.reason === undefined ? {} : { reason: sent.reason }),
       };
     }
     const nonce = first.nonce ?? sent.nonce ?? now();

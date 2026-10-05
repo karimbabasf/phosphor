@@ -16,7 +16,7 @@ import { RAW, SERVICE_MESSAGE, VAULT_REFUSAL_CODES } from '../fixtures/vault-ref
 const calm = (said: string): boolean => /^[A-Z]/.test(said) && /\.$/.test(said) && !RAW.test(said);
 
 test('the sources still answer the codes this file was written against, so a new one cannot slip by unread', () => {
-  for (const code of ['auth_failed', 'blob_refused', 'crypto_failed', 'foreign_key', 'interaction_required', 'keychain_unavailable', 'not_committed', 'pin_mismatch', 'se_unavailable', 'user_cancel', 'helper_unreachable', 'timeout', 'garbled']) {
+  for (const code of ['auth_failed', 'blob_refused', 'crypto_failed', 'foreign_key', 'grammar', 'interaction_required', 'keychain_unavailable', 'not_committed', 'pin_mismatch', 'se_unavailable', 'user_cancel', 'wrong_signer', 'helper_unreachable', 'timeout', 'garbled']) {
     assert.ok(VAULT_REFUSAL_CODES.includes(code), `${code} is no longer read off the sources`);
   }
 });

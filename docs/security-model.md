@@ -1,13 +1,14 @@
 # Security model
 
 What this app defends against, how, and where the v1 boundary honestly sits.
+[Check it yourself](verify.md) gives each wallet claim with its code, its test and a command.
 
 ## Threat model
 
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
 defends against and the test that proves each defence, what stays open, what the invite tools
-guard, and how to check a release yourself. It describes version 0.10.15. The rest of the
+guard, and how to check a release yourself. It describes version 0.10.16. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -43,6 +44,8 @@ The agent cannot:
 
 - approve or refuse a move, run one your rules do not allow, or change a rule;
 - send money out, or withdraw from Hyperliquid, without your click, at any size;
+- move money out of your vault once it is on Touch ID: only you ask for a top-up, and it needs
+  your click and your Touch ID;
 - see or use the wallet key;
 - read a page at an address it wrote itself;
 - see an invite code you put in the invite field.
@@ -52,7 +55,8 @@ session (a page, the news, a chain read, a venue's words the app does not know, 
 agent wrote), when its agent was started outside Phosphor and you have not allowed it, when the
 agent asked for it on its own after a move failed, when it spends a coin the app cannot price, or
 when it is a swap the app cannot measure by dollar figures 1Click signed: a coin 1Click puts no
-price on, or a relay price with no signed 1Click quote beside it.
+price on, or a relay price with no signed 1Click quote beside it. Once your vault is on Touch ID, a
+move that spends more than your allowance holds waits for your click too.
 
 ### What it defends against, and the test that proves it
 
@@ -61,8 +65,9 @@ prove. `npm test` runs the unit tests in `tests/unit/`, the injection suite and 
 suite. `cargo test` in `src-tauri` runs the shell's own tests, after `npm run bundle` has built
 the payload they check. `npm run attack` boots the app this checkout builds
 (`npm run app:build`) on a throwaway data folder and home, plays a hostile program in each case of
-`tests/attack/cases/`, and exits with an error when a defence does not hold. Two cases have a half
-that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
+`tests/attack/cases/`, and exits with an error when a defence does not hold. Three cases
+(`04-update-signature`, `12-xpc-vault`, `30-xpc-sign-intent`) have a half that needs a Developer ID
+build; add `-- --app <Phosphor.app>` to run it.
 
 - **The agent approves its own move.** No tool and no route in the agent's process decides. A
   decision needs the window token, which no route serves and no agent's environment holds.
@@ -111,9 +116,11 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   not that a forged one fails it. Proof: attack `04-update-signature` (the Developer ID
   requirement); the `update.rs` tests under `cargo test` (the download, the version inside, the
   archive, and a bundle that passes minisign without the Developer ID refused).
-- **Another program asks the Secure Enclave service to open the wallet.** On a signed release
-  the service answers only the signed Phosphor app. Proof: attack `12-xpc-vault`;
-  `vault-peer-check.test.ts` (a foreign app refused, the app answered).
+- **Another program asks the Secure Enclave service to open the wallet, or to sign with the vault's
+  Touch ID key.** On a signed release the service answers only the signed Phosphor app, for the
+  chip's operations too, and a build with no Team ID refuses every chip operation. Proof: attacks
+  `12-xpc-vault`, `30-xpc-sign-intent`; `vault-peer-check.test.ts` (a foreign app refused, the app
+  answered).
 - **A wallet file swapped on disk for one wrapped to your enclave key.** Anyone can wrap to that
   key: its public half is in the file. On a Developer ID build that carries the keychain
   entitlement, a bound wallet's file is checked against a pin only the vault service can write,
@@ -137,6 +144,22 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   (a staged file swapped during the touch is never pinned; a cancelled restore; the crash matrix,
   for a bind and a restore; a wallet made after a start-up probe that could not read the markers
   is committed all the same; Phosphor-only only for a file the service confirmed).
+- **The backend asks the chip key to sign something its Touch ID dialog does not say.** The vault
+  service reads every payload itself, against a grammar that takes a move of known tokens from the
+  vault to the allowance its marker pins, the removal of a key, or the empty rekey proof, and
+  refuses everything else before the key is touched, so a refusal never raises a dialog. A transfer
+  to any other receiver is refused, so no dialog ever names an account the backend chose, however
+  it is spelled ("your-allowance.near" included). The dialog's sentence is the service's, written
+  from what it read; the backend never sends one. Adding a key and switching predecessor auth back
+  on are refused by name, whatever the payload wraps them in. The app reads the same grammar first
+  (`src/vault/chip-grammar.ts`), so such a payload never reaches the service at all; the service
+  stays the boundary. Proof: attack `31-chip-hostile-payloads` (all 37 held in the app before the
+  service is asked, and each refused by the service when asked straight); `chip-service.test.ts`
+  (every refusal before the key with no signature asked for, each signed payload's sentence byte for
+  byte, each signature verified in Node); `intent-grammar.test.ts` (every accept and refusal, 10 000
+  mutated payloads read the same as Node reads them, and the app's first reading refuses every one
+  the grammar refuses); `audit2-grammar-named-receiver.test.ts` (a name registered to read like
+  your allowance or your vault gets no dialog, and the app refuses it first).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -175,6 +198,23 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
   `runner-host.test.ts`, and the last check's tests in `intents-relay.test.ts`,
   `intents-native.test.ts`, `intents-spend.test.ts`, `hypercore-withdraw.test.ts` and
   `hypercore-deposit.test.ts`.
+- **An agent moves money while the vault moves to the chip.** From the start of a move or a restore
+  until NEAR says how it ended, nothing an agent asks for is proposed or signed: the door refuses a
+  propose with nothing drafted, a row an agent filed is refused when it lands and again at its last
+  check before the key, and a click on one waits until the move is over. A move bundle written down
+  before a restart keeps agents waiting until NEAR can no longer run it; one whose deadline lies
+  further ahead than any bundle the app signs (two minutes) is not the app's, and holds nothing
+  back. The account the rails sign for changes in that call, and so does every key on the vault.
+  Proof: `wave3-wiring.test.ts`, `audit2-rekey-forged-journal.test.ts`.
+- **An agent reaches for the vault.** No agent is offered a chip tool, every `/api/vault` write
+  refuses what an agent holds, and only the shell, with its relay secret, takes or answers the
+  vault service's requests. Proof: attacks `32-mcp-chip-reach`, `33-relay-ops`.
+- **An agent takes money out of the vault.** An agent cannot ask for a top-up or approve one: the
+  vault's Touch ID key signs only after your click, and a move nobody clicked that finds the
+  allowance short signs nothing. Proof: attack `34-agent-top-up`.
+- **A program rewrites `state/vault.json`.** It cannot point the vault at another Touch ID key or
+  bring the owner key back into the session: the service's pin and the chain decide. Proof: attack
+  `35-vault-json-keyref-swap`.
 - **Freeze is pressed while the policy file is broken.** Plans stop first, and the window says
   the switch could not be saved. Proof: `kill-switch.test.ts`.
 - **Someone guesses your password.** Five wrong tries start a wait, on unlock and on every other
@@ -195,7 +235,7 @@ that needs a Developer ID build; add `-- --app <Phosphor.app>` to run it.
 
 ### What stays open
 
-These are true of 0.10.15. [Known limits](known-limits.md) gives each one with what it means for
+These are true of 0.10.16. [Known limits](known-limits.md) gives each one with what it means for
 your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
@@ -204,8 +244,10 @@ your money.
   window has not read yet, and an unread one also goes when it expires, but copies left by a
   signature, an unlock, a new wallet or words or a key shown to you can stay in memory until it is reused,
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
-  closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
-  never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
+  closes it for the vault: the move to the chip ([below](#the-move-to-the-chip-and-the-restore)).
+  After it the vault answers only to this Mac's Touch ID key and the paper key, and the session
+  holds the allowance key, the gas key and the trading key, never the owner key; none of them
+  reaches the vault. Until you move it, lock the wallet when you step away.
 - **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
   the vault service carried its provisioning profile, or by a copy you build yourself, has a key
   another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
@@ -220,8 +262,38 @@ your money.
   you made. Any program running as you can load the old key from such a copy and ask for your
   Touch ID with its own dialog, and an older Phosphor build opens it too. Phosphor shreds only the
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
-  yourself. What closes it: moving to new keys that never existed outside the keychain, so the
-  old key holds nothing. The chip vault plans that; it is not built.
+  yourself. What closes it for the vault: the move to the chip, after which the old key is no key
+  of the vault. An old copy still holds the allowance, the gas account and Hyperliquid.
+- **The paper is the only key that opens the vault away from this Mac.** After the move the vault
+  answers to this Mac's Touch ID key and the 24-word paper key, and to nothing else: the key backup
+  alone no longer reaches it, by design. If the Mac is lost and the paper is lost or wrong, the vault
+  is lost. Phosphor has you type three of the words back before anything moves (all 24 after a
+  lock, the tab left or a restart), and the paper signs an empty proof on chain in the same call
+  that adds it, but it cannot see the paper you wrote, so a slip in a word it did not ask for shows
+  only at a restore. A
+  restore on a new Mac takes both: the key backup brings back the vault's address, the allowance,
+  the gas account and Hyperliquid, and the paper brings back the vault. Keep the paper like cash,
+  apart from the key backup. The paper is also an ordinary EVM key at m/44'/60'/0'/0/0, so it signs
+  for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
+- **The key backup also controls the allowance and the gas account.** Both keys are derived from
+  the owner key, so whoever holds the key backup holds the allowance (its size plus 10 percent,
+  $110 at the default, more while a move is under way), the gas account (about 0.5 NEAR) and
+  Hyperliquid. Keep it like cash. What closes it: nothing planned; deriving them is what keeps one
+  backup instead of three.
+- **After the move, your wallet's words still open the allowance, the gas account and
+  Hyperliquid.** The move takes your wallet's key off the vault, not out of use: the recovery
+  phrase or private key the Vault tab still shows after the move no longer opens the vault, but the
+  allowance key and the gas key are derived from it, and it still owns your Hyperliquid account.
+  The reveal says so beside the words. Whoever reads those words can spend the allowance, the gas
+  account's NEAR and your Hyperliquid collateral. What closes it: nothing planned; show the words
+  only to write your backup.
+- **A program running as you during the move sees what the move sees.** The owner key and the paper
+  sign the call that changes the vault's keys in the app, not in the chip, so such a program could
+  read the paper's words as you type them, pin a wrong allowance, or add a key of its own in the same
+  call. The chip refuses to add a key at all, so after the move a program can no longer do that.
+  The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault
+  tab reads the vault's keys from the chain. What closes it: an audit by a third party, which is
+  planned and not done, and a signer that builds that call itself.
 - **A bound wallet's key is one keychain item.** After the bind, and for every wallet a signed
   release makes, the key lives in one item in the vault's keychain group and in no file, so no copy
   of the wallet file opens without it. If the item is gone (the Mac erased or replaced, its
@@ -230,6 +302,10 @@ your money.
   the bound file and go with the item. The app never shows or spends from those NEAR and Solana
   addresses, and a trading key is approved again. What closes it: nothing in this build; the
   backup kept off this Mac is the way back.
+- **A chip sentence names a token by its ticker, not its chain.** "move 5.00 USDC" does not say
+  whether that is USDC on NEAR or USDC bridged from Ethereum; both are in the chip's token table,
+  and a payload names each ticker once, so one sentence never says USDC twice. The value is the
+  same either way. What closes it: nothing planned.
 - **One marker refuses every device-bound file on the Mac.** Markers are one pool for the whole
   Mac, and while any exists the service refuses every device-bound key file. So the first wallet a
   signed release binds, makes or restores, from any copy and in any data folder, stops every
@@ -289,7 +365,10 @@ your money.
   it is.
 - **A release signs what its build job made.** Before signing, the release checks that the
   payload's own files match the tagged source and that every program carries only the committed
-  entitlements. Nothing checks the rest of the disk image beside the app. It cannot vouch for
+  entitlements, and that the vault service carries the five chip ops and the grammar's newest
+  rule (a service built without them, or from an older grammar, is never signed; that is a check
+  of a few strings, not of how the program was built, and since the move that program is the
+  vault's last check). Nothing checks the rest of the disk image beside the app. It cannot vouch for
   the compiled programs (the shell, the bundled Node, the Secure Enclave service) or for the
   installed packages, and the release build does not repeat CI's check of each package's registry
   signature. What closes it: a build anyone can reproduce byte for byte.
@@ -309,6 +388,51 @@ your money.
   Touch ID happened.
 - **The venues are not Phosphor's.** The NEAR Intents verifier can be upgraded by its owners, and
   an invite claim on the 1Click route rests on 1Click delivering.
+- **NEAR Intents' admins can switch predecessor auth back on.** The move turns auth by predecessor
+  id off for the vault (the NEAR door, in the Vault tab), so your wallet's key cannot act for it
+  through the account's NEAR wallet contract. The verifier's admins (the DAO and the roles
+  UnrestrictedAccountUnlocker and UnrestrictedAccountManager) can turn it back on for any account
+  (`force_enable_auth_by_predecessor_ids`), which would let that key reach a moved vault again. The
+  Vault tab reads the flag from the chain and says when the door is open, with what to do, so a
+  forced flip is visible. What closes it: nothing Phosphor controls; the switch is the verifier's.
+- **A backend compromised after the move writes every Touch ID dialog but the chip's.** The owner
+  key's unwrap and the presence ask carry sentences the backend writes, and such a backend can ask
+  for the paper on a screen of its own: Phosphor asks for words of the paper only in a move or a
+  restore you started. Only a chip dialog moves money out of the vault, and the vault service writes that
+  one from the payload it read. What closes it: nothing in this build.
+- **This Mac's login password answers the chip's dialog.** The chip key asks for you on every use,
+  by Touch ID or the login password, so a stolen Mac and its password move the vault. What closes
+  it: nothing in this build; keep the login password strong and the Mac locked.
+- **Every chain read trusts one NEAR RPC.** The app reads NEAR through FastNEAR alone. A lying RPC
+  can make a top-up whose call landed look dead: the settle trusts a final block whose time is not
+  tied to its hash, and asks no second RPC before it calls a bundle dead, so the next approval signs
+  again, and the money moves twice inside your own accounts. It can make a stopped move look done
+  only by lying about the whole move at one block (this Mac's key and the paper on, the owner key
+  and the NEAR door off), and it can always hide a forced switch of the NEAR door from the Vault
+  tab. What closes it: a second RPC asked before any verdict that lets a signature through, and the
+  final height recorded at the send.
+- **The chip's sentence is 120 characters at most, and the dialog must show all of it.** A payload
+  whose sentence would run longer is refused, but no real Touch ID dialog has been read in a test
+  yet. What closes it: a session on a real Mac (session S) that reads each sentence in the system
+  dialog.
+- **An unlock answered while the gate's chain read is out keeps the owner key out all session.** A
+  stale chip marker (a move stopped after the commit), or no marker known at the start (its status
+  refused), has the owner-key gate ask NEAR at the open. When the answer comes after the unlock, a
+  wallet that never moved opens without its owner key, and every move it signs is refused as if the
+  vault had moved, until a lock and an unlock. What closes it: asking the chain before the unlock
+  is answered.
+- **The trading key's counter in vault.json can be rolled back.** A program running as you that
+  rolls it back makes the next Allow trading approve an address the venue approved before, so
+  that key's signed actions inside the venue's nonce window (about two days) could replay; a
+  counter of 2^31 - 1 makes every approval ask for a reopen. It cannot make the app trade with or
+  approve a key someone else holds: every trading key is derived from the owner key. What closes
+  it: deriving each trading key under its approval's own nonce.
+- **A signed test session leaves a signing window open.** A maintainer's signed run of the release
+  harness unlocks its throwaway keychain for that run, its key trusts codesign, and the import
+  passes the p12 password on a command line, so a program running as the maintainer could sign
+  with the Developer ID in that window. It adds nothing while such a program can already read the
+  signing key's file. What closes it: moving the signing keys off the maintainer's Mac first, and
+  that session waits for it.
 - **The web gate lets a little through.** Which pages the agent chooses to read can tell those
   sites a few bits each, at most 12 pages a session and 3 a site.
 - **Grok has no web search.** With Grok in the chat, the agent cannot search the web. Give it a
@@ -380,7 +504,7 @@ It should be built by this repository's release workflow, from the tag of its ve
 ```
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.15
+  --source-ref refs/tags/v0.10.16
 ```
 
 With `--repo` alone, the check also passes for a file any other workflow in this repository
@@ -396,7 +520,7 @@ the tag builds:
 cd /Applications/Phosphor.app/Contents/Resources/phosphor
 find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
 
-git clone --depth 1 --branch v0.10.15 https://github.com/karimbabasf/phosphor.git
+git clone --depth 1 --branch v0.10.16 https://github.com/karimbabasf/phosphor.git
 cd phosphor && npm run bundle
 ```
 
@@ -466,7 +590,10 @@ The chain stops at the first refusal, in this order:
    (`never_asks`), refused when it drops an allowed destination, a forbidden issuer or an issuer
    cap (`allowlist_shortened`, `forbidden_issuers_shortened`, `issuer_caps_dropped`), and
    refused when its sentence does not name every figure it moves (`sentence_mismatch`); a
-   valid patch always returns `needs_approval`, with before and after on every limit it touches
+   valid patch always returns `needs_approval`, with before and after on every limit it touches.
+   A vault top-up branches off here too: it must be priced (`invalid_amount`) and move between two
+   of the wallet's own accounts (`destination_not_allowed`), and it always returns
+   `needs_approval`, whatever its size
 4. The draft is a rail this app runs (a swap inside NEAR Intents, a Hyperliquid deposit or
    withdrawal, a send to another intents account, a payout to an address on a chain, a trade);
    any other kind is refused by name (`unknown_kind`)
@@ -1042,16 +1169,18 @@ regression introduced by a future code path nobody thought to write a targeted t
 
 ## What signs, and with what
 
-One key moves money: the EVM key in the keystore. It signs ERC-191 intents for the NEAR
-Intents rails (`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/rails/intents-spend.ts`)
-and EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Orders on Hyperliquid are
-signed by a second key, a Hyperliquid API wallet kept in the same file (`src/hl/sign.ts`), which
-the venue lets trade and forbids from withdrawing, transferring or approving another agent. Nothing signs a chain
-transaction: the chain signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts`
-went with the chain wallets (2026-09-16), and those two files now hold only the readers, the
-explorer prefixes, the NEAR RPC and the address rules. Since 0.10.5 a new wallet holds the EVM
-key alone, and importing a Solana or NEAR key is refused. A file made before 0.10.5 still seals
-the Solana and NEAR keys its mnemonic derived, and nothing reads them.
+Until the vault moves to the chip ([below](#the-move-to-the-chip-and-the-restore)), one key moves
+money: the EVM key in the keystore. It signs ERC-191 intents for the NEAR Intents rails
+(`src/rails/intents-native.ts`, `src/rails/intents-send.ts`, `src/rails/intents-spend.ts`) and
+EIP-712 actions for Hyperliquid (`src/rails/hl-user-signed.ts`). Orders on Hyperliquid are signed by
+a second key, a Hyperliquid API wallet kept in the same file (`src/hl/sign.ts`), which the venue
+lets trade and forbids from withdrawing, transferring or approving another agent. No wallet key
+signs a chain transaction (only GAS does, the vault's `execute_intents` calls below): the chain
+signers that used to live in `src/chain/evm.ts` and `src/chain/near.ts` went with the chain wallets
+(2026-09-16), and those two files now hold only the readers, the explorer prefixes, the NEAR RPC and
+the address rules. Since 0.10.5 a new wallet holds the EVM key alone, and importing a Solana or NEAR
+key is refused. A file made before 0.10.5 still seals the Solana and NEAR keys its mnemonic derived,
+and nothing reads them.
 
 Every amount that reaches a signature is a BigInt in base units, checked against the quote the
 human approved (`checkIntentPayload`), and the quote itself is checked against the venue's
@@ -1114,3 +1243,181 @@ prefix. Every issued code has them (`src/invite/code.ts`). They miss a code some
 prefix and a slip, another separator or groups of one or two; a character short or one stuck to
 its end; its digits typed as O, I or L; or a code split over two messages. Each costs that one
 code.
+
+**Two keys derived from the owner key, never stored.** The chip vault adds ALLOWANCE, a
+0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account
+that pays for the vault's `execute_intents` calls. Both come from the EVM key at every open and are
+written nowhere (`src/keystore/derived.ts`): HKDF-SHA256 (RFC 5869) over the key's 32 bytes, salt
+`phosphor`. ALLOWANCE takes info `phosphor-allowance-v1` and reads the 32 bytes as a secp256k1
+scalar, drawn again under `phosphor-allowance-v1/1`, `/2` and on while it is 0 or not below the
+group order. GAS takes info `phosphor-gas-v1` as an ed25519 seed, and its account is the hex of its
+public key. The keystore holds both as buffers beside the EVM key and the lock zeroes them with it.
+Derived rather than kept, so no new key enters the wallet file and the backup a person already has
+brings both back. The cost of that: whoever holds the EVM key, or its backup, also holds ALLOWANCE
+(its size plus 10 %, $110 at the default, more while a move is under way) and GAS (about 0.5
+NEAR). Keep the key backup like cash. The published vectors, checked outside this code with
+Python's hmac, foundry's `cast` and the OpenSSL command line, and checked again by
+`tests/unit/keystore-derived.test.ts`:
+
+```
+owner      4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   0x2c7536E3605D9C16a7a3D7b1898e529396a65c23
+allowance  c96e3431c7fe5789854eb223ffab755b902c08bb34fdf40bfcb9839589d3faa1   0xF6BEEE2877DC58331cFa06c66Cc47B5F2535A379
+gas seed   f393907ec2ad1db656b6bd3d8e4804ad70d12ed136c76f46dac1549606a6c64d
+gas        e4d620800228e29d21a180cc305b9541c170631df3b5b513b795947a27520108
+
+owner      0123456789012345678901234567890123456789012345678901234567890123   0x14791697260E4c9A71f18484C9f997B308e59325
+allowance  7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a   0x619f9D371128BED76934C04434Bf9C43b904bE36
+gas seed   fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879
+gas        ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7
+```
+
+Both owner keys are public test keys (the canonical Ethereum documentation key and the
+hyperliquid-python-sdk signing fixture), so every value above holds nothing.
+
+**A third derived key: the Hyperliquid trading key of a vault on the chip.** A moved vault's wallet
+file takes no new key, so the key plans trade with comes from the EVM key the same way:
+HKDF-SHA256, salt `phosphor`, info `phosphor/hl-agent/v<n>` (n a counter from 1, drawn again under
+`/1`, `/2` like ALLOWANCE), made at every open beside ALLOWANCE and GAS, wiped by the lock and by the
+next open, and written nowhere (`src/keystore/derived.ts`, `src/keystore/store.ts`). It trades only
+once Hyperliquid approved it. Allow trading (`POST /api/vault/trading-key/allow`, window only, no
+agent door) asks one Touch ID whose sentence is read off the signed approval and names the key and
+its days ("Let 0x... trade on your Hyperliquid account for 90 days"); the EVM key signs that
+approveAgent and is zeroed (`src/hl/agent-key.ts`). The approval carries its end (`valid_until`, 90
+days; the venue takes at most 180), one name holds one key at a time, and the counter in
+`state/vault.json` only goes up, so no approval names an address the venue approved before. From
+then on `apiWallet()` serves the derived key, never the API wallet the file holds. The key backup
+also makes the trading key, which reaches nothing the owner key does not. Its vectors, checked with
+Python's hmac, `openssl kdf` and `cast wallet address`: `tests/fixtures/hl-agent-keys.ts`.
+
+**Once a vault has moved to the chip, the EVM key is out of the session.** `state/vault.json` names
+the chip key and the vault it moved (`src/vault/prefs.ts`), and the keystore reads it at every open
+(`keepOwnerKeyOutWhen`, wired in `src/main.ts`). That session holds the Hyperliquid API wallet,
+ALLOWANCE and GAS only: the payload, the EVM key and the data key are wiped at the open, and
+anything that asks for the EVM key or the payload gets `owner_touch_required`, never a lock error
+that would wait for an unlock that cannot help. The open still parses the payload once, so string
+copies of the EVM key can stay in memory until it is reused, as after any open; nothing in the
+session points at them. The EVM key then signs one Hyperliquid owner action
+per Touch ID of its own (`withOwnerKey`), and the buffer it lends is zeroed as soon as that
+signature is made (`tests/unit/keystore-chip-session.test.ts` reads it back). Before it signs, the
+key's own address must be the account the action was built for: until the payload is opened, the
+app reads that account from the wallet file's header, which its encryption does not cover, so a
+program running as you that rewrites the header gets a refusal and no signature
+(`tests/unit/audit2-gate-header-skip.test.ts`). `state/vault.json` is
+not a control on its own, so the same gate also reads the vault service's chip markers: a marker
+naming the vault keeps the EVM key out once the chain shows the vault moved (the marker's chip key,
+or the paper key it pins, is on the vault), even after a program running as you removes the chip
+entry (`ownerKeyGate`, `src/vault/chip.ts`). A marker alone does not count, because that program can
+have the service pin a fresh chip key to any account with no dialog; the chain decides, and the key
+stays out until it has answered. No marker known is not no marker: until the service has answered
+for every chip on this Mac (its status refused at the start, say, after a program deleted both of
+the app's notes of the move), the chain alone decides. The vault counts as moved when NEAR lists any
+key on it or reads the EVM key off it, the key comes in only when NEAR lists none and reads the EVM
+key on, and with no answer it stays out; the start asks the service again until it answers
+(`vault-chip.test.ts`, `wave3-wiring.test.ts`). The Hyperliquid owner touch reads the same gate (`src/main.ts`), so
+a withdrawal is one Touch ID either way. A vault whose chip key is gone and whose paper key was
+retired falls back to vault.json alone, where removing the entry puts the EVM key back in the next
+session: it reaches Hyperliquid's owner actions there, not the vault, whose keys on chain no longer
+include it. The chip key signs only through the vault service, which checks its own marker first.
+
+**The chip key signs only what the vault service reads.** The chip key is a P-256 Secure Enclave
+key made like the wallet's own (permanent, one Touch ID or login password per use, in the vault's
+keychain group and never in a file), under its own tag prefix and its own marker service
+(`src-tauri/se-helper/ChipOps.swift`), so it never makes the Mac read as bound and the wallet's
+sweep never sees it. Its marker pins the vault it signs for, the allowance it tops up and the paper
+recovery key. The service writes it once, while the key is in its first ten minutes, and no op
+deletes it or a pinned key; a chip key nobody pinned signs nothing and is swept after those ten
+minutes. A build with no keychain home (a development build, any copy without the vault profile)
+answers every chip op with a refusal.
+
+A signature request carries a key and a payload, and the service checks, in this order and before
+the one call that asks you: the request's form; a marker for that key; the key itself; the grammar
+(`src-tauri/se-helper/IntentGrammar.swift`); that the payload signs for the pinned vault; and that
+the sentence fits in 120 characters. The grammar reads a strict subset of JSON that every parser
+reads one way (printable ASCII, no escapes, no key twice, exact key sets) and takes three shapes: a
+move of tokens from the app's token table out of the vault to the allowance its marker pins, the
+removal of a key that is not the signing chip, and the empty proof a rekey asks of a new chip key.
+A transfer to any other receiver is refused (rule `receiver`): the app never asks the chip for one,
+and a name the backend registered could read like a pinned account. Every other kind the verifier
+knows is refused by name, `add_public_key` and `set_auth_by_predecessor_id` first: the first would
+give the vault to a key the backend chose, and the second would reopen the door the rekey closes.
+The deadline must fall within two minutes, and the nonce must expire exactly seven days after it,
+the life every nonce Phosphor builds carries (`NONCE_LIFE_AFTER_DEADLINE_MS`), so the app asks the
+chain about every nonce under one rule. The sentence names the pinned vault, allowance and paper
+key in words and any other key by its ends, eight characters each, and says every amount exactly:
+"move 100.00 USDC from your vault to your allowance". The dialog reads "Phosphor is trying to"
+followed by that sentence, and its context is used for that one signature and never again.
+
+The answer is the verifier's WebAuthn form: authenticator data for phosphor.money with user present
+set, client data whose challenge is the payload's SHA-256, and the signature as r || s with S
+folded into the low half of the group, which the verifier requires. The service verifies that
+signature against the chip's public key before it answers, so a signature that would fail on chain
+never leaves. It reads, wraps and echoes the payload as one value: the request's string as the
+system's JSON reader decoded it, which drops one leading byte order mark, so the backend compares
+the payload it gets back byte for byte with the one it asked for. The relay in the shell carries
+twelve ops, the five chip ops among them, adds the transport key to an unwrap only, and adds nothing
+to a signature request (`src-tauri/src/enclave.rs`).
+
+## The move to the chip and the restore
+
+The vault moves from the owner key to two keys of its own in one call to the verifier, and a
+restore on a new Mac is the same call with another old signer (`src/vault/rekey.ts`). The call
+carries three signed payloads and lands whole or not at all:
+
+- P_a, the old signer: add the chip key, add the paper key, remove every old key, and turn auth by
+  predecessor id off (`set_auth_by_predecessor_id`, enabled false). On a migration the old signer is
+  the owner key behind its own Touch ID ("Move your vault to this Mac's Touch ID key and your paper
+  key"), and the old keys are the owner key and anything the verifier lists for the vault. On a
+  restore it is the paper the person brings, and the old keys are every key the verifier lists (the
+  old chip, that paper) and the owner key when `has_public_key` still names it.
+- P_c, the new paper key: an empty proof that the paper written down signs.
+- P_b, the chip key: an empty proof, behind its own Touch ID, whose sentence the vault service
+  writes ("confirm this Mac's Touch ID key for your vault").
+
+Predecessor auth is on by default for every account, and the owner key drives the 0x account's NEAR
+wallet contract, so leaving it on would leave the owner key a door to the vault after its key is
+removed. P_a closes it in the same call, and the chip's grammar refuses the intent that would open it
+again.
+
+Before anything is sent the verifier's dry run must report exactly the events the app built from
+the plan, every one on P_a's hash: the chip key added, the paper key added, each old key removed,
+predecessor auth set off (only when it read on, since a second off reports nothing), then the three
+payloads executed. For a migration that is five events. One event more, less or different and
+nothing is sent. The move is done only when the chain reads, at one final block, the chip key and
+the paper key on the vault, the owner key and every removed key off it, and predecessor auth off,
+and then only if the chip key and the paper key are the vault's only stored keys: the owner key can
+add a key until the call runs, so a key added after the last read before the signatures is caught
+there, and the window says the vault holds a key Phosphor did not add (the Vault tab names it).
+Then `state/vault.json` names the chip, the session lets go of the owner key at once, and the rails
+spend the allowance. Every check that can stop a move runs before the first Touch ID: the wallet
+open, a Touch ID wallet with a proven backup, the paper checked, the vault still answering to
+the old signer, and a gas account that can pay for the call. The gas account's id is derived from
+the owner key and never typed; funding it is a NEAR payout to that id, one click and one Touch ID
+that names it (`POST /api/vault/gas/fund`, 0.1 to 1 NEAR).
+
+The paper's 24 words are shown once, to the window that asked, and written nowhere: no state file,
+audit line, frame or `/api/state`. While they are written down the window holds them and the app
+holds a SHA-256 of the phrase. The window checks three of them, at places it picks, typed from the
+paper with pasting off, and names a slip by its number, never the word; then it sends the 24 it
+holds, and the app checks them against the SHA-256 and holds the paper's private key in a buffer it
+zeroes after P_c signs, after half an hour, or at a lock. Where the window no longer holds the words
+(a lock, the tab left, a restart) all 24 are typed, and a typo is answered yes or no, never with the
+word. The
+strings the words travel in cannot be wiped, as for every phrase the app shows. Beside vault.json,
+`state/chip-run.json` keeps public keys only (the vault, the paper key, the owner key, the chip
+key), so a restart can finish or resume a move: a paper shown and never proven opens nothing and a
+new one is shown; a paper proven before a restart is typed again and checked against its public
+key; a chip made and never pinned is swept after ten minutes; a pinned chip is used again when the
+same paper is typed; a call written down in the vault move journal is never signed again until it is
+settled; a call that ran is finished at the next start from the chain's word alone, and that word
+must be the whole move: the chip and the paper on the vault, the owner key off it and predecessor
+auth off at one block, or every nonce of the bundle written down for that chip spent. Two of those
+reads alone write nothing and drop nothing, so an RPC that lies about the chip and the paper cannot
+make a stopped move look done (`tests/unit/audit2-rekey-resume-weak.test.ts`). The owner key's
+public half comes from the run record only when it is the key whose address is the vault, or from
+any unlock in this process. A chip whose call
+can no longer be proved dead or done (its nonce salt taken out) is never asked to sign that move
+again; a new chip carries it on. `tests/unit/rekey.test.ts` runs both directions through the
+window's routes against the vault service's own rules, and `node scripts/rekey-crash.ts` kills a
+real backend at each of the eight points of a migration and of a restore, starts it again on the same
+folder and the same stand-in keychain, and holds each of the 16 to those views (`--live` simulates
+the migration bundle on mainnet, read-only, for a throwaway account).

@@ -24,6 +24,7 @@ import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
 import { handleInviteCheck, handleInviteClaim } from './invite.ts';
 import { handleAgentAnswer } from './agent-answer.ts';
+import { handleTradingKeyAllow, handleTradingKeyStatus } from './hl-agent.ts';
 import {
   handleActivity,
   handleLock,
@@ -58,6 +59,8 @@ import {
   handleVaultStatus,
   handleVaultUnlock,
 } from './vault.ts';
+import { handleAllowanceSize, handleAllowanceTopUp } from './allowance.ts';
+import { handleChipMove, handleChipPhrase, handleChipPhraseProven, handleChipRestore, handleGasFund } from './chip.ts';
 import { sendHealth } from './health.ts';
 import { sendDay } from './day.ts';
 import { sendCoinImage, sendCoinImages } from './pictures.ts';
@@ -125,6 +128,8 @@ const GET: Record<string, Route> = {
   // The vault's own facts: custody kind, enclave reach, backed up, what the dialog is waiting
   // on. No key and no address; the window draws the Vault tab off it.
   '/api/vault': (ctx, _req, res) => handleVaultStatus(ctx, res),
+  // The Hyperliquid trading key of a vault on Touch ID: approved or not, until when, and the next one.
+  '/api/vault/trading-key': (ctx, _req, res) => handleTradingKeyStatus(ctx, res),
   '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
   // Whether one asset's address may be drawn right now: the per-asset route, read only.
   '/api/deposit/route': (ctx, _req, res, url) => handleDepositRoute(ctx, url, res),
@@ -180,8 +185,8 @@ const POST: Record<string, Route> = {
   '/api/vault/unlock': (ctx, req, res) => handleVaultUnlock(ctx, req, res),
   '/api/vault/reveal': (ctx, req, res) => handleVaultReveal(ctx, req, res),
   '/api/vault/backup-proven': (ctx, req, res) => handleVaultBackupProven(ctx, req, res),
-  // The same pair for a wallet with no phrase: its private key, and the whole copy typed back as the
-  // proof; later, if the person asks, the same check again with nothing written.
+  // The same pair for a wallet with no phrase: its private key, and I saved it somewhere safe as the
+  // proof; later, if the person asks, a check of a copy against the wallet with nothing written.
   '/api/vault/reveal-key': (ctx, req, res) => handleVaultRevealKey(ctx, req, res),
   '/api/vault/key-proven': (ctx, req, res) => handleVaultKeyProven(ctx, req, res),
   '/api/vault/key-check': (ctx, req, res) => handleVaultKeyCheck(ctx, req, res),
@@ -191,6 +196,18 @@ const POST: Record<string, Route> = {
   '/api/vault/bind': (ctx, req, res) => handleVaultBind(ctx, req, res),
   '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
+  // The allowance: a top-up the person asks for (it lands pending), and its size. Window token,
+  // never an op on /api/mcp. See src/http/allowance.ts.
+  '/api/vault/allowance/top-up': (ctx, req, res) => handleAllowanceTopUp(ctx, req, res),
+  '/api/vault/allowance/size': (ctx, req, res) => handleAllowanceSize(ctx, req, res),
+  // The move to the chip (src/http/chip.ts): the paper key, the move, the restore, the gas account. Window only.
+  '/api/vault/chip/phrase': (ctx, req, res) => handleChipPhrase(ctx, req, res),
+  '/api/vault/chip/phrase-proven': (ctx, req, res) => handleChipPhraseProven(ctx, req, res),
+  '/api/vault/chip/move': (ctx, req, res) => handleChipMove(ctx, req, res),
+  '/api/vault/chip/restore': (ctx, req, res) => handleChipRestore(ctx, req, res),
+  '/api/vault/gas/fund': (ctx, req, res) => handleGasFund(ctx, req, res),
+  // "Allow trading on Hyperliquid": one Touch ID approves the trading key a vault on Touch ID derives. Window only.
+  '/api/vault/trading-key/allow': (ctx, req, res) => handleTradingKeyAllow(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).

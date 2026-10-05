@@ -51,6 +51,18 @@
 // `addresses` is base64 of the canonical JSON of the file header's addresses. A `label` is a
 // test's per-run tag prefix; the app never sends one.
 //
+// THE CHIP KEY'S OPS. The vault's own signing key (Phase 2) lives in the same keychain home under
+// its own tag prefix and marker service, so nothing here ever reads one as the other. Its five ops
+// and the rules for them are in ChipOps.swift, and what it may sign is IntentGrammar.swift's:
+//   {"op":"chipCreate","label"?}                        a fresh chip key; no dialog
+//   {"op":"chipCommit","keyRef","account","allowance","recovery"}  pins it to a vault; no dialog
+//   {"op":"chipStatus","keyRef"?}                       the chip keys and their pins; no dialog
+//   {"op":"chipSweep","label"?}                         deletes chip keys nothing pins; no dialog
+//   {"op":"signIntent","keyRef","payload"}              one Touch ID, the service's own sentence
+// Those three files are compiled in with PHOSPHOR_CHIP, which scripts/build-se-helper.sh passes to
+// both builds. Without it this file builds alone and answers none of the five: a build that left
+// the grammar out refuses every chip op rather than signing with no grammar.
+//
 // THE DATA KEY NEVER LEAVES HERE IN THE CLEAR. An unwrap answers with the data key sealed under
 // the per-boot transport key the shell was given (AES-256-GCM, the request id as AAD), so the
 // shell that relays the answer and the loopback hop it travels over both see ciphertext, and an
@@ -136,6 +148,7 @@ func x963(_ key: SecKey) throws -> Data {
 struct KeychainStatus: Error { let status: OSStatus }
 struct VaultKey { let tag: String; let created: Date? }
 struct Marker { let pin: Data; let at: Date? }
+struct ChipMark { let body: Data; let at: Date? }
 
 protocol Platform {
   /// The Team ID this code is signed with, nil when it has none.
@@ -154,6 +167,14 @@ protocol Platform {
   func agree(tag: String, group: String?, eph: Data, reason: String) throws -> (Data, Data)
   func makeBlob() throws -> (Data, Data)
   func agree(blob: Data, eph: Data, reason: String) throws -> (Data, Data)
+  /// The public half of the key under `tag`, X9.63, read with no dialog; nil when there is none.
+  func publicKey(tag: String, group: String) -> Result<Data?, KeychainStatus>
+  /// Every chip marker in the group, by the tag of the key it pins, with its data as written.
+  func chipMarkers(group: String) -> Result<[String: ChipMark], KeychainStatus>
+  func addChipMarker(tag: String, body: Data, group: String) -> OSStatus
+  /// ES256 over `data` by the key under `tag`, as DER: the call that asks the owner, with `reason`
+  /// as the dialog's text.
+  func sign(tag: String, group: String, data: Data, reason: String) throws -> Data
 }
 
 struct SystemPlatform: Platform {
@@ -349,6 +370,114 @@ struct SystemPlatform: Platform {
       }
     }
   }
+
+  /* A reference to a key is not a use of it, so this asks nobody: the access control guards the
+     signature, not the lookup. */
+  func publicKey(tag: String, group: String) -> Result<Data?, KeychainStatus> {
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassKey,
+      kSecAttrApplicationTag as String: Data(tag.utf8),
+      kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+      kSecAttrAccessGroup as String: group,
+      kSecUseDataProtectionKeychain as String: true,
+      kSecUseAuthenticationContext as String: quiet(),
+      kSecReturnRef as String: true,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    if status == errSecItemNotFound { return .success(nil) }
+    guard status == errSecSuccess, let item, CFGetTypeID(item) == SecKeyGetTypeID(), let pub = try? x963(item as! SecKey) else {
+      return .failure(KeychainStatus(status: status == errSecSuccess ? errSecDecode : status))
+    }
+    return .success(pub)
+  }
+
+  /* The same listing as markers(group:), under the chip's own marker service, with each data as
+     written: the chip ops read the pins in it themselves. */
+  func chipMarkers(group: String) -> Result<[String: ChipMark], KeychainStatus> {
+    let base: [String: Any] = [
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: chipMarkerService,
+      kSecAttrAccessGroup as String: group,
+      kSecUseDataProtectionKeychain as String: true,
+      kSecUseAuthenticationContext as String: quiet(),
+    ]
+    var listing = base
+    listing[kSecMatchLimit as String] = kSecMatchLimitAll
+    listing[kSecReturnAttributes as String] = true
+    var found: CFTypeRef?
+    let status = SecItemCopyMatching(listing as CFDictionary, &found)
+    if status == errSecItemNotFound { return .success([:]) }
+    guard status == errSecSuccess, let rows = found as? [[String: Any]] else { return .failure(KeychainStatus(status: status)) }
+    var out: [String: ChipMark] = [:]
+    for row in rows {
+      let tag = row[kSecAttrAccount as String] as? String ?? ""
+      var one = base
+      one[kSecAttrAccount as String] = tag
+      one[kSecReturnData as String] = true
+      var data: CFTypeRef?
+      let read = SecItemCopyMatching(one as CFDictionary, &data)
+      guard read == errSecSuccess else { return .failure(KeychainStatus(status: read)) }
+      out[tag] = ChipMark(body: data as? Data ?? Data(), at: row[kSecAttrCreationDate as String] as? Date)
+    }
+    return .success(out)
+  }
+
+  func addChipMarker(tag: String, body: Data, group: String) -> OSStatus {
+    SecItemAdd([
+      kSecClass as String: kSecClassGenericPassword,
+      kSecAttrService as String: chipMarkerService,
+      kSecAttrAccount as String: tag,
+      kSecAttrLabel as String: "Phosphor chip marker",
+      kSecAttrAccessGroup as String: group,
+      kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly,
+      kSecUseDataProtectionKeychain as String: true,
+      kSecValueData as String: body,
+    ] as CFDictionary, nil)
+  }
+
+  /* The chip's signature. A context of its own for every signature, never reused, so one touch
+     signs one payload, and its reason is the sentence the rules wrote: the dialog reads "Phosphor
+     is trying to <sentence>". The enclave hashes `data` once more (ecdsaSignatureMessageX962SHA256,
+     which is ES256) and answers DER. */
+  func sign(tag: String, group: String, data: Data, reason: String) throws -> Data {
+    let ctx = LAContext()
+    ctx.localizedReason = reason
+    ctx.localizedCancelTitle = "Cancel"
+    ctx.touchIDAuthenticationAllowableReuseDuration = 0
+    let query: [String: Any] = [
+      kSecClass as String: kSecClassKey,
+      kSecAttrApplicationTag as String: Data(tag.utf8),
+      kSecAttrKeyType as String: kSecAttrKeyTypeECSECPrimeRandom,
+      kSecAttrAccessGroup as String: group,
+      kSecUseDataProtectionKeychain as String: true,
+      kSecUseAuthenticationContext as String: ctx,
+      kSecReturnRef as String: true,
+    ]
+    var item: CFTypeRef?
+    let status = SecItemCopyMatching(query as CFDictionary, &item)
+    guard status == errSecSuccess, let found = item, CFGetTypeID(found) == SecKeyGetTypeID() else {
+      throw Fail(code: status == errSecItemNotFound ? "no_key" : "auth_failed", message: "keychain key \(status)")
+    }
+    var err: Unmanaged<CFError>?
+    if let der = SecKeyCreateSignature(found as! SecKey, .ecdsaSignatureMessageX962SHA256, data as CFData, &err) as Data? {
+      return der
+    }
+    // A cancel can come back from LocalAuthentication, from the keychain or from the token the
+    // key lives on; each is the owner saying no, and is answered as one.
+    let e = err?.takeRetainedValue() as Error? as NSError?
+    if let e, e.domain == LAError.errorDomain {
+      switch LAError.Code(rawValue: e.code) {
+      case .userCancel, .appCancel, .systemCancel: throw Fail(code: "user_cancel", message: "cancelled")
+      case .notInteractive: throw Fail(code: "interaction_required", message: "no user present")
+      default: break
+      }
+    }
+    if let e, (e.domain == NSOSStatusErrorDomain && e.code == Int(errSecUserCanceled)) || (e.domain == "CryptoTokenKit" && e.code == -4) {
+      throw Fail(code: "user_cancel", message: "cancelled")
+    }
+    throw Fail(code: "auth_failed", message: e?.localizedDescription ?? "the chip key did not sign")
+  }
 }
 
 #if PHOSPHOR_TESTSEAM
@@ -376,6 +505,11 @@ let keychainPrefix = "keychain:"
 let keychainTagBase = "com.karimbabasf.phosphor.vault."
 let markerService = "com.karimbabasf.phosphor.vault.marker"
 
+/* The chip key's own names in the same group (ChipOps.swift). Neither prefix starts the other, so
+   the vault's reads, its sweep and its Mac-wide "bound" never see a chip key or a chip marker. */
+let chipTagBase = "com.karimbabasf.phosphor.chip."
+let chipMarkerService = "com.karimbabasf.phosphor.chip.marker"
+
 /* How long a key no marker names may still be opened, and how long sweep leaves it alone: one
    create or bind flow (a queued request, then a Touch ID) with room to spare. Past it, only a
    marker opens a key. */
@@ -390,10 +524,10 @@ func validLabel(_ s: String) -> Bool {
 }
 
 /* keychainTagBase, an optional label and a dot, and an upper-case UUID: what create makes, and
-   nothing else names a vault key. */
-func validTag(_ tag: String) -> Bool {
-  guard tag.hasPrefix(keychainTagBase) else { return false }
-  let parts = tag.dropFirst(keychainTagBase.count).split(separator: ".", omittingEmptySubsequences: false)
+   nothing else names a vault key. The chip key's tags are the same shape under chipTagBase. */
+func validTag(_ tag: String, base: String = keychainTagBase) -> Bool {
+  guard tag.hasPrefix(base) else { return false }
+  let parts = tag.dropFirst(base.count).split(separator: ".", omittingEmptySubsequences: false)
   guard parts.count == 1 || (parts.count == 2 && validLabel(String(parts[0]))) else { return false }
   let id = Array(parts[parts.count - 1].unicodeScalars)
   guard id.count == 36 else { return false }
@@ -676,7 +810,8 @@ func presence(_ req: [String: Any]) -> [String: Any] {
 // AES-GCM authenticates before it decrypts. foreign_key is a blob this enclave cannot load at all,
 // which is the other Mac's wallet file. keychain_unavailable is a build with a Team ID that cannot
 // reach its home: it never makes a blob instead and never opens one, because it cannot tell
-// whether a marker forbids it.
+// whether a marker forbids it. The chip ops add two of their own, grammar and wrong_signer
+// (ChipOps.swift).
 func answer(_ line: String) -> String {
   let result: [String: Any]
   if let data = line.data(using: .utf8),
@@ -691,6 +826,18 @@ func answer(_ line: String) -> String {
       case "sweep": result = try sweep(req)
       case "status": result = try status(req)
       case "presence": result = presence(req)
+      #if PHOSPHOR_CHIP
+      case "chipCreate": result = try chipCreate(req)
+      case "chipCommit": result = try chipCommit(req)
+      case "chipStatus": result = try chipStatus(req)
+      case "chipSweep": result = try chipSweep(req)
+      case "signIntent": result = try signIntent(req)
+      // Not an op: the string scripts/release-check.ts reads a shipped service for. The five names
+      // are short enough for Swift to keep inside the code, and ChipOps.swift and IntentGrammar.swift
+      // carry their own strings into a build without this flag too. It answers as any unknown op
+      // does, written out: as a fallthrough the optimizer folds it into default and drops the string.
+      case "the chip vault's dispatch is compiled in": result = failure("bad_input", "unknown op \(op)")
+      #endif
       default: result = failure("bad_input", "unknown op \(op)")
       }
     } catch let f as Fail {

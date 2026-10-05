@@ -18,7 +18,8 @@ import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import type { RelayClient, RelayPublishResult, RelayQuote, RelayStatus } from '../../src/relay/client.ts';
 import type { VerifierPort } from '../../src/relay/verifier.ts';
 import { decodeNonce } from '../../src/relay/payload.ts';
-import { erc191SignatureField } from '../../src/intents-sign.ts';
+import { erc191SignatureField, liveIntentsSigner } from '../../src/intents-sign.ts';
+import { KINDS, signerOf, useKind } from './helpers/rail-kinds.ts';
 import type { IntentsSignerPort } from '../../src/intents-sign.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from '../../src/rails/intents-native.ts';
 import {
@@ -1096,3 +1097,26 @@ test("the executor's last check runs after every read and right before the key; 
   assert.equal(checks, 1);
   assert.equal(open.signed.length, 1);
 });
+
+// ---------- both kinds of wallet (PHASE2-PLAN.md C6) ----------
+
+for (const kind of KINDS) {
+  test(`kind ${kind}: the live signer signs the relay swap once, for the account it spends, with that account's own key`, async () => {
+    const run = useKind(kind, TEST_KEY);
+    try {
+      const h = harness({ deps: { signer: liveIntentsSigner } });
+      const result = await h.rail.execute(draftOf(), 'p1', h.hooks);
+      assert.equal(result.ok, true, result.detail);
+      assert.equal(h.publishes.length, 1);
+      const { payload, signature } = h.publishes[0];
+      const body = JSON.parse(payload) as { signer_id: string; deadline: string; nonce: string };
+      assert.equal(body.signer_id, ACCOUNT);
+      assert.equal(await signerOf(payload, signature), OWNER, 'the signature recovers to the account the payload names');
+      assert.deepEqual(run.asks, kind === 'key' ? { owner: 1, allowance: 0 } : { owner: 0, allowance: 1 }, 'one key, the one its kind uses, once');
+      // The nonce rule every rail holds to (CONTRACTS.md, "Lead's call: nonce lifetime"): exactly a week past the deadline.
+      assert.equal(decodeNonce(body.nonce)?.deadlineMs, Date.parse(body.deadline) + NONCE_LIFE_AFTER_DEADLINE_MS);
+    } finally {
+      run.restore();
+    }
+  });
+}

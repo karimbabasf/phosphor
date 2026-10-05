@@ -96,6 +96,10 @@ brief was written by another model, and nothing in that chain is a human.
 | `src/rails/` | The rails: the swap inside `intents.near` (the solver relay, `intents-relay.ts`, and 1Click, `intents-native.ts`, for a pair the relay offers no price for; `src/proposals/swap-route.ts` picks before the card is priced), the send to another intents account (`intents-send.ts`), the Hyperliquid deposit and withdrawal (`hypercore-*.ts`), and the POA deposit address (`intents-address.ts`). Every rail reads its own account from the key, never from a caller. |
 | `src/chain/evm.ts` | The EVM chains this app can read and name: a public RPC per chain for read-only lookups and the explorer prefixes a receipt links to. Nothing here signs: the EVM key signs intents and Hyperliquid actions, never a chain transaction. |
 | `src/chain/near.ts` | The NEAR RPC the verifier is read through, base58 for the keystore and the 1Click quote signature, and the account id rules a send checks. Nothing here signs. |
+| `src/chain/near-tx.ts` | The one NEAR transaction the app can sign, for the chip vault: the gas account's call of `execute_intents` on `intents.near`, with 50 TGas and no deposit, sent at FINAL. Borsh and ed25519 by hand, pinned to near-api-js's published vectors. It refuses before signing when the gas account cannot pay (`gas_low` under 0.06 NEAR, NEP-642), and after sending it only asks by hash or resends the identical bytes, never re-signs. `src/vault/submit.ts` is its one caller. |
+| `src/vault/relay.ts` | The backend's half of the vault service relay: a queue the desktop shell drains, one Touch ID at a time. It carries the wallet key's ops and the chip's five (`chipCreate`, `chipCommit`, `chipStatus`, `chipSweep`, `signIntent`), reads every answer strictly, and remembers the chip markers each vault account is named by. A demo relay answers every keychain write itself, the chip's three included. |
+| `src/vault/chip.ts` | The chip signer. It asks the service to sign one vault payload behind one Touch ID (the service writes the sentence from the payload) and holds the answer to the question: the payload byte for byte, the key vault.json pins, and the webauthn wrapper the verifier takes. What it can refuse itself it refuses before the dialog. Its gate keeps the owner key out of the session while vault.json says the vault moved, or while a chip marker names the vault and the chain shows the vault moved to it; the Hyperliquid owner touch reads the same gate. Its status reader tells `src/vault/accounts.ts` which chip key the service holds. |
+| `src/vault/submit.ts` | Sends a vault bundle and settles it. Nothing is sent until the verifier's simulation reports exactly the bundle's events; executed reads as done only once the views at one final block agree. A bundle is written to `state/vault-moves.json` before it leaves this Mac, and no new signature for that account is asked for until every bundle written there has run, is proved dead (its deadline two minutes gone by NEAR's block and this Mac's clock, GAS's own transaction not run, every nonce unspent at one block with its salt valid), or can never run again with its fate unprovable, which the person is told. One signature per move. |
 | `src/market/` | The market data layer: the venue catalogue and symbol resolver, the candle cache the render path reads from, the folding that turns a venue-served interval into any timeframe, and the one ATR the trade payload reads. |
 | `src/audit.ts` | Append-only JSONL. One line per event, never rewritten by the app. |
 | `src/store.ts` | Proposal persistence with subscribe/notify, re-created from disk on boot. |
@@ -170,7 +174,7 @@ The rule chain and the fail-closed positions in it are described in
 
 ## Where money lives
 
-Two pockets, and nothing on a chain:
+Two pockets, and nothing on a chain but the gas account's NEAR (the last item):
 
 - **The NEAR Intents balance.** Entries on the `intents.near` verifier's own ledger, credited to
   the account the EVM key derives (the address, lowercased). Money arrives through the POA bridge
@@ -180,13 +184,18 @@ Two pockets, and nothing on a chain:
 - **The Hyperliquid collateral.** USDC on the venue's own books, in the account the same EVM
   address signs for, funded from the intents balance (`src/rails/hypercore-deposit.ts`) and
   returned to it (`src/rails/hypercore-withdraw.ts`).
+- **The vault on Touch ID.** Once the vault moves, the intents balance is two accounts: the vault
+  (the same address, moved only by the chip key and the paper key) and the allowance every rail
+  spends from (`src/vault/accounts.ts`, `src/vault/allowance.ts`). The gas account, a NEAR account
+  derived from the same key (`src/vault/gas-account.ts`), holds the NEAR you add to it and signs
+  the vault's `execute_intents` calls on NEAR (`src/chain/near-tx.ts`).
 
-`ChainId` (`eth`, `base`, `arb`, `sol`, `near`) survives as the home chain of an asset, which is
-how the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. It is never
-a place this app holds funds or signs a transaction. The chain wallets, the per-chain balance
-reads, the gas floors and the chain signers all went on 2026-09-16; rows they wrote still render
-as history. Every RPC endpoint and contract account in the repo names the live network, and no
-config field, environment variable or type points them anywhere else.
+`ChainId` (`eth`, `base`, `arb`, `sol`, `near`) survives as the home chain of an asset, which is how
+the 1Click token list names one: "USDC from eth" and "USDC from arb" are two ids. Apart from the gas
+account on NEAR, it is never a place this app holds funds or signs a transaction. The chain wallets,
+the per-chain balance reads, the gas floors and the chain signers all went on 2026-09-16; rows they
+wrote still render as history. Every RPC endpoint and contract account in the repo names the live
+network, and no config field, environment variable or type points them anywhere else.
 
 ## Why NEAR Intents is the only rail
 
@@ -271,7 +280,9 @@ shell carries, and the entitlements of every binary: the file Tauri's ad hoc pas
 app's executables, and none anywhere else. It also holds every binary to the oldest macOS the app
 supports, `minimumSystemVersion` in `tauri.conf.json` (13.5): a compiler builds for the Mac it runs
 on unless told otherwise, and the Secure Enclave service, built that way, asked for macOS 15.0 in
-0.10.13 and 0.10.14. Then it runs `notarize-mac.sh`, which signs every
+0.10.13 and 0.10.14. And it holds the service to the chip vault: the five chip ops, the message of
+the grammar's receiver rule, and the marker only main.swift's `-D PHOSPHOR_CHIP` dispatch holds,
+read from its bytes, so a service built without the flag, or from an older grammar, is never signed. Then it runs `notarize-mac.sh`, which signs every
 binary with the entitlements its path is given and none it arrived with: the shell
 `src-tauri/entitlements.plist` (no JIT), node `src-tauri/entitlements-node.plist` (`allow-jit`
 alone, which V8 needs), and the Secure Enclave service three made from its Developer ID
@@ -283,10 +294,13 @@ that the profile, the signing certificate and the release's team are one team. T
 deletes the signing keychain, signs the updater bundle with
 `scripts/updater-sign.ts` (Node's own crypto, no package), and runs the release gate, which holds
 the app in the DMG and the app in the update to the checkout again, with the hardened runtime and
-one team on every binary and the signing gate once more. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the
-app inside it, and nothing checks what else sits beside the app before the DMG is signed and
-notarized. The split keeps the secrets from the build. This check stops the build
-from changing a first-party file in the payload or adding an entitlement before signing. It
+one team on every binary and the signing gate once more, and asks two NEAR RPCs run by different
+companies which intents.near is deployed: any build but the one the Touch ID vault was spiked on
+(`scripts/verifier-gate.ts`), no answer from either, or two answers that differ, stops the
+release. The rest of the DMG is the build job's: `notarize-mac.sh` swaps only the app inside it,
+and nothing checks what else sits beside the app before the DMG is signed and notarized. The split
+keeps the secrets from the build. This check stops the build from changing a first-party file in
+the payload or adding an entitlement before signing. It
 cannot vouch for the compiled programs (the shell, the bundled Node, the Secure Enclave service)
 or for `node_modules`, which the build job made and the sign job signs as handed over; only a
 reproducible build could. The release build also does not run `npm audit signatures` or the

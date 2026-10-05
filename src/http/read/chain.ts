@@ -12,6 +12,7 @@
 
 import { fail, intParam, sendJson } from '../respond.ts';
 import { evmAddress } from '../../keystore/index.ts';
+import { spendAccountId } from '../../ledger/index.ts';
 import { addressSummary, CHAIN_NETWORKS, DEFAULT_LIMIT, intentsActivity, isChainNetwork, MAX_LIMIT, transaction, transactions, validateAddress, validateHash } from '../../chainscan/index.ts';
 import type { ChainDeps, IntentsRow } from '../../chainscan/index.ts';
 import { LOG_LIMIT_MAX } from '../context.ts';
@@ -27,6 +28,15 @@ function ownAccount(ctx: Ctx): string | null {
     const configured = ctx.cfg.addresses.evm;
     return typeof configured === 'string' && configured.trim() !== '' ? configured.trim().toLowerCase() : null;
   }
+}
+
+/* The ledger an agent reads by default: the account its moves spend from, which is the vault
+   until the vault moves to the chip and the allowance after (src/ledger/index.ts). Both are this
+   app's own, whichever one is asked for. */
+function ownAccounts(ctx: Ctx): { spend: string | null; own: Set<string> } {
+  const vault = ownAccount(ctx);
+  const spend = spendAccountId(ctx.cfg) ?? vault;
+  return { spend, own: new Set([vault, spend].filter((a): a is string => a !== null)) };
 }
 
 const NETWORK_HINT = `network must be one of ${CHAIN_NETWORKS.join(', ')}`;
@@ -72,15 +82,15 @@ export function chainReadsWith(deps: ChainDeps = {}): ReadTable {
       sendJson(res, 200, await transaction(args.network, check.normalized, depsFor(ctx)));
     },
     intents_activity: async (ctx, _body, args, res) => {
-      const own = ownAccount(ctx);
+      const ours = ownAccounts(ctx);
       const given = typeof args.account === 'string' ? args.account.trim() : '';
-      const account = given !== '' ? given : own;
+      const account = given !== '' ? given : ours.spend;
       if (account === null) return fail(res, 400, 'no account: this app has no wallet address yet, and none was given');
       const check = validateAddress('near', account);
       if (!check.ok) return fail(res, 400, check.reason);
       const answer = await intentsActivity(check.normalized, intParam(args.limit, DEFAULT_LIMIT, MAX_LIMIT), depsFor(ctx));
       // Whether this is the app's own ledger, so an agent never mistakes a stranger's for ours.
-      sendJson(res, 200, { ...answer, rows: labelInvites(ctx, answer.rows), own: check.normalized === own });
+      sendJson(res, 200, { ...answer, rows: labelInvites(ctx, answer.rows), own: ours.own.has(check.normalized) });
     },
   };
 }

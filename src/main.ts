@@ -55,6 +55,17 @@ import { createInfoClient } from './hl/info.ts';
 import { createServer } from './server.ts';
 import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
+import { chipStatusReader, ownerKeyGate } from './vault/chip.ts';
+import { liveVerifier } from './relay/verifier.ts';
+import { createAccounts } from './vault/accounts.ts';
+import { createVaultSubmitter, fileJournal, journalPathFor } from './vault/submit.ts';
+import { SWEEP_EVERY_MS, createAllowance } from './vault/allowance.ts';
+import { useChipVault } from './vault/rekey.ts';
+import { useRailAccounts } from './intents-sign.ts';
+import { demoAccounts } from './ledger/demo.ts';
+import { ownerTouchVia } from './proposals/lifecycle.ts';
+import { useOwnerTouch } from './rails/hl-user-signed.ts';
+import { hlAgentPlan } from './hl/agent-key.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -241,6 +252,20 @@ if (transportKey !== null) {
       audit.append('app_start', `the enclave probe failed: ${probe.error}`, { error: probe.error });
     }
   });
+  /* The chip markers on this Mac, queued right behind the probe: the relay hands requests out in the
+     order asked, so no unlock the window asks for is answered before them. The owner key gate below
+     then asks the chain about any marker naming this wallet's vault (src/vault/chip.ts), while the
+     person is still at the Touch ID. A status that did not answer is asked again until one does
+     (fix2a FA-1): until then no marker is known, and the gate asks the chain alone. */
+  const askMarkers = (attempt: number): void => {
+    void vault.ask({ op: 'chipStatus' }).then((answer) => {
+      const evm = keystore.addresses().evm;
+      if (evm !== null) ownerKeyStaysOut(evm);
+      if (answer.ok || vault.chipMarkersKnown()) return;
+      setTimeout(() => askMarkers(attempt + 1), Math.min(30_000, 1_000 * 2 ** attempt)).unref();
+    });
+  };
+  askMarkers(0);
 }
 
 const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, secret: seatSecret, handSecret: handSeatSecret });
@@ -255,6 +280,32 @@ const agents = createAgents(Date.now, MAX_AGENTS, { reserved: RESERVED_SEATS, se
    fixed fifteen minutes whatever the tab said. */
 let announceLock: (() => void) | null = null;
 const vaultPrefs = createVaultPrefs(cfg.dataDir);
+/* A vault that moved to the chip keeps its owner key out of the session: the key signs one
+   Hyperliquid owner action per touch of its own, never from memory (src/vault/accounts.ts). A chip
+   marker for the vault, once the chain shows the vault moved to it, keeps it out too, so deleting
+   vault.json's chip entry alone cannot bring it back (src/vault/chip.ts). Anything else that asks
+   whether the owner key is out asks this same gate. */
+const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifier(), { owner: () => keystore.ownerPublicKey() });
+keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
+// The touch each of those owner actions asks for, read for the same vault by the same gate.
+useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));
+/* The Hyperliquid trading key derived from the owner key (src/hl/agent-key.ts): which versions each
+   open makes, and which one trades once the venue approved it, read off vault.json at every ask. */
+keystore.planHlAgentsWith((v) => hlAgentPlan(vaultPrefs.get(), v));
+/* Which account the rails sign for, and with which key (src/intents-sign.ts): VAULT until the
+   vault moves, then ALLOWANCE. The chip service's status answer for the key vault.json names
+   tells a moved vault (`chip`) from one the service does not back (`broken`); the rails spend
+   ALLOWANCE under both. It is asked once here, behind the markers above, and again by whatever
+   changes vault.json's chip or signs for the vault. The demo names its own. */
+const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });
+useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);
+void accounts.refresh();
+/* Every vault move goes through one submitter, so the journal that keeps a signed bundle from being
+   signed twice is one file and one queue per account: the allowance's top-ups and the rekey share it
+   (src/vault/submit.ts). The move to the chip (src/vault/rekey.ts) is installed where the relay may
+   make keys: a live app, or a test harness that allows it (PHOSPHOR_DEMO_ENCLAVE). A demo has none. */
+const vaultMoves = createVaultSubmitter({ verifier: liveVerifier(), gasSeed: () => keystore.gasSeed(), gasAccount: () => keystore.derivedAccounts()?.gas ?? null, journal: fileJournal(journalPathFor(cfg.dataDir)) });
+if (cfg.mode === 'live' || process.env.PHOSPHOR_DEMO_ENCLAVE === '1') useChipVault({ verifier: liveVerifier(), submitter: vaultMoves, accounts, reads: true });
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
@@ -540,12 +591,17 @@ const tradeDeps: TradeDeps = {
    stages against the fixture, signing nothing and reaching for no chain. `refresh` is theirs:
    a demo move changes the fixture's balances and the row waiting on them is judged against the
    read that shows it. */
+/* The allowance's vault side (src/vault/allowance.ts): the top-up the vault's chip key signs behind
+   one Touch ID, and the sweep home the allowance key signs with none. Live only: a demo moves no vault. */
+const allowance =
+  cfg.mode === 'live' ? createAllowance({ accounts, prefs: vaultPrefs, relay: vault, verifier: liveVerifier(), submitter: vaultMoves }) : undefined;
 const rails = createRails({
   cfg,
   tokens,
   trade: tradeDeps,
   prices: () => ledger.snapshot().prices,
   refresh: () => ledger.refresh(),
+  allowance,
 });
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
@@ -596,6 +652,7 @@ const proposals = createProposalService({
   venueCredited,
   vault,
   keystore,
+  allowance,
   /* What the chain says about a send's receiver (transaction count, balance, contract or
      not), read once at propose time so the card can say "never used on Ethereum, check it
      twice". Live only: a demo holds nothing and asks nobody. Bounded to eight seconds because
@@ -650,6 +707,14 @@ function sweepOpenProposals(): void {
 }
 sweepOpenProposals();
 setInterval(sweepOpenProposals, RECONCILE_SWEEP_MS).unref?.();
+
+/* The allowance goes home when it is worth more than its size plus 10 %: after every settled move
+   that touched it (src/proposals/execute.ts), every ten minutes while the wallet is open, and at
+   every unlock. Each look reads the balances and signs nothing when nothing is over. */
+setInterval(() => void proposals.sweepAllowance?.('timer'), SWEEP_EVERY_MS).unref?.();
+keystore.onChange((state) => {
+  if (state === 'unlocked') void proposals.sweepAllowance?.('unlock');
+});
 
 /* And a faster tick that asks nothing of anybody: a row past its deadline with nothing having
    changed says so itself. The venue sweep above reads 1Click over the network and runs every

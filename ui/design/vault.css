@@ -576,6 +576,39 @@
   .vault-key { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
+/* The private key behind its Touch ID: one well in Geist Mono, masked until
+   Show, with Show and Copy beside it, and under it where the row is narrow. */
+.vault-secret {
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+}
+
+.vault-secret-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 44px;
+  letter-spacing: 0.04em;
+  font-feature-settings: "tnum";
+}
+
+/* The dots take the key's own shape, so Show and Hide move nothing around them. */
+.vault-secret-text[data-masked] {
+  color: var(--text-3);
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vault-secret-tools {
+  display: flex;
+  flex: 0 0 auto;
+  gap: var(--s-2);
+}
+
+@container (max-width: 520px) {
+  .vault-secret { flex-direction: column; align-items: stretch; }
+}
+
 /* ---------- limits ----------
 
    One tile, a short list of what the app will do: the rule's name at the
@@ -897,6 +930,342 @@
 
 .vault-address .deposit-chunks {
   font-size: var(--fs-14);
+}
+
+/* ---------- your vault: the move to this Mac's Touch ID key ----------
+
+   The move is one raised card of four numbered steps, numbered because the
+   order is the point: the backup, the gas account, the paper key, the move.
+   A step's disc is pressed into the card until it is the one to do, then a
+   small raised key like the row glyph's, and pressed in again with its check
+   once it is done. Only the open step shows its body; nothing waits behind
+   an empty slot. */
+.vault-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin: var(--s-1) 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-step {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: var(--s-3);
+  align-items: start;
+  min-width: 0;
+}
+
+.vault-step-disc,
+.vault-run-mark {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  font-size: var(--fs-13);
+  font-weight: 550;
+  color: var(--text-3);
+}
+
+.vault-step-disc {
+  width: 28px;
+  height: 28px;
+  background: var(--well-bg);
+  box-shadow: var(--well);
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out);
+}
+
+.vault-step-disc > *,
+.vault-run-mark > * {
+  grid-area: 1 / 1;
+}
+
+.vault-step-check,
+.vault-run-check {
+  display: none;
+  width: 15px;
+  height: 15px;
+}
+
+.vault-step[data-state="now"] .vault-step-disc {
+  color: var(--text);
+  background: linear-gradient(180deg, var(--bg-3), var(--bg-2));
+  box-shadow: inset 0 1px 0 rgba(var(--hi-rgb), 0.08), 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+
+.vault-step[data-state="done"] .vault-step-disc {
+  color: var(--text-2);
+}
+
+.vault-step[data-state="done"] .vault-step-number,
+.vault-run-step[data-state="done"] .vault-run-number {
+  display: none;
+}
+
+.vault-step[data-state="done"] .vault-step-check,
+.vault-run-step[data-state="done"] .vault-run-check {
+  display: block;
+}
+
+.vault-step-words {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.vault-step-title {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.vault-step[data-state="next"] .vault-step-title {
+  color: var(--text-3);
+}
+
+.vault-step[data-state="done"] .vault-step-title {
+  color: var(--text-2);
+}
+
+.vault-step-note {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+/* A step's own heading inside it sits at the step title's size, under it. */
+.vault-step-body > .vault-flow-title {
+  font-size: var(--fs-14);
+}
+
+.vault-step-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  min-width: 0;
+  margin-top: var(--s-2);
+}
+
+/* The two plain sentences about the paper and the backup: in the text tone
+   on the paper key's screen, where they are read before the words. */
+.vault-plain {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-1);
+}
+
+.vault-step-body .vault-truth {
+  color: var(--text);
+}
+
+/* The paper key's words in the words well, four to a row as the paper is
+   written, and no selection: a drag never puts them on the clipboard. */
+.vault-paper {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.vault-paper-address,
+.vault-gas-elsewhere {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.vault-gas-elsewhere[hidden] {
+  display: none;
+}
+
+/* An address read one character at a time: Geist Mono in a well. */
+.vault-mono {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  background: var(--well-bg);
+  box-shadow: var(--well);
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  line-height: 1.5;
+  letter-spacing: -0.01em;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.vault-id {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  letter-spacing: -0.01em;
+  color: var(--text-2);
+}
+
+/* Typed back: 24 numbered fields in the words' own well, laid out as the
+   paper numbers them, each a slot a shade up from the well. */
+.vault-paper-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-2) var(--s-3);
+  padding: var(--s-3) var(--s-4);
+  border-radius: var(--radius);
+  background: var(--well-bg);
+  box-shadow: var(--well);
+}
+
+.vault-paper-field {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  min-width: 0;
+}
+
+.vault-paper-field > .meta {
+  flex: 0 0 auto;
+  min-width: 18px;
+  text-align: right;
+  color: var(--text-3);
+}
+
+.vault .vault-paper-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--well-bg), var(--bg-3) 40%);
+  box-shadow: none;
+  font-size: var(--fs-14);
+  font-weight: 500;
+}
+
+@container (max-width: 520px) {
+  .vault-paper-fields { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+
+/* The check asks for three words: three to a row, so no slot stands empty. */
+.vault-paper-fields.vault-paper-check {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+@container (max-width: 400px) {
+  .vault-paper-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* What a Touch ID dialog will say, quoted in a well before it is asked. */
+.vault-says {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-2);
+}
+
+.vault-said-label {
+  margin: 0 0 4px;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--text-3);
+}
+
+.vault-said {
+  margin: 0;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: var(--well-bg);
+  box-shadow: var(--well);
+  font-size: var(--fs-13);
+  line-height: 1.45;
+  color: var(--text);
+}
+
+/* A move under way: its steps, the one under way turning, the ones done
+   with their check, the rest by their number. */
+.vault-run {
+  display: flex;
+  flex-direction: column;
+  gap: var(--s-3);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.vault-run-step {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  column-gap: var(--s-3);
+  align-items: start;
+  min-width: 0;
+}
+
+.vault-run-mark {
+  width: 22px;
+  height: 22px;
+  font-size: var(--fs-12);
+}
+
+.vault-run-mark > .spinner {
+  --spinner-size: 14px;
+  display: none;
+}
+
+.vault-run-step[data-state="now"] .vault-run-mark {
+  color: var(--text);
+}
+
+.vault-run-step[data-state="now"] .vault-run-number {
+  display: none;
+}
+
+.vault-run-step[data-state="now"] .spinner {
+  display: block;
+}
+
+.vault-run-step[data-state="done"] .vault-run-mark {
+  color: var(--text-2);
+}
+
+.vault-run-words {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-top: 1px;
+}
+
+.vault-run-title {
+  margin: 0;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text);
+}
+
+.vault-run-step[data-state="next"] .vault-run-title {
+  color: var(--text-3);
+}
+
+.vault-run-step[data-state="done"] .vault-run-title {
+  color: var(--text-2);
+}
+
+/* A quoted dialog is said once it matters: under the step under way. */
+.vault-run-step:not([data-state="now"]) .vault-said {
+  display: none;
+}
+
+/* Who opens the vault, as the chain reads it: the Policies list, with a
+   value that needs reading in the warning tone. */
+.vault-rule-value[data-tone="warn"] {
+  color: var(--warn);
+}
+
+.vault-pins .vault-rule-value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-13);
+  font-weight: 400;
+  letter-spacing: -0.01em;
 }
 
 /* ---------- wide ---------- */

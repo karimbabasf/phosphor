@@ -133,6 +133,13 @@ one and ask for your Touch ID, until the wallet moves to new keys. Delete the co
 Phosphor-only is also one rule for the whole Mac: [Known limits](known-limits.md) says what that
 means before you make a second wallet.
 
+The Vault tab can also move your vault to this Mac's Touch ID key and a paper key you write by
+hand. After that the wallet key no longer opens the vault and stays out of the open app's memory,
+every move out of the vault asks for a Touch ID that names it, a top-up always waits for your
+click, and your assistant spends from a small allowance. That closes the first limit above for the
+vault, not for the allowance, the gas account or Hyperliquid, whose keys are in memory while the
+wallet is open. See [Getting started](getting-started.md#move-your-vault-to-touch-id).
+
 A software wallet is locked with your password and a slow key derivation. Anything that learns
 the password, or reads the disk and guesses it, has the keys. A click on a software wallet is a
 click alone, with no biometric: Approve runs the move with no Touch ID after it. That is the
@@ -206,10 +213,10 @@ Phosphor code involved in the check.
    ```
 
 3. The digest the release's source builds, on a Mac with Node 24 and Xcode's command line tools.
-   Use the tag of the version you have, such as v0.10.15:
+   Use the tag of the version you have, such as v0.10.16:
 
    ```
-   git clone --depth 1 --branch v0.10.15 https://github.com/karimbabasf/phosphor.git
+   git clone --depth 1 --branch v0.10.16 https://github.com/karimbabasf/phosphor.git
    cd phosphor && npm run bundle
    ```
 
@@ -221,14 +228,18 @@ into the digest, never dates or owners, so the same tag gives the same digest on
 
 In that clone, the check the release itself passed before and after signing compares the
 payload's own files in your copy with the tag, one by one, reads the entitlements of every binary
-in it, and checks the vault service: the provisioning profile inside it is the tag's, and run by
-hand it starts (it stops at once, because only the app may start it). It does not compare the
+in it, and checks the vault service: the provisioning profile inside it is the tag's, run by
+hand it starts (it stops at once, because only the app may start it), and it carries the five chip
+ops and the grammar's newest rule. It does not compare the
 compiled programs (the shell, the bundled Node, the Secure Enclave service) or the installed
 packages:
 
 ```
 node scripts/release-check.ts --app /Applications/Phosphor.app --checkout . --stage signed
 ```
+
+With `--stage signed` it also asks NEAR which intents.near is deployed (see below), so it can fail
+for that alone, with your copy as it should be.
 
 The defences in this document are checked by an attack suite the repository ships: `npm run attack`
 runs the app this checkout builds (`npm run app:build` makes the ad-hoc bundle it boots), plays the
@@ -239,6 +250,18 @@ need a Developer ID build. No check changes the bundle it is handed, so a notari
 why. The screen-lock check posts the lock signal to the one shell it started; `-- --real-screen-lock`
 posts macOS's own instead, which every app on the Mac receives. The apps it starts keep their
 window and WebKit state in the throwaway home, not in the installed app's `~/Library`.
+
+The NEAR Intents verifier is not part of a release, and its owners can upgrade it. In the same
+clone, `node scripts/verifier-check.ts` reads which verifier is deployed (its version and the hash
+of its code) and prints `spiked: yes` only for the build the Touch ID vault was tested against,
+0.4.4. Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
+`simulate_intents`, signed by keys made for that run, and check that the verifier reports exactly
+the events the app expects. Neither sends anything. A release asks the same question: once the app
+is signed, `scripts/release-check.ts` reads the deployed verifier from two keyless NEAR RPCs run by
+different companies, FastNEAR and dRPC, and stops the release on any other build, when either gives
+no answer, or when the two name different builds, until someone reruns the spike on it and pins the
+new pair in `scripts/verifier-gate.ts` and `src/relay/verifier.ts`. One RPC's answer carries no
+proof, so one provider alone cannot pass a release.
 
 ## The lock
 
