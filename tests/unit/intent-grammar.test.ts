@@ -18,6 +18,8 @@ import { base58Encode } from '../../src/chain/near.ts';
 import { NATIVE_ASSET } from '../../src/intents.ts';
 import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../../src/rails/intents-relay.ts';
 import { buildNonce, decodeNonce } from '../../src/relay/payload.ts';
+import { chipBytesRefusal, chipPayloadRefusal } from '../../src/vault/chip-grammar.ts';
+import { readVaultPayload } from '../../src/vault/payload.ts';
 import { chipTokenRows, REGISTRY } from '../../scripts/gen-chip-tokens.ts';
 import { ACCEPTED, CASES, CHIP, NOW_MS, PINS, RECOVERY, RULES, U128_MAX, USDC, VAULT, nonceAt, payload } from '../fixtures/intent-grammar/corpus.ts';
 import type { Case } from '../fixtures/intent-grammar/corpus.ts';
@@ -80,6 +82,37 @@ const parseRequest = (c: Context) => ({
 
 const VERB = /^(confirm|move|send|remove) /;
 
+/* Node's own first reading of a payload (src/vault/chip.ts chipSign, src/vault/chip-grammar.ts):
+   the rule it refuses by ('shape' for readVaultPayload's), or null when it would hand the payload to
+   the service. chipSign's signer check is the service's wrong_signer, not the grammar's: left out. */
+function nodeFirst(c: Context): string | null {
+  const bytes = chipBytesRefusal(c.payload);
+  if (bytes !== null) return bytes.rule;
+  let read: ReturnType<typeof readVaultPayload>;
+  try {
+    read = readVaultPayload(c.payload);
+  } catch (err) {
+    return `shape: ${err instanceof Error ? err.message : String(err)}`;
+  }
+  return chipPayloadRefusal(read, `p256:${base58Encode(c.chip ?? CHIP)}`, c.nowMs ?? NOW_MS, c.pins ?? PINS)?.rule ?? null;
+}
+
+/* Where Node and the grammar part: refused by the grammar and handed on by Node (`missed`), accepted
+   by the grammar and refused by Node (`stricter`), or refused by both under different rule names. */
+function parted(contexts: readonly (Context & { name: string })[], answers: Answer[]): { missed: string[]; stricter: string[]; renamed: string[] } {
+  const missed: string[] = [];
+  const stricter: string[] = [];
+  const renamed: string[] = [];
+  contexts.forEach((c, i) => {
+    const node = nodeFirst(c);
+    const a = answers[i]!;
+    if (!a.ok && node === null) missed.push(`${c.name}: the grammar's ${a.rule}`);
+    if (a.ok && node !== null) stricter.push(`${c.name}: Node's ${node}`);
+    if (!a.ok && node !== null && !node.startsWith('shape') && node !== a.rule) renamed.push(`${c.name}: the grammar's ${a.rule}, Node's ${node}`);
+  });
+  return { missed, stricter, renamed };
+}
+
 test('every corpus case is accepted with its sentence byte for byte, or refused by its rule', { skip }, (t) => {
   const answers = drive(CASES.map(parseRequest));
   CASES.forEach((c: Case, i) => {
@@ -99,6 +132,15 @@ test('every corpus case is accepted with its sentence byte for byte, or refused 
   assert.deepEqual(RULES.filter((rule) => !ruled.has(rule)), [], 'every rule in the grammar has a case');
   assert.ok(CASES.length >= 60);
   t.diagnostic(`${CASES.length} corpus cases: ${ACCEPTED.length} accepted, ${CASES.length - ACCEPTED.length} refused, ${ruled.size} rules`);
+});
+
+test('Node refuses first every corpus case the grammar refuses, under the same rule, and hands on every case it accepts', { skip }, (t) => {
+  const answers = drive(CASES.map(parseRequest));
+  const { missed, stricter, renamed } = parted(CASES, answers);
+  assert.deepEqual(missed, [], 'refused by the grammar and handed on by Node');
+  assert.deepEqual(stricter, [], 'accepted by the grammar and refused by Node');
+  assert.deepEqual(renamed, [], 'refused by both under different rules');
+  t.diagnostic(`${CASES.length} corpus cases: Node hands on the ${ACCEPTED.length} the grammar accepts and refuses the other ${CASES.length - ACCEPTED.length} first`);
 });
 
 test('the chip key never signs add_public_key or set_auth_by_predecessor_id, however the payload dresses it', { skip }, () => {
@@ -127,9 +169,10 @@ test('the chip key never signs add_public_key or set_auth_by_predecessor_id, how
     ['set_auth_by_predecessor_id in a list of five', top([transfer, transfer, transfer, transfer, { intent: 'set_auth_by_predecessor_id', enabled: true }])],
   ];
   const answers = drive(dressed.map(([, p]) => parseRequest({ payload: p })));
-  dressed.forEach(([name], i) => {
+  dressed.forEach(([name, p], i) => {
     assert.equal(answers[i].ok, false, `${name}: accepted as "${answers[i].sentence}"`);
     assert.notEqual(answers[i].rule, 'driver', name);
+    assert.notEqual(nodeFirst({ payload: p }), null, `${name}: Node would hand it to the service`);
   });
   // The two kinds are refused by name, not merely as kinds the grammar does not know.
   assert.equal(answers[0].rule, 'refused_kind');
@@ -288,6 +331,15 @@ test('10 000 mutated payloads: every one the grammar accepts reads the same in J
   const byRule = Object.entries(refusals).sort(([x], [y]) => (x < y ? -1 : 1)).map(([rule, n]) => `${rule} ${n}`).join(', ');
   t.diagnostic(`seed ${seed}: ${mutants.length} mutants, ${accepted} accepted (${changed} differ from their seed payload), ${mutants.length - accepted} refused: ${byRule}`);
   assert.ok(changed >= 500, `only ${changed} accepted mutants differ from their seed, too few for the property to mean much`);
+  // Node's first reading refuses first every mutant the grammar refuses. It is stricter in one way
+  // only: an account id that starts 0x and is not an EVM address, which the grammar reads as a NEAR
+  // name and Node never builds (readVaultPayload, src/rails/intents-send.ts intentsAccountProblem).
+  const { missed, stricter } = parted(mutants.map((m, i) => ({ ...m.base, name: `mutant ${i} ${JSON.stringify(m.text).slice(0, 160)}`, payload: m.text })), answers);
+  assert.deepEqual(missed.slice(0, 5), [], `${missed.length} mutants refused by the grammar and handed on by Node`);
+  const evmOnly = /is not an EVM address, so it cannot be an intents account$/;
+  const other = stricter.filter((s) => !evmOnly.test(s));
+  assert.deepEqual(other.slice(0, 5), [], `${other.length} mutants accepted by the grammar and refused by Node for another reason`);
+  t.diagnostic(`Node's first reading: ${mutants.length - accepted} refused first, ${accepted - stricter.length} handed on, ${stricter.length} refused for a 0x account id that is no EVM address`);
 });
 
 type DerFixture = { runs: { run: string; keys: { x963: string; signatures: { message: string; der: string; raw: string; low: string; high: boolean }[] }[] }[] };

@@ -263,7 +263,11 @@ test('chipSign holds the answer to the question: the payload byte for byte, the 
 });
 
 test('the service\'s refusals reach the caller by their codes, and each has a calm sentence', async () => {
-  const w = await chipWorld();
+  let asked = 0;
+  const w = await chipWorld((request, answer) => {
+    if (request.op === 'signIntent') asked += 1;
+    return answer;
+  });
   try {
     const unmarked = await createChip(w.relay);
     assert.ok(unmarked.ok);
@@ -273,8 +277,16 @@ test('the service\'s refusals reach the caller by their codes, and each has a ca
     const cases: [string, Awaited<ReturnType<typeof chipSign>>, string][] = [
       ['a cancelled Touch ID', cancelled, 'user_cancel'],
       ['a chip with no marker', await chipSign(w.relay, { ...w.pin, keyRef: unmarked.keyRef, publicKey: unmarked.publicKey }, transfer), 'not_committed'],
-      ['a key the chip never adds', await chipSign(w.relay, w.pin, w.payload([{ intent: 'add_public_key', public_key: `p256:${base58Encode(Buffer.alloc(64, 7))}` }])), 'grammar'],
     ];
+    // A key the chip never adds: refused here before the service is asked, and by the service when asked straight.
+    const addKey = w.payload([{ intent: 'add_public_key', public_key: `p256:${base58Encode(Buffer.alloc(64, 7))}` }]);
+    const before = asked;
+    const here = await chipSign(w.relay, w.pin, addKey);
+    assert.ok(!here.ok && here.code === 'chip_payload' && here.detail.startsWith('refused_kind: add_public_key'), JSON.stringify(here));
+    assert.equal(asked, before, 'the service was never asked');
+    const there = await w.relay.ask({ op: 'signIntent', keyRef: w.pin.keyRef, payload: addKey });
+    assert.ok(!there.ok && there.error === 'grammar', JSON.stringify(there));
+    assert.ok(knownRefusal('grammar') && calm(String(refusal('grammar').error)));
     w.service.keychainHome = false;
     cases.push(['a build with no keychain home', await chipSign(w.relay, w.pin, transfer), 'keychain_unavailable']);
     w.service.keychainHome = true;
@@ -288,6 +300,54 @@ test('the service\'s refusals reach the caller by their codes, and each has a ca
       assert.ok(knownRefusal(code) && calm(String(refusal(code).error)), `${code}: ${String(refusal(code).error)}`);
     }
     assert.equal(w.service.signatures, 0);
+  } finally {
+    await w.stop();
+  }
+});
+
+test('chipSign reads the service\'s grammar first: a key added, predecessor auth switched or any payload the grammar refuses never reaches the service', async () => {
+  let asked = 0;
+  const w = await chipWorld((request, answer) => {
+    if (request.op === 'signIntent') asked += 1;
+    return answer;
+  });
+  try {
+    const now = Date.now();
+    const at = (deadlineMs: number, intents: VaultIntent[] = []) => buildVaultPayload({ signerId: w.vault, intents, deadlineMs, salt: SALT });
+    const send = (asset: string, amount: string, to: string): VaultIntent => ({ intent: 'transfer', receiver_id: to, tokens: { [asset]: amount } });
+    const good = w.payload([send(USDC, '5000000', w.allowance)]);
+    const other = `p256:${base58Encode(Buffer.alloc(64, 0x33))}`;
+    const hostile: [string, string, string][] = [
+      ['predecessor auth on', w.payload([{ intent: 'set_auth_by_predecessor_id', enabled: true }]), 'refused_kind'],
+      ['predecessor auth off', w.payload([{ intent: 'set_auth_by_predecessor_id', enabled: false }]), 'refused_kind'],
+      ['a key added', w.payload([{ intent: 'add_public_key', public_key: other }]), 'refused_kind'],
+      ['two receivers', w.payload([send(USDC, '1', w.allowance), send('nep141:usdt.tether-token.near', '1', 'evil.near')]), 'one_receiver'],
+      ['two kinds', w.payload([send(USDC, '1', w.allowance), { intent: 'remove_public_key', public_key: other }]), 'one_kind'],
+      ['a token outside the table', w.payload([send('nep141:evil.near', '1', w.allowance)]), 'token'],
+      ['USDC twice', w.payload([send(USDC, '1', w.allowance), send('nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near', '1', w.allowance)]), 'token_repeat'],
+      ['five transfers', w.payload([1, 2, 3, 4, 5].map((n) => send(USDC, String(n), w.allowance))), 'intents'],
+      ['the chip removing itself', w.payload([{ intent: 'remove_public_key', public_key: w.pin.publicKey }]), 'signing_key'],
+      ['one key removed twice', w.payload([{ intent: 'remove_public_key', public_key: other }, { intent: 'remove_public_key', public_key: other }]), 'key_repeat'],
+      ['a receiver that is no NEAR name', good.replace(`"receiver_id":"${w.allowance}"`, '"receiver_id":"a"'), 'shape'],
+      ['a sentence over 120 characters', w.payload([send(USDC, '340282366920938463463374607431768211455', `${'a'.repeat(59)}.near`)]), 'sentence'],
+      ['over 4096 bytes', good + ' '.repeat(4096), 'size'],
+      ['a character past ASCII', good.replace('intents.near', 'intents.nеar'), 'ascii'],
+      ['a backslash escape', good.replace('intents.near', 'intents\\u002enear'), 'escape'],
+      ['a past deadline', at(now - 1_000, [send(USDC, '1', w.allowance)]), 'deadline'],
+      ['a deadline past now and 120 s', at(now + 121_000, [send(USDC, '1', w.allowance)]), 'deadline'],
+    ];
+    for (const [what, payload, rule] of hostile) {
+      const r = await chipSign(w.relay, w.pin, payload, { now: () => now, allowance: w.allowance, recovery: PAPER });
+      assert.ok(!r.ok && r.code === 'chip_payload', `${what}: ${JSON.stringify(r)}`);
+      if (rule !== 'shape') assert.ok(r.detail.startsWith(`${rule}: `), `${what}: ${r.detail}`);
+    }
+    assert.equal(asked, 0, 'the service was asked');
+    assert.equal(w.service.signatures, 0);
+    // What the grammar takes still goes to the service, and signs once.
+    const signed = await chipSign(w.relay, w.pin, good, { now: () => now, allowance: w.allowance, recovery: PAPER });
+    assert.ok(signed.ok, JSON.stringify(signed));
+    assert.equal(asked, 1);
+    assert.equal(w.service.signatures, 1);
   } finally {
     await w.stop();
   }

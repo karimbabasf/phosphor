@@ -11,7 +11,9 @@
 // and rule name, with no dialog and no touch: every check sits before the key. A valid 5.00 USDC
 // top-up then signs with exactly one dialog, its sentence byte for byte, so the refusals are the
 // grammar's and not a broken service. Then Node's own first line, src/vault/chip.ts chipSign, over
-// the same set with a relay stub that counts the requests it hands on: which line held each payload.
+// the same set with a relay stub that counts the requests it hands on: Node reads the service's
+// grammar first (src/vault/chip-grammar.ts), so it holds every one before the service is asked,
+// on the same clock the service was given.
 //
 // Why: the dialog is the only text the owner reads before a touch that can move the vault's money
 // or give the vault to another key, and Node may be the attacker. No payload of this set may ever
@@ -143,7 +145,7 @@ export const attack: AttackCase = {
     const dialogsBeforeNode = mac.dialogs().length;
     for (const h of set) {
       const before = asked;
-      const r = await chipSign(relay, { keyRef, publicKey, account: VAULT }, h.payload);
+      const r = await chipSign(relay, { keyRef, publicKey, account: VAULT }, h.payload, { now: () => nowMs });
       const calls = asked - before;
       if (r.ok) {
         wrong.push(`${h.name}: chipSign SIGNED it`);
@@ -161,11 +163,11 @@ export const attack: AttackCase = {
     }
     const nodeDialogs = mac.dialogs().length - dialogsBeforeNode;
 
-    const pass = wrong.length === 0 && dialogsAfterHostile === 0 && touchesAfterHostile === 0 && controlSigned && newDialogs.length === 1 && newDialogs[0] === TOP_UP_SAID && nodeDialogs === 0;
+    const pass = wrong.length === 0 && dialogsAfterHostile === 0 && touchesAfterHostile === 0 && controlSigned && newDialogs.length === 1 && newDialogs[0] === TOP_UP_SAID && nodeDialogs === 0 && nodeHeld === set.length;
     const setAuthOn = direct.get('set_auth_by_predecessor_id enabled true');
     const addKey = direct.get('add_public_key');
     return {
-      expected: `all ${set.length} hostile payloads refused with their code and rule, 0 dialogs and 0 touches; the 5.00 USDC top-up signs with exactly one dialog "${TOP_UP_SAID}"; chipSign over the same set signs nothing and raises no dialog`,
+      expected: `all ${set.length} hostile payloads refused with their code and rule, 0 dialogs and 0 touches; the 5.00 USDC top-up signs with exactly one dialog "${TOP_UP_SAID}"; chipSign over the same set holds all ${set.length} in Node before the service is asked, signs nothing and raises no dialog`,
       observed: `service: ${set.length - wrong.filter((w) => !w.includes('chipSign')).length}/${set.length} refused right, dialogs +${dialogsAfterHostile}, touches +${touchesAfterHostile}; control signed=${controlSigned} dialogs=${JSON.stringify(newDialogs)}; chipSign: ${nodeHeld} held in Node (chip_payload, 0 service calls), ${serviceHeld} held by the service, dialogs +${nodeDialogs}${wrong.length ? `; WRONG: ${wrong.join('; ').slice(0, 600)}` : ''}; per payload: ${lines.join(', ')}`,
       pass,
       evidence: `signIntent(set_auth enabled true) -> ${setAuthOn}; signIntent(add_public_key) -> ${addKey}; ${set.length} hostile -> dialogs() +${dialogsAfterHostile}, touches() +${touchesAfterHostile}; top-up -> dialogs() ${JSON.stringify(newDialogs)}`,

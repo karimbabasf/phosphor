@@ -695,7 +695,7 @@ function signersFor(host: RekeyHost, box: Box, plan: Plan, chip: { keyRef: strin
       return touched.ok ? touched.value : touched;
     },
     async chip(payload) {
-      const signed = await chipSign(host.relay, { keyRef: chip.keyRef, publicKey: chip.publicKey, account: plan.vault }, payload);
+      const signed = await chipSign(host.relay, { keyRef: chip.keyRef, publicKey: chip.publicKey, account: plan.vault }, payload, { now: clock, allowance: plan.allowance, recovery: plan.recovery });
       return signed.ok ? signed.signed : refused(signed.code, signed.detail);
     },
     async paper(payload) {

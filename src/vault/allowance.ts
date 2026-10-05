@@ -331,7 +331,7 @@ export function createAllowance(deps: AllowanceDeps): AllowanceService {
         }
         const before = frozen(lastCheck);
         if (before !== null) return before;
-        const signed = await chipSign(deps.relay, pin, payload);
+        const signed = await chipSign(deps.relay, pin, payload, { now, allowance });
         if (!signed.ok) return { ok: false, code: signed.code, detail: signed.detail };
         // The signature exists here and nowhere else: frozen while the dialog was up, it never leaves.
         const after = frozen(lastCheck);

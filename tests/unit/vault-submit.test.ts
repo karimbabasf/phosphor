@@ -87,7 +87,7 @@ async function world(opts: { chipOnChain?: boolean; gas?: bigint; journal?: Vaul
       id,
       account: vault,
       async sign() {
-        const signed = await chipSign(relay, pin, await payload([{ intent: 'transfer', receiver_id: allowance, tokens: { [USDC]: amount.toString() } }]));
+        const signed = await chipSign(relay, pin, await payload([{ intent: 'transfer', receiver_id: allowance, tokens: { [USDC]: amount.toString() } }]), { now: double.now });
         if (!signed.ok) return { ok: false, code: signed.code, detail: signed.detail };
         signedBundles.push([signed.signed]);
         return { ok: true, bundle: [signed.signed], before: {} };
@@ -187,7 +187,7 @@ test('the migrate rekey: C7\'s five events on the old key\'s payload, then the f
           ]),
         );
         const pc = await erc191(w.recovery, await w.payload([]));
-        const pb = await chipSign(w.relay, w.pin, await w.payload([]));
+        const pb = await chipSign(w.relay, w.pin, await w.payload([]), { now: w.double.now });
         if (!pb.ok) return { ok: false, code: pb.code, detail: pb.detail };
         return { ok: true, bundle: [pa, pc, pb.signed], before };
       },
@@ -507,7 +507,7 @@ test('part of a bundle run on its own is never done: the move reads as a mismatc
       account: w.vault,
       async sign() {
         const one = await erc191(w.old, await w.payload([]));
-        const two = await chipSign(w.relay, w.pin, await w.payload([]));
+        const two = await chipSign(w.relay, w.pin, await w.payload([]), { now: w.double.now });
         assert.ok(two.ok);
         w.signedBundles.push([one, two.signed]);
         return { ok: true, bundle: [one, two.signed], before: {} };

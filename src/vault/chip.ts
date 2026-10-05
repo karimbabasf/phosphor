@@ -9,8 +9,9 @@
 // wrapper the verifier takes (src/vault/webauthn.ts).
 //
 // Every check this process can make is made before the touch, so a refusal raises no dialog: a
-// payload the app would not build (readVaultPayload: the shape, the seven-day nonce) or one that
-// signs for another account never reaches the service.
+// payload the app would not build (readVaultPayload: the shape, the seven-day nonce), one that
+// signs for another account, or one the service's grammar would refuse (src/vault/chip-grammar.ts)
+// never reaches the service.
 //
 // The service's chip markers also close a door vault.json alone leaves open (ownerKeyGate): a
 // marker naming this vault, once the chain shows the vault moved to it, keeps the owner key out of
@@ -23,7 +24,9 @@ import { base58Decode } from '../chain/near.ts';
 import type { ChipPrefs } from './prefs.ts';
 import type { ChipStatus } from './accounts.ts';
 import { ownerKeyOut } from './accounts.ts';
+import { chipBytesRefusal, chipPayloadRefusal } from './chip-grammar.ts';
 import { readVaultPayload } from './payload.ts';
+import type { VaultPayload } from './payload.ts';
 import { isVerifierPublicKey } from '../relay/verifier.ts';
 import type { VerifierPort } from '../relay/verifier.ts';
 import { isChipKeyRef } from './relay.ts';
@@ -78,21 +81,34 @@ export function isChipPublicKey(value: unknown): value is string {
   }
 }
 
-/* C7's chipSign. One Touch ID, whose sentence the service writes. The answer must carry the payload
+/* What the caller knows beside the pin: this Mac's clock, the one that built the payload's deadline
+   (the service reads the same Mac's), and the allowance and paper key the chip's marker pins, which
+   make the length check of the Touch ID sentence exact (src/vault/chip-grammar.ts). */
+export type ChipSignOptions = { now?: () => number; allowance?: string; recovery?: string };
+
+/* C7's chipSign. One Touch ID, whose sentence the service writes. Before it, the vault service's
+   grammar is asked here first (src/vault/chip-grammar.ts): a payload it would refuse, a key added or
+   predecessor auth switched among them, never reaches the service. The answer must carry the payload
    asked for byte for byte (JSONSerialization drops a leading byte order mark from a string, so the
    service can sign a payload that is not this one, p2-grammar finding 1), the public key vault.json
    pins, and a webauthn signature that verifies over this app's wrapper with S low. */
-export async function chipSign(relay: Pick<VaultRelay, 'ask'>, pin: ChipPin, payload: string): Promise<ChipSigned | ChipRefused> {
+export async function chipSign(relay: Pick<VaultRelay, 'ask'>, pin: ChipPin, payload: string, opts: ChipSignOptions = {}): Promise<ChipSigned | ChipRefused> {
   if (!isChipPublicKey(pin.publicKey) || !isChipKeyRef(pin.keyRef) || !/^0x[0-9a-fA-F]{40}$/.test(pin.account)) {
     return refused('chip_missing', 'vault.json pins no chip this process can ask for');
   }
-  let signer: string;
+  const bytes = chipBytesRefusal(payload);
+  if (bytes !== null) return refused('chip_payload', `${bytes.rule}: ${bytes.message}`);
+  let read: VaultPayload;
   try {
-    signer = readVaultPayload(payload).signer_id;
+    read = readVaultPayload(payload);
   } catch (err) {
     return refused('chip_payload', err instanceof Error ? err.message : String(err));
   }
-  if (signer !== pin.account.toLowerCase()) return refused('chip_payload', 'the payload signs for another account than the vault the chip holds');
+  const account = pin.account.toLowerCase();
+  if (read.signer_id !== account) return refused('chip_payload', 'the payload signs for another account than the vault the chip holds');
+  const pins = { account, ...(opts.allowance === undefined ? {} : { allowance: opts.allowance.toLowerCase() }), ...(opts.recovery === undefined ? {} : { recovery: opts.recovery }) };
+  const grammar = chipPayloadRefusal(read, pin.publicKey, (opts.now ?? Date.now)(), pins);
+  if (grammar !== null) return refused('chip_payload', `${grammar.rule}: ${grammar.message}`);
 
   const answer = await relay.ask({ op: 'signIntent', keyRef: pin.keyRef, payload });
   if (!answer.ok) return serviceRefused(answer);

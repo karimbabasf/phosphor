@@ -148,11 +148,14 @@ build; add `-- --app <Phosphor.app>` to run it.
   vault, the removal of a key, or the empty rekey proof, and refuses everything else before the key
   is touched, so a refusal never raises a dialog. The dialog's sentence is the service's, written
   from what it read; the backend never sends one. Adding a key and switching predecessor auth back
-  on are refused by name, whatever the payload wraps them in. Proof: attack
-  `31-chip-hostile-payloads`; `chip-service.test.ts` (every refusal before the key with no signature
-  asked for, each signed payload's sentence byte for byte, each signature verified in Node);
-  `intent-grammar.test.ts` (every accept and refusal, 10 000 mutated payloads read the same as Node
-  reads them).
+  on are refused by name, whatever the payload wraps them in. The app reads the same grammar first
+  (`src/vault/chip-grammar.ts`), so such a payload never reaches the service at all; the service
+  stays the boundary. Proof: attack `31-chip-hostile-payloads` (all 34 held in the app before the
+  service is asked, and each refused by the service when asked straight); `chip-service.test.ts`
+  (every refusal before the key with no signature asked for, each signed payload's sentence byte for
+  byte, each signature verified in Node); `intent-grammar.test.ts` (every accept and refusal, 10 000
+  mutated payloads read the same as Node reads them, and the app's first reading refuses every one
+  the grammar refuses).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
