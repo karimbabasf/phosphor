@@ -81,9 +81,11 @@ type Service = { run(request: VaultRequest): Answer | Promise<Answer> };
    enclave-wrapped file (a software P-256 key plays the enclave), vault.json, the relay with a
    service behind it, the chain double, the owner key gate on the keystore, and the accounts the
    rails read, asking the service through the relay. `marker` is the account the backend pins the
-   new chip key to, or null for no chip at all; `moved` puts that chip key on the vault on chain and
-   names it in vault.json, as the end of a rekey leaves them. Nothing here moves the vault. */
-async function mac(service: Service, opts: { marker?: string | null; moved?: boolean; makesKeys?: boolean } = {}) {
+   new chip key to, or null for no chip at all; `moved` puts that chip key and its paper key on the
+   vault on chain and names it in vault.json, as the end of a rekey leaves them; `onChain` puts only
+   the named pinned keys on the vault, vault.json untouched; the gate's chain reads wait for
+   `chainHeld` when it is given. Nothing here moves the vault. */
+async function mac(service: Service, opts: { marker?: string | null; moved?: boolean; makesKeys?: boolean; onChain?: ('chip' | 'paper')[]; chainHeld?: Promise<void> } = {}) {
   const dir = tempDir('phosphor-chip-wiring-');
   fs.mkdirSync(path.join(dir, 'state'));
   const keysPath = path.join(dir, 'keys.json');
@@ -95,7 +97,10 @@ async function mac(service: Service, opts: { marker?: string | null; moved?: boo
   const jwk = pair.publicKey.export({ format: 'jwk' }) as { x: string; y: string };
   const x963 = Buffer.concat([Buffer.from([0x04]), Buffer.from(jwk.x, 'base64url'), Buffer.from(jwk.y, 'base64url')]);
   const store = createKeystore({ keysPath, kdf: () => ({ name: 'scrypt', N: 2 ** 14, r: 8, p: 1, salt: crypto.randomBytes(16).toString('hex') }) });
-  const ownerKeyStaysOut = ownerKeyGate(() => prefs.get(), relay, chain.verifier);
+  const held = opts.chainHeld;
+  const chainForGate: Pick<VerifierPort, 'hasPublicKey'> =
+    held === undefined ? chain.verifier : { hasPublicKey: async (account, key, at) => (await held, chain.verifier.hasPublicKey(account, key, at)) };
+  const ownerKeyStaysOut = ownerKeyGate(() => prefs.get(), relay, chainForGate);
   store.keepOwnerKeyOutWhen(ownerKeyStaysOut);
   store.importWithEnclave({ keyBlob: crypto.randomBytes(427).toString('base64'), publicKey: x963.toString('base64'), createdAt: new Date().toISOString() }, { keys: { evm: `0x${V.old}` } });
   store.lock();
@@ -118,6 +123,8 @@ async function mac(service: Service, opts: { marker?: string | null; moved?: boo
       chain.addKey(vault, recovery);
       prefs.setChip({ ...chip, account: vault });
     }
+    if (opts.onChain?.includes('chip')) chain.addKey(vault, made.publicKey);
+    if (opts.onChain?.includes('paper')) chain.addKey(vault, recovery);
   }
   return {
     keysPath,
@@ -459,26 +466,60 @@ test('end to end on the service\'s stand-in: a chip-kind swap spends from the al
   }
 });
 
-test('end to end on the service\'s stand-in: a marker the backend planted on a vault that never moved changes nothing once the chain says so', async (t) => {
-  const s = await standIn(t);
-  if (s === null) return;
-  // A backend that ran chipCreate then chipCommit naming this wallet's vault: no dialog, no move.
-  const m = await mac(s.service, { marker: V.vault.toLowerCase(), moved: false });
+/* The owner key gate's rule (U6, accepted by the lead): a chip marker naming the vault counts only
+   when the chain shows the marker's chip key OR the paper key it pins on the vault, and until the
+   chain has answered the owner key stays out. Each case is a backend that ran chipCreate then
+   chipCommit naming this wallet's vault through the service's own ops (no dialog), with vault.json
+   left empty, and the boot src/main.ts runs; the owner touch reads the same gate. */
+test('end to end on the service\'s stand-in: a marker counts only when the chain shows its chip key or its paper key on the vault, and the owner key stays out until the chain answers', async (t) => {
+  const vault = V.vault.toLowerCase();
+
+  // Planted on a vault that never moved, the chain's answer held back at first.
+  const first = await standIn(t);
+  if (first === null) return;
+  let answer: () => void = () => {};
+  const chainHeld = new Promise<void>((resolve) => (answer = resolve));
+  const m = await mac(first.service, { marker: vault, chainHeld });
   try {
     useOwnerTouch(ownerTouchVia({ vault: m.relay, keystore: m.store, ownerOut: m.ownerKeyStaysOut }));
     assert.equal(m.prefs.get().chip, null, 'vault.json names no chip');
     await m.boot();
     assert.equal(m.relay.chipMarkers(V.vault).length, 1, 'the planted marker is real and the gate has read it');
     m.open();
-    assert.equal(m.store.evmPrivateKey(), `0x${V.old}`, 'the chain shows neither pinned key on the vault: the owner key opens');
-    assert.equal(ownerTouchRequired(), false, 'and the owner touch reads the same');
+    assert.throws(() => m.store.evmPrivateKey(), OwnerTouchRequired, 'no chain answer yet: the owner key stays out');
+    assert.equal(ownerTouchRequired(), true, 'and the owner touch reads the same');
+    answer();
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(m.ownerKeyStaysOut(V.vault), false, 'the chain shows neither pinned key on the vault: the marker does not count');
+    m.open();
+    assert.equal(m.store.evmPrivateKey(), `0x${V.old}`, 'the next open holds the owner key');
+    assert.equal(ownerTouchRequired(), false);
     const now = await m.accounts.refresh();
     assert.equal(now.kind, 'key', 'the vault kind does not flip');
     assert.equal(now.spend, V.vault);
     assert.equal(liveIntentsSigner.address(m.keysPath), V.vault, 'the rails sign for the vault with its own key, as before');
-    assert.deepEqual(s.double.touches(), [], 'the plant took no Touch ID, which is why the chain decides');
+    assert.deepEqual(first.double.touches(), [], 'the plant took no Touch ID, which is why the chain decides');
   } finally {
     await m.stop();
+  }
+
+  // The chain shows the marker's chip key on the vault, or only the paper key it pins: either counts.
+  for (const onChain of [['chip'], ['paper']] as const) {
+    const s = await standIn(t);
+    if (s === null) return;
+    const moved = await mac(s.service, { marker: vault, onChain: [...onChain] });
+    try {
+      useOwnerTouch(ownerTouchVia({ vault: moved.relay, keystore: moved.store, ownerOut: moved.ownerKeyStaysOut }));
+      await moved.boot();
+      assert.equal(moved.ownerKeyStaysOut(V.vault), true, `the ${onChain[0]} key is on the vault: the marker counts`);
+      moved.open();
+      assert.throws(() => moved.store.evmPrivateKey(), OwnerTouchRequired, `${onChain[0]} on chain: the owner key stays out`);
+      assert.equal(ownerTouchRequired(), true);
+      moved.chain.faults.reads = true;
+      assert.equal(moved.ownerKeyStaysOut(V.vault), true, 'and once the chain said moved, that is for good');
+    } finally {
+      await moved.stop();
+    }
   }
 });
 
