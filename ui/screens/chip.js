@@ -238,7 +238,7 @@
       offer: 'Your ' + backupName(vault) + ' opens your vault today.',
       restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
-      moved: 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
+      moved: screen === 'moved' && unreadFacts() ? 'Your vault moved to this Mac\'s Touch ID key and your paper key.' : 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
       checking: 'Checking which keys open your vault, with NEAR. This takes a moment.'
     };
     dom.setText(refs.line, lines[screen] || '');
@@ -969,6 +969,12 @@
     dom.setHidden(under, !note);
   }
 
+  // A fact about who opens the vault that NEAR has not answered since the vault moved.
+  function unreadFacts() {
+    return [slice.chipOnChain, slice.recoveryOnChain, slice.oldOnChain, slice.predecessorAuth].some(function (f) { return typeof f !== 'boolean'; }) ||
+      !Array.isArray(slice.otherKeys);
+  }
+
   function warnLine() {
     var line = dom.el('p', 'vault-warn');
     kit.append(line, kit.icon('warning', 'icon-16'));
@@ -1001,6 +1007,9 @@
     list.appendChild(refs.facts.old);
     list.appendChild(refs.facts.door);
     flow.appendChild(list);
+    refs.reading = kit.text('vault-sub', 'Phosphor is reading your vault from NEAR to confirm who opens it.');
+    refs.reading.setAttribute('role', 'status');
+    flow.appendChild(refs.reading);
     var door = warnLine();
     refs.doorOpen = door.line;
     refs.doorOpenText = door.words;
@@ -1032,17 +1041,21 @@
       kit.pop(refs.doneLine);
     }
 
-    var unread = 'Not read yet';
+    // A fact NEAR has not answered since the move is never a yes or a no (src/vault/rekey.ts chipSlice).
+    var checking = 'Checking...';
+    var chipOn = slice.chipOnChain;
     var paperOn = slice.recoveryOnChain;
     var oldOn = slice.oldOnChain;
     var door = slice.predecessorAuth;
-    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', 'Opens it', null, null);
-    paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : unread), paperOn === false ? 'warn' : null,
+    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', chipOn === true ? 'Opens it' : (chipOn === false ? 'Not on your vault' : checking), chipOn === false ? 'warn' : null,
+      chipOn === false ? 'NEAR reads it off your vault, so this Mac cannot move your vault\'s money.' : null);
+    paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : checking), paperOn === false ? 'warn' : null,
       paperOn === false ? 'Your vault reads no paper key. Move your money to a fresh wallet while this Mac still opens your vault.' : null);
-    paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : unread), oldOn === true ? 'warn' : null,
+    paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : checking), oldOn === true ? 'warn' : null,
       'It still opens your allowance, the gas account and Hyperliquid.');
-    paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : unread), door === true ? 'warn' : null,
+    paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : checking), door === true ? 'warn' : null,
       'A way for your ' + name + ' to act for your vault through NEAR. The move shut it. NEAR Intents\' admins can open it again for any account, and this line reads it from NEAR.');
+    dom.setHidden(refs.reading, !unreadFacts());
     dom.setText(refs.doorOpenText, 'NEAR Intents\' admins opened the NEAR door again, so your ' + name + ' can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.');
     dom.setHidden(refs.doorOpen, door !== true);
     var others = Array.isArray(slice.otherKeys) ? slice.otherKeys : [];

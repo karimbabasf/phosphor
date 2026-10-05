@@ -228,7 +228,8 @@ Under Your vault, the Vault key row takes you through four steps, in order:
 Afterwards the row lists who opens your vault, as NEAR reads it: this Mac's Touch ID key, your paper
 key, and not your recovery phrase. It also shows the NEAR door: a way for your recovery phrase to
 act for your vault through NEAR, which the move shut. NEAR Intents' admins can open it again for any
-account, and the row would then say so.
+account, and the row would then say so. Each line comes from a read of NEAR begun after the move;
+until one answers, the line says Checking...
 
 The Allowance row reads like "$63 of $100": what your assistant spends with no Touch ID. Anything
 over the size plus 10 percent goes back to your vault on its own, USDC first. Top up asks for USDC

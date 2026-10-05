@@ -243,6 +243,7 @@ function chipSlice(over: Any = {}): Any {
 const MOVED = (over: Any = {}): Any =>
   chipSlice(Object.assign({
     state: 'done',
+    chipOnChain: true,
     recoveryOnChain: true,
     oldOnChain: false,
     predecessorAuth: false,
@@ -750,6 +751,27 @@ test('the move names both Touch IDs before it asks, then shows each step as its 
   assert.ok(said(row).includes('Who opens your vault'));
 });
 
+test('the moment the move lands paints no fact NEAR has not read since: each row says Checking..., calm, until a fresh read answers', () => {
+  const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r6', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
+  const row = keyRow(w);
+  w.frame({ run: 'r6', status: 'done' });
+  // The state the backend sends at done: the read in hand began before the move, so it holds nothing.
+  w.chip(MOVED({ run: { id: 'r6', kind: 'migrate', status: 'done', reason: null, said: null }, chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null }));
+  const facts = (): Record<string, string> => Object.fromEntries(find(row, '.vault-facts .vault-rule').map((r: Any) => [find(r, '.vault-rule-label')[0].textContent, find(r, '.vault-rule-value')[0].textContent]));
+  assert.ok(said(row).includes('Your vault is on this Mac\'s Touch ID key.'), 'the done moment is gone');
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Checking...', 'Your paper key': 'Checking...', 'Your private key': 'Checking...', 'The NEAR door': 'Checking...' });
+  assert.equal(find(row, '.vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 0, 'an unread fact in the warning tone');
+  assert.equal(find(row, '.vault-warn').filter(isShown).length, 0, 'a warning about a fact NEAR has not read');
+  assert.ok(said(row).includes('Phosphor is reading your vault from NEAR to confirm who opens it.'));
+  assert.ok(said(row).includes('Your vault moved to this Mac\'s Touch ID key and your paper key.'));
+  for (const claim of ['fresh wallet', 'nothing else does', 'can reach your vault']) assert.equal(said(row).includes(claim), false, claim);
+  // A fresh read answers: the facts from NEAR, and the quiet line goes.
+  w.chip({ chipOnChain: true, recoveryOnChain: true, oldOnChain: false, predecessorAuth: false, otherKeys: [] });
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Opens it', 'Your private key': 'No longer opens it', 'The NEAR door': 'Shut' });
+  assert.equal(said(row).includes('Phosphor is reading your vault from NEAR'), false);
+  assert.ok(said(row).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
+});
+
 test('a done frame that beats the state lands on the done moment, never back on the steps', () => {
   const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r5', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
   w.frame({ run: 'r5', status: 'done' });
@@ -844,9 +866,15 @@ test('a vault that moved says who opens it, as NEAR reads it, with the NEAR door
   assert.equal(facts()['The NEAR door'], 'Open');
   assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
   assert.ok(said(row).includes('NEAR Intents\' admins opened the NEAR door again, so your private key can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.'));
-  // Unread is never a yes or a no.
-  w.chip({ predecessorAuth: null, recoveryOnChain: null, oldOnChain: null });
-  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Not read yet', 'Your private key': 'Not read yet', 'The NEAR door': 'Not read yet' });
+  // Unread is never a yes or a no, this Mac's Touch ID key included.
+  w.chip({ chipOnChain: null, predecessorAuth: null, recoveryOnChain: null, oldOnChain: null });
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Checking...', 'Your paper key': 'Checking...', 'Your private key': 'Checking...', 'The NEAR door': 'Checking...' });
+  // NEAR reads this Mac's Touch ID key off the vault.
+  w.chip({ chipOnChain: false, predecessorAuth: false, recoveryOnChain: true, oldOnChain: false });
+  assert.equal(facts()['This Mac\'s Touch ID key'], 'Not on your vault');
+  assert.ok(said(row).includes('NEAR reads it off your vault, so this Mac cannot move your vault\'s money.'));
+  assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
+  w.chip({ chipOnChain: true });
   // A key nobody here added is named, with what to do.
   w.chip({ predecessorAuth: false, recoveryOnChain: true, oldOnChain: false, otherKeys: ['secp256k1:TmysAU1B' + 'x'.repeat(70) + 'H7MkuLjQ'] });
   assert.ok(said(row).includes('Your vault also holds a key Phosphor did not add: secp256k1:TmysAU1B...H7MkuLjQ. It can move your vault\'s money. Send what your vault and allowance hold to a wallet whose key was made fresh, then stop using this one.'));
