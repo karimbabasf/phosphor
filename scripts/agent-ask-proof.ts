@@ -306,10 +306,15 @@ async function waitFor(page: Json, expression: string, timeout = 15_000): Promis
   }
 }
 
+// The words as a string literal for the page's code, with the characters that could end the script
+// or a line written as escapes. The literal still reads as the same words.
+const asLiteral = (words: string): string =>
+  JSON.stringify(words).replace(/[<>/\u2028\u2029]/g, (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`);
+
 // The card names an agent it knows plainly ("Claude Code wants to use Phosphor") and any other by
 // the words it gave ("It calls itself codex").
 const ASKS_ABOUT = (words: string): string =>
-  `(function(){var a=document.querySelector('.agent-ask');return !!a&&!a.hidden&&a.getClientRects().length>0&&a.innerText.indexOf(${JSON.stringify(words)})>=0})()`;
+  `(function(){var a=document.querySelector('.agent-ask');return !!a&&!a.hidden&&a.getClientRects().length>0&&a.innerText.indexOf(${asLiteral(words)})>=0})()`;
 
 async function main(): Promise<void> {
   const require = createRequire(import.meta.url);

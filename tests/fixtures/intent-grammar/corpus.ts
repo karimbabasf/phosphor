@@ -159,7 +159,7 @@ export const REFUSED: Case[] = [
   refuse('an escape in a value', payload().replace('intents.near', 'intents\\u002enear'), 'escape'),
   refuse('an escape that spells a second signer_id', payload().replace('"verifying_contract"', '"signer\\u005fid":"evil.near","verifying_contract"'), 'escape'),
   refuse('nesting deeper than six', payload({ intents: [[[[[[]]]]]] }), 'depth'),
-  refuse('signer_id twice, the stranger first', payload().replace('{', '{"signer_id":"evil.near",'), 'duplicate_key', 'signer_id'),
+  refuse('signer_id twice, the stranger first', payload().replace(/^\{/, '{"signer_id":"evil.near",'), 'duplicate_key', 'signer_id'),
   refuse('signer_id twice, the vault first', payload().replace('"verifying_contract"', '"signer_id":"evil.near","verifying_contract"'), 'duplicate_key', 'signer_id'),
   refuse('intent twice: a transfer that also says set_auth_by_predecessor_id', topUp.replace('"intent":"transfer",', '"intent":"transfer","intent":"set_auth_by_predecessor_id",'), 'duplicate_key', 'intent'),
   refuse('one asset twice inside tokens', topUp.replace(`"${USDC}":"100000000"`, `"${USDC}":"100000000","${USDC}":"999000000000"`), 'duplicate_key'),
