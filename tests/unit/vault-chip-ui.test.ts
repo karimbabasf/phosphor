@@ -115,7 +115,7 @@ function makeNode(tagName: string): Any {
       return prevented;
     },
     click() { node.dispatch('click'); },
-    focus() { node.focused = true; },
+    focus(options?: Any) { node.focused = true; node.focusOptions = options ?? null; },
     scrollIntoView() { node.scrolled = true; },
     getBoundingClientRect: () => ({ width: 0, height: 0, top: 0 }),
     querySelector(selector: string) { return find(node, selector)[0] ?? null; },
@@ -600,6 +600,29 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   const phrase = build({ vault: { hasMnemonic: true } });
   await showPaper(phrase);
   assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'));
+});
+
+test('the paper key opens at its warning: the lock line comes into view, and the focus on I wrote it down scrolls nothing past it', async () => {
+  const w = build();
+  await showPaper(w);
+  const row = keyRow(w);
+  const warn = find(row, '.vault-paper')[0].parentNode.childNodes[0];
+  assert.equal(warn.textContent, 'On this screen only. Anyone who reads these words can open your vault.');
+  assert.equal(warn.scrolled, true, 'the warning is not brought into view');
+  const wrote = shownButtons(row).find((b: Any) => b.textContent === 'I wrote it down') as Any;
+  assert.equal(wrote.focused, true);
+  assert.deepEqual({ ...wrote.focusOptions }, { preventScroll: true }, 'the focus scrolls the window past the warning');
+  // Two misses bring the words back the same way.
+  press(row, 'I wrote it down');
+  w.answer.post['/api/vault/chip/phrase-proven'] = () => ({ ok: false, code: 'wrong_words', error: 'Those words do not match the paper key on screen. Check each word against your paper.' });
+  for (let i = 0; i < 2; i += 1) {
+    type(fields(w), OLD_PAPER);
+    press(row, 'Check my paper');
+    await flush();
+  }
+  const again = find(row, '.vault-paper')[0].parentNode.childNodes[0];
+  assert.equal(again.scrolled, true, 'the words came back past their warning');
+  assert.deepEqual({ ...(shownButtons(row).find((b: Any) => b.textContent === 'I wrote it down') as Any).focusOptions }, { preventScroll: true });
 });
 
 test('typed back whole: 24 fields, pasting off, a slip named by its number and never by the word, two misses show the words again', async () => {

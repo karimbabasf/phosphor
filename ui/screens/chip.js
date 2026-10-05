@@ -580,7 +580,9 @@
       paint();
     });
     dom.on(hide, 'click', wipe);
-    if (wrote.focus) wrote.focus();
+    // The step opens at its warning, so the lock line and both plain sentences are read first.
+    if (wrote.focus) wrote.focus({ preventScroll: true });
+    kit.bringIntoView(warn);
   }
 
   /* All 24 words typed back from the paper, one to a field. A space or Enter
