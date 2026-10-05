@@ -832,6 +832,11 @@ func answer(_ line: String) -> String {
       case "chipStatus": result = try chipStatus(req)
       case "chipSweep": result = try chipSweep(req)
       case "signIntent": result = try signIntent(req)
+      // Not an op: the string scripts/release-check.ts reads a shipped service for. The five names
+      // are short enough for Swift to keep inside the code, and ChipOps.swift and IntentGrammar.swift
+      // carry their own strings into a build without this flag too. It answers as any unknown op
+      // does, written out: as a fallthrough the optimizer folds it into default and drops the string.
+      case "the chip vault's dispatch is compiled in": result = failure("bad_input", "unknown op \(op)")
       #endif
       default: result = failure("bad_input", "unknown op \(op)")
       }
