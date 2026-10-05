@@ -37,7 +37,7 @@ import type { AllowanceService } from '../vault/allowance.ts';
 import { railAccounts } from '../intents-sign.ts';
 import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
-import { vaultMoveUnderWay } from '../vault/rekey.ts';
+import { vaultMoveUnderWay, vaultMovedElsewhere } from '../vault/rekey.ts';
 import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
 import type { OwnerTouch } from '../rails/hl-user-signed.ts';
 import { recordRecipient } from '../recipients.ts';
@@ -506,12 +506,41 @@ export function agentsWait(ctx: { keystore?: Keystore }): boolean {
   return ctx.keystore !== undefined && vaultMoveUnderWay(ctx.keystore);
 }
 
+/* A VAULT THAT MOVED TO ANOTHER MAC SPENDS NOTHING HERE (src/vault/rekey.ts vaultMovedElsewhere).
+   NEAR shows the wallet's own key off the vault while this Mac holds no chip for it, so a swap,
+   send, payout or Hyperliquid deposit from the vault would be signed by a key the vault no longer
+   takes and fail on its card. Each is refused in words before anything is signed: at land(), at a
+   click, and at its rail's last check before the key. With no word from NEAR, nothing is refused
+   here: the chain is the real boundary, and this is only the words. */
+export const VAULT_ELSEWHERE_SAID = "Your vault opens with another Mac's Touch ID key now, so this Mac signed nothing. Restore your vault on this Mac with your paper key to spend from it here.";
+
+export function vaultElsewhere(ctx: { keystore?: Keystore }): boolean {
+  return ctx.keystore !== undefined && vaultMovedElsewhere(ctx.keystore);
+}
+
+// The kinds whose rail signs for the account the rails spend from: the vault, under kind key.
+export function spendsFromVault(draft: WriteDraft): boolean {
+  return draft.kind === 'swap' || draft.kind === 'intents_send' || draft.kind === 'intents_pay' || draft.kind === 'hl_deposit';
+}
+
+// The refusal a vault spend gets once NEAR shows the vault answering to another Mac's keys.
+export function elsewhereVerdict(p: Proposal): Verdict {
+  return { outcome: 'refuse', reasons: [...p.verdict.reasons, VAULT_ELSEWHERE_SAID], rule: 'vault_elsewhere', reasonCodes: ['vault_elsewhere'] };
+}
+
 export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
   const p = requirePending(ctx, id, 'approve');
 
   if (p.by !== undefined && agentsWait(ctx)) {
     ctx.audit.append('approve_attempt_rejected', `approve for ${id}, an agent's move, while the vault is moving`, { id, action: 'approve', vaultMoving: true });
     throw new Error("Your vault is moving to this Mac's Touch ID key right now. Approve this once the move is done. Nothing changed.");
+  }
+
+  // A spend from a vault NEAR shows on another Mac's keys: refused in words, before any Touch ID.
+  if (spendsFromVault(p.draft) && vaultElsewhere(ctx)) {
+    const verdict = elsewhereVerdict(p);
+    ctx.audit.append('policy_refused', `${id} refused at approval time: vault_elsewhere`, { id, rule: 'vault_elsewhere', reasons: verdict.reasons });
+    return persist(ctx, { ...p, verdict, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
   }
 
   // Re-run the engine at approval time: the policy file, the kill switch and the balances

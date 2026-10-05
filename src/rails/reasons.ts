@@ -32,6 +32,8 @@ export const REASON_CODES = [
   'plan_exists',
   // The vault is moving to this Mac's Touch ID key, and an agent's move waits until it is done.
   'vault_moving',
+  // NEAR shows the vault answering to another Mac's keys: the wallet's key here no longer spends it.
+  'vault_elsewhere',
   // A person said no.
   'declined',
   // After the click.

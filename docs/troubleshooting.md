@@ -175,6 +175,11 @@ vault". Anything else in the dialog is not the move: cancel it. What the window 
 - **Your vault already answers to other keys.** The vault moved, from this Mac or another one. On a
   new Mac, restore it from the Vault tab: restore the wallet from its key backup first, write a new
   paper key, then type the old paper's 24 words.
+- **Your vault opens with another Mac's Touch ID key now.** NEAR shows your wallet's own key off
+  the vault, and this Mac holds no Touch ID key for it, so this Mac signs no swap, send, payout or
+  Hyperliquid deposit from the vault: each one says so before anything is signed. Restore the vault
+  on this Mac to spend from it here. The gas account still takes NEAR: Add NEAR shows its account
+  whole, to send 0.1 to 1 NEAR to it from any NEAR wallet.
 - **A paper shown before Phosphor restarted opens nothing.** It was never added to the vault. Show a
   new one and write that down; destroy the old one.
 - **Your vault moved, and it also holds a key Phosphor did not add.** Someone with your owner key

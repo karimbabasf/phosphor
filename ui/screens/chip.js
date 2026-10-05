@@ -283,6 +283,7 @@
     var now = stepNow(screen);
     if (now === 'paper') return paperStage() + (paper ? ':held' : '');
     if (now === 'move' || now === 'old') return 'go';
+    if (now === 'gas' && slice.elsewhere === true) return 'send';
     return 'ask';
   }
 
@@ -458,13 +459,17 @@
   /* ---------- step: the gas account ---------- */
 
   function drawGasStep(body, screen) {
-    body.appendChild(kit.text('vault-text', screen === 'restore'
-      ? 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. It came back with your wallet, often with NEAR still in it; if not, add 0.1 to 1 NEAR: one click on its card, then one Touch ID.'
-      : 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. Add 0.1 to 1 NEAR from your vault: one click on its card, then one Touch ID.'));
+    // A vault on another Mac's keys pays nothing from here: NEAR goes to the account straight.
+    var elsewhere = slice.elsewhere === true;
+    body.appendChild(kit.text('vault-text', elsewhere
+      ? 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. It came back with your wallet, often with NEAR still in it; if not, send it 0.1 to 1 NEAR on NEAR from any NEAR wallet. Its account is in the Gas account row below.'
+      : screen === 'restore'
+        ? 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. It came back with your wallet, often with NEAR still in it; if not, add 0.1 to 1 NEAR: one click on its card, then one Touch ID.'
+        : 'The gas account pays NEAR\'s small fee for every move of your vault, this one included. Add 0.1 to 1 NEAR from your vault: one click on its card, then one Touch ID.'));
     refs.gasNote = kit.text('vault-sub');
     body.appendChild(refs.gasNote);
     var tools = dom.el('div', 'vault-actions');
-    var go = button('Add NEAR', 'btn-sm');
+    var go = button(elsewhere ? 'Show the gas account' : 'Add NEAR', 'btn-sm');
     dom.on(go, 'click', function () {
       var allowance = window.PhosphorAllowance;
       if (allowance && typeof allowance.openGas === 'function') allowance.openGas();
@@ -792,7 +797,7 @@
   function fixOf() {
     var run = runOf();
     var code = refused ? refused.code : (run && run.status === 'failed' ? run.reason : null);
-    if (code === 'gas_low' || code === 'gas_unfunded') return { label: 'Add NEAR', go: 'gas' };
+    if (code === 'gas_low' || code === 'gas_unfunded') return { label: slice.elsewhere === true ? 'Show the gas account' : 'Add NEAR', go: 'gas' };
     if (code === 'not_backed_up') return { label: 'Back it up first', go: 'backup' };
     if (code === 'phrase_gone' || code === 'wrong_paper') return { label: 'Show a new paper key', go: 'paper' };
     return null;

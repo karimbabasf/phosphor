@@ -1057,6 +1057,45 @@ test('the gas account: its NEAR, low and empty said plainly, its id to check the
   assert.ok(said(rowOf(moved, 'gas')).includes('From your allowance, as a payout on NEAR.'));
 });
 
+test('a vault on another Mac\'s keys pays no NEAR from here: Add NEAR shows the gas account whole, to send NEAR to it straight', async () => {
+  const elsewhere = chipSlice({ state: 'broken', oldOnChain: false, predecessorAuth: false, elsewhere: true, needs: ['gas'], gas: { account: GAS, near: '0', low: true } });
+  const w = build({ vault: { chip: elsewhere } });
+  const copied: string[] = [];
+  w.sandbox.PhosphorNetPick.copyChecked = (value: string, say: (words: string) => void) => {
+    copied.push(value);
+    say('Account copied, ends in ...' + value.slice(-6));
+    return Promise.resolve(true);
+  };
+  w.chip({});
+  const gas = rowOf(w, 'gas');
+  assert.ok(said(gas).includes('Your vault opens with another Mac\'s Touch ID key now, so this Mac cannot pay NEAR from it. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+  assert.deepEqual(find(gas, '.vault-mono').filter(isShown).map((n: Any) => n.textContent), [GAS], 'the account whole, not cut to its ends');
+  assert.equal(shownButtons(gas).some((b: Any) => b.textContent === 'Add NEAR'), false, 'no payout from the vault is offered');
+  press(gas, 'Copy');
+  await flush();
+  assert.deepEqual(copied, [GAS]);
+  assert.ok(said(gas).includes('Account copied, ends in ...' + GAS.slice(-6)));
+  // The restore's gas step says where NEAR goes, and its button brings the account into view.
+  const key = keyRow(w);
+  assert.ok(said(key).includes('if not, send it 0.1 to 1 NEAR on NEAR from any NEAR wallet. Its account is in the Gas account row below.'));
+  press(key, 'Show the gas account');
+  assert.equal(gas.scrolled, true);
+  assert.equal(find(gas, '.vault-gas-add')[0].hidden, true, 'no payout form');
+  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
+  // A form opened before NEAR's word came goes, and the route's refusal says why.
+  const before = build({ vault: { chip: chipSlice({ state: 'broken', oldOnChain: false, needs: ['gas'], gas: { account: GAS, near: '0', low: true } }) } });
+  const row = rowOf(before, 'gas');
+  press(row, 'Add NEAR');
+  const form = find(row, '.vault-gas-add')[0];
+  before.answer.post['/api/vault/gas/fund'] = Object.assign(chipRefusal('fund_elsewhere'), { gas: GAS });
+  before.answer.onRefresh = () => before.chip({ elsewhere: true });
+  form.dispatch('submit');
+  await flush();
+  assert.equal(form.hidden, true, 'the payout form is gone');
+  assert.ok(said(row).includes('Send 0.1 to 1 NEAR on NEAR straight to this account'));
+  assert.ok(said(row).includes(GAS));
+});
+
 /* ---------- the trading key ---------- */
 
 test('Allow trading on Hyperliquid: one Touch ID whose sentence the row names first, and the way past each refusal', async () => {

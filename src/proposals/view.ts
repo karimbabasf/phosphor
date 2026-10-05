@@ -15,7 +15,7 @@
    while a module is being evaluated, so the pair resolves. It is here rather than restated
    because a second derivation of OutcomeState beside this one is the exact bug this file
    exists to end. */
-import { outcomeOf } from './lifecycle.ts';
+import { VAULT_ELSEWHERE_SAID, outcomeOf } from './lifecycle.ts';
 import type { OutcomeState, PlanFate } from './lifecycle.ts';
 import { px } from '../trade/plan.ts';
 import { isReasonCode } from '../rails/reasons.ts';
@@ -662,6 +662,7 @@ const RULE_REASON: Record<string, ReasonCode> = {
   no_rail: 'not_available',
   unknown_kind: 'invalid_request',
   vault_moving: 'vault_moving',
+  vault_elsewhere: 'vault_elsewhere',
 };
 
 /* THE CAUSE, read off what decided the row: the verdict's code or rule for a refusal, the rail's
@@ -797,6 +798,8 @@ export function reasonSentence(code: ReasonCode, draft: WriteDraft, seen: Seen =
       return `${sym} already has a live plan, so nothing new was placed. Change or cancel that plan first.`;
     case 'vault_moving':
       return "Your vault is moving to this Mac's Touch ID key right now, so nothing moved. Ask again once the move is done.";
+    case 'vault_elsewhere':
+      return VAULT_ELSEWHERE_SAID;
     case 'declined':
       return 'You said no. Nothing moved.';
     case 'not_sent':

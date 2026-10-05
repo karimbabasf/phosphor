@@ -12,10 +12,12 @@
    amount moves it from the vault. The assistant has no way to ask for one.
 
    THE GAS ACCOUNT (src/vault/gas-account.ts). Its id is derived from the
-   wallet's key, never typed, and a payout to it is the only way NEAR gets
-   there: one click on its card and one Touch ID that names the gas account.
-   Low means a vault move would be refused before anything is signed, so the
-   row says so beside the way to fill it. */
+   wallet's key, never typed, and a payout to it is the way this app sends
+   NEAR there: one click on its card and one Touch ID that names the gas
+   account. Low means a vault move would be refused before anything is
+   signed, so the row says so beside the way to fill it. A vault NEAR shows
+   on another Mac's keys cannot pay it (state.vault.chip.elsewhere): the row
+   then shows the account whole, to send NEAR to it from any NEAR wallet. */
 (function () {
   'use strict';
 
@@ -449,6 +451,23 @@
     r.main.appendChild(refs.gasLow);
     refs.gasId = idLine('A payout to it names ', ' in its Touch ID.');
     r.main.appendChild(refs.gasId.line);
+    /* The vault opens with another Mac's key: this Mac pays nothing from it,
+       so the account is shown whole, to send NEAR to it straight. */
+    refs.gasElsewhere = dom.el('div', 'vault-gas-elsewhere');
+    refs.gasElsewhere.appendChild(kit.text('vault-sub', 'Your vault opens with another Mac\'s Touch ID key now, so this Mac cannot pay NEAR from it. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+    refs.gasWhole = dom.el('p', 'vault-mono');
+    refs.gasElsewhere.appendChild(refs.gasWhole);
+    var copyTools = dom.el('div', 'vault-actions');
+    refs.gasCopy = button('Copy', 'btn-quiet btn-sm');
+    copyTools.appendChild(refs.gasCopy);
+    refs.gasElsewhere.appendChild(copyTools);
+    refs.gasCopied = kit.text('vault-sub');
+    refs.gasCopied.setAttribute('role', 'status');
+    refs.gasCopied.hidden = true;
+    refs.gasElsewhere.appendChild(refs.gasCopied);
+    refs.gasElsewhere.hidden = true;
+    r.main.appendChild(refs.gasElsewhere);
+    dom.on(refs.gasCopy, 'click', copyGas);
     refs.gasAsked = kit.text('vault-sub');
     refs.gasAsked.setAttribute('role', 'status');
     r.main.appendChild(refs.gasAsked);
@@ -509,12 +528,19 @@
           ? 'Empty. Add NEAR before your vault can move.'
           : 'Low. Your vault\'s moves wait until it holds more NEAR.');
     dom.setHidden(refs.gasLow, !(low || !gas || near === null));
+    var elsewhere = gasElsewhere();
     dom.setText(refs.gasId.id, gas && gas.account ? short(gas.account) : '');
-    dom.setHidden(refs.gasId.line, !(gas && gas.account));
+    dom.setHidden(refs.gasId.line, !(gas && gas.account) || elsewhere);
+    dom.setText(refs.gasWhole, elsewhere ? gas.account : '');
+    dom.setHidden(refs.gasElsewhere, !elsewhere);
+    dom.setHidden(refs.gasCopy, !copier());
+    if (!elsewhere) dom.setHidden(refs.gasCopied, true);
+    // A form opened before NEAR's word came: the payout it would ask for is refused, so it goes.
+    if (elsewhere && !refs.gasAdd.hidden) dom.setHidden(refs.gasAdd, true);
     dom.setText(refs.gasAsked, asked.gas ? asked.gas.line : '');
     dom.setHidden(refs.gasAsked, !asked.gas);
     refs.gasOpen.className = 'btn ' + (low || !near ? 'btn-ghost btn-sm' : 'btn-quiet btn-sm');
-    dom.setHidden(refs.gasOpen, !refs.gasAdd.hidden || !(gas && gas.account));
+    dom.setHidden(refs.gasOpen, !refs.gasAdd.hidden || !(gas && gas.account) || elsewhere);
     // Where the NEAR comes from: the vault before the move, the allowance after it.
     dom.setText(refs.gasFrom, (slice.state === 'done'
       ? 'From your allowance, as a payout on NEAR.'
@@ -528,9 +554,33 @@
     dom.setText(refs.gasGo.querySelector('.btn-label'), n !== null && n > 0 ? 'Add ' + nearWords(n) : 'Add NEAR');
   }
 
+  // NEAR shows the vault on another Mac's keys, and the gas account has an id to show.
+  function gasElsewhere() {
+    var gas = slice && slice.gas && typeof slice.gas === 'object' ? slice.gas : null;
+    return !!slice && slice.elsewhere === true && !!gas && typeof gas.account === 'string' && !!gas.account;
+  }
+
+  function copier() {
+    var pick = window.PhosphorNetPick;
+    return !!pick && typeof pick.copyChecked === 'function';
+  }
+
+  // The account, copied and read back (ui/screens/netpick.js), so what lands is what is shown.
+  function copyGas() {
+    if (!gasElsewhere() || !copier()) return;
+    window.PhosphorNetPick.copyChecked(slice.gas.account, function (words) {
+      dom.setText(refs.gasCopied, words);
+      dom.setHidden(refs.gasCopied, !words);
+    }, 'account');
+  }
+
   function openGas() {
     if (!mounted || !slice) return;
     kit.bringIntoView(refs.gas);
+    if (gasElsewhere()) {
+      if (refs.gasCopy.focus && !refs.gasCopy.hidden) refs.gasCopy.focus();
+      return;
+    }
     if (!refs.gasAdd.hidden) {
       if (refs.gasField.input.focus) refs.gasField.input.focus();
       return;
@@ -559,7 +609,8 @@
       .then(function (answer) {
         if (!answer || answer.ok !== true) {
           kit.say(refs.gasError, kit.refusalWords(answer, 'Phosphor could not ask for that payout. Try again.'));
-          return null;
+          // The vault is on another Mac's keys: the state that says so brings the account's id.
+          return answer && answer.code === 'fund_elsewhere' ? refresh() : null;
         }
         var p = answer.proposal || {};
         var waits = WAITING.indexOf(p.status) >= 0 || !p.status;

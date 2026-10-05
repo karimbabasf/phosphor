@@ -253,6 +253,9 @@ type Box = {
      in hand (resumeChip writes vault.json back when the chip is on the vault). */
   checked: string | null;
   askedFor: string | null;
+  // The vault the last read of the slice found answering to keys this Mac does not hold (kind key,
+  // NEAR reading the wallet's own key off it), or null (vaultMovedElsewhere).
+  elsewhere: string | null;
 };
 
 const boxes = new WeakMap<object, Box>();
@@ -260,7 +263,7 @@ const boxes = new WeakMap<object, Box>();
 function boxOf(host: RekeyHost): Box {
   const known = boxes.get(host.keystore);
   if (known !== undefined) return known;
-  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map(), checked: null, askedFor: null };
+  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map(), checked: null, askedFor: null, elsewhere: null };
   boxes.set(host.keystore, box);
   // A lock is someone stepping away: a proven paper key goes with it, and is typed again.
   host.keystore.onChange((state) => {
@@ -858,6 +861,19 @@ export function vaultMoveUnderWay(keystore: Keystore): boolean {
   return chain !== null && vault !== null && mayStillRun(chain, vault, (id) => id.startsWith('rekey:'));
 }
 
+/* Whether this wallet's vault answers to keys this Mac does not hold, by NEAR's last word: the
+   accounts read kind key (vault.json names no chip of this Mac's for it) and the slice's last read
+   of the chain found the wallet's own key off the vault. Every spend from the vault would be signed
+   by that key and refused on chain, so it is refused before anything is signed, in words
+   (src/proposals/lifecycle.ts vaultElsewhere). A fact NEAR never gave (no read yet, no answer)
+   refuses nothing: the chain stays the real boundary. */
+export function vaultMovedElsewhere(keystore: Keystore): boolean {
+  const box = boxes.get(keystore);
+  const chain = installed;
+  const vault = keystore.addresses().evm?.toLowerCase() ?? null;
+  return box !== undefined && chain !== null && vault !== null && box.elsewhere === vault && chain.accounts.accounts().kind === 'key';
+}
+
 // A move whose call is out and unconfirmed is checked again, in the background, while it can still run.
 function keepChecking(host: RekeyHost): void {
   const box = boxOf(host);
@@ -901,6 +917,9 @@ export type ChipSlice = {
   // Whether agents wait for a move of this vault right now: vaultMoveUnderWay, the very fact that
   // holds them, so the assistant's line says so after a restart mid-move too, when `run` is null.
   moving: boolean;
+  // Whether the vault answers to another Mac's keys (vaultMovedElsewhere): nothing here spends
+  // from it, and NEAR for the gas account is sent to it straight, not paid from the vault.
+  elsewhere: boolean;
 };
 
 /* The slice for /api/state (src/http/state.ts). Synchronous: it reads what was last read from the
@@ -913,7 +932,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   const box = boxOf(host);
   const moving = vaultMoveUnderWay(host.keystore);
   if (chain === null || vault === null) {
-    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving };
+    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
   }
   const record = readRecord(host.dataDir, vault);
   /* A vault this Mac moved (its run record says done), or one a chip of this Mac's is pinned to,
@@ -946,6 +965,8 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   else if (unsure) state = 'checking';
   else if (view.old === false) state = 'broken';
   else state = needs.length === 0 ? 'ready' : 'none';
+  const elsewhere = accounts.kind === 'key' && !unsure && view.old === false;
+  box.elsewhere = elsewhere ? vault : null;
   const paper: ChipSlice['paper'] =
     box.paper !== null && box.paper.wallet === vault
       ? 'proven'
@@ -969,6 +990,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
     run: box.run === null ? null : { id: box.run.id, kind: box.run.kind, status: box.run.status, reason: box.run.reason ?? null },
     pins: record !== null && record.status === 'done' && record.recovery !== null ? { vault, allowance: accounts.allowance, recovery: record.recovery } : null,
     moving,
+    elsewhere,
   };
 }
 

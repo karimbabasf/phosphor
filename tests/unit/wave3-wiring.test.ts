@@ -15,12 +15,15 @@ import path from 'node:path';
 import { recoverTypedDataAddress } from 'viem';
 import { english } from 'viem/accounts';
 
+import { base58Encode } from '../../src/chain/near.ts';
 import { STATE_CACHE_MAX_MS } from '../../src/http/state.ts';
-import { AGENTS_WAIT_SAID } from '../../src/proposals/lifecycle.ts';
+import { AGENTS_WAIT_SAID, VAULT_ELSEWHERE_SAID } from '../../src/proposals/lifecycle.ts';
 import { buildApproveAgentPayload } from '../../src/rails/hl-user-signed.ts';
 import type { Proposal } from '../../src/types.ts';
+import { buildVaultPayload } from '../../src/vault/payload.ts';
+import { verifierKeyOf } from '../../src/vault/phrase24.ts';
 import { MOVE_VAULT_REASON } from '../../src/vault/reason.ts';
-import { RESUME_POLL_MS } from '../../src/vault/rekey.ts';
+import { RESUME_POLL_MS, VIEW_FRESH_MS, erc191Signed } from '../../src/vault/rekey.ts';
 import { VAULT_SETTLE_FLOOR_MS, fileJournal, journalPathFor } from '../../src/vault/submit.ts';
 import { USDC, USDT } from './helpers/allowance-world.ts';
 import { wave3World } from './helpers/wave3-world.ts';
@@ -277,6 +280,90 @@ test('a vault moved here whose vault.json lost its chip entry reads checking, ne
   const late = await afterChipEntryDeleted({ alsoRecord: true, late: true, firstStatus: { kind: 'answer', answer: { ok: false, error: 'keychain_unavailable', message: 'the keychain did not answer' } } });
   assert.deepEqual(late.states, ['checking', 'done']);
   assert.equal(late.named, late.keyRef);
+});
+
+/* Another Mac moved this vault: the wallet's own key signed the move there, adding keys this Mac
+   never holds and taking itself off, and NEAR ran it. Then the Vault tab reads NEAR until it says
+   the vault is on another Mac's keys. */
+async function movedElsewhere(w: Wave3World, vault: string): Promise<void> {
+  const key = Buffer.from(w.keystore.evmPrivateKey().slice(2), 'hex');
+  const salt = await w.chain.verifier.currentSalt();
+  assert.ok(salt !== null);
+  const payload = buildVaultPayload({
+    signerId: vault,
+    intents: [
+      { intent: 'add_public_key', public_key: `p256:${base58Encode(Buffer.alloc(64, 0x33))}` },
+      { intent: 'add_public_key', public_key: verifierKeyOf(Buffer.alloc(32, 0x44)) },
+      { intent: 'remove_public_key', public_key: verifierKeyOf(key) },
+      { intent: 'set_auth_by_predecessor_id', enabled: false },
+    ],
+    deadlineMs: w.chain.now() + 60_000,
+    salt,
+  });
+  const ran = await w.chain.runAsStranger([await erc191Signed(key, payload)]);
+  key.fill(0);
+  assert.equal(ran.ok, true, ran.panic ?? 'ran');
+  // Past the slice's own freshness, so the next read asks NEAR again.
+  w.chain.advance(VIEW_FRESH_MS + 1_000);
+  for (let i = 0; i < 300; i += 1) {
+    if ((await w.get('/api/state')).json.vault.chip.elsewhere === true) return;
+    await new Promise((r) => setTimeout(r, 20));
+  }
+  throw new Error('the Vault tab never read the vault on another Mac\'s keys');
+}
+
+test('on a Mac whose vault moved to another Mac\'s keys, a spend from the vault and Add NEAR refuse in words before anything is signed, and Add NEAR names the gas account', { skip, timeout: 120_000 }, async () => {
+  const w = await wave3World();
+  try {
+    const { vault, gas } = await w.wallet();
+    w.chain.fund(vault, USDC, usdc(1850));
+    w.ledger.reread();
+    const swap = (amountIn: string) => ({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn } });
+    // Filed before NEAR showed the move: over the $100 click line, so it waits for the person.
+    const big = await w.mcp(swap('150'));
+    assert.equal(w.svc.get(String(big.json.id))?.status, 'pending');
+    // On its way when NEAR shows the move: under the click line, it waits at its last read before the key.
+    const read = w.holdSwapRead();
+    const small = await w.mcp(swap('2'));
+    assert.equal(w.svc.get(String(small.json.id))?.status, 'executing');
+    await read.reached;
+
+    await movedElsewhere(w, vault);
+    const chip = (await w.get('/api/state')).json.vault.chip;
+    assert.deepEqual([chip.state, chip.oldOnChain, chip.elsewhere], ['broken', false, true], 'the Vault tab offers the restore');
+
+    // The move on its way stops at its last check before the key, in words.
+    read.release();
+    const stopped = await w.svc.settled(String(small.json.id), 30_000);
+    assert.equal(stopped.status, 'failed', JSON.stringify(stopped.result));
+    assert.equal(stopped.result?.reason, 'vault_elsewhere');
+    assert.equal(w.svc.view(stopped).reason?.sentence, VAULT_ELSEWHERE_SAID);
+
+    // A new one is refused when it is filed.
+    const again = await w.mcp(swap('2'));
+    const refused = w.svc.get(String(again.json.id))!;
+    assert.equal(refused.status, 'policy_refused');
+    assert.equal(refused.verdict.outcome === 'refuse' && refused.verdict.rule, 'vault_elsewhere');
+    assert.equal(w.svc.view(refused).reason?.code, 'vault_elsewhere');
+
+    // A click on the earlier one: refused in words, and no Touch ID is asked for it.
+    const from = w.seen.length;
+    await w.post('/api/approve', { id: String(big.json.id) });
+    const clicked = w.svc.get(String(big.json.id))!;
+    assert.equal(clicked.status, 'policy_refused');
+    assert.equal(w.svc.view(clicked).reason?.sentence, VAULT_ELSEWHERE_SAID);
+    assert.deepEqual(w.seen.slice(from).map((r) => r.op), [], 'no Touch ID was asked');
+
+    // Add NEAR: refused at the route, with the gas account's id to send NEAR to straight; nothing filed.
+    const rows = w.svc.list().length;
+    const fund = await w.post('/api/vault/gas/fund', { near: 0.5 });
+    assert.deepEqual([fund.json.ok, fund.json.code, fund.json.gas], [false, 'fund_elsewhere', gas]);
+    assert.match(String(fund.json.error), /another Mac's Touch ID key now, so this Mac cannot pay NEAR from it/);
+    assert.equal(w.svc.list().length, rows, 'no payout was filed');
+    assert.equal(w.publishes.length, 0, 'nothing was signed');
+  } finally {
+    await w.close();
+  }
 });
 
 /* The owner key's Touch ID for the move, held until the test lets it go: the move is under way and

@@ -20,7 +20,7 @@ import { settleFor } from './custody.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { allowanceState } from '../vault/allowance.ts';
 import { GAS_FUND_MAX_NEAR, GAS_FUND_MIN_NEAR, fundingNear, gasAccountOf } from '../vault/gas-account.ts';
-import { chipSlice, provePaper, showPaper, startRekey } from '../vault/rekey.ts';
+import { chipSlice, provePaper, showPaper, startRekey, vaultMovedElsewhere } from '../vault/rekey.ts';
 import type { ChipFrame, ChipSlice, Refused, RekeyHost } from '../vault/rekey.ts';
 
 /* The rekey's own refusals, said once here. Codes from the vault service, the relay, the submit
@@ -42,6 +42,7 @@ const CHIP_WORDS: Record<string, string> = {
   vault_json: 'Your vault moved, and Phosphor could not note it on this Mac yet. It tries again on its own while the app is open.',
   vault_other_keys: 'Your vault moved, and it also holds a key Phosphor did not add. Look at the Vault tab before you move anything else.',
   fund_amount: `Add between ${GAS_FUND_MIN_NEAR} and ${GAS_FUND_MAX_NEAR} NEAR to the gas account.`,
+  fund_elsewhere: `Your vault opens with another Mac's Touch ID key now, so this Mac cannot pay NEAR from it. Send ${GAS_FUND_MIN_NEAR} to ${GAS_FUND_MAX_NEAR} NEAR on NEAR straight to the gas account instead, from any NEAR wallet.`,
 };
 
 // The sentence for any code a chip route or frame can carry.
@@ -142,7 +143,9 @@ export async function handleChipRestore(ctx: Ctx, req: http.IncomingMessage, res
 
 /* POST /api/vault/gas/fund {near} -> {ok, proposal}: NEAR paid out on the NEAR chain to the gas
    account, the R4 route. The receiver is the derived id and nothing from the body; the proposal
-   waits for a click and a Touch ID that names the receiver, as every payout does. */
+   waits for a click and a Touch ID that names the receiver, as every payout does. A vault NEAR shows
+   on another Mac's keys cannot pay it (src/vault/rekey.ts vaultMovedElsewhere): the answer says so
+   and carries the gas account's id, so NEAR can be sent to it straight. Nothing is filed. */
 export async function handleGasFund(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/gas/fund', req, res);
   if (body === null) return;
@@ -150,6 +153,7 @@ export async function handleGasFund(ctx: Ctx, req: http.IncomingMessage, res: ht
   if (near === null) return sendJson(res, 200, chipRefusal('fund_amount'));
   const gas = gasAccountOf(ctx.keystore);
   if (gas === null) return sendJson(res, 200, refusal('wallet_locked'));
+  if (vaultMovedElsewhere(ctx.keystore)) return sendJson(res, 200, { ...chipRefusal('fund_elsewhere'), gas });
   const proposal = await ctx.proposals.proposeSend({ to: gas, symbol: 'NEAR', amount: near, where: 'near' });
   ctx.audit.append('app_start', `the window asked to pay ${near} NEAR to the gas account`, { gas, proposal: proposal.id, status: proposal.status });
   ctx.session.touch();

@@ -15,7 +15,7 @@ import type { AllowanceSweep } from '../rails/allowance-sweep.ts';
 import { VAULT_TOP_UP_COUNTERPARTY } from '../rails/vault-topup.ts';
 import { SWEEP_MARGIN, amountWords, moveSpend, shortfallOf, shortfallSentence } from '../vault/allowance.ts';
 import type { CoinAmount } from '../vault/allowance.ts';
-import { AGENTS_WAIT_SAID, agentsWait, buildCtx, errText, mergePatch, newProposal, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { AGENTS_WAIT_SAID, VAULT_ELSEWHERE_SAID, agentsWait, buildCtx, elsewhereVerdict, errText, mergePatch, newProposal, nowIso, persist, spendsFromVault, totalUsdOf, vaultElsewhere, enclaveGated } from './lifecycle.ts';
 import { priceOf } from './draft.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
@@ -83,6 +83,10 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
   // And nothing an agent asked for while the vault moves, whatever the verdict (lifecycle.ts agentsWait).
   if (p.by !== undefined && p.verdict.outcome !== 'refuse' && agentsWait(ctx)) {
     p = { ...p, verdict: { outcome: 'refuse', reasons: [...p.verdict.reasons, AGENTS_WAIT_SAID], rule: 'vault_moving', reasonCodes: ['vault_moving'] } };
+  }
+  // And no spend from a vault NEAR shows on another Mac's keys, whoever asked (lifecycle.ts vaultElsewhere).
+  if (p.verdict.outcome !== 'refuse' && spendsFromVault(p.draft) && vaultElsewhere(ctx)) {
+    p = { ...p, verdict: elsewhereVerdict(p) };
   }
   /* AND FREEZE IS READ AGAIN FOR AN ALLOW, with nothing awaited between this and the executing
      write. The verdict a caller hands in was taken before its simulation, seconds of quotes and
@@ -389,6 +393,8 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
       refuseIfFrozen(ctx);
       // An agent's move signs nothing while the vault moves (lifecycle.ts agentsWait).
       if (p.by !== undefined && agentsWait(ctx)) throw new ReasonError('vault_moving', AGENTS_WAIT_SAID);
+      // Nor does a spend from a vault NEAR shows on another Mac's keys (lifecycle.ts vaultElsewhere).
+      if (spendsFromVault(p.draft) && vaultElsewhere(ctx)) throw new ReasonError('vault_elsewhere', VAULT_ELSEWHERE_SAID);
     },
     onEvidence: (e) => {
       const current = ctx.store.get(p.id) ?? executing;

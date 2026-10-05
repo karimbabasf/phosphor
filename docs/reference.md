@@ -313,6 +313,15 @@ after the move, the same move runs. `/api/state` `vault.chip.moving` is that sam
 assistant's line ("Your vault is moving") reads it, so the line stands exactly as long as the hold,
 after a restart mid-move too.
 
+On a Mac whose vault NEAR shows on another Mac's keys (`vaultMovedElsewhere` in
+`src/vault/rekey.ts`: the accounts read kind key and the Vault tab's last read of NEAR found the
+wallet's own key off the vault; `vault.chip.elsewhere` in `/api/state`), a swap, send, payout or
+Hyperliquid deposit is refused before anything is signed, whoever asked: at `land()` (rule
+`vault_elsewhere`), at a click (refused, with no Touch ID asked), and at its rail's last check
+before the key (reason `vault_elsewhere`). `POST /api/vault/gas/fund` answers `{ok: false, code:
+'fund_elsewhere', error, gas}` with the gas account's id and files nothing. With no word from NEAR
+nothing is refused: the chain is the real boundary, and these are the words.
+
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
 transaction, $10,000,000 per day or session), refused when it would leave the ask threshold at

@@ -1038,10 +1038,15 @@
   user-select: none;
 }
 
-.vault-paper-address {
+.vault-paper-address,
+.vault-gas-elsewhere {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+
+.vault-gas-elsewhere[hidden] {
+  display: none;
 }
 
 /* An address read one character at a time: Geist Mono in a well. */
