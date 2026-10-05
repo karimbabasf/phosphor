@@ -24,6 +24,7 @@ import { handleMcp } from './mcp.ts';
 import { handleTermsAccept } from './terms.ts';
 import { handleInviteCheck, handleInviteClaim } from './invite.ts';
 import { handleAgentAnswer } from './agent-answer.ts';
+import { handleTradingKeyAllow, handleTradingKeyStatus } from './hl-agent.ts';
 import {
   handleActivity,
   handleLock,
@@ -127,6 +128,8 @@ const GET: Record<string, Route> = {
   // The vault's own facts: custody kind, enclave reach, backed up, what the dialog is waiting
   // on. No key and no address; the window draws the Vault tab off it.
   '/api/vault': (ctx, _req, res) => handleVaultStatus(ctx, res),
+  // The Hyperliquid trading key of a vault on Touch ID: approved or not, until when, and the next one.
+  '/api/vault/trading-key': (ctx, _req, res) => handleTradingKeyStatus(ctx, res),
   '/api/deposit': (ctx, _req, res) => handleDepositStatus(ctx, res),
   // Whether one asset's address may be drawn right now: the per-asset route, read only.
   '/api/deposit/route': (ctx, _req, res, url) => handleDepositRoute(ctx, url, res),
@@ -203,6 +206,8 @@ const POST: Record<string, Route> = {
   '/api/vault/chip/move': (ctx, req, res) => handleChipMove(ctx, req, res),
   '/api/vault/chip/restore': (ctx, req, res) => handleChipRestore(ctx, req, res),
   '/api/vault/gas/fund': (ctx, req, res) => handleGasFund(ctx, req, res),
+  // "Allow trading on Hyperliquid": one Touch ID approves the trading key a vault on Touch ID derives. Window only.
+  '/api/vault/trading-key/allow': (ctx, req, res) => handleTradingKeyAllow(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).

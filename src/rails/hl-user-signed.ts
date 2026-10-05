@@ -23,7 +23,9 @@
 // They are exported as plain functions rather than a Rail on purpose. A Rail is reachable by
 // the agent through MCP; these are the primitives a rail composes, behind its own refusals.
 // The third action only the master key can sign, approveAgent, is built here as well
-// (buildApproveAgentPayload) and signed from the terminal by scripts/hl-agent.ts, never by a rail.
+// (buildApproveAgentPayload, approveAgent) and is never a rail's: scripts/hl-agent.ts signs it
+// from the terminal for a wallet that holds its master key, and the window's "Allow trading"
+// (src/hl/agent-key.ts) behind one Touch ID for a vault that moved to it.
 //
 // Once a vault has moved to this Mac's Touch ID key, the master key is not in memory any more:
 // each of these signatures asks for a Touch ID of its own that names it (OwnerTouch, below).
@@ -296,6 +298,35 @@ export function buildUsdClassTransferPayload(args: {
   };
 }
 
+/* A trading key's end, set in its name: the label, " valid_until ", then the end in milliseconds,
+   at most 180 days ahead (docs, exchange endpoint, "Approve an API wallet"). The venue prunes a key
+   that expired, so the end is real, and the Touch ID dialog says it (agentValidityDays). */
+export const HL_AGENT_MAX_DAYS = 180;
+const DAY_MS = 86_400_000;
+/* The name Phosphor's trading keys go by on the venue (scripts/hl-agent.ts's default): an approval
+   under a name the account already has replaces that key, so Phosphor holds one trading key, never
+   two, and the one an approval retires is gone from the venue the same moment. */
+export const HL_AGENT_LABEL = 'phosphor-runner';
+
+export function agentNameUntil(label: string, validUntil: number): string {
+  return `${label} valid_until ${validUntil}`;
+}
+
+/* How long an approveAgent's name lets the key trade, read off the signed message alone: null for a
+   plain label, a key with no end (what scripts/hl-agent.ts signs); whole days from the action's
+   nonce, 1 to 180, for `<label> valid_until <ms>`, the label held to the venue's 16 characters;
+   undefined for anything else, which no Touch ID may be asked to sign. */
+export function agentValidityDays(agentName: unknown, nonce: unknown): number | null | undefined {
+  if (typeof agentName !== 'string') return undefined;
+  if (/^[A-Za-z0-9-]{1,32}$/.test(agentName)) return null;
+  const until = /^[A-Za-z0-9-]{1,16} valid_until ([1-9]\d{0,15})$/.exec(agentName);
+  if (until === null || typeof nonce !== 'bigint') return undefined;
+  const span = BigInt(until[1]) - nonce;
+  if (span <= 0n || span % BigInt(DAY_MS) !== 0n) return undefined;
+  const days = Number(span / BigInt(DAY_MS));
+  return days <= HL_AGENT_MAX_DAYS ? days : undefined;
+}
+
 // The action and its message keep the field order scripts/hl-agent.ts posts and signs. The
 // address is lowercased once, as the script does, so the signed and the posted text agree.
 export function buildApproveAgentPayload(args: {
@@ -521,6 +552,23 @@ export async function userRole(deps: HlUserSignedDeps, address: string): Promise
   return typeof body?.role === 'string' ? body.role : 'unknown';
 }
 
+export type HlAgentListing = { address: string; name: string; validUntil: number | null };
+
+/* The trading keys the venue holds approved for an account: address lower case, the name without its
+   end, and the end in milliseconds or null. No key, a public /info POST; throws when the venue's
+   answer is not a list, so a caller never reads a failure as "no key approved". */
+export async function extraAgents(deps: HlUserSignedDeps, account: string): Promise<HlAgentListing[]> {
+  const user = account.trim().toLowerCase();
+  if (!isAddress(user)) throw new Error(`hyperliquid extraAgents: ${account} is not an address`);
+  const rows = await info<unknown>(deps, { type: 'extraAgents', user });
+  if (!Array.isArray(rows)) throw new Error('hyperliquid extraAgents answered with something that is not a list');
+  return rows.flatMap((row) => {
+    const r = (row ?? {}) as { address?: unknown; name?: unknown; validUntil?: unknown };
+    if (typeof r.address !== 'string' || !isAddress(r.address)) return [];
+    return [{ address: r.address.toLowerCase(), name: typeof r.name === 'string' ? r.name : '', validUntil: typeof r.validUntil === 'number' ? r.validUntil : null }];
+  });
+}
+
 // One entry of the venue's non-funding ledger: a deposit, a withdrawal, a transfer between
 // accounts or between the account's own books. Every number is a string, like every read here.
 type LedgerUpdate = { time?: number; hash?: string; delta?: Record<string, unknown> };
@@ -589,7 +637,7 @@ type ExchangeResponse = { status?: string; response?: unknown };
 // status field is checked as well and is what decides ok here.
 async function postAction(
   deps: HlUserSignedDeps,
-  action: HlSendAssetAction | HlUsdClassTransferAction,
+  action: HlSendAssetAction | HlUsdClassTransferAction | HlApproveAgentAction,
   nonce: number,
   signature: HlSignature,
 ): Promise<{ ok: boolean; detail: string; body: unknown; ambiguous?: boolean }> {
@@ -825,4 +873,36 @@ export async function sendAsset(
     nonce,
     activationFeeUsdc,
   };
+}
+
+// ---------- approveAgent: a trading key for this account ----------
+
+export type HlApproveResult = {
+  ok: boolean;
+  detail: string;
+  action?: HlApproveAgentAction;
+  // As on a send: the venue did not answer, and the key may be approved all the same.
+  ambiguous?: boolean;
+  // Why nothing was signed, when the Touch ID gave no signature: 'declined' for a cancel.
+  reason?: ReasonCode;
+  // The relay's own code for that refused touch, for the caller's sentence and the log.
+  touch?: string;
+};
+
+/* Approves a trading key for this account: the action only the owner key signs. On a vault that
+   moved to Touch ID the signature is the owner touch's, one Touch ID whose dialog is read off this
+   very message (src/vault/reason.ts). Nothing moves money, so nothing is resent here: a caller that
+   got no answer reads the venue's list (extraAgents) before asking again. */
+export async function approveAgent(
+  deps: HlUserSignedDeps,
+  params: { agentAddress: string; agentName: string; nonce: number },
+): Promise<HlApproveResult> {
+  const sign = deps.sign ?? liveSignPort;
+  const { action, typedData, nonce } = buildApproveAgentPayload(params);
+  deps.lastCheck?.();
+  const signature = await signFor(sign, deps, typedData);
+  if (signature instanceof OwnerTouchRefused) return { ok: false, detail: signature.message, reason: signature.reason, touch: signature.touch };
+  const out = await postAction(deps, action, nonce, signature);
+  if (!out.ok) return { ok: false, detail: out.detail, action, ambiguous: out.ambiguous };
+  return { ok: true, detail: `approved trading key ${action.agentAddress} on Hyperliquid (nonce ${String(nonce)})`, action };
 }

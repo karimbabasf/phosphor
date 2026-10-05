@@ -37,7 +37,7 @@ import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
 import type { RailKeys, Wallet } from './derive.ts';
-import { accountsOf, deriveKeys } from './derived.ts';
+import { accountsOf, deriveHlAgentKey, deriveKeys, evmAddressOf } from './derived.ts';
 import type { DerivedAccounts } from './derived.ts';
 import { seWrap } from './sewrap.ts';
 import type { SeWrapped } from './sewrap.ts';
@@ -123,6 +123,12 @@ export type StoredAddresses = { evm: string | null; solana: string | null; near:
 /* The Hyperliquid API wallet the runner signs orders with: a key that can trade and, by the
    venue's own signing split, cannot withdraw, transfer or approve another agent. */
 export type ApiWallet = { key: `0x${string}`; address: string | null };
+
+/* Which Hyperliquid trading keys derived from the owner key (src/keystore/derived.ts, HL-AGENT) an
+   open makes: `trade`, the version the venue approved for this vault, which apiWallet() then serves
+   in place of the file's own API wallet, and `next`, the one an approval would name. Null is none. */
+export type HlAgentPlan = { trade: number | null; next: number | null };
+const NO_HL_AGENTS: HlAgentPlan = { trade: null, next: null };
 
 /* Which entry in a payload is the API wallet. A keys.json written before 2026-09-01 keyed the
    agent by a venue axis this app no longer has, so the entry that names this venue wins and the
@@ -257,6 +263,7 @@ export type Keystore = {
   // as keys() does, and never decodes the rest of the payload: see `evmKey` in createKeystore.
   evmPrivateKey(): `0x${string}`;
   // The same for the runner: the API wallet alone, or null when the wallet has none. See `apiKey`.
+  // Once the venue approved a trading key derived from the owner key, that one (planHlAgentsWith).
   apiWallet(): ApiWallet | null;
 
   // ---- Phase 2: the keys derived from the owner key (src/keystore/derived.ts) ----
@@ -280,6 +287,14 @@ export type Keystore = {
      data key, the key handed to `fn` and zeroed when `fn` returns, or when the promise it returns
      settles. The lock is left as it was, and the data key is wiped either way. */
   withOwnerKey<T>(dek: Buffer, fn: (key: Buffer) => T): { ok: true; value: T } | Extract<UnlockResult, { ok: false }>;
+
+  // ---- the Hyperliquid trading key derived from the owner key (src/hl/agent-key.ts) ----
+  /* Which trading keys every open derives beside ALLOWANCE and GAS, for the vault being opened,
+     held and wiped the same way. Until it is called, none, and apiWallet() serves the API wallet
+     the file holds, as before (src/main.ts wires it to vault.json). */
+  planHlAgentsWith(plan: (vault: string) => HlAgentPlan): void;
+  // The 0x address of a trading key this open derived, or null: public, what an approval names.
+  hlAgentAccount(version: number): `0x${string}` | null;
 
   path(): string;
   onChange(fn: (state: LockState) => void): () => void;
@@ -525,6 +540,11 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   // Phase 2's two keys, derived from the EVM key at every hold() and wiped with it.
   let allowKey: Buffer | null = null;
   let gasKey: Buffer | null = null;
+  /* And the trading keys the plan names, by version, derived and wiped the same way; their
+     addresses are worked out on the first ask. The plan is read at every open and every ask. */
+  let hlAgentPlan: (vault: string) => HlAgentPlan = () => NO_HL_AGENTS;
+  const agentKeys = new Map<number, Buffer>();
+  const agentAccounts = new Map<number, `0x${string}`>();
   /* Whether the open session holds the owner key, and the address of the one it opened with. A
      vault that moved to the chip opens with ownerHeld false: `plain` is then an empty buffer, and
      no payload, owner key or data key is in memory (keepOwnerKeyOutWhen). */
@@ -643,9 +663,59 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     return key as `0x${string}`;
   }
 
+  /* Once the venue approved a derived trading key for this vault, it is the one key that trades:
+     the file's own API wallet is never served beside it, since that approval replaced it on the
+     venue. A plan that names a version this open did not derive serves none, not the old one. */
   function apiWallet(): ApiWallet | null {
-    if (plain !== null) return apiKey === null ? null : { key: `0x${apiKey.toString('hex')}`, address: apiAddress };
+    if (plain !== null) {
+      const trade = planFor(heldVault).trade;
+      if (trade !== null) {
+        const key = agentKeys.get(trade);
+        return key === undefined ? null : { key: `0x${key.toString('hex')}`, address: agentAccount(trade) };
+      }
+      return apiKey === null ? null : { key: `0x${apiKey.toString('hex')}`, address: apiAddress };
+    }
     return apiWalletOf(shutPayload());
+  }
+
+  // A plan that throws names no derived key, and the session trades as it did before the plan.
+  function planFor(vault: string | null): HlAgentPlan {
+    if (vault === null) return NO_HL_AGENTS;
+    try {
+      return hlAgentPlan(vault);
+    } catch {
+      return NO_HL_AGENTS;
+    }
+  }
+
+  function agentAccount(version: number): `0x${string}` | null {
+    const key = agentKeys.get(version);
+    if (key === undefined) return null;
+    let account = agentAccounts.get(version);
+    if (account === undefined) {
+      account = evmAddressOf(key);
+      agentAccounts.set(version, account);
+    }
+    return account;
+  }
+
+  function forgetAgents(): void {
+    wipe(...agentKeys.values());
+    agentKeys.clear();
+    agentAccounts.clear();
+  }
+
+  // Each version once, and a version that derives nothing is left out rather than stopping the open.
+  function deriveAgents(owner: Buffer, vault: string): void {
+    const plan = planFor(vault);
+    for (const version of [plan.trade, plan.next]) {
+      if (version === null || agentKeys.has(version)) continue;
+      try {
+        agentKeys.set(version, deriveHlAgentKey(owner, version));
+      } catch {
+        // Not a version the derivation takes (vault.json edited by hand): no key for it.
+      }
+    }
   }
 
   // ---------- the owner key, and the two keys derived from it ----------
@@ -729,6 +799,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (plain !== null && plain !== body) wipe(plain);
     wipe(evmKey, apiKey, allowKey, gasKey);
     evmKey = allowKey = gasKey = null;
+    forgetAgents();
     const key = payload.evm?.privateKey;
     const owner = typeof key === 'string' && EVM_KEY.test(key) ? Buffer.from(key.slice(2), 'hex') : null;
     // The address the gate is asked about comes from the same derivation as addresses(), so the
@@ -751,6 +822,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
         wipe(allowKey, gasKey);
         allowKey = gasKey = null;
       }
+      deriveAgents(owner, heldVault);
     }
     const api = apiWalletOf(payload);
     apiKey = api === null ? null : Buffer.from(api.key.slice(2), 'hex');
@@ -948,6 +1020,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     stopClosing();
     if (plain === null) return false;
     wipe(plain, dataKey, evmKey, apiKey, allowKey, gasKey);
+    forgetAgents();
     plain = null;
     dataKey = null;
     evmKey = null;
@@ -1585,6 +1658,11 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
       return true;
     },
     withOwnerKey,
+    planHlAgentsWith: (plan) => {
+      hlAgentPlan = plan;
+    },
+    // Only while open: a lock wipes the keys, and their addresses with them.
+    hlAgentAccount: (version) => (plain === null ? null : agentAccount(version)),
     path: () => file,
     custody,
     enclave,

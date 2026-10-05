@@ -384,6 +384,16 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['7ee7c33929bff790cd5b87813289af4628ae027f0a5bdcdb3f4d196ef5ea4f9a', 'ALLOWANCE key derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
   ['fcda8770013610a5a890531e5a67a8d96dbe3d6ef142f2494999a58ba4743879', 'GAS seed derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
   ['ca541826c952a550f599949160d91d6dcd82616f0a07cd5488cb8e30ab62b5f7', 'GAS account derived from the hyperliquid-python-sdk test key, tests/fixtures/derived-keys.ts'],
+  // The Hyperliquid trading keys derived from the same two public test keys, versions 1 and 2
+  // (src/keystore/derived.ts, HL-AGENT): published vectors, keyed to nothing (tests/fixtures/hl-agent-keys.ts).
+  ['9bd79f6143f38e7148895138bc777a7f1713871b372118ee6fd1905ab541cdcc', 'trading key v1 derived from the canonical Ethereum test key, tests/fixtures/hl-agent-keys.ts'],
+  ['b019392723d9eff17f3a6e27b6ee0fb604d2867b076c996e225da6bcb30aa966', 'trading key v2 derived from the canonical Ethereum test key, tests/fixtures/hl-agent-keys.ts'],
+  ['15e2354fbbd2692b68388e3bde1fff440cf9ba7033b26ca7483970a5cca118c6', 'trading key v1 derived from the hyperliquid-python-sdk test key, tests/fixtures/hl-agent-keys.ts'],
+  ['883dae3c8b464ef6a145bc1033d034d8dea7bf0632c2d455eff327a21f0e8bf2', 'trading key v2 derived from the hyperliquid-python-sdk test key, tests/fixtures/hl-agent-keys.ts'],
+  // The two halves of the canonical test key's approval of trading key v1 for 90 days, checked with
+  // foundry's `cast wallet sign --data`: a signature over public data by a public key.
+  ['c69b4759bde4d0e04b326f5db34d1cbb4e4753f7e11c9108290b51d1e9d1c88e', 'approveAgent signature half (r), canonical Ethereum test key, tests/unit/hl-agent-allow.test.ts'],
+  ['31c689da930e4f5180e8baa6856b930b0d14f950e6632edd80f92a9706eb462a', 'approveAgent signature half (s), canonical Ethereum test key, tests/unit/hl-agent-allow.test.ts'],
   // The order n of the P-256 group, a curve constant published in SEC 2. src/vault/webauthn.ts
   // folds a signature's S below n / 2 with it, the only form the NEAR Intents verifier accepts.
   ['ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551', 'P-256 group order n, src/vault/webauthn.ts'],

@@ -20,13 +20,17 @@
 // Never reuses an address. The venue prunes a deregistered agent's nonce state, and a reused
 // address can then have previously signed actions replayed against it, so every run generates
 // a fresh key and the old one is simply abandoned.
+//
+// A vault that moved to Touch ID cannot use this: its owner key is out of reach of another
+// process, and its wallet file takes no new key. The window's "Allow trading" approves the
+// trading key that vault derives from its owner key, behind one Touch ID (src/hl/agent-key.ts).
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 import { loadConfig } from '../src/config.ts';
-import { liveSignPort, SIGNATURE_CHAIN_ID, SIGNATURE_CHAIN_ID_HEX } from '../src/rails/hl-user-signed.ts';
+import { buildApproveAgentPayload, HL_AGENT_LABEL, liveSignPort } from '../src/rails/hl-user-signed.ts';
 
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const cfg = loadConfig(root);
@@ -35,54 +39,23 @@ const API = 'https://api.hyperliquid.xyz';
 console.error(`approving an agent wallet on Hyperliquid (${API})`);
 
 const nameArg = process.argv.indexOf('--name');
-const agentName = nameArg > -1 ? String(process.argv[nameArg + 1]) : 'phosphor-runner';
+const agentName = nameArg > -1 ? String(process.argv[nameArg + 1]) : HL_AGENT_LABEL;
 
 const agentKey = generatePrivateKey();
 const agentAddress = privateKeyToAccount(agentKey).address;
-const nonce = Date.now();
 
 // The user-signed scheme: real EIP-712 over the action's own fields, domain
 // HyperliquidSignTransaction, with the REAL chain id. Not the msgpack phantom-agent scheme the
-// runner uses for orders. Getting these two the wrong way round is the documented failure.
-const action = {
-  type: 'approveAgent',
-  hyperliquidChain: 'Mainnet',
-  signatureChainId: SIGNATURE_CHAIN_ID_HEX,
-  agentAddress: agentAddress.toLowerCase(),
-  agentName,
-  nonce,
-};
-
-const typed = {
-  domain: {
-    name: 'HyperliquidSignTransaction',
-    version: '1',
-    chainId: SIGNATURE_CHAIN_ID,
-    verifyingContract: '0x0000000000000000000000000000000000000000',
-  },
-  types: {
-    'HyperliquidTransaction:ApproveAgent': [
-      { name: 'hyperliquidChain', type: 'string' },
-      { name: 'agentAddress', type: 'address' },
-      { name: 'agentName', type: 'string' },
-      { name: 'nonce', type: 'uint64' },
-    ],
-  },
-  primaryType: 'HyperliquidTransaction:ApproveAgent',
-  message: {
-    hyperliquidChain: 'Mainnet',
-    agentAddress: agentAddress.toLowerCase(),
-    agentName,
-    nonce: BigInt(nonce),
-  },
-};
+// runner uses for orders. Getting these two the wrong way round is the documented failure. Built
+// by the app's own builder, so the script and the window sign the same table byte for byte.
+const { action, typedData: typed, nonce } = buildApproveAgentPayload({ agentAddress, agentName, nonce: Date.now() });
 
 const master = liveSignPort.address(cfg.keysPath);
 console.log(`master account : ${master}`);
 console.log(`new agent      : ${agentAddress}  (name: ${agentName})`);
 console.log('approving...');
 
-const signature = await liveSignPort.signTypedData(cfg.keysPath, typed as never);
+const signature = await liveSignPort.signTypedData(cfg.keysPath, typed);
 
 const res = await fetch(`${API}/exchange`, {
   method: 'POST',
