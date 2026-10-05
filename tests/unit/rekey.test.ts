@@ -957,11 +957,11 @@ test('two windows at once: one move runs, the other is told the vault is already
 test('the old fee account\'s NEAR goes back to the vault\'s NEAR deposit address in one transfer, whatever the body names, and each refusal says why', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
   let deposit: string | null = null;
-  // NEAR's deposit route as 1Click answers it: unconfirmed until the test says open (review18 M1).
-  let oneclick: 'open' | 'unknown' = 'open';
+  // NEAR's deposit route as the status page answers it: open until the test pauses it (review18 M1).
+  let page: 'open' | 'closed' = 'open';
   const routeHealth: RouteHealth = {
     check: async (ask) => {
-      const reasons: RouteVerdict['reasons'] = [{ source: 'oneclick', state: oneclick, text: '' }];
+      const reasons: RouteVerdict['reasons'] = [{ source: 'status', state: page, text: 'The NEAR Intents status page says: "NEAR deposits paused".' }];
       return { network: ask.network, direction: ask.direction, state: combine(reasons), reasons, checkedAt: 0 };
     },
   };
@@ -1001,13 +1001,13 @@ test('the old fee account\'s NEAR goes back to the vault\'s NEAR deposit address
     assert.equal((await app.post('/api/vault/gas/return', hostile)).json.code, 'wallet_locked');
     assert.equal(chain.sendCount(), 0);
     assert.equal((await app.post('/api/vault/unlock')).json.ok, true);
-    // A NEAR route 1Click has not confirmed: nothing goes to the bridge's address.
-    oneclick = 'unknown';
+    // NEAR deposits paused: nothing goes to the bridge's address.
+    page = 'closed';
     const unsure = await app.post('/api/vault/gas/return', hostile);
     assert.deepEqual([unsure.json.ok, unsure.json.code], [false, 'gas_return_failed']);
-    assert.match(unsure.json.error, /^Phosphor cannot confirm NEAR Intents is taking NEAR deposits right now/);
+    assert.match(unsure.json.error, /^NEAR Intents has paused NEAR deposits right now/);
     assert.equal(chain.sendCount(), 0);
-    oneclick = 'open';
+    page = 'open';
     // Open, with the Receive row's address: one transfer, to that address and nowhere the body names.
     const back = await app.post('/api/vault/gas/return', hostile);
     assert.equal(back.json.ok, true, JSON.stringify(back.json));

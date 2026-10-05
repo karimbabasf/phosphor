@@ -8,7 +8,7 @@ What this app defends against, how, and where the v1 boundary honestly sits.
 This is the short version of Phosphor's security model, for anyone deciding whether to trust it
 with money. It says who Phosphor plans for, what the agent can and cannot do, what Phosphor
 defends against and the test that proves each defence, what stays open, what the invite tools
-guard, and how to check a release yourself. It describes version 0.10.18. The rest of the
+guard, and how to check a release yourself. It describes version 0.10.19. The rest of the
 [security model](security-model.md#the-trust-boundary-is-the-app-window-not-the-conversation)
 gives the detail behind each line.
 
@@ -235,7 +235,7 @@ build; add `-- --app <Phosphor.app>` to run it.
 
 ### What stays open
 
-These are true of 0.10.18. [Known limits](known-limits.md) gives each one with what it means for
+These are true of 0.10.19. [Known limits](known-limits.md) gives each one with what it means for
 your money.
 
 - **The key is in memory while the wallet is open.** The backend holds the unwrapped key so it
@@ -503,7 +503,7 @@ It should be built by this repository's release workflow, from the tag of its ve
 ```
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.18
+  --source-ref refs/tags/v0.10.19
 ```
 
 With `--repo` alone, the check also passes for a file any other workflow in this repository
@@ -519,7 +519,7 @@ the tag builds:
 cd /Applications/Phosphor.app/Contents/Resources/phosphor
 find . -type f ! -name .DS_Store | sed 's|^\./||' | LC_ALL=C sort | tr '\n' '\0' | xargs -0 shasum -a 256 | shasum -a 256
 
-git clone --depth 1 --branch v0.10.18 https://github.com/karimbabasf/phosphor.git
+git clone --depth 1 --branch v0.10.19 https://github.com/karimbabasf/phosphor.git
 cd phosphor && npm run bundle
 ```
 
@@ -1246,7 +1246,7 @@ code.
 **Two keys derived from the owner key, never stored.** The chip vault adds ALLOWANCE, a
 0x account the agent spends from with no click up to its size, and GAS, a NEAR implicit account,
 the old fee account: it paid NEAR's fee for the vault's moves until the NEAR Intents relay took that
-over in 0.10.18, and now only sends what a 0.10.16 wallet paid into it back to the vault, in one
+over in 0.10.19, and now only sends what a 0.10.16 wallet paid into it back to the vault, in one
 transfer (`src/vault/gas-account.ts`, `src/chain/near-tx.ts`). Both come from the EVM key at every open and are
 written nowhere (`src/keystore/derived.ts`): HKDF-SHA256 (RFC 5869) over the key's 32 bytes, salt
 `phosphor`. ALLOWANCE takes info `phosphor-allowance-v1` and reads the 32 bytes as a secp256k1
