@@ -237,8 +237,8 @@ The Allowance row reads like "$63 of $100": what your assistant spends with no T
 over the size plus 10 percent goes back to your vault on its own, USDC first. Top up asks for USDC
 from your vault on a card in the conversation, then one Touch ID that names the amount; under a
 quarter of its size the row says it is running low. A move bigger than the allowance asks two Touch
-IDs on Approve: the first approves the move, the second moves the difference from your vault to your
-allowance. See [Money](money.md#top-ups-and-the-sweep).
+IDs on Approve, and its card says so before you click: the first approves the move, the second moves
+the difference from your vault to your allowance. See [Money](money.md#top-ups-and-the-sweep).
 
 Once the vault has moved, Allow trading on Hyperliquid, in the Trading key row, approves a new
 trading key with one Touch ID: "Let 0x... trade on your Hyperliquid account for 90 days". The row says

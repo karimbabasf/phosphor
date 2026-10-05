@@ -475,12 +475,18 @@
      chat read text from outside Phosphor, its agent was started outside Phosphor, or the app
      started the turn it was asked in (src/proposals/execute.ts, land). The same size from their
      own chat runs alone, so the card says why on its face (cards.js lineFor), in the app's own
-     sentence: the verdict's last reason, as written. '' for any other row. */
+     sentence: the verdict's last reason, as written. A move bigger than the allowance says its two
+     Touch IDs there too, before Approve asks them (src/vault/allowance.ts shortfallSentence, the
+     start src/proposals/execute.ts keys on). '' for any other row. */
   function gateLine(proposal) {
     var p = proposal && typeof proposal === 'object' ? proposal : {};
-    if (p.webRead !== true && p.outside !== true && p.appTurn !== true) return '';
     var verdict = p.verdict || {};
     if (!Array.isArray(verdict.reasons) || !verdict.reasons.length) return '';
+    for (var i = 0; i < verdict.reasons.length; i += 1) {
+      var reason = String(verdict.reasons[i]).trim();
+      if (reason.indexOf('Your allowance holds ') === 0) return reason;
+    }
+    if (p.webRead !== true && p.outside !== true && p.appTurn !== true) return '';
     var last = String(verdict.reasons[verdict.reasons.length - 1]).trim();
     return last.charAt(0).toUpperCase() + last.slice(1);
   }
