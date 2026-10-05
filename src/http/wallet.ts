@@ -1086,7 +1086,7 @@ function warningOf(net: ReceiveNetwork, shared: string[], nets: Map<string, Rece
 async function readRoutes(ctx: Ctx, account: string): Promise<Map<string, RouteVerdict> | null> {
   const routes = ctx.routeHealth;
   if (routes === undefined) return null;
-  const verdicts = await Promise.all(RECEIVE_NETWORKS.map((n) => routes.check({ network: n.id, direction: 'in', account })));
+  const verdicts = await Promise.all(RECEIVE_NETWORKS.map((n) => routes.check({ network: n.id, direction: 'in', account, deposit: true })));
   return new Map(verdicts.map((v) => [v.network, v]));
 }
 
@@ -1119,7 +1119,7 @@ function withRoute(row: IntentsReceiveNetwork, verdict: RouteVerdict | undefined
 export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null; unconfirmed: string | null }> {
   const routes = ctx.routeHealth;
   if (routes === undefined) return { closed: null, notice: null, link: null, unconfirmed: null };
-  const verdict = await routes.check({ network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS });
+  const verdict = await routes.check({ network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS, deposit: true });
   const sentence = routeSentence(verdict, 'deposit', audience);
   if (verdict.state === 'closed') return { closed: sentence, notice: null, link: STATUS_LINK, unconfirmed: null };
   if (!depositConfirmed(verdict)) return { closed: null, notice: null, link: null, unconfirmed: unconfirmedSentence(chain) };

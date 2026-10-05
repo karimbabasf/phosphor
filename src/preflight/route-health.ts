@@ -576,7 +576,10 @@ export type RouteHealthDeps = {
    signature); absent, the TTLs above decide. A kept closed answer is used whatever its age.
    `waitMs` is how long the probe and the page may take before they count as unknown,
    the check's own deadline unless the ask is about to show an address (ADDRESS_WAIT_MS). */
-export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number; waitMs?: number };
+/* `deposit`: the ask is about money coming in through a bridge deposit address. 1Click plays no
+   part in a deposit (the bridge credits it), so it is not asked: the bridge that gave the address,
+   the status page and the chain decide (Karim, 2026-10-05: "dont rely on the 1click api"). */
+export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number; waitMs?: number; deposit?: boolean };
 
 export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
 
@@ -593,11 +596,11 @@ export async function routeGate(routes: RouteHealth | undefined, ask: RouteAsk, 
   return verdict.state === 'closed' ? { closed: sentence, notice: null } : { closed: null, notice: sentence };
 }
 
-/* Whether a deposit address may be shown on this verdict: 1Click itself said it takes the coin in,
-   and no voice closes the route. Open always has that yes; degraded has it only when the warning
-   came beside it, never in its place. */
+/* Whether a deposit address may be shown on this verdict: no voice closes the route. A deposit's
+   verdict carries no 1Click voice (RouteAsk.deposit), and the address itself is the bridge's answer,
+   so a bridge that gave one and a status page that does not say the network is paused are enough. */
 export function depositConfirmed(verdict: RouteVerdict): boolean {
-  return verdict.state !== 'closed' && verdict.reasons.some((r) => r.source === 'oneclick' && r.state === 'open');
+  return verdict.state !== 'closed';
 }
 
 type Cached<T> = { at: number; ttl: number; value: T };
@@ -925,7 +928,7 @@ export function createRouteHealth(deps: RouteHealthDeps): RouteHealth {
     try {
       const net = spendNetworkOf(q.network);
       const [probed, status, chain] = await Promise.all([
-        q.direction === 'in' && net !== undefined && q.account !== null && q.account !== ''
+        q.direction === 'in' && q.deposit !== true && net !== undefined && q.account !== null && q.account !== ''
           ? within(probeReason(net, q.account, q.asset, q.maxAgeMs), wait).then((r) => r ?? { source: 'oneclick' as const, state: 'unknown' as const, text: `1Click did not answer about ${net.name} in time` })
           : Promise.resolve(null),
         within(statusFor(q.network, q.maxAgeMs), wait).then((r) => r ?? keptStatus(q.network)),

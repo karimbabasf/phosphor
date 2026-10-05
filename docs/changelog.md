@@ -5,6 +5,18 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.19
+
+Built 2026-10-05, the deposit fix. Tagged v0.10.19 on 2026-10-05.
+
+- Deposit addresses show again on every network the bridge credits. 0.10.18 asked NEAR Intents' swap
+  service whether each network took deposits, and while that service had trouble no address showed
+  anywhere. A deposit never goes through the swap service: the bridge gives the address and credits
+  what arrives. So a deposit now asks only the bridge and the NEAR Intents status page, and an
+  address is hidden only when the bridge credits nothing on that network or the page says it is
+  paused.
+- The NEAR in a 0.10.16 gas account goes back to your vault under the same rule.
+
 ## 0.10.18
 
 Built 2026-10-05, the simpler vault. Tagged v0.10.18 on 2026-10-05.

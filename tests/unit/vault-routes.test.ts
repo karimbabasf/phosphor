@@ -564,7 +564,7 @@ test('the window asks the route for the exact asset before it draws an address: 
     assert.equal(closed.json.error, 'NEAR Intents has paused Base deposits right now, so no address is shown. Money sent now may not arrive.');
     assert.equal(closed.json.route, 'closed');
     assert.equal(closed.json.statusLink, STATUS_LINK);
-    assert.deepEqual(asked.at(-1), { network: 'base', direction: 'in', account: asked.at(-1)?.account, asset: usdc, waitMs: ADDRESS_WAIT_MS });
+    assert.deepEqual(asked.at(-1), { network: 'base', direction: 'in', account: asked.at(-1)?.account, asset: usdc, waitMs: ADDRESS_WAIT_MS, deposit: true });
     assert.equal((await b.get('/api/deposit')).json.deposit, null, 'the read started a watch');
 
     // Show refuses the same way, so the window can tell a pause from any other refusal.

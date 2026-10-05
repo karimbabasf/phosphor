@@ -272,7 +272,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
       ? {}
       : {
           route: async (account: string, chain: string, assetId: string) => {
-            const gate = await routeGate(routeHealth, { network: chain, direction: 'in', account, asset: assetId, waitMs: ADDRESS_WAIT_MS }, 'deposit');
+            const gate = await routeGate(routeHealth, { network: chain, direction: 'in', account, asset: assetId, waitMs: ADDRESS_WAIT_MS, deposit: true }, 'deposit');
             return { closed: gate.closed, link: gate.closed === null ? null : STATUS_LINK };
           },
         }),
