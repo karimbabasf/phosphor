@@ -31,9 +31,9 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
 - Once your vault is on Touch ID, your assistant spends from an allowance, $100 unless you pick
   another size or turn it off. It starts empty. A top-up moves USDC from your vault: you ask in the
   Vault tab, approve its card and give one Touch ID. Your assistant cannot ask for one. A top-up
-  NEAR turns down after it left your Mac waits for NEAR before saying whether anything moved, and
-  is never signed again. Whatever the allowance holds over its size plus 10 percent goes back to
-  your vault on its own, USDC first, keeping what moves under way will spend.
+  turned down after it left your Mac waits for NEAR and is never signed again. Whatever the
+  allowance holds over its size plus 10 percent goes back to your vault on its own, USDC first,
+  keeping what moves under way will spend.
 - A swap, send, payout or Hyperliquid deposit bigger than your allowance waits for your click, and
   its card says Approve asks two Touch IDs: the move's own, then one that moves exactly the
   difference from your vault. Cancel either and nothing is signed. The vault never adds more than
@@ -65,15 +65,16 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   the trading key, and never asks for or repeats a paper key, recovery phrase or private key.
 - A portfolio held whole in what a 100 percent cap allows is no longer refused by a rounding error.
 - Backing up a private key is Touch ID, the key behind dots with Show and Copy, then I saved it
-  somewhere safe. Nothing is typed back, and a copied key leaves the clipboard within 30 seconds.
+  somewhere safe; nothing is typed back. I saved it, Hide, Close or Done clears a copied key from
+  the clipboard; leave without one of those clicks and it stays until you copy something else.
 - Your wallet, your keys and your settings stay as they were until you move your vault.
-- To check before you trust: [Check it yourself](verify.md) gives each of the wallet's seven
-  security claims its code, test and command, and `node scripts/vault-check.ts` reads who can move a
-  vault from two NEAR RPCs, failing closed when they disagree.
+- [Check it yourself](verify.md) gives each of the wallet's seven security claims its code, test
+  and command, and `node scripts/vault-check.ts` reads who can move a vault from two NEAR RPCs,
+  failing closed when they disagree.
 - The attack suite tries six more ways into the Touch ID vault and shows each one held: 32 cases.
-- A release stops unless two NEAR RPCs run by different companies agree the NEAR Intents verifier
-  is the build the Touch ID vault was tested on, and its vault service carries the Touch ID key's
-  operations and the grammar's newest rule.
+- A release stops unless two independent NEAR RPCs agree the NEAR Intents verifier is the build the
+  Touch ID vault was tested on, and its vault service carries the Touch ID key's operations and the
+  grammar's newest rule.
 
 ## 0.10.15
 

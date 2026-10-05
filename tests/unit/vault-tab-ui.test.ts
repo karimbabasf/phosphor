@@ -1086,7 +1086,7 @@ function fakeClock(world: World): { tick: (ms: number) => void } {
   };
 }
 
-const COPIED = 'Copied. Phosphor clears it when you click I saved it, or in 30 seconds.';
+const COPIED = 'Copied. Phosphor clears it when you click I saved it.';
 
 test('Copy puts the whole key on the clipboard as a wallet imports it, says when Phosphor clears it, and repeats the key nowhere', async () => {
   const world = build({ vault: { hasMnemonic: false } });
@@ -1170,7 +1170,7 @@ test('the copied key leaves the clipboard inside the panel\'s next click, at onc
   await flush();
   buttonNamed(flow(proven), 'Copy').click();
   await flush();
-  assert.ok(buttonNamed(flow(proven), 'Copied. Phosphor clears it when you click Done, or in 30 seconds.'), 'the button names a click the panel does not offer');
+  assert.ok(buttonNamed(flow(proven), 'Copied. Phosphor clears it when you click Done.'), 'the button names a click the panel does not offer');
   buttonNamed(flow(proven), 'Done').click();
   assert.deepEqual(proven.clipboard, ['0x' + KEY_HEX, ''], 'Done left the key on the clipboard');
 

@@ -1209,7 +1209,7 @@
     clip.writeText('0x' + shownKey.groups.join(''))
       .then(function () {
         clipHeld = copy;
-        setLabel(copy, 'Copied. Phosphor clears it when you click ' + nextClick + ', or in 30 seconds.');
+        setLabel(copy, 'Copied. Phosphor clears it when you click ' + nextClick + '.');
         if (clipTimer !== null) window.clearTimeout(clipTimer);
         clipTimer = window.setTimeout(clearClip, CLIP_CLEAR_MS);
       })

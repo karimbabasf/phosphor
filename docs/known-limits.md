@@ -35,8 +35,9 @@ same hash that guards the wallet file's password, so a program that reads memory
 guesses to make before it learns them, and three words of twelve do not open the wallet. A wallet
 with no phrase backs up its private key instead, and I saved it somewhere safe, clicked just after
 the key was shown, is the proof, so nothing of the key is kept for it: only the wallet it opens,
-for half an hour. Copy puts your key on the clipboard for up to 30 seconds, where any app running
-as you can read it. Paste it into your password manager, then copy something else.
+for half an hour. Copy puts your key on the clipboard, where any app running as you can read it,
+until you click I saved it somewhere safe, Hide, Close or Done. If you leave without one of those
+clicks, the key stays there until you copy something else.
 
 What it means: a program that can read the app's memory while the vault is open has the key, and
 after a lock it may still find a copy. On macOS that takes a process running as you with the right
