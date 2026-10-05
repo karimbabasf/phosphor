@@ -159,6 +159,11 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   const hl = hyperliquid !== undefined && hyperliquid.ok ? { funded: hyperliquid.collateralUsdc >= DUST_USD } : undefined;
 
   const unpriced = rows.filter(r => r.priced === false).map(r => r.symbol);
+  const unread: WalletPlace[] = pending ? ['intents', 'hyperliquid'] : intents?.unknown === true ? ['intents'] : [];
 
-  return { rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, unpriced, hyperliquid: hl, ...(pending ? { pending: true as const } : {}) };
+  return {
+    rows, totalUsd, byChain, stale, staleWhy, emptyCount, dustCount, dustUsd, unpriced, hyperliquid: hl,
+    ...(pending ? { pending: true as const } : {}),
+    ...(unread.length > 0 ? { unread } : {}),
+  };
 }

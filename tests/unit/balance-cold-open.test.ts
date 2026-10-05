@@ -86,12 +86,23 @@ test('the window opens on a loading state, never $0.00, until the first read lan
   assert.equal(before.basic.caption, 'Reading your balance.');
   assert.equal(before.basic.emptyLine, null, 'and no "Nothing here yet" over money nobody has read');
   assert.deepEqual(before.wallet.stale, ['intents', 'hyperliquid'], 'an agent reading the wallet is told the same');
+  assert.deepEqual(before.wallet.unread, ['intents', 'hyperliquid'], 'with no figures behind either');
 
   await ledger.refresh();
   const after = panel(ledger);
   assert.equal(after.basic.totalLine, '$5.00');
   assert.equal(after.basic.caption, 'in your balance');
   assert.deepEqual(after.wallet.stale, []);
+  assert.equal(after.wallet.unread, undefined);
+
+  // Two misses in a row later: stale, and the last good holdings stay in the rows for a screen to keep.
+  world.verifier = 'down';
+  await ledger.refresh();
+  await ledger.refresh();
+  const missed = panel(ledger);
+  assert.ok(missed.wallet.stale.includes('intents'));
+  assert.equal(missed.wallet.unread, undefined, 'read before, so not unread');
+  assert.equal(missed.wallet.rows.find((r) => r.kind === 'intents')?.quantity, 5);
 });
 
 test('a first read that fails says so and never shows the money as gone', async () => {
@@ -104,6 +115,7 @@ test('a first read that fails says so and never shows the money as gone', async 
   await ledger.refresh();
   const missed = panel(ledger);
   assert.ok(missed.wallet.stale.includes('intents'), 'nothing was ever read, so one miss is already unread');
+  assert.deepEqual(missed.wallet.unread, ['intents']);
   assert.match(missed.wallet.staleWhy?.intents ?? '', /http 503/);
   assert.equal(missed.basic.totalLine, '');
   assert.equal(missed.basic.emptyLine, 'Part of your balance could not be read just now. It shows here as soon as it can be.');

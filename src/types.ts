@@ -161,6 +161,10 @@ export type WalletView = {
   // Nothing read yet (LedgerSnapshot.pending): every place is in `stale`, and the window says
   // the balance is being read rather than that it could not be.
   pending?: true;
+  // The stale places with no figures at all: every place before the first pass lands, and the
+  // verifier while no read of it has answered. A stale place outside this list keeps its last
+  // good figures in `rows`, and a screen shows them as the last known balance.
+  unread?: WalletPlace[];
 };
 
 // ---------- Policy ----------
