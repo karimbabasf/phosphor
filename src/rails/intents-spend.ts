@@ -52,10 +52,11 @@ import type { Preflight, RailHooks } from '../types.ts';
 import type { VenueProbe } from '../preflight/index.ts';
 import { quoteSignatureProblems, signedQuoteRecord } from '../quote-signature.ts';
 import type { QuoteRecord } from '../quote-signature.ts';
-import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline, shortenDeadline } from './intents-native.ts';
+import { INTENTS_SIGNING_STANDARD, checkIntentPayload, intentDeadline, intentNonce, shortenDeadline } from './intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
 import { submitSignedIntent } from './intents-submit.ts';
 import { FIRST_POLL_MS, watchOneClick } from './watch.ts';
+import type { RanProof } from './watch.ts';
 import { tell } from './oneclick-words.ts';
 import { ReasonError } from './reasons.ts';
 
@@ -109,6 +110,9 @@ export type IntentsSpendRequest = {
   echo: QuoteEcho;
   // The caller's own checks on the live quote (its floor, its fee cap). Problems refuse.
   checkQuote?: (quote: OneClickQuote) => string[];
+  // The caller's proof that NEAR ran the signed transfer (./watch.ts ranProof), built from its
+  // nonce once it exists. It ends the watch beside 1Click's word; absent, only 1Click ends it.
+  ran?: (nonce: string) => RanProof;
 };
 
 // Signed by the time this exists, or held back by the preflight with nothing signed at all:
@@ -131,6 +135,7 @@ export type IntentsSpendOutcome =
       quote: OneClickQuote;
       signedQuote: QuoteRecord; // what 1Click signed, verified before the handle was used
       watch: OneClickStatus; // the last status seen, terminal or not
+      ran: bigint | null; // the balance read that proved NEAR ran it, when the caller asked for one
     }
   | {
       signed: true;
@@ -256,6 +261,7 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   // the verifier will parse, so the payload string is never re-serialised.
   const payload = generatedPayload as string;
   const deadline = intentDeadline(payload) ?? 'unknown';
+  const nonce = intentNonce(payload);
   const refused = deps.beforeSign === undefined ? null : await deps.beforeSign();
   if (refused !== null) throw new ReasonError('route_closed', refused);
   // The executor's last check (Freeze), after the route read and with nothing awaited before the key.
@@ -270,16 +276,17 @@ export async function spendFromIntents(deps: IntentsSpendDeps, req: IntentsSpend
   const submitted = sent.intent;
   tell(hooks, { txids: [submitted.intentHash], handle: depositAddress, deadline, quote: signedQuote });
 
-  const watch = await watchStatus(deps, depositAddress, hooks);
+  const ran = nonce === undefined ? undefined : req.ran?.(nonce);
+  const watch = await watchStatus(deps, depositAddress, hooks, ran?.ask);
 
-  return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, signedQuote, watch };
+  return { signed: true, submitted: true, intentHash: submitted.intentHash, depositAddress, deadline, quote, signedQuote, watch, ran: ran?.held() ?? null };
 }
 
 // The one watch every rail shares (./watch.ts): from a quarter second after the submit,
 // doubling to this rail's interval, until terminal or out of time. Never throws once the intent
 // has been submitted: a status endpoint that goes down after the money has moved must not become
 // an unhandled rejection. Every read tells the executor 1Click's word, so the card moves with it.
-export function watchStatus(deps: IntentsSpendDeps, depositAddress: string, hooks?: RailHooks): Promise<OneClickStatus> {
+export function watchStatus(deps: IntentsSpendDeps, depositAddress: string, hooks?: RailHooks, over?: () => Promise<boolean>): Promise<OneClickStatus> {
   const plan = { firstMs: deps.firstPollMs ?? FIRST_POLL_MS, everyMs: deps.pollIntervalMs, timeoutMs: deps.pollTimeoutMs, sleep: deps.sleep, now: deps.now };
-  return watchOneClick(plan, (handle) => deps.api.status(handle), depositAddress, hooks);
+  return watchOneClick(plan, (handle) => deps.api.status(handle), depositAddress, hooks, over);
 }

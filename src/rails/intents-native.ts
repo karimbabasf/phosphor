@@ -77,7 +77,8 @@ import { pickOrExplain, swapSummary } from './asset-words.ts';
 import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { networkByVenue } from './intents-address.ts';
 import { ReasonError, quoteRefusalReason, reasonOf } from './reasons.ts';
-import { watchOneClick } from './watch.ts';
+import { ranProof, watchOneClick } from './watch.ts';
+import type { RanProof } from './watch.ts';
 import { FATE_RECHECK_MS, proofWords, transferFate } from '../relay/fate.ts';
 import type { DeadProof } from '../relay/fate.ts';
 import type { FinalBlock } from '../relay/verifier.ts';
@@ -1305,11 +1306,11 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         signedQuote,
       );
 
-    /* AND WHEN NEAR SHOWS THE SWAP RAN, whatever 1Click still says (ranProof): the swap's own
+    /* AND WHEN NEAR SHOWS THE SWAP RAN, whatever 1Click still says (swapRan): the swap's own
        transfer spent and the bought coin arrived. 1Click keeps one more poll to say SUCCESS, and a
        terminal word from it still takes its own branch below; only a 1Click still short of an
        answer ends on NEAR's word, as Done, read back from the verifier like a SUCCESS is. */
-    const ran = ranProof(owner, nonce, p.destinationAsset, beforeBase, p.minOutBase);
+    const ran = swapRan(owner, nonce, p.destinationAsset, beforeBase, p.minOutBase);
     const ranOnChain = (afterBase: bigint, last: OneClickStatus): RailResult => {
       const before = beforeBase ?? 0n;
       return {
@@ -1534,38 +1535,19 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  /* Whether NEAR shows the swap done: this swap's own signed transfer spent at the verifier, and the
-     bought coin up by at least the approved floor since the read taken before the signature. Both,
-     because a rise alone is any credit of that coin and a spent nonce alone is the input gone, not
-     the coin arrived. Asked from RAN_RECHECK_MS after the submit and at most that often, one read at
-     a time, and never awaited by the poll: an RPC that hangs must not slow 1Click's own answer. A
-     read that fails proves nothing. `ask` says yes at the first poll after both are seen, so 1Click
-     keeps one poll to answer and a swap it answers promptly settles on its SUCCESS exactly as
-     before. `held` is the balance read that proved it. */
-  function ranProof(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint): { ask: () => Promise<boolean>; held: () => bigint | null } {
-    let askedAt = now();
-    let reading = false;
-    let after: bigint | null = null;
-    const read = async (account: string, signed: string, base: bigint): Promise<void> => {
-      try {
-        if ((await nonceUsed(account, signed)) !== true) return;
-        const held = await verifierBalance(account, asset);
-        if (held !== null && held - base >= floor) after = held;
-      } finally {
-        reading = false;
-      }
-    };
-    return {
-      ask: async () => {
-        if (after !== null) return true;
-        if (nonce === undefined || before === null || reading || now() - askedAt < ranRecheckMs) return false;
-        askedAt = now();
-        reading = true;
-        void read(owner.toLowerCase(), nonce, before).catch(() => undefined);
-        return false;
-      },
-      held: () => after,
-    };
+  /* Whether NEAR shows the swap done (./watch.ts ranProof): this swap's own signed transfer spent at
+     the verifier, and the bought coin up by at least the approved floor since the read taken before
+     the signature. With no nonce or no before-read there is nothing to prove it with. */
+  function swapRan(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint): RanProof {
+    if (nonce === undefined || before === null) return { ask: async () => false, held: () => null };
+    const account = owner.toLowerCase();
+    return ranProof({
+      now,
+      everyMs: ranRecheckMs,
+      spent: () => nonceUsed(account, nonce),
+      read: () => verifierBalance(account, asset),
+      landed: (held) => held - before >= floor,
+    });
   }
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION: 1Click's dry quote for the draft's amountIn, read

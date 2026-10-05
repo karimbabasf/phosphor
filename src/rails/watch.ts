@@ -41,6 +41,48 @@ export async function pollUntil(plan: PollPlan, step: () => Promise<boolean>): P
   }
 }
 
+/* Whether NEAR shows a move done, asked beside 1Click's word: the move's own signed transfer spent
+   at the verifier (`spent`), and then a balance read that shows it landed (`landed`). Both, because
+   a rise alone is any credit of that coin and a spent nonce alone is the input gone, not the coin
+   arrived. Asked from `everyMs` after it is made and at most that often, one read at a time, and
+   never awaited by the poll: an RPC that hangs must not slow 1Click's own answer. A read that fails
+   proves nothing. `ask` says yes at the first poll after both are seen, so 1Click keeps one poll to
+   answer and a move it answers promptly settles on its SUCCESS exactly as before. `held` is the
+   balance read that proved it. The swap (src/rails/intents-native.ts) and the send share it. */
+export type RanProof = { ask: () => Promise<boolean>; held: () => bigint | null };
+
+export function ranProof(o: {
+  now: () => number;
+  everyMs: number;
+  spent: () => Promise<boolean | null>;
+  read: () => Promise<bigint | null>;
+  landed: (held: bigint) => boolean;
+}): RanProof {
+  let askedAt = o.now();
+  let reading = false;
+  let after: bigint | null = null;
+  const read = async (): Promise<void> => {
+    try {
+      if ((await o.spent()) !== true) return;
+      const held = await o.read();
+      if (held !== null && o.landed(held)) after = held;
+    } finally {
+      reading = false;
+    }
+  };
+  return {
+    ask: async () => {
+      if (after !== null) return true;
+      if (reading || o.now() - askedAt < o.everyMs) return false;
+      askedAt = o.now();
+      reading = true;
+      void read().catch(() => undefined);
+      return false;
+    },
+    held: () => after,
+  };
+}
+
 /* A 1Click order, by its deposit handle, until a terminal status or the window ends. Never
    throws once the money is on its way: a status endpoint that goes down after the move must not
    become a thrown "nothing happened". Every read tells the executor 1Click's own word for the
