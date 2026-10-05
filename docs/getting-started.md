@@ -27,7 +27,7 @@ file was built from the public code. It needs the GitHub CLI (`brew install gh`)
 ```sh
 gh attestation verify ~/Downloads/Phosphor-macOS-arm64.dmg --repo karimbabasf/phosphor \
   --signer-workflow karimbabasf/phosphor/.github/workflows/release.yml \
-  --source-ref refs/tags/v0.10.16
+  --source-ref refs/tags/v0.10.17
 ```
 
 Put the version you downloaded in the last line. It passes only for a file that this

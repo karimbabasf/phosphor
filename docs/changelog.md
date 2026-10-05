@@ -5,6 +5,19 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.17
+
+Built 2026-10-05, the swap card fix. Tagged v0.10.17 on 2026-10-05.
+
+- Every move card follows its own move to the end, however many run at once. Before, the window
+  carried only the newest few, and the other cards stopped where they were: after "divide my funds
+  into 8 coins", five cards kept saying "Sent. Waiting for a buyer to take it." and then "Taking
+  longer" while your balance, and your assistant, already showed all eight coins.
+- A swap card says Done as soon as NEAR shows the swap ran, even while the swap service still calls
+  it working. Phosphor checks two things on NEAR: the swap's own signed transfer is spent, and the
+  coin it bought is in your balance at no less than the amount you approved. A swap NEAR has not run
+  keeps saying it waits for a buyer, and nothing is ever signed twice.
+
 ## 0.10.16
 
 Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Tagged v0.10.16 on 2026-10-05.
