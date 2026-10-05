@@ -14,7 +14,7 @@ import type http from 'node:http';
 import { errText, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import type { Ctx } from './context.ts';
-import { guarded, knownRefusal, refusal } from './wallet.ts';
+import { depositRoute, guarded, knownRefusal, refusal } from './wallet.ts';
 import { backupProven } from './vault.ts';
 import { settleFor } from './custody.ts';
 import { heldSymbol } from '../intents.ts';
@@ -177,6 +177,14 @@ export async function handleGasReturn(ctx: Ctx, req: http.IncomingMessage, res: 
   const report = ctx.keystore.isUnlocked() ? ctx.keystore.addressReport() : null;
   const vault = report !== null && report.verified === true ? report.addresses.evm : null;
   if (vault === null) return sendJson(res, 200, chipRefusal('wallet_locked'));
+  // The same gate as every deposit address: NEAR's route must read open by 1Click's own answer
+  // before NEAR goes to the bridge's address (review18 M1).
+  const gate = await depositRoute(ctx, 'near', vault, '');
+  const shut = gate.closed ?? gate.unconfirmed;
+  if (shut !== null) {
+    ctx.audit.append('app_start', "the old fee account's NEAR did not go back: NEAR Intents is not confirmed open for NEAR deposits", {});
+    return sendJson(res, 200, { ...chipRefusal('gas_return_failed'), error: shut });
+  }
   const to = await vaultNearAddress(ctx, vault);
   if (to === null) {
     ctx.audit.append('app_start', "the old fee account's NEAR did not go back: the bridge showed no NEAR deposit address for the vault", {});

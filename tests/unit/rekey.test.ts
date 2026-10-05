@@ -11,6 +11,8 @@
 //
 // Run: node --test tests/unit/rekey.test.ts
 
+import { combine } from '../../src/preflight/route-health.ts';
+import type { RouteHealth, RouteVerdict } from '../../src/preflight/route-health.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -101,7 +103,7 @@ type App = {
    accounts the rails read, one vault move submitter over a journal in the data folder, and the chip
    vault installed over the chain double. The shell is the test, relaying to the stand-in service
    with its clock held to the chain's. `papers` are the paper keys /chip/phrase hands out, in order. */
-async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?: string[]; dataDir?: string; hook?: (r: Request) => Hook | undefined; near?: IntentsDouble['near']; intents?: () => IntentsRead | undefined; nearDeposit?: () => string | null } = {}): Promise<App> {
+async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?: string[]; dataDir?: string; hook?: (r: Request) => Hook | undefined; near?: IntentsDouble['near']; intents?: () => IntentsRead | undefined; nearDeposit?: () => string | null; routeHealth?: RouteHealth } = {}): Promise<App> {
   const dataDir = opts.dataDir ?? tempDir('phosphor-rekey-');
   const token = crypto.randomBytes(32).toString('hex');
   const keysPath = path.join(dataDir, 'keys', 'keys.json');
@@ -146,6 +148,7 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
     cfg,
     token,
     vault: relay,
+    ...(opts.routeHealth === undefined ? {} : { routeHealth: opts.routeHealth }),
     // The Receive report, with a NEAR row only when the test names its deposit address.
     intentsReceive: async () => {
       const near = opts.nearDeposit?.() ?? null;
@@ -954,7 +957,15 @@ test('two windows at once: one move runs, the other is told the vault is already
 test('the old fee account\'s NEAR goes back to the vault\'s NEAR deposit address in one transfer, whatever the body names, and each refusal says why', { skip, timeout: 120_000 }, async () => {
   const chain = createIntentsDouble({ start: T0 * 1000 });
   let deposit: string | null = null;
-  const app = await chipApp(chain, { papers: [], nearDeposit: () => deposit });
+  // NEAR's deposit route as 1Click answers it: unconfirmed until the test says open (review18 M1).
+  let oneclick: 'open' | 'unknown' = 'open';
+  const routeHealth: RouteHealth = {
+    check: async (ask) => {
+      const reasons: RouteVerdict['reasons'] = [{ source: 'oneclick', state: oneclick, text: '' }];
+      return { network: ask.network, direction: ask.direction, state: combine(reasons), reasons, checkedAt: 0 };
+    },
+  };
+  const app = await chipApp(chain, { papers: [], nearDeposit: () => deposit, routeHealth });
   const oldGas = async (want: unknown): Promise<unknown> => {
     let seen: unknown;
     for (let i = 0; i < 100; i += 1) {
@@ -990,6 +1001,13 @@ test('the old fee account\'s NEAR goes back to the vault\'s NEAR deposit address
     assert.equal((await app.post('/api/vault/gas/return', hostile)).json.code, 'wallet_locked');
     assert.equal(chain.sendCount(), 0);
     assert.equal((await app.post('/api/vault/unlock')).json.ok, true);
+    // A NEAR route 1Click has not confirmed: nothing goes to the bridge's address.
+    oneclick = 'unknown';
+    const unsure = await app.post('/api/vault/gas/return', hostile);
+    assert.deepEqual([unsure.json.ok, unsure.json.code], [false, 'gas_return_failed']);
+    assert.match(unsure.json.error, /^Phosphor cannot confirm NEAR Intents is taking NEAR deposits right now/);
+    assert.equal(chain.sendCount(), 0);
+    oneclick = 'open';
     // Open, with the Receive row's address: one transfer, to that address and nowhere the body names.
     const back = await app.post('/api/vault/gas/return', hostile);
     assert.equal(back.json.ok, true, JSON.stringify(back.json));
