@@ -239,7 +239,7 @@
       offer: 'Your ' + backupName(vault) + ' opens your vault today.',
       restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
-      moved: screen === 'moved' && unreadFacts() ? 'Your vault moved to this Mac\'s Touch ID key and your paper key.' : 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
+      moved: screen === 'moved' ? whoOpens(vault) : '',
       checking: 'Checking which keys open your vault, with NEAR. This takes a moment.'
     };
     dom.setText(refs.line, lines[screen] || '');
@@ -997,6 +997,19 @@
     dom.setHidden(under, !note);
   }
 
+  /* The row's first line once the vault moved: the worst fact NEAR read about
+     who opens it, and nothing NEAR has not read since the move. */
+  function whoOpens(vault) {
+    var name = backupName(vault);
+    if (slice.chipOnChain === false) return 'This Mac\'s Touch ID key no longer opens your vault.';
+    if (Array.isArray(slice.otherKeys) && slice.otherKeys.length) return 'Your vault also answers to a key Phosphor did not add.';
+    if (slice.oldOnChain === true) return 'Your ' + name + ' still opens your vault.';
+    if (slice.predecessorAuth === true) return 'Your ' + name + ' can reach your vault again, through the NEAR door.';
+    if (slice.recoveryOnChain === false) return 'Only this Mac\'s Touch ID key opens your vault. It has no paper key.';
+    if (unreadFacts()) return 'Your vault moved to this Mac\'s Touch ID key and your paper key.';
+    return 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.';
+  }
+
   // A fact about who opens the vault that NEAR has not answered since the vault moved.
   function unreadFacts() {
     return [slice.chipOnChain, slice.recoveryOnChain, slice.oldOnChain, slice.predecessorAuth].some(function (f) { return typeof f !== 'boolean'; }) ||
@@ -1082,9 +1095,11 @@
     paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : checking), oldOn === true ? 'warn' : null,
       'It still opens your allowance, the gas account and Hyperliquid.');
     paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : checking), door === true ? 'warn' : null,
-      'A way for your ' + name + ' to act for your vault through NEAR. The move shut it. NEAR Intents\' admins can open it again for any account, and this line reads it from NEAR.');
+      door === true
+        ? 'A way for your ' + name + ' to act for your vault through NEAR. NEAR Intents\' admins opened it again.'
+        : 'A back way in for your ' + name + ', through NEAR. The move shut it, and Phosphor checks it each time it reads your vault.');
     dom.setHidden(refs.reading, !unreadFacts());
-    dom.setText(refs.doorOpenText, 'NEAR Intents\' admins opened the NEAR door again, so your ' + name + ' can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.');
+    dom.setText(refs.doorOpenText, 'NEAR Intents\' admins opened the NEAR door again, so your ' + name + ' can reach your vault. Keep it like cash. If anyone else may have it, send your money to a wallet only you control.');
     dom.setHidden(refs.doorOpen, door !== true);
     var others = Array.isArray(slice.otherKeys) ? slice.otherKeys : [];
     dom.setText(refs.othersText, others.length
@@ -1093,6 +1108,8 @@
     dom.setHidden(refs.others, !others.length);
     var truth = plainTruth(vault);
     dom.setText(refs.truth.childNodes[0], truth[0]);
+    // With no paper key on the vault, the paper is no key at all.
+    dom.setHidden(refs.truth.childNodes[0], paperOn === false);
     dom.setText(refs.truth.childNodes[1], truth[1]);
   }
 

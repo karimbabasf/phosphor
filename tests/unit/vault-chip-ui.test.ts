@@ -906,23 +906,39 @@ test('a vault that moved says who opens it, as NEAR reads it, with the NEAR door
   const row = keyRow(w);
   const facts = (): Record<string, string> => Object.fromEntries(find(row, '.vault-facts .vault-rule').map((r: Any) => [find(r, '.vault-rule-label')[0].textContent, find(r, '.vault-rule-value')[0].textContent]));
   assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Opens it', 'Your private key': 'No longer opens it', 'The NEAR door': 'Shut' });
-  assert.ok(said(row).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
-  assert.ok(said(row).includes('A way for your private key to act for your vault through NEAR. The move shut it. NEAR Intents\' admins can open it again for any account, and this line reads it from NEAR.'));
+  const headline = (): string => find(row, '.vault-row-main .vault-text')[0].textContent;
+  assert.equal(headline(), 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.');
+  assert.ok(said(row).includes('A back way in for your private key, through NEAR. The move shut it, and Phosphor checks it each time it reads your vault.'));
   assert.ok(said(row).includes('It still opens your allowance, the gas account and Hyperliquid.'));
   assert.equal(find(row, '.vault-backup-line').filter(isShown).length, 0, 'the done moment shows on every open, not only after the move');
   assert.equal(find(row, '.vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 0);
 
-  // A forced flip by the verifier's admins is visible.
+  // A forced flip by the verifier's admins is visible, and the headline follows it.
   w.chip({ predecessorAuth: true });
   assert.equal(facts()['The NEAR door'], 'Open');
   assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
-  assert.ok(said(row).includes('NEAR Intents\' admins opened the NEAR door again, so your private key can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.'));
+  assert.equal(headline(), 'Your private key can reach your vault again, through the NEAR door.');
+  assert.ok(said(row).includes('A way for your private key to act for your vault through NEAR. NEAR Intents\' admins opened it again.'));
+  assert.equal(said(row).includes('The move shut it'), false, 'the note says the move shut a door that reads open');
+  assert.ok(said(row).includes('NEAR Intents\' admins opened the NEAR door again, so your private key can reach your vault. Keep it like cash. If anyone else may have it, send your money to a wallet only you control.'));
+  // The headline never says nothing else opens it while a fact below says otherwise.
+  const TRUTH = 'Your paper key is the only key that opens your vault away from this Mac.';
+  w.chip({ predecessorAuth: false, oldOnChain: true });
+  assert.equal(headline(), 'Your private key still opens your vault.');
+  w.chip({ oldOnChain: false, recoveryOnChain: false });
+  assert.equal(headline(), 'Only this Mac\'s Touch ID key opens your vault. It has no paper key.');
+  assert.equal(said(row).includes(TRUTH), false, 'the paper is the key away from this Mac, with no paper on the vault');
+  w.chip({ recoveryOnChain: true, otherKeys: ['secp256k1:abc'] });
+  assert.equal(headline(), 'Your vault also answers to a key Phosphor did not add.');
+  w.chip({ otherKeys: [] });
+  assert.ok(said(row).includes(TRUTH));
   // Unread is never a yes or a no, this Mac's Touch ID key included.
   w.chip({ chipOnChain: null, predecessorAuth: null, recoveryOnChain: null, oldOnChain: null });
   assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Checking...', 'Your paper key': 'Checking...', 'Your private key': 'Checking...', 'The NEAR door': 'Checking...' });
   // NEAR reads this Mac's Touch ID key off the vault.
   w.chip({ chipOnChain: false, predecessorAuth: false, recoveryOnChain: true, oldOnChain: false });
   assert.equal(facts()['This Mac\'s Touch ID key'], 'Not on your vault');
+  assert.equal(headline(), 'This Mac\'s Touch ID key no longer opens your vault.');
   assert.ok(said(row).includes('NEAR reads it off your vault, so this Mac cannot move your vault\'s money.'));
   assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
   w.chip({ chipOnChain: true });
