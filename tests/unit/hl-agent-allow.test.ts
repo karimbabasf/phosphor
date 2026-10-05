@@ -6,12 +6,6 @@
 // The keystore, the relay, withOwnerKey, the owner touch and the signatures are real; a software P-256
 // key plays the enclave and the test plays the shell (tests/unit/helpers/owner-touch.ts). Hyperliquid
 // is a fake: nothing is sent anywhere, and the owner keys are published test keys.
-//
-// WAITING: the dialog's sentence is src/vault/reason.ts's, which the wave 3 integrator teaches to say
-// a trading key's days (reports/p2-hlagent.md). Until then the owner touch cannot name the approval,
-// so it asks nothing and signs nothing, and the tests that need the dialog skip. DIALOG_SAYS_DAYS is
-// read when the file loads, so they run, strict, the moment the line lands; then the integrator
-// deletes the switch and the one waiting test below.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -68,10 +62,6 @@ const SIGNED_V1: HlSignature = {
   s: '0x31c689da930e4f5180e8baa6856b930b0d14f950e6632edd80f92a9706eb462a',
   v: 28,
 };
-
-const DIALOG_SAYS_DAYS =
-  ownerReason(buildApproveAgentPayload({ agentAddress: V1.address, agentName: agentNameUntil(HL_AGENT_LABEL, UNTIL), nonce: NOW }).typedData) !== null;
-const WAITING = DIALOG_SAYS_DAYS ? false : "waits for src/vault/reason.ts to say a trading key's days (reports/p2-hlagent.md, the wave 3 integrator's line)";
 
 test.afterEach(teardown);
 
@@ -150,6 +140,14 @@ test("an approveAgent's days are read off the signed name and nonce alone, and a
   }
   assert.equal(agentValidityDays(agentNameUntil(HL_AGENT_LABEL, UNTIL), NOW), undefined, 'a nonce that is not the uint64 the builder writes');
   assert.equal(agentValidityDays(7, n), undefined);
+});
+
+test("src/vault/reason.ts says the key and its days, keeps a plain label's words, and says nothing it cannot read", () => {
+  const said = (agentName: string) => ownerReason(buildApproveAgentPayload({ agentAddress: V1.address, agentName, nonce: NOW }).typedData);
+  assert.equal(said(agentNameUntil(HL_AGENT_LABEL, UNTIL)), sentence(V1.address));
+  assert.equal(said(agentNameUntil(HL_AGENT_LABEL, NOW + DAY)), sentence(V1.address).replace(' for 90 days', ' for 1 day'));
+  assert.equal(said('phosphor-runner'), sentence(V1.address).replace(' for 90 days', ''));
+  assert.equal(said(agentNameUntil(HL_AGENT_LABEL, NOW + 181 * DAY)), null);
 });
 
 test('the approval of a derived key signs to the vector foundry checked, and the posted action is the one signed', async () => {
@@ -234,15 +232,10 @@ test('a gate that closes on a session still holding the owner key, then opens ag
       },
     }),
   );
-  if (DIALOG_SAYS_DAYS) await v.shell.answer();
+  await v.shell.answer();
   const out = await allowing;
-  if (DIALOG_SAYS_DAYS) {
-    assert.equal(!out.ok && out.code, 'not_moved', 'the touch was asked, and the check at the signature found the vault never moved');
-    assert.equal(v.shell.asked.length, 1);
-  } else {
-    assert.equal(!out.ok && out.code, 'unnamed', 'refused at the touch, not signed from the session');
-    nothingAsked(v);
-  }
+  assert.equal(!out.ok && out.code, 'not_moved', 'the touch was asked, and the check at the signature found the vault never moved');
+  assert.equal(v.shell.asked.length, 1);
   assert.equal(net.posts.length, 0, 'nothing signed, so nothing posted');
   assert.equal(v.prefs.get().hlAgent, undefined);
   assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'the owner key left the session before the signature, whatever the gate says now');
@@ -288,16 +281,11 @@ test('the app\'s gate: a marker the chain shows on the vault keeps the owner key
   assert.equal(v.store.hlAgentAccount(1), V1.address, 'and made the next trading key all the same');
   const net = venue();
   const allowing = allowTrading(deps(v, net));
-  if (DIALOG_SAYS_DAYS) assert.equal((await v.shell.answer()).reason, sentence(V1.address));
+  assert.equal((await v.shell.answer()).reason, sentence(V1.address));
   const out = await allowing;
-  if (DIALOG_SAYS_DAYS) {
-    assert.equal(out.ok, true);
-    assert.equal(net.posts.length, 1);
-    assert.deepEqual(v.store.apiWallet(), { key: `0x${V1.key}`, address: V1.address });
-  } else {
-    assert.equal(!out.ok && out.code, 'unnamed');
-    nothingAsked(v);
-  }
+  assert.equal(out.ok, true);
+  assert.equal(net.posts.length, 1);
+  assert.deepEqual(v.store.apiWallet(), { key: `0x${V1.key}`, address: V1.address });
 });
 
 test('the app\'s gate: a marker the chain does not show counts as moved only until the chain answers, and then nothing is signed', async () => {
@@ -310,32 +298,21 @@ test('the app\'s gate: a marker the chain does not show counts as moved only unt
   for (const answer of answers.splice(0)) answer(false);
   await settle();
   assert.equal(gate(v.vault), false, 'the chain says the vault never moved');
-  if (DIALOG_SAYS_DAYS) await v.shell.answer();
+  await v.shell.answer();
   const out = await allowing;
-  assert.equal(!out.ok && out.code, DIALOG_SAYS_DAYS ? 'not_moved' : 'unnamed', 'the check at the signature asks the gate again');
+  assert.equal(!out.ok && out.code, 'not_moved', 'the check at the signature asks the gate again');
   assert.equal(net.posts.length, 0, 'nothing signed, nothing posted');
   assert.equal(v.prefs.get().hlAgent, undefined);
   assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'the owner key left the session before the touch, as approve() lets it go');
 
   const again = await allowTrading(deps(v, net));
   assert.equal(!again.ok && again.code, 'not_moved', 'from now on this wallet is the one that never moved');
-  assert.equal(v.shell.asked.length, DIALOG_SAYS_DAYS ? 1 : 0);
-});
-
-test('until src/vault/reason.ts says a trading key\'s days, allowing trading asks nothing and signs nothing', { skip: DIALOG_SAYS_DAYS }, async () => {
-  const v = agentVault(V.old);
-  v.open();
-  const net = venue();
-  const out = await allowTrading(deps(v, net));
-  assert.equal(!out.ok && out.code, 'unnamed');
-  nothingAsked(v);
-  assert.equal(net.posts.length, 0);
-  assert.equal(v.prefs.get().hlAgent, undefined);
+  assert.equal(v.shell.asked.length, 1);
 });
 
 // ---------- one Touch ID ----------
 
-test('kind chip: allowing trading is one Touch ID that names the new key and its days, and the session trades with it at once', { skip: WAITING }, async () => {
+test('kind chip: allowing trading is one Touch ID that names the new key and its days, and the session trades with it at once', async () => {
   const v = agentVault(V.old, { stored: STORED });
   v.open();
   assert.deepEqual(v.store.apiWallet(), { key: STORED, address: privateKeyToAccount(STORED).address }, 'before: the key the file holds');
@@ -372,7 +349,7 @@ test('kind chip: allowing trading is one Touch ID that names the new key and its
   });
 });
 
-test('the owner key lent for the approval is zeroed once it signed, and it is the owner key, not the trading key', { skip: WAITING }, async () => {
+test('the owner key lent for the approval is zeroed once it signed, and it is the owner key, not the trading key', async () => {
   const lent: Array<{ buffer: Buffer; was: string }> = [];
   const lending = (store: Keystore): Keystore => ({
     ...store,
@@ -392,7 +369,7 @@ test('the owner key lent for the approval is zeroed once it signed, and it is th
   assert.ok(lent[0].buffer.every((b) => b === 0), 'and its 32 bytes read back as zero');
 });
 
-test('a cancel signs nothing, posts nothing and writes nothing, and the next try names the same key', { skip: WAITING }, async () => {
+test('a cancel signs nothing, posts nothing and writes nothing, and the next try names the same key', async () => {
   const v = agentVault(V.old, { stored: STORED });
   v.open();
   const net = venue();
@@ -409,7 +386,7 @@ test('a cancel signs nothing, posts nothing and writes nothing, and the next try
   assert.equal((await again).ok, true);
 });
 
-test("Hyperliquid's refusal writes nothing, and the next approval names the same key again", { skip: WAITING }, async () => {
+test("Hyperliquid's refusal writes nothing, and the next approval names the same key again", async () => {
   const v = agentVault(V.old);
   v.open();
   const refusing = venue({ refuse: 'Must deposit before performing actions.' });
@@ -429,7 +406,7 @@ test("Hyperliquid's refusal writes nothing, and the next approval names the same
   assert.equal(ok.posts[0].action.agentAddress, refusing.posts[0].action.agentAddress, 'a key the venue never took is named again');
 });
 
-test('no answer from Hyperliquid: its list of keys says whether the approval went in, and nothing is signed twice', { skip: WAITING }, async () => {
+test('no answer from Hyperliquid: its list of keys says whether the approval went in, and nothing is signed twice', async () => {
   const v = agentVault(V.old);
   v.open();
   const took = venue({ silent: true, listed: (posts) => posts.map((p) => ({ address: p.action.agentAddress, name: 'phosphor-runner', validUntil: UNTIL })) });
@@ -451,7 +428,7 @@ test('no answer from Hyperliquid: its list of keys says whether the approval wen
   assert.equal(w.prefs.get().hlAgent, undefined, 'nothing written while the venue cannot say');
 });
 
-test('Freeze pressed while the dialog is up stops the signature, and nothing is posted', { skip: WAITING }, async () => {
+test('Freeze pressed while the dialog is up stops the signature, and nothing is posted', async () => {
   const v = agentVault(V.old);
   v.open();
   let frozen = false;
@@ -465,7 +442,7 @@ test('Freeze pressed while the dialog is up stops the signature, and nothing is 
   assert.equal(v.prefs.get().hlAgent, undefined);
 });
 
-test('a plan armed while the dialog is up keeps its key: the approval that would replace it is not signed', { skip: WAITING }, async () => {
+test('a plan armed while the dialog is up keeps its key: the approval that would replace it is not signed', async () => {
   const v = agentVault(V.old, { stored: STORED });
   v.open();
   let armed = 0;
@@ -479,7 +456,7 @@ test('a plan armed while the dialog is up keeps its key: the approval that would
   assert.deepEqual(v.store.apiWallet(), { key: STORED, address: privateKeyToAccount(STORED).address }, 'the plan trades on with the key it took');
 });
 
-test('a second approval names a new key, never an address the venue approved before, and waits for the next open to make it', { skip: WAITING }, async () => {
+test('a second approval names a new key, never an address the venue approved before, and waits for the next open to make it', async () => {
   const v = agentVault(V.old);
   v.open();
   const net = venue();
@@ -502,7 +479,7 @@ test('a second approval names a new key, never an address the venue approved bef
   assert.equal(v.prefs.get().hlAgent?.version, 2);
 });
 
-test('a second click while the first dialog is up is refused at once, not queued as a second dialog', { skip: WAITING }, async () => {
+test('a second click while the first dialog is up is refused at once, not queued as a second dialog', async () => {
   const v = agentVault(V.old);
   v.open();
   const net = venue();
@@ -595,7 +572,7 @@ test('the route on a wallet that holds its owner key answers its refusal in plai
   }
 });
 
-test('the route: one Touch ID through the app\'s own router, the window told, and the audit line names the key, never as an executed move', { skip: WAITING }, async () => {
+test('the route: one Touch ID through the app\'s own router, the window told, and the audit line names the key, never as an executed move', async () => {
   const v = agentVault(V.old);
   v.open();
   const net = venue();

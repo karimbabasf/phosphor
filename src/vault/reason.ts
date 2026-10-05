@@ -16,7 +16,7 @@
 import type { Proposal, WriteDraft } from '../types.ts';
 import { spendNetworkOf } from '../rails/intents-address.ts';
 import { payAddress } from '../rails/pay-rules.ts';
-import { APPROVE_AGENT_TYPES, HL_DOMAIN, HL_USDC_TOKEN, SEND_ASSET_TYPES, USD_CLASS_TRANSFER_TYPES } from '../rails/hl-user-signed.ts';
+import { APPROVE_AGENT_TYPES, HL_DOMAIN, HL_USDC_TOKEN, SEND_ASSET_TYPES, USD_CLASS_TRANSFER_TYPES, agentValidityDays } from '../rails/hl-user-signed.ts';
 
 const MAX_REASON = 120;
 
@@ -211,11 +211,13 @@ export function ownerReason(typed: unknown): string | null {
       break;
     }
     default: {
-      const { agentAddress, agentName } = message;
+      const { agentAddress, agentName, nonce } = message;
       if (typeof agentAddress !== 'string' || !/^0x[0-9a-fA-F]{40}$/.test(agentAddress)) return null;
-      // Signed and never shown: a label on the venue's list of agents, so it is held to a label's shape.
-      if (typeof agentName !== 'string' || !/^[A-Za-z0-9-]{1,32}$/.test(agentName)) return null;
-      said = `Let ${ends(agentAddress.toLowerCase(), 'evm')} trade on your Hyperliquid account`;
+      // The label is signed and never shown, held to a label's shape. A trading key the vault derives
+      // also carries its end in the name (src/hl/agent-key.ts), and the dialog says how long it trades.
+      const days = agentValidityDays(agentName, nonce);
+      if (days === undefined) return null;
+      said = `Let ${ends(agentAddress.toLowerCase(), 'evm')} trade on your Hyperliquid account${days === null ? '' : ` for ${days === 1 ? '1 day' : `${days} days`}`}`;
     }
   }
   return said.length <= MAX_REASON ? said : null;
