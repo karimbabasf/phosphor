@@ -59,8 +59,10 @@ derives from your wallet key, about 0.0005 NEAR a move):
 - **A move bigger than the allowance** waits for your click, whatever its size, and its card says
   how much comes from the vault. Approving it asks the move's own Touch ID, then one Touch ID for
   a top-up of exactly the difference, of the coin the move spends. Cancel either one and nothing
-  is signed for the move. A move nobody clicked never touches the vault: if the allowance turns
-  out short when it runs, it stops, and nothing is signed.
+  is signed for the move. The vault never adds more than the card said: if the allowance was
+  spent while the card waited and the move now needs more, nothing is signed and the card comes
+  back with the new amount for another click. A move nobody clicked never touches the vault: if
+  the allowance turns out short when it runs, it stops, and nothing is signed.
 - **The sweep** sends money home. When the allowance is worth more than its size plus 10 %,
   everything over the size goes back to the vault with no click and no Touch ID: USDC first, then
   the other coins from the largest dollar value down, and the allowance keeps at least its size.

@@ -720,6 +720,11 @@ export type Proposal = {
   // Set when the preflight first said hold: the row stays approved, nothing is signed, and the
   // executor retries on its own until the checks clear or the hold runs out.
   heldSince?: string;
+  /* What the card's line named from the vault for this move when the row landed, in base units
+     of the coin it spends: the most the vault adds for it, whatever the allowance reads later.
+     Absent when the card named none. A move that needs more asks again (src/proposals/execute.ts
+     shortfallStep). */
+  vaultShortfall?: { asset: string; base: string };
   /* WHEN EACH STAGE WAS FIRST ENTERED, and when the stage last changed at all. The row is
      written many times inside one stage (evidence lands, the preflight lands, a balance is
      re-read), so "last written" is not "last moved", and a counter on a card that reset on

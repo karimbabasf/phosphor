@@ -63,7 +63,12 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
      section 1). Judged on the ledger's last read of the allowance; an unread one is left to the
      rail's own live read, which refuses a balance it cannot see. */
   const over = overAllowance(ctx, p.draft);
-  if (over !== null) p = { ...p, verdict: askedFor(p.verdict, over) };
+  if (over !== null) p = { ...p, verdict: askedFor(p.verdict, over.line), vaultShortfall: over.shortfall };
+  // The row keeps what the vault adds only beside the card's line that names it.
+  if (p.vaultShortfall !== undefined && !namesVault(p.verdict)) {
+    const { vaultShortfall: _named, ...rest } = p;
+    p = rest;
+  }
   // And any move an agent the app did not spawn asked for before the person allowed it in the
   // window: it reads with its own tools, where this app cannot look (src/agents.ts). Ahead of the
   // web-read check, which such a seat also trips, because this reason says what to do about it.
@@ -424,6 +429,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   let result: RailResult;
   // A move bigger than the allowance takes the difference from the vault first, or nothing runs.
   const short = await shortfallStep(ctx, p);
+  if (short !== null && 'again' in short) return askAgain(ctx, ctx.store.get(p.id) ?? executing, short.again, short.shortfall);
   if (short !== null) result = short;
   else {
     try {
@@ -829,10 +835,13 @@ function ledgerHeld(ctx: PCtx, account: string, asset: string): bigint | null {
   return sum;
 }
 
+// The card's line saying the vault adds the difference first, and that difference, the row keeps.
+export type CardShortfall = { line: string; shortfall: NonNullable<Proposal['vaultShortfall']> };
+
 /* The card's line when a move spends more of a coin than the allowance holds, or null. Not for a
    swap: its builder read the allowance live a moment before (src/proposals/rails.ts), and a ledger
    read a refresh behind a top-up must not hold a swap the live read let through. */
-function overAllowance(ctx: PCtx, draft: WriteDraft): string | null {
+function overAllowance(ctx: PCtx, draft: WriteDraft): CardShortfall | null {
   if (ctx.allowance === undefined || draft.kind === 'swap') return null;
   const rails = railAccounts(ctx.cfg.keysPath);
   if (rails.kind !== 'chip' || rails.spend === null) return null;
@@ -840,26 +849,31 @@ function overAllowance(ctx: PCtx, draft: WriteDraft): string | null {
   if (need === null || spenderOf(draft) !== rails.spend.toLowerCase()) return null;
   const held = ledgerHeld(ctx, rails.spend, need.asset);
   if (held === null || held >= need.base) return null;
-  return shortfallSentence(need, held, need.base - held);
+  return { line: shortfallSentence(need, held, need.base - held), shortfall: { asset: need.asset, base: (need.base - held).toString() } };
 }
 
 /* For the swap builder (src/proposals/rails.ts), off live reads: the card's line when a swap
    spends more than the allowance holds and the vault holds the rest, or null when it does not
    (the builder then refuses as it always has). */
-export async function vaultShortfall(ctx: PCtx, coin: Pick<CoinAmount, 'asset' | 'symbol' | 'decimals'>, need: bigint, held: bigint | null): Promise<string | null> {
+export async function vaultShortfall(ctx: PCtx, coin: Pick<CoinAmount, 'asset' | 'symbol' | 'decimals'>, need: bigint, held: bigint | null): Promise<CardShortfall | null> {
   const service = ctx.allowance;
   if (service === undefined || held === null || need <= held) return null;
   const acc = service.accounts();
   if (acc.kind !== 'chip' || acc.vault === null) return null;
   const saved = await service.balance(acc.vault, coin.asset);
   if (saved === null || held + saved < need) return null;
-  return shortfallSentence(coin, held, need - held);
+  return { line: shortfallSentence(coin, held, need - held), shortfall: { asset: coin.asset, base: (need - held).toString() } };
+}
+
+// Whether the card already says the difference moves from the vault (shortfallSentence's line).
+function namesVault(verdict: Verdict): boolean {
+  return verdict.reasons.some((r) => r.startsWith('Your allowance holds '));
 }
 
 /* An allow becomes a click, and a click keeps its own rule, each with the line beside it once:
    the swap builder may already have said it off a live read (src/proposals/rails.ts). */
 function askedFor(verdict: Verdict, line: string): Verdict {
-  if (verdict.reasons.some((r) => r.startsWith('Your allowance holds '))) return verdict;
+  if (namesVault(verdict)) return verdict;
   if (verdict.outcome === 'allow') return { outcome: 'needs_approval', reasons: [...verdict.reasons, line], why: [line] };
   if (verdict.outcome === 'needs_approval') return { ...verdict, reasons: [...verdict.reasons, line], why: [...(verdict.why ?? verdict.reasons.slice(-1)), line] };
   return verdict;
@@ -873,8 +887,12 @@ function askedFor(verdict: Verdict, line: string): Verdict {
    play, or nothing to read it by, which the rail then judges alone); a result when the move stops
    here, with nothing signed for it.
    Never on the policy's word: a move nobody clicked that turns out bigger than the allowance stops
-   here, and the vault is not touched. */
-async function shortfallStep(ctx: PCtx, p: Proposal): Promise<RailResult | null> {
+   here, and the vault is not touched.
+   NEVER MORE THAN THE CARD SAID (audit2 AU2-06). The card's line named a difference when the row
+   landed (vaultShortfall), and the click approved that: the vault adds at most that much for this
+   row, top-ups this row already made counted. A move that needs more, because the allowance was
+   spent meanwhile, signs nothing and asks again (`again`: the fresh line and its difference). */
+async function shortfallStep(ctx: PCtx, p: Proposal): Promise<RailResult | { again: string; shortfall: NonNullable<Proposal['vaultShortfall']> } | null> {
   const service = ctx.allowance;
   if (service === undefined) return null;
   const acc = service.accounts();
@@ -897,6 +915,9 @@ async function shortfallStep(ctx: PCtx, p: Proposal): Promise<RailResult | null>
   if (saved < short) {
     return { ok: false, reason: 'insufficient_balance', detail: `${holds}, and your vault holds ${baseUnitsToDecimal(saved, need.decimals)} ${need.symbol}, less than the ${amountWords(coin)} it would add; nothing was signed` };
   }
+  const named = p.vaultShortfall?.asset === need.asset ? BigInt(p.vaultShortfall.base) : 0n;
+  const paid = toppedUpFor(ctx, p.id, need.asset);
+  if (short > named - paid) return { again: shortfallSentence(need, held, short), shortfall: { asset: need.asset, base: (paid + short).toString() } };
   const topUp = await shortfallTopUp(ctx, p, need, coin, vault, allowance);
   if (topUp.status === 'executed') return null;
   const why = topUp.result?.detail ?? topUp.verdict.reasons.at(-1) ?? topUp.status;
@@ -905,6 +926,35 @@ async function shortfallStep(ctx: PCtx, p: Proposal): Promise<RailResult | null>
     reason: topUp.result?.reason ?? (topUp.status === 'policy_refused' ? 'policy_rule' : 'not_sent'),
     detail: `the top-up of ${amountWords(coin)} from your vault this move needed first (${topUp.id}) is ${topUp.status}: ${why}; nothing was signed for this move`,
   };
+}
+
+/* What the vault already added for a row, of one coin: every top-up for it but those that surely
+   moved nothing (refused before signing, or failed with nothing sent). */
+function toppedUpFor(ctx: PCtx, id: string, asset: string): bigint {
+  let sum = 0n;
+  for (const r of ctx.store.list()) {
+    if (r.draft.kind !== 'vault_top_up' || r.draft.forProposal !== id || r.draft.asset !== asset) continue;
+    if (r.status === 'policy_refused' || r.status === 'refused' || (r.status === 'failed' && (r.result?.txids ?? []).length === 0)) continue;
+    sum += decimalToBaseUnits(r.draft.amount, r.draft.decimals);
+  }
+  return sum;
+}
+
+// Said first on a card that asks again, so the second click says why it is needed.
+export const ASKED_AGAIN_SAID = 'Your allowance changed after you approved this, so it waits for your click again.';
+
+/* The vault would add more than the card the person clicked named: nothing was signed, the
+   reservation is let go, and the row is pending again with a fresh line naming the new difference. */
+function askAgain(ctx: PCtx, row: Proposal, line: string, shortfall: NonNullable<Proposal['vaultShortfall']>): Proposal {
+  const { decidedBy: _by, decidedAt: _at, heldSince: _held, result: _result, balances: _balances, ...rest } = row;
+  const kept = row.verdict.reasons.filter((r) => !r.startsWith('Your allowance holds ') && r !== ASKED_AGAIN_SAID);
+  const why = [ASKED_AGAIN_SAID, line];
+  ctx.audit.append('proposal_created', `${row.id} goes back to pending: the vault would add ${shortfall.base} base units of ${shortfall.asset}, more than its card named, so nothing was signed`, {
+    id: row.id,
+    named: row.vaultShortfall ?? null,
+    now: shortfall,
+  });
+  return persist(ctx, { ...rest, status: 'pending', vaultShortfall: shortfall, verdict: { outcome: 'needs_approval', reasons: [...kept, ...why], why } });
 }
 
 /* The shortfall's own row: priced as its share of the move, judged by the engine, dry-run by its

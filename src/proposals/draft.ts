@@ -241,6 +241,8 @@ export async function proposeRail(
   origin?: Origin,
   presimulated?: SimulationResult | null,
   asks: readonly (string | null | undefined)[] = [],
+  // What the card's line names from the vault, kept on the row it lands (src/proposals/execute.ts).
+  vaultShortfall?: Proposal['vaultShortfall'],
 ): Promise<Proposal> {
   const snapshot = ctx.ledger.snapshot();
   const policy = loadPolicy(ctx.dataDir);
@@ -339,7 +341,8 @@ export async function proposeRail(
      threshold alone, and the moves where an unchecked price costs most would read like any other. */
   if (simulation.ask !== undefined) verdict = heldFor(verdict, [simulation.ask]);
 
-  return land(ctx, newProposal(kind, pinned(draft, simulation), simulation, verdict, origin));
+  const row = newProposal(kind, pinned(draft, simulation), simulation, verdict, origin);
+  return land(ctx, vaultShortfall === undefined ? row : { ...row, vaultShortfall });
 }
 
 /* THE COINS THE CARD WAS PRICED WITH, pinned into the draft that lands. The rail reads 1Click's

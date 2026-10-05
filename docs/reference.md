@@ -301,7 +301,10 @@ approval Touch ID: the finger is the vault chip key's own, at its signature. Onc
 moved to the chip, `src/proposals/execute.ts` also turns an `allow` into `needs_approval` for any
 send, payout or Hyperliquid deposit that spends more of a coin than the allowance holds (the swap
 builder does the same off its live read), and its shortfall step tops up exactly the difference
-behind that Touch ID, only for a move a person approved, before the move's rail runs.
+behind that Touch ID, only for a move a person approved, before the move's rail runs. The row keeps
+the difference its card named when it landed (`vaultShortfall`), and the step never adds more for
+that row, top-ups it already made counted: a move that needs more signs nothing and goes back to
+`pending` with a fresh line naming the new difference (`audit2-allowance-card-shortfall.test.ts`).
 
 While the vault moves to the chip (a move or a restore, from its start until NEAR says how it
 ended, or while a move bundle written down before a restart can still run: `vaultMoveUnderWay` in

@@ -46,6 +46,7 @@ import { errText } from './lifecycle.ts';
 import type { PCtx } from './lifecycle.ts';
 import { RELAY_DEADLINE_GRACE_MS } from './reconcile.ts';
 import { vaultShortfall } from './execute.ts';
+import type { CardShortfall } from './execute.ts';
 import { draftSymbolOf, pickSwapSides } from './swap-reads.ts';
 import type { SidePick, SwapSide } from './swap-reads.ts';
 import { oneClickRoute } from './swap-route.ts';
@@ -64,15 +65,16 @@ export type PreparedSwap = {
   simulation: SimulationResult | null;
   // Why this swap waits for a click whatever its size, when the builder found a reason.
   ask?: string | null;
-  // The line saying the difference over the allowance moves from the vault first (a click, then Touch ID).
-  topUp?: string | null;
+  // The line saying the difference over the allowance moves from the vault first (a click, then
+  // Touch ID), and that difference, which the row keeps as the most the vault adds for it.
+  topUp?: CardShortfall | null;
 };
 
 export function decideSwap(ctx: PCtx, prepared: PreparedSwap): Promise<Proposal> {
   const { params, draft, refusal } = prepared;
   if (refusal !== null) return refuseDraft(ctx, 'swap', draft, refusal.problems, params, refusal.code);
   // Both, when both hold: a listed price never hides an earlier swap that may still go through.
-  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, [prepared.ask, prepared.topUp, earlierSwapMayRun(ctx, draft)]);
+  return proposeRail(ctx, 'swap', draft, params, prepared.simulation, [prepared.ask, prepared.topUp?.line, earlierSwapMayRun(ctx, draft)], prepared.topUp?.shortfall);
 }
 
 /* AN EARLIER SWAP OF THE SAME COIN THAT MAY STILL GO THROUGH. An open swap that signed a transfer (a
@@ -198,7 +200,7 @@ export async function prepareSwap(ctx: PCtx, params: SwapParams): Promise<Prepar
   // The coin spent, by id, once the rail has named it: what it is priced by when only 1Click prices it.
   let spentAsset: string | undefined;
   // Set when the swap spends more than the allowance holds and the vault covers the rest.
-  let topUp: string | null = null;
+  let topUp: CardShortfall | null = null;
   if (problems.length === 0 && ask !== null) {
     if (rail !== null && typeof rail.spend === 'function') {
       try {
