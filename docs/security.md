@@ -213,10 +213,10 @@ Phosphor code involved in the check.
    ```
 
 3. The digest the release's source builds, on a Mac with Node 24 and Xcode's command line tools.
-   Use the tag of the version you have, such as v0.10.16:
+   Use the tag of the version you have, such as v0.10.17:
 
    ```
-   git clone --depth 1 --branch v0.10.16 https://github.com/karimbabasf/phosphor.git
+   git clone --depth 1 --branch v0.10.17 https://github.com/karimbabasf/phosphor.git
    cd phosphor && npm run bundle
    ```
 
