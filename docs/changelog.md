@@ -5,6 +5,29 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.18
+
+Built 2026-10-05, the simpler vault. Tagged v0.10.18 on 2026-10-05.
+
+- Phosphor pays NEAR's fee for every vault move, as it does for swaps. Each move goes through the
+  NEAR Intents relay with no quote, and done is still what NEAR's own records say. There is no gas
+  account to fill any more. NEAR left in a 0.10.16 gas account shows in the Vault tab with "Send to
+  my vault", which sends it back once NEAR Intents confirms it takes NEAR deposits.
+- Your vault sets up with one button, "Secure my vault". It shows only the steps you still need,
+  one at a time, and none that is already done.
+- A deposit address shows only when NEAR Intents' swap service says it takes that coin in right
+  now. Before, a slow check during an incident could show a TON address that was paused, to you and
+  to your assistant. Now both say Phosphor cannot confirm it yet, with Try again.
+- Your balance opens fast and never shows a false $0.00. Before it waited on the swap service's coin
+  list, up to ten seconds during today's incident. In Pro, a refresh that misses keeps your last good coins
+  on screen instead of "Still reading your coins".
+- Money you receive through a deposit address shows in Activity, as "Received 5 USDC on Base", with
+  its state and its chain transaction.
+- A send card says Done as soon as NEAR shows the money arrived, the way swap cards do since 0.10.17.
+- When your coin sits in your vault, your assistant proposes its exact amount, and Approve moves it
+  from your vault with one more Touch ID. Before, "swap all" read only the allowance and the
+  assistant sent you to the Vault tab instead.
+
 ## 0.10.17
 
 Built 2026-10-05, the swap card fix. Tagged v0.10.17 on 2026-10-05.
