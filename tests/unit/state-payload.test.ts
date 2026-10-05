@@ -28,6 +28,8 @@ import {
   PROPOSAL_PAGE_MAX,
   STATE_DECIDED_BYTES,
   STATE_DECIDED_KEPT,
+  STATE_FRESH_MS,
+  stateProposals,
 } from '../../src/http/state.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
@@ -254,6 +256,28 @@ test('state carries the most recent decided rows, up to the count and up to the 
   } finally {
     await h.close();
   }
+});
+
+/* A MOVE STILL RUNNING, OR ONE THAT JUST LANDED, RIDES WHATEVER THE BUDGET. The window repaints a
+   card only from a row on state (ui/screens/agent.js onProposals), and on 2026-10-05 the budget
+   carried three of eight swaps running at once: five cards waited for a buyer over swaps the store
+   had as done (tests/unit/swap-ran-proof.test.ts runs that through the app). Once a landed row is
+   older than STATE_FRESH_MS the history budget is all that holds it, as before. */
+test('every move still running, and every row that changed in the last two minutes, rides on state whatever the budget', () => {
+  const now = Date.parse('2026-10-05T10:00:00.000Z');
+  const ago = (ms: number): string => new Date(now - ms).toISOString();
+  const burst = (status: ProposalStatus, changedMsAgo: number) =>
+    Array.from({ length: 8 }, (_, i): Proposal => ({ ...row(`${status}-${i}`, status, 30), lastChangeAt: ago(changedMsAgo), ...(status === 'executed' ? { settledAt: ago(changedMsAgo) } : {}) }));
+  const ids = (rows: Proposal[]): string[] => stateProposals(rows, now).map((p) => p.id);
+  const running = [...burst('approved', 600_000).slice(0, 2), ...burst('executing', 5_000)];
+  const carried = ids([...history(40), ...running]);
+  for (const p of running) assert.ok(carried.includes(p.id), `${p.id} is running and was not on state`);
+  const landed = burst('executed', STATE_FRESH_MS - 1_000);
+  const justLanded = ids([...history(40), ...landed]);
+  for (const p of landed) assert.ok(justLanded.includes(p.id), `${p.id} landed a moment ago and was not on state`);
+  // Past the window, the budget alone decides again: the newest few, never all eight.
+  const old = ids([...history(40), ...burst('executed', STATE_FRESH_MS + 1_000)]);
+  assert.ok(old.length < 8 && old.length <= STATE_DECIDED_KEPT, `${old.length} rows after the window`);
 });
 
 /* The order the window reads. ui/screens/decision.js takes pending[0] out of the filtered list and

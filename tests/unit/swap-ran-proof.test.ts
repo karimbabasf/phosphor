@@ -23,11 +23,12 @@ import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_VERIFIER, RAN_RECHECK_MS, intentsN
 import { parseStatus } from '../../src/intents.ts';
 import type { OneClickQuote } from '../../src/intents.ts';
 import { proposalView } from '../../src/proposals/view.ts';
+import { stateProposals } from '../../src/http/state.ts';
 import type { Proposal, RailEvidence, RailResult, SwapDraft } from '../../src/types.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
+import { SELF_EVM, makeCtx, seededPolicy } from './helpers/proposals.ts';
 
 const OWNER = '0x19E7E376E7C213B7E7e7e46cc70A5dD086DAff2A';
-const ACCOUNT = OWNER.toLowerCase();
 const USDC = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 const START = Date.parse('2026-10-05T09:30:00.000Z');
 const SPEND = 1_016_800n; // 1.0168 USDC
@@ -117,15 +118,18 @@ function sharedClock(start: number) {
 
 type Outcome = { coin: Coin; result: RailResult; doneAt: number; ranAt: number; told: Array<{ at: number; stage: string }> };
 
-// `chain: 'hangs'` is an RPC that takes the watch's nonce question and never answers.
-async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<Outcome[]> {
-  const clock = sharedClock(START);
+/* 1Click and NEAR for the eight, on a clock the caller owns. NEAR runs a swap `runsAfterMs` after
+   its submit, or never when `nearRuns` is false: its nonce spent and its coin arrived. 1Click says
+   SUCCESS `saysAfterMs` after that for a prompt coin, and `lagsByMs` later still for a late one.
+   `chain: 'hangs'` is an RPC that takes the watch's nonce question and never answers. */
+type WorldOpts = { owner: string; now: () => number; runsAfterMs: number; saysAfterMs: number; lagsByMs: number; nearRuns?: boolean; chain?: 'answers' | 'hangs' };
+
+function worldOf(o: WorldOpts) {
   const submittedAt = new Map<string, number>();
   const coinByHandle = new Map(COINS.map((c) => [handleOf(c), c]));
   const coinByAsset = new Map(COINS.map((c) => [assetOf(c), c]));
   const coinByNonce = new Map(COINS.map((c, i) => [nonceOf(i), c]));
-  // When NEAR ran the swap for this coin, once its intent is in.
-  const ranAt = (c: Coin): number => (submittedAt.get(handleOf(c)) ?? Infinity) + RUNS_AFTER_MS;
+  const ranAt = (c: Coin): number => (o.nearRuns === false ? Infinity : (submittedAt.get(handleOf(c)) ?? Infinity) + o.runsAfterMs);
   const api = {
     tokens: async () => list,
     quote: async (q: { dry: boolean; destinationAsset: string }) => {
@@ -143,16 +147,16 @@ async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<
           timeEstimate: 12,
           depositAddress: handleOf(c),
         },
-        quoteRequest: { dry: q.dry, originAsset: USDC, destinationAsset: assetOf(c), amount: SPEND.toString(), depositType: 'INTENTS', recipientType: 'INTENTS', recipient: OWNER, refundType: 'INTENTS', refundTo: OWNER },
+        quoteRequest: { dry: q.dry, originAsset: USDC, destinationAsset: assetOf(c), amount: SPEND.toString(), depositType: 'INTENTS', recipientType: 'INTENTS', recipient: o.owner, refundType: 'INTENTS', refundTo: o.owner },
       });
       return { quote: signed['quote'] as OneClickQuote, raw: signed };
     },
     generateIntent: async ({ depositAddress }: { depositAddress: string }) => {
       const i = COINS.indexOf(coinByHandle.get(depositAddress)!);
       const payload = JSON.stringify({
-        signer_id: ACCOUNT,
+        signer_id: o.owner.toLowerCase(),
         verifying_contract: INTENTS_VERIFIER,
-        deadline: new Date(START + 72 * 3_600_000).toISOString(),
+        deadline: new Date(o.now() + 72 * 3_600_000).toISOString(),
         nonce: nonceOf(i),
         intents: [{ intent: 'transfer', receiver_id: depositAddress, tokens: { [USDC]: SPEND.toString() } }],
       });
@@ -160,35 +164,44 @@ async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<
     },
     submitIntent: async ({ payload }: { payload: string }) => {
       const handle = (JSON.parse(payload) as { intents: Array<{ receiver_id: string }> }).intents[0]!.receiver_id;
-      submittedAt.set(handle, clock.now());
+      submittedAt.set(handle, o.now());
       return { intentHash: `intent-${handle}`, correlationId: 'c' };
     },
     status: async (handle: string) => {
       const c = coinByHandle.get(handle)!;
-      const says = ranAt(c) + SAYS_AFTER_MS + (c.lags ? LAGS_BY_MS : 0);
-      return parseStatus({ status: clock.now() >= says ? 'SUCCESS' : 'PROCESSING' });
+      const says = ranAt(c) + o.saysAfterMs + (c.lags ? o.lagsByMs : 0);
+      return parseStatus({ status: o.now() >= says ? 'SUCCESS' : 'PROCESSING' });
     },
   };
-  const rail = intentsNativeRail({
-    keysPath: '/nonexistent',
-    quoteKey: TEST_QUOTE_KEY,
-    tokens,
-    api,
-    signer: { address: () => OWNER, signErc191: async () => 'secp256k1:stub' },
+  const chain = {
     // Ten USDC to spend; each bought coin arrives the moment NEAR runs its swap.
     verifierBalance: async (_account: string, asset: string) => {
       if (asset === USDC) return 10_000_000n;
       const c = coinByAsset.get(asset);
-      return c !== undefined && clock.now() >= ranAt(c) ? c.out : 0n;
+      return c !== undefined && o.now() >= ranAt(c) ? c.out : 0n;
     },
     nonceUsed: (_account: string, nonce: string, at?: string) => {
       // The watch asks at NEAR's final state; the deadline proof's reads at a block are its own.
-      if (opts.chain === 'hangs' && at === undefined) return new Promise<boolean | null>(() => {});
+      if (o.chain === 'hangs' && at === undefined) return new Promise<boolean | null>(() => {});
       const c = coinByNonce.get(nonce);
-      return Promise.resolve(c !== undefined && clock.now() >= ranAt(c));
+      return Promise.resolve(c !== undefined && o.now() >= ranAt(c));
     },
-    finalBlock: async () => ({ hash: `blk-${clock.now()}`, atMs: clock.now() - 2_600 }),
+    finalBlock: async () => ({ hash: `blk-${o.now()}`, atMs: o.now() - 2_600 }),
     saltValid: async () => true,
+  };
+  return { api, chain, ranAt };
+}
+
+async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<Outcome[]> {
+  const clock = sharedClock(START);
+  const world = worldOf({ owner: OWNER, now: clock.now, runsAfterMs: RUNS_AFTER_MS, saysAfterMs: SAYS_AFTER_MS, lagsByMs: LAGS_BY_MS, ...opts });
+  const rail = intentsNativeRail({
+    keysPath: '/nonexistent',
+    quoteKey: TEST_QUOTE_KEY,
+    tokens,
+    api: world.api,
+    signer: { address: () => OWNER, signErc191: async () => 'secp256k1:stub' },
+    ...world.chain,
     now: clock.now,
     sleepImpl: clock.sleep,
   });
@@ -202,7 +215,7 @@ async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<
       },
     };
     const result = await rail.execute(draftOf(coin), `p-${coin.symbol}`, hooks);
-    return { coin, result, doneAt: clock.now(), ranAt: ranAt(coin), told };
+    return { coin, result, doneAt: clock.now(), ranAt: world.ranAt(coin), told };
   });
   return clock.drive(Promise.all(runs));
 }
@@ -274,4 +287,77 @@ test('a chain read that never answers holds up nothing: 1Click\'s answers land w
     if (o.coin.lags) assert.ok(o.doneAt >= o.ranAt + SAYS_AFTER_MS + LAGS_BY_MS, `${o.coin.symbol} ended before 1Click's word`);
     else assert.equal(o.doneAt, answered.get(o.coin.symbol), `${o.coin.symbol} settled later than with a chain that answers`);
   }
+});
+
+// ---------- through the app, read the way the window reads it ----------
+
+/* The eight through the real proposal service and executor, in real time with the rail's polls
+   cut to tens of milliseconds, and read as the window reads them: /api/state's proposals
+   (stateProposals) with each row's view beside it (src/http/state.ts). The window repaints a card
+   only from a row that frame carries (ui/screens/agent.js onProposals): a row the frame leaves out
+   is a card that keeps what it last showed while its own clock counts "Taking longer". On
+   2026-10-05 the frame's 6 KB of decided rows held three swaps of the eight; the agent, reading
+   the store, said all eight went through while five cards waited for a buyer. */
+async function throughTheApp(nearRuns: boolean) {
+  const world = worldOf({ owner: SELF_EVM, now: Date.now, runsAfterMs: 150, saysAfterMs: 150, lagsByMs: 60_000, nearRuns });
+  const rail = intentsNativeRail({
+    keysPath: '/nonexistent',
+    quoteKey: TEST_QUOTE_KEY,
+    tokens,
+    api: world.api,
+    signer: { address: () => SELF_EVM, signErc191: async () => 'secp256k1:stub' },
+    ...world.chain,
+    firstPollMs: 10,
+    pollIntervalMs: 40,
+    pollTimeoutMs: 3_000,
+    ranRecheckMs: 40,
+    settleSchedule: { firstMs: 10, maxMs: 40, timeoutMs: 1_000 },
+  });
+  const policy = seededPolicy();
+  policy.outbound.humanClickAboveUsd = 1_000;
+  const h = makeCtx({ policy, deps: { rails: { for: (d) => (d.kind === 'swap' && d.venue === 'intents-native' ? rail : null), kinds: () => ['swap'] } } });
+  const rows = await Promise.all(COINS.map((c) => h.svc.proposeSwap({ chain: 'base', toChain: 'arb', fromSymbol: 'USDC', toSymbol: c.symbol, amountIn: '1.0168', by: 'agent:test' })));
+  return {
+    h,
+    ids: rows.map((r) => r.id),
+    // What the window's cards are drawn from, by id.
+    frame: () => new Map(stateProposals(h.store.list()).map((p) => [p.id, h.svc.view(p)])),
+  };
+}
+
+async function until(check: () => boolean, ms: number): Promise<void> {
+  const deadline = Date.now() + ms;
+  while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 20));
+}
+
+test('through the app: every card the window draws says Done once NEAR shows its swap ran, the five 1Click is late on included', async () => {
+  const app = await throughTheApp(true);
+  await until(() => app.ids.every((id) => app.h.store.get(id)?.status === 'executed'), 8_000);
+  const frame = app.frame();
+  app.ids.forEach((id, i) => {
+    const c = COINS[i]!;
+    const row = app.h.store.get(id)!;
+    assert.equal(row.status, 'executed', `${c.symbol}: ${row.result?.detail}`);
+    if (c.lags) assert.match(row.result!.detail, /signed transfer spent while 1click still reported PROCESSING/, c.symbol);
+    const card = frame.get(id);
+    assert.ok(card !== undefined, `${c.symbol}: the store says executed and the window's frame does not carry the row, so its card stays as it last was`);
+    assert.equal(card.state, 'done', `${c.symbol}: the card reads ${card.stageLabel}, "${card.stageCopy}"`);
+  });
+  await app.h.svc.settle(5_000);
+});
+
+test('through the app: while NEAR has not run a swap, its card stays on "Sent. Waiting for a buyer to take it."', async () => {
+  const app = await throughTheApp(false);
+  await until(() => app.ids.every((id) => app.h.store.get(id)?.result?.evidence?.providerStage === 'PROCESSING'), 5_000);
+  // A few chain checks' worth of the watch asking, and NEAR saying no each time.
+  await new Promise((resolve) => setTimeout(resolve, 400));
+  const frame = app.frame();
+  app.ids.forEach((id, i) => {
+    const c = COINS[i]!;
+    const card = frame.get(id);
+    assert.ok(card !== undefined, `${c.symbol}: a move still running is missing from the window's frame`);
+    assert.equal(card.state, 'working', `${c.symbol}: ${card.stageLabel}`);
+    assert.equal(card.stageCopy, 'Sent. Waiting for a buyer to take it.', c.symbol);
+  });
+  await app.h.svc.settle(8_000);
 });

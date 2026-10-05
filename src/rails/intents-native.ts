@@ -747,6 +747,8 @@ export type IntentsNativeRailDeps = {
   // How long, and how often, the after-read is repeated once 1Click says SUCCESS. Defaults to
   // INTENTS_SETTLE; the tests shorten it.
   settleSchedule?: RiseSchedule;
+  // How often the watch asks NEAR whether the swap ran. Defaults to RAN_RECHECK_MS; the tests shorten it.
+  ranRecheckMs?: number;
 };
 
 /* The default reader, over the same view calls the ledger uses. It never throws: a verifier that
@@ -841,6 +843,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const maxDeadlineMs = deps.maxDeadlineMs ?? SIGNED_DEADLINE_MS;
   const quoteKey = deps.quoteKey;
   const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
+  const ranRecheckMs = deps.ranRecheckMs ?? RAN_RECHECK_MS;
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
@@ -1555,7 +1558,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     return {
       ask: async () => {
         if (after !== null) return true;
-        if (nonce === undefined || before === null || reading || now() - askedAt < RAN_RECHECK_MS) return false;
+        if (nonce === undefined || before === null || reading || now() - askedAt < ranRecheckMs) return false;
         askedAt = now();
         reading = true;
         void read(owner.toLowerCase(), nonce, before).catch(() => undefined);

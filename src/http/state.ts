@@ -51,18 +51,39 @@ const WAITING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awai
 // Of those, the ones waiting on the person's OK: the lock screen counts these.
 const ASKING: ReadonlySet<string> = new Set(['pending', 'pending_unlock', 'awaiting_touch']);
 
+/* STILL RUNNING, AND JUST LANDED: never trimmed either. The window repaints a move card only from
+   a row this frame carries (ui/screens/agent.js onProposals), so a row the budget drops is a card
+   that keeps the last thing it showed while its own clock counts on. On 2026-10-05 eight swaps ran
+   at once; a swap row is about 2.4 KB running and 3.1 KB landed, so the 6 KB budget carried the
+   newest three, and five cards said "Sent. Waiting for a buyer to take it." for minutes over swaps
+   the store, and the assistant reading it, had as done. A move that is running (approved,
+   executing) rides until it lands, and a row that changed in the last STATE_FRESH_MS rides
+   whatever the budget, so every card on screen sees its own landing. Both are bounded by what is
+   in flight, never by the data directory. */
+const RUNNING: ReadonlySet<string> = new Set(['approved', 'executing']);
+export const STATE_FRESH_MS = 2 * 60_000;
+
+// Whether the row's stage moved, or it settled, at or after `since`.
+function changedSince(p: Proposal, since: number): boolean {
+  return [p.lastChangeAt, p.settledAt].some((stamp) => {
+    const at = Date.parse(stamp ?? '');
+    return Number.isFinite(at) && at >= since;
+  });
+}
+
 /* The trim, in store order.
    The order is load-bearing rather than cosmetic: ui/screens/decision.js takes pending[0] out of
    the filtered list, so reversing here would silently change which proposal a person is asked
    about first. The walk is backwards to find the newest decided rows and the result is put back
    the way the store wrote it. */
-export function stateProposals(all: Proposal[]): Proposal[] {
+export function stateProposals(all: Proposal[], now: number = Date.now()): Proposal[] {
   const out: Proposal[] = [];
   let decided = 0;
   let bytes = 0;
+  const fresh = now - STATE_FRESH_MS;
   for (let i = all.length - 1; i >= 0; i -= 1) {
     const p = all[i];
-    if (WAITING.has(p.status)) {
+    if (WAITING.has(p.status) || RUNNING.has(p.status) || changedSince(p, fresh)) {
       out.push(p);
       continue;
     }
