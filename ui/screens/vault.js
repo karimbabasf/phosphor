@@ -11,6 +11,11 @@
                       limits, beside the assistant when the Vault is wide
      Your wallet      the keys, restore, the addresses, forget
 
+   Once this copy of Phosphor can move the vault to this Mac's Touch ID key, a
+   fourth, Your vault, sits between Safety and the wallet: the move, the
+   allowance, the gas account and the trading key (ui/screens/chip.js and
+   ui/screens/allowance.js draw its rows with this page's own pieces, `kit`).
+
    Every row is a tile: its name and one line on the left, its value or its
    one action on the right, and anything it opens (a confirm, a flow) grows
    in place under the words, never a dialog. The only red on the page is the
@@ -94,9 +99,12 @@
     mounted = true;
     store.subscribe(render);
     store.select('lock', function () {
-      /* A locked window is not a place for the phrase or the key. */
+      /* A locked window is not a place for the phrase, the key or a paper key. */
       var state = store.get() || {};
-      if (state.lock && state.lock.state !== 'unlocked') wipePhrase();
+      if (state.lock && state.lock.state !== 'unlocked') {
+        wipePhrase();
+        wipePaper();
+      }
     });
     window.addEventListener('phosphor:view', function (event) {
       var view = event && event.detail ? event.detail.view : null;
@@ -106,6 +114,7 @@
         mountAgents();
       } else {
         wipePhrase();
+        wipePaper();
         closeFreeze(false);
         closeForget(false);
       }
@@ -125,6 +134,8 @@
       } else if (refs.askEdit && !refs.askEdit.hidden) {
         event.preventDefault();
         closeAsk(true);
+      } else if (window.PhosphorAllowance && typeof window.PhosphorAllowance.escape === 'function' && window.PhosphorAllowance.escape()) {
+        event.preventDefault();
       }
     });
     render();
@@ -146,7 +157,7 @@
   /* A row is a tile: its glyph on a small raised tile before its name, as
      an agent's row leads with its mark, one line under the name, its value
      or its action on the right, and anything it opens under both. */
-  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash' };
+  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash', chip: 'mac', allowance: 'swap', gas: 'send', trading: 'long' };
 
   function row(title, surface) {
     var node = dom.el('div', 'vault-row');
@@ -305,6 +316,8 @@
     buildAddresses(wallet.body);
     buildForget(wallet.body);
     page.appendChild(wallet.node);
+    refs.page = page;
+    refs.walletSec = wallet.node;
 
     host.appendChild(page);
   }
@@ -1722,12 +1735,24 @@
     /* A password wallet has a second copy of itself: the file, encrypted
        under the same password. */
     refs.exportPassword = button('Save an encrypted copy', 'btn-quiet btn-sm');
+    /* A vault on a Touch ID key comes back on a new Mac in two steps, both
+       here: the wallet from its backup, then the vault from the paper key
+       (ui/screens/chip.js draws that restore in the vault's own row). */
+    refs.recoveryVault = text('vault-sub');
+    refs.recoveryVault.hidden = true;
+    r.main.appendChild(refs.recoveryVault);
+    refs.restoreVault = button('Restore your vault', 'btn-ghost btn-sm');
+    refs.restoreVault.hidden = true;
     var actions = dom.el('div', 'vault-actions');
     refs.restoreActions = actions;
     actions.appendChild(refs.restore);
     actions.appendChild(refs.restoreKey);
     actions.appendChild(refs.exportPassword);
+    actions.appendChild(refs.restoreVault);
     r.main.appendChild(actions);
+    dom.on(refs.restoreVault, 'click', function () {
+      if (window.PhosphorChip && typeof window.PhosphorChip.startRestore === 'function') window.PhosphorChip.startRestore();
+    });
     /* Not backed up, this button is Back up first: a password wallet shows its
        backup straight here, a Touch ID wallet goes to its backup row, whose
        line says why before its own Touch ID. */
@@ -1776,6 +1801,18 @@
     dom.setHidden(refs.restore, !canRestore || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.restoreKey, !canRestore || guarded || !refs.recoveryFlow.hidden);
     dom.setHidden(refs.exportPassword, !has || enclave || !refs.recoveryFlow.hidden);
+
+    /* A vault that moved to a Touch ID key: on a new Mac the wallet comes back
+       from its backup first, then the vault from the paper key. While the
+       vault waits for its paper here, its restore sits beside the wallet's. */
+    var chip = has && vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
+    var moved = !!chip && (chip.state === 'done' || chip.state === 'broken');
+    var waits = !!chip && chip.state === 'broken' && !!window.PhosphorChip;
+    dom.setText(refs.recoveryVault, waits
+      ? 'Your wallet is back. Your vault comes back with your paper key.'
+      : 'On a new Mac your vault comes back after the wallet, with your paper key.');
+    dom.setHidden(refs.recoveryVault, !moved);
+    dom.setHidden(refs.restoreVault, !waits || !refs.recoveryFlow.hidden);
   }
 
   function closeRecovery() {
@@ -2532,6 +2569,55 @@
       .finally(function () { window.PhosphorShell.setPending(refs.forget, false); });
   }
 
+  /* ---------- your vault ----------
+
+     The move to this Mac's Touch ID key, the allowance, the gas account and
+     the trading key. The section is drawn the first time the state carries a
+     vault slice this copy of Phosphor can act on (src/http/chip.ts
+     chipVaultSlice), between Safety and the wallet, and its two screens
+     paint it on every render after that. A copy that cannot move a vault (a
+     demo with no chain, a build with no keychain home, a Mac with no Touch
+     ID) shows nothing: a worry with nothing to do is not said at all. */
+  function vaultSlice(vault) {
+    var chip = vault && vault.chip;
+    if (!chip || typeof chip !== 'object' || !vault.custody) return null;
+    var needs = Array.isArray(chip.needs) ? chip.needs : [];
+    if (chip.state === 'done' || chip.state === 'broken' || chip.state === 'moving' || chip.run) return chip;
+    if (chip.state !== 'ready' && chip.state !== 'none') return null;
+    if (chip.state === 'none' && !needs.length) return null;
+    if (needs.indexOf('keychain') >= 0) return null;
+    if (vault.custody !== 'secure-enclave' && !(vault.enclave && vault.enclave.ready === true)) return null;
+    return chip;
+  }
+
+  function renderVault(state) {
+    var Chip = window.PhosphorChip;
+    var Allowance = window.PhosphorAllowance;
+    if (!Chip || !Allowance || !refs.page) return;
+    var chip = vaultSlice(state.vault || {});
+    if (!refs.vaultSec) {
+      if (!chip) return;
+      var sec = section('Your vault', 'chip');
+      sec.body.className += ' vault-grid';
+      refs.vaultSec = sec.node;
+      refs.page.insertBefore(sec.node, refs.walletSec);
+      Chip.mount(sec.body, kit);
+      Allowance.mount(sec.body, kit);
+      Chip.mountTrading(sec.body);
+    }
+    dom.setHidden(refs.vaultSec, !chip);
+    Chip.render(state, chip);
+    Allowance.render(state, chip);
+  }
+
+  /* The paper key leaves the window with the phrase: at a lock, and when the
+     tab is left. The lines a top-up or a refill left under their rows go
+     with it: back on the tab, the rows say what is true now. */
+  function wipePaper() {
+    if (window.PhosphorChip && typeof window.PhosphorChip.wipe === 'function') window.PhosphorChip.wipe();
+    if (window.PhosphorAllowance && typeof window.PhosphorAllowance.rest === 'function') window.PhosphorAllowance.rest();
+  }
+
   /* ---------- render ---------- */
 
   function render() {
@@ -2542,6 +2628,7 @@
     renderIdle(vault, state.lock);
     renderBackup(vault);
     renderLimits(state);
+    renderVault(state);
     renderCustody(vault);
     renderBind(vault);
     renderRecovery(vault);
@@ -2685,6 +2772,30 @@
     if (refs.backupGo && !refs.backupGo.hidden && refs.backupGo.focus) refs.backupGo.focus();
   }
 
+  /* This page's own pieces, for the two screens that draw Your vault: their
+     rows, flows, errors and motion are this page's, not copies of it. */
+  var kit = {
+    row: row,
+    grow: grow,
+    shrink: shrink,
+    text: text,
+    icon: icon,
+    append: append,
+    problem: problem,
+    say: say,
+    note: note,
+    sayRefusal: sayRefusal,
+    refusalWords: refusalWords,
+    pop: pop,
+    dateWords: dateWords,
+    usdShort: usdShort,
+    bringIntoView: bringIntoView,
+    focusRecovery: focusRecovery,
+    openMigrate: openMigrate,
+    visible: function () { return visible; },
+    CANCELLED: CANCELLED
+  };
+
   window.PhosphorVault = {
     boot: boot,
     render: render,
@@ -2694,6 +2805,7 @@
     focusRecovery: focusRecovery,
     openMigrate: openMigrate,
     printPhrase: printPhrase,
-    wipePhrase: wipePhrase
+    wipePhrase: wipePhrase,
+    kit: kit
   };
 })();

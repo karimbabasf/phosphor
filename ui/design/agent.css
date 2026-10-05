@@ -49,6 +49,24 @@
   color: #a9d8ff;
 }
 
+/* The vault moving to Touch ID: one sentence that wraps as text, in the line's own tones,
+   beside whatever control the head holds. */
+.agent-who[data-moving="true"] {
+  display: block;
+  padding-left: 26px;
+  text-indent: -26px;
+  white-space: normal;
+}
+
+.agent-who[data-moving="true"] .agent-who-mark {
+  vertical-align: -4px;
+  text-indent: 0;
+}
+
+.agent-who[data-moving="true"] .agent-who-state {
+  white-space: normal;
+}
+
 .agent-who[hidden] { display: none; }
 
 .agent-who-mark {

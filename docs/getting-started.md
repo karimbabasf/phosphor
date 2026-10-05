@@ -198,6 +198,55 @@ you make or restore a second wallet on this Mac, make the one you have Phosphor-
 prove its backup. A demo run never does this: it makes a password wallet and leaves Phosphor's keys
 alone.
 
+## Move your vault to Touch ID
+
+Your vault is the account every deposit lands in. On a Touch ID wallet, the Vault tab can move it to
+this Mac's Touch ID key and a paper key you write by hand. After the move nothing else opens it:
+every move out of the vault asks for a Touch ID that names it, and your assistant spends from a
+small allowance.
+
+Your paper key is the only key that opens your vault away from this Mac. Your recovery phrase also
+controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so
+keep both like cash. On a wallet with no recovery phrase, that second backup is your private key.
+
+Under Your vault, the Vault key row takes you through four steps, in order:
+
+1. **Back up your recovery phrase** (or private key). It still opens the allowance, the gas account
+   and Hyperliquid after the move.
+2. **Add NEAR to the gas account.** It pays NEAR's small fee for every move of your vault. Add 0.1 to
+   1 NEAR from the Gas account row: a payout you approve on its card in the conversation, with one
+   Touch ID that names the gas account.
+3. **Write your paper key.** Show my paper key puts 24 words on screen once, with your vault's
+   address to write under them. Write both by hand: there is no Print and no Copy, because a
+   printer, a screenshot or a clipboard keeps one more key to your vault. Then type all 24 words
+   back from the paper, one to a field, with pasting off. A slip is named by its number, never by
+   the word.
+4. **Move your vault.** Two Touch IDs: the first reads "Move your vault to this Mac's Touch ID key and
+   your paper key", the second "confirm this Mac's Touch ID key for your vault". Cancel any other
+   sentence. The row shows each step as it runs, and your assistant's moves wait until it is done.
+
+Afterwards the row lists who opens your vault, as NEAR reads it: this Mac's Touch ID key, your paper
+key, and not your recovery phrase. It also shows the NEAR door: a way for your recovery phrase to
+act for your vault through NEAR, which the move shut. NEAR Intents' admins can open it again for any
+account, and the row would then say so.
+
+The Allowance row reads like "$63 of $100": what your assistant spends with no Touch ID. Anything
+over the size plus 10 percent goes back to your vault on its own, USDC first. Top up asks for USDC
+from your vault on a card in the conversation, then one Touch ID that names the amount; under a
+quarter of its size the row says it is running low. A move bigger than the allowance asks two Touch
+IDs on Approve: the first approves the move, the second moves the difference from your vault to your
+allowance. See [Money](money.md#top-ups-and-the-sweep).
+
+Once the vault has moved, Allow trading on Hyperliquid, in the Trading key row, approves a new
+trading key with one Touch ID: "Let 0x... trade on your Hyperliquid account for 90 days". The row says
+when it ends. Allow a new one before then: without a trading key, Freeze cannot close your positions.
+
+On a new Mac, restore the wallet first, with I already have a wallet and your recovery phrase or
+private key. The Vault tab then says your vault waits for your paper key. Restore your vault, beside
+the wallet's own restore, has you write a new paper key, then type the old paper's 24 words, and one
+Touch ID brings the vault here. The restore retires the old paper. See
+[Troubleshooting](troubleshooting.md#moving-the-vault-to-touch-id).
+
 ## The five minute lock
 
 The wallet locks after five minutes with nobody at the window, when the Mac wakes from a sleep of
