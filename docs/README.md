@@ -4,7 +4,7 @@ These pages are the user documentation for Phosphor, the local Mac app that hold
 your venue connections and your rules while an agent proposes moves and you click. They describe
 version 0.10.16, the version in `package.json`. The site at
 [phosphor.money/docs](https://phosphor.money/docs) is rendered from these
-files, and the three developer documents below sit beside them.
+files, and the four developer documents below sit beside them.
 
 ## Pages
 - [Getting started](getting-started.md): download, check the file, make or restore a wallet, back it up, move your vault to Touch ID, the lock and the brake.
@@ -22,6 +22,7 @@ files, and the three developer documents below sit beside them.
 - [Architecture](architecture.md): the two-process topology, module map, data flow and failure modes.
 - [Security model](security-model.md): the threat model with the test behind each defence, the trust boundary, the three verdicts, fail-closed rules, the approval token and the v1 limits.
 - [Reference](reference.md): the tool surface, policy as sentences, the first run, config, keys and signing.
+- [Check it yourself](verify.md): the wallet's seven security claims, each with the code that enforces it, the test that proves it and the command that runs it; checking your download and your vault on NEAR.
 
 ## Keeping these current
 These pages describe the version in `package.json`, nothing older and nothing planned. Every
