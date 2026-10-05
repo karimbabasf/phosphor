@@ -576,6 +576,7 @@ test('the live registry holds every rail kind and nothing else', () => {
     'intents_send',
     'swap',
     'trade',
+    'vault_top_up',
   ]);
   for (const kind of registry.kinds()) {
     const rail = registry.for({ kind } as WriteDraft);

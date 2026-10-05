@@ -23,6 +23,7 @@ import type {
   IntentsSendDraft,
   SwapDraft,
   TradeDraft,
+  VaultTopUpDraft,
   WriteDraft,
 } from '../types.ts';
 
@@ -32,7 +33,8 @@ export type RailKind =
   | 'hl_withdraw'
   | 'intents_send'
   | 'intents_pay'
-  | 'trade';
+  | 'trade'
+  | 'vault_top_up';
 
 export type RailDraft =
   | SwapDraft
@@ -40,7 +42,8 @@ export type RailDraft =
   | HlWithdrawDraft
   | IntentsSendDraft
   | IntentsPayDraft
-  | TradeDraft;
+  | TradeDraft
+  | VaultTopUpDraft;
 
 export const RAIL_KINDS: readonly RailKind[] = [
   'swap',
@@ -49,6 +52,7 @@ export const RAIL_KINDS: readonly RailKind[] = [
   'intents_send',
   'intents_pay',
   'trade',
+  'vault_top_up',
 ];
 
 export function isRailKind(kind: WriteDraft['kind']): kind is RailKind {

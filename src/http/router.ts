@@ -58,6 +58,7 @@ import {
   handleVaultStatus,
   handleVaultUnlock,
 } from './vault.ts';
+import { handleAllowanceSize, handleAllowanceTopUp } from './allowance.ts';
 import { sendHealth } from './health.ts';
 import { sendDay } from './day.ts';
 import { sendCoinImage, sendCoinImages } from './pictures.ts';
@@ -191,6 +192,10 @@ const POST: Record<string, Route> = {
   '/api/vault/bind': (ctx, req, res) => handleVaultBind(ctx, req, res),
   '/api/vault/forget': (ctx, req, res) => handleVaultForget(ctx, req, res),
   '/api/vault/prefs': (ctx, req, res) => handleVaultPrefs(ctx, req, res),
+  // The allowance: a top-up the person asks for (it lands pending), and its size. Window token,
+  // never an op on /api/mcp. See src/http/allowance.ts.
+  '/api/vault/allowance/top-up': (ctx, req, res) => handleAllowanceTopUp(ctx, req, res),
+  '/api/vault/allowance/size': (ctx, req, res) => handleAllowanceSize(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).

@@ -41,6 +41,37 @@ Your assistant sees the two apart: its wallet read shows `spendable`, the allowa
 first, a top-up you confirm with Touch ID, and the swap quote says how much before anything is
 proposed.
 
+### Top-ups and the sweep
+
+The allowance has a size, $100 until you pick another in the Vault tab. Two moves keep it near
+that size, both inside NEAR Intents, both sent by your gas account (a small NEAR account the app
+derives from your wallet key, about 0.0005 NEAR a move):
+
+- **A top-up** moves USDC from your vault to your allowance. You ask for it in the Vault tab, or
+  the window offers one when the allowance falls under a quarter of its size. It always waits
+  for your click, whatever the amount, and then asks one Touch ID whose sentence names the amount:
+  "move 20.00 USDC from your vault to your allowance". The vault's Touch ID key signs it; your
+  assistant has no way to ask for one. A top-up never takes the allowance past its size plus 10 %
+  (more would only come straight back), and it does not count against the day's limits: the
+  money stays yours, in your other account.
+- **A move bigger than the allowance** waits for your click, whatever its size, and its card says
+  how much comes from the vault. Approving it asks the move's own Touch ID, then one Touch ID for
+  a top-up of exactly the difference, of the coin the move spends. Cancel either one and nothing
+  is signed for the move. A move nobody clicked never touches the vault: if the allowance turns
+  out short when it runs, it stops, and nothing is signed.
+- **The sweep** sends money home. When the allowance is worth more than its size plus 10 %,
+  everything over the size goes back to the vault with no click and no Touch ID: USDC first, then
+  the other coins from the largest dollar value down, and the allowance keeps at least its size.
+  It looks after every settled move that touched the allowance, every ten minutes while your
+  wallet is open, when you unlock, and when you change the size. A coin the app has no price for
+  never moves this way, and with no price at all nothing does. It waits while any move is
+  approved, waiting on a Touch ID or running, and Freeze stops it. Each sweep writes one line in
+  the log, `allowance_swept`, naming every coin and amount.
+
+A size of $0 sends everything priced home at the next sweep. What a Mac running someone else's
+code could spend with no Touch ID is the allowance (at most its size plus 10 %, $110 at the
+default) and the gas account; the vault needs your finger.
+
 ## Deposit
 
 Money comes in through the deposit card, never through a tool. Press Add money on the Basic or

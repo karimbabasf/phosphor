@@ -31,6 +31,10 @@ import { CLOSE_GRACE_MS } from '../keystore/store.ts';
 import { errText } from '../err-text.ts';
 import type { Keystore } from '../keystore/store.ts';
 import type { VaultRelay, VaultResult } from '../vault/relay.ts';
+import { ASK_TIMEOUT_MS } from '../vault/relay.ts';
+import { moveSpend } from '../vault/allowance.ts';
+import type { AllowanceService } from '../vault/allowance.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
@@ -78,6 +82,10 @@ export type ProposalDeps = {
      wallet is opened by password and a click is a click. */
   vault?: VaultRelay;
   keystore?: Keystore;
+  /* The vault's side of the allowance (src/vault/allowance.ts): the shortfall step a move bigger
+     than the allowance takes first, and the sweep after every settled move. Absent on a wallet
+     that has not moved to the chip, in demo mode and in tests, where nothing tops up or sweeps. */
+  allowance?: AllowanceService;
   held?: { retryMs: number; maxMs: number };
   /* The public chain read a send builder makes about the receiver (transaction count, balance,
      whether it is a contract), so the card can say "never used on Ethereum, check it twice".
@@ -180,6 +188,7 @@ export type PCtx = {
   venueCredited?: VenueCredited;
   vault?: VaultRelay;
   keystore?: Keystore;
+  allowance?: AllowanceService;
   recipientActivity?: (network: ChainNetwork, address: string) => Promise<AddressActivity | null>;
   // finishTouch, serialised by the service like approve is, so the continuation of a click
   // never interleaves with another proposal's execution.
@@ -407,6 +416,11 @@ export function selfAddresses(ctx: PCtx): string[] {
   for (const a of ownBook(ctx).evm) set.add(a.toLowerCase());
   const read = ctx.ledger.intents();
   for (const h of read?.holdings ?? []) set.add(h.accountId.toLowerCase());
+  /* The accounts the rails sign for, by name and not only once they hold something: an empty
+     allowance is still ours, and a top-up into it is a move between our own accounts
+     (p2-rails open risk 5). */
+  const rails = railAccounts(ctx.cfg.keysPath);
+  for (const a of [rails.vault, rails.spend, ctx.keystore?.derivedAccounts()?.allowance ?? null]) if (typeof a === 'string' && a !== '') set.add(a.toLowerCase());
   return [...set];
 }
 
@@ -506,6 +520,22 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
     ctx.keystore?.dropOwnerKey();
     const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
     ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; Touch ID asks at each owner signature`, { id, totalUsd: totalUsdOf(p.draft), ownerTouch: true });
+    return ctx.execute(approved);
+  }
+
+  /* A TOP-UP'S FINGER IS THE VAULT'S OWN (PHASE2-PLAN.md C8). The click approves it, and the one
+     Touch ID is the vault's chip key at its signature, whose sentence the vault service writes
+     from the payload ("move 5.00 USDC from your vault to your allowance"); an approval touch here
+     would open the wallet for nothing and put a second dialog in front of the one that matters.
+     The gas account that sends it lives in the open session, so a shut wallet is opened first:
+     the row stays pending and the click can be made again. */
+  if (p.draft.kind === 'vault_top_up') {
+    if (isLocked()) {
+      ctx.audit.append('approve_attempt_rejected', `approve for top-up ${id} while the wallet is shut`, { id, action: 'approve', locked: true });
+      throw new Error('Open your wallet first: the gas account that sends a top-up opens with it. Nothing changed.');
+    }
+    const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
+    ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; the vault's Touch ID asks at its signature`, { id, totalUsd: totalUsdOf(p.draft), vaultTouch: true });
     return ctx.execute(approved);
   }
 
@@ -630,7 +660,7 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
       const row = ctx.store.get(id);
       return row === undefined || !mayStillSign(row);
     },
-    CLOSE_GRACE_MS,
+    CLOSE_GRACE_MS + topUpGraceMs(ctx, current),
   );
   if (!opened.ok) {
     ctx.audit.append('proposal_created', `${id} goes back to pending: the data key did not open the wallet (${opened.error})`, { id, error: opened.error });
@@ -640,6 +670,23 @@ export async function finishTouch(ctx: PCtx, id: string, result: VaultResult): P
   ctx.audit.append('approved', `human approved ${current.kind} proposal ${id} with Touch ID`, { id, totalUsd: totalUsdOf(current.draft), touch: true });
   rememberRecipient(ctx, approved);
   return ctx.execute(approved);
+}
+
+/* A move on a vault that moved to the chip may take a top-up from the vault first, and that is a
+   Touch ID of its own, a dry run and a send before the move itself signs
+   (src/proposals/execute.ts, the shortfall step). On a wallet opened for this one move the key is
+   held that much longer, still only until the move has signed. */
+function topUpGraceMs(ctx: PCtx, p: Proposal): number {
+  const rails = railAccounts(ctx.cfg.keysPath);
+  const need = moveSpend(p.draft);
+  if (ctx.allowance === undefined || rails.kind !== 'chip' || rails.spend === null || need === null) return 0;
+  // Only where the ledger's last read shows the allowance short of the move, or shows nothing.
+  const read = ctx.ledger.intents();
+  if (read !== undefined && read.ok) {
+    const rows = read.holdings.filter((h) => h.accountId.toLowerCase() === rails.spend!.toLowerCase() && h.assetId === need.asset);
+    if (rows.every((h) => h.amountBase !== undefined) && rows.reduce((sum, h) => sum + BigInt(h.amountBase!), 0n) >= need.base) return 0;
+  }
+  return ASK_TIMEOUT_MS + 90_000;
 }
 
 /* THE OWNER KEY FOR ONE HYPERLIQUID SIGNATURE, BEHIND ONE TOUCH (P2.8). What a rail's signature asks
@@ -811,6 +858,9 @@ type DailyLimit = { capUsd: number; spentUsd: number; resetsAt: string | null };
    Under-counting one that succeeded costs the cap itself. */
 function countsAgainstCap(p: Proposal): boolean {
   if (p.kind === 'policy_change') return false;
+  /* A top-up moves money between the person's own accounts and leaves for nobody, and the move a
+     shortfall top-up pays for is charged in full on its own row: charging both would count it twice. */
+  if (p.kind === 'vault_top_up') return false;
   if (p.status === 'executed' || p.status === 'executing') return true;
   // A held row is a person's decision waiting on the chain: the app will move it on its own
   // the moment the checks clear, so the budget holds it while it waits.

@@ -1,14 +1,22 @@
 // Execution: the single exit for a freshly evaluated proposal, the one route from approved to
 // the thing that runs it, and the two ways a proposal actually moves (a rail, or a policy file).
 
-import type { Preflight, Proposal, Rail, RailEvidence, RailHooks, RailResult, WriteDraft } from '../types.ts';
+import type { Preflight, Proposal, Rail, RailEvidence, RailHooks, RailResult, SimulationResult, VaultTopUpDraft, VaultTopUpParams, Verdict, WriteDraft } from '../types.ts';
 import type { PocketRead } from '../ledger/settle.ts';
 import { SETTLING_SENTENCE } from '../ledger/settle.ts';
 import { loadPolicy, savePolicyChecked } from '../policy/file.ts';
 import { evaluate } from '../policy/engine.ts';
 import { renderSentences } from '../policy/render.ts';
 import { isLocked } from '../keystore/index.ts';
-import { buildCtx, errText, mergePatch, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { baseUnitsToDecimal, decimalToBaseUnits } from '../intents.ts';
+import { railAccounts } from '../intents-sign.ts';
+import { createAllowanceSweep } from '../rails/allowance-sweep.ts';
+import type { AllowanceSweep } from '../rails/allowance-sweep.ts';
+import { VAULT_TOP_UP_COUNTERPARTY } from '../rails/vault-topup.ts';
+import { SWEEP_MARGIN, amountWords, moveSpend, shortfallOf, shortfallSentence } from '../vault/allowance.ts';
+import type { CoinAmount } from '../vault/allowance.ts';
+import { buildCtx, errText, mergePatch, newProposal, nowIso, persist, totalUsdOf, enclaveGated } from './lifecycle.ts';
+import { priceOf } from './draft.ts';
 import { reservationMade } from './reservation.ts';
 import { within } from '../shutdown.ts';
 import { buildWallet } from '../wallet.ts';
@@ -49,6 +57,13 @@ export async function land(ctx: PCtx, p: Proposal): Promise<Proposal> {
       },
     };
   }
+  /* A MOVE BIGGER THAN THE ALLOWANCE WAITS FOR A CLICK, whatever its size, and its card says why:
+     the difference moves from the vault first, behind the vault's own Touch ID (the shortfall step,
+     executeRail below). The allowance is the most a move with no click may take (PHASE2-PLAN.md
+     section 1). Judged on the ledger's last read of the allowance; an unread one is left to the
+     rail's own live read, which refuses a balance it cannot see. */
+  const over = overAllowance(ctx, p.draft);
+  if (over !== null) p = { ...p, verdict: askedFor(p.verdict, over) };
   // And any move an agent the app did not spawn asked for before the person allowed it in the
   // window: it reads with its own tools, where this app cannot look (src/agents.ts). Ahead of the
   // web-read check, which such a seat also trips, because this reason says what to do about it.
@@ -393,14 +408,19 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
   };
 
   let result: RailResult;
-  try {
-    result = await rail.execute(p.draft, p.id, hooks);
-  } catch (err) {
-    // A rail that throws has said nothing about whether it sent anything, so its message
-    // is passed through as-is rather than summarised into "failed". A rail that knew why it
-    // stopped (a balance short of the amount, a price that moved) says so in the code.
-    const reason = reasonOf(err);
-    result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}`, ...(reason === undefined ? {} : { reason }) };
+  // A move bigger than the allowance takes the difference from the vault first, or nothing runs.
+  const short = await shortfallStep(ctx, p);
+  if (short !== null) result = short;
+  else {
+    try {
+      result = await rail.execute(p.draft, p.id, hooks);
+    } catch (err) {
+      // A rail that throws has said nothing about whether it sent anything, so its message
+      // is passed through as-is rather than summarised into "failed". A rail that knew why it
+      // stopped (a balance short of the amount, a price that moved) says so in the code.
+      const reason = reasonOf(err);
+      result = { ok: false, detail: `${p.draft.kind} rail threw: ${errText(err)}`, ...(reason === undefined ? {} : { reason }) };
+    }
   }
 
   const preflight = withPreflight(ctx.store.get(p.id)?.preflight, result.preflight);
@@ -485,6 +505,7 @@ async function runRail(ctx: PCtx, p: Proposal, rail: Rail, executing: Proposal, 
     ...checks,
   });
   if (settling) watchSettling(ctx);
+  afterSettledMove(ctx, recorded);
 
   /* And the decoration is not on the caller's clock either. `balanceAfter` is up to fifteen
      seconds of RPC across every chain, and until now the agent's tool call and the HTTP
@@ -685,6 +706,7 @@ export function judgeSettling(ctx: PCtx, p: Proposal): Proposal {
     `${units(floor, pocket.decimals)} ${pocket.symbol} floor this move was approved with.`;
   const done = persist(ctx, { ...row, status: 'executed', settledAt: nowIso(), pocket: settled, balances, result: { ok: true, detail, txids, ...kept } });
   ctx.audit.append('executed', `${row.id}: ${detail}`, { id: row.id, txids });
+  afterSettledMove(ctx, done);
   return done;
 }
 
@@ -765,6 +787,271 @@ export async function settleProposal(ctx: PCtx, id: string): Promise<Proposal> {
       ...(judged.result?.evidence === undefined ? {} : { evidence: judged.result.evidence }),
     },
   });
+}
+
+// ---------- the allowance ----------
+//
+// Once the vault has moved to this Mac's Touch ID key, every rail spends the allowance
+// (src/intents-sign.ts) and the vault moves only behind its own Touch ID (src/vault/allowance.ts).
+// Three things join that to the proposals: a move bigger than the allowance takes the exact
+// difference from the vault first; a person can top the allowance up from the window; and every
+// settled move that touched the allowance is followed by a look at whether it is over its size.
+
+// The account a draft spends from, lowercased, for the drafts that name one.
+function spenderOf(draft: WriteDraft): string | null {
+  return 'from' in draft && typeof draft.from === 'string' ? draft.from.toLowerCase() : null;
+}
+
+// What the ledger's last good read says one account holds of one coin, in base units; null with none.
+function ledgerHeld(ctx: PCtx, account: string, asset: string): bigint | null {
+  const read = ctx.ledger.intents();
+  if (read === undefined || !read.ok) return null;
+  let sum = 0n;
+  for (const h of read.holdings) {
+    if (h.accountId.toLowerCase() !== account.toLowerCase() || h.assetId !== asset) continue;
+    if (h.amountBase === undefined) return null;
+    sum += BigInt(h.amountBase);
+  }
+  return sum;
+}
+
+/* The card's line when a move spends more of a coin than the allowance holds, or null. Not for a
+   swap: its builder read the allowance live a moment before (src/proposals/rails.ts), and a ledger
+   read a refresh behind a top-up must not hold a swap the live read let through. */
+function overAllowance(ctx: PCtx, draft: WriteDraft): string | null {
+  if (ctx.allowance === undefined || draft.kind === 'swap') return null;
+  const rails = railAccounts(ctx.cfg.keysPath);
+  if (rails.kind !== 'chip' || rails.spend === null) return null;
+  const need = moveSpend(draft);
+  if (need === null || spenderOf(draft) !== rails.spend.toLowerCase()) return null;
+  const held = ledgerHeld(ctx, rails.spend, need.asset);
+  if (held === null || held >= need.base) return null;
+  return shortfallSentence(need, held, need.base - held);
+}
+
+/* For the swap builder (src/proposals/rails.ts), off live reads: the card's line when a swap
+   spends more than the allowance holds and the vault holds the rest, or null when it does not
+   (the builder then refuses as it always has). */
+export async function vaultShortfall(ctx: PCtx, coin: Pick<CoinAmount, 'asset' | 'symbol' | 'decimals'>, need: bigint, held: bigint | null): Promise<string | null> {
+  const service = ctx.allowance;
+  if (service === undefined || held === null || need <= held) return null;
+  const acc = service.accounts();
+  if (acc.kind !== 'chip' || acc.vault === null) return null;
+  const saved = await service.balance(acc.vault, coin.asset);
+  if (saved === null || held + saved < need) return null;
+  return shortfallSentence(coin, held, need - held);
+}
+
+/* An allow becomes a click, and a click keeps its own rule, each with the line beside it once:
+   the swap builder may already have said it off a live read (src/proposals/rails.ts). */
+function askedFor(verdict: Verdict, line: string): Verdict {
+  if (verdict.reasons.some((r) => r.startsWith('Your allowance holds '))) return verdict;
+  if (verdict.outcome === 'allow') return { outcome: 'needs_approval', reasons: [...verdict.reasons, line], why: [line] };
+  if (verdict.outcome === 'needs_approval') return { ...verdict, reasons: [...verdict.reasons, line], why: [...(verdict.why ?? verdict.reasons.slice(-1)), line] };
+  return verdict;
+}
+
+/* THE SHORTFALL STEP (PHASE2-PLAN.md C8, call 14). A move that spends more of a coin than the
+   allowance holds right now takes exactly the difference from the vault first, of that coin, as
+   a top-up row of its own (why: shortfall) that this move's click approved: the vault's chip key
+   signs it behind one Touch ID whose sentence names the amount, and the gas account sends it.
+   Only then does the move's own rail run. Null when there is nothing to add (or no allowance in
+   play, or nothing to read it by, which the rail then judges alone); a result when the move stops
+   here, with nothing signed for it.
+   Never on the policy's word: a move nobody clicked that turns out bigger than the allowance stops
+   here, and the vault is not touched. */
+async function shortfallStep(ctx: PCtx, p: Proposal): Promise<RailResult | null> {
+  const service = ctx.allowance;
+  if (service === undefined) return null;
+  const acc = service.accounts();
+  if (acc.kind !== 'chip' || acc.allowance === null || acc.vault === null) return null;
+  const need = moveSpend(p.draft);
+  const allowance = acc.allowance.toLowerCase();
+  if (need === null || spenderOf(p.draft) !== allowance) return null;
+  const held = await service.balance(allowance, need.asset);
+  if (held === null) return null;
+  const short = shortfallOf(need.base, held);
+  if (short === 0n) return null;
+  const coin: CoinAmount = { ...need, base: short };
+  const holds = `your allowance holds ${baseUnitsToDecimal(held, need.decimals)} ${need.symbol}, less than the ${amountWords(need)} this move spends`;
+  if (p.decidedBy !== 'human') {
+    return { ok: false, reason: 'insufficient_balance', detail: `${holds}, and money leaves your vault only on your click and your Touch ID; nothing was signed` };
+  }
+  const vault = acc.vault.toLowerCase();
+  const saved = await service.balance(vault, need.asset);
+  if (saved === null) return { ok: false, reason: 'balance_unread', detail: `${holds}, and your vault's ${need.symbol} could not be read just now; nothing was signed` };
+  if (saved < short) {
+    return { ok: false, reason: 'insufficient_balance', detail: `${holds}, and your vault holds ${baseUnitsToDecimal(saved, need.decimals)} ${need.symbol}, less than the ${amountWords(coin)} it would add; nothing was signed` };
+  }
+  const topUp = await shortfallTopUp(ctx, p, need, coin, vault, allowance);
+  if (topUp.status === 'executed') return null;
+  const why = topUp.result?.detail ?? topUp.verdict.reasons.at(-1) ?? topUp.status;
+  return {
+    ok: false,
+    reason: topUp.result?.reason ?? (topUp.status === 'policy_refused' ? 'policy_rule' : 'not_sent'),
+    detail: `the top-up of ${amountWords(coin)} from your vault this move needed first (${topUp.id}) is ${topUp.status}: ${why}; nothing was signed for this move`,
+  };
+}
+
+/* The shortfall's own row: priced as its share of the move, judged by the engine, dry-run by its
+   rail, approved by the click that approved the move, and run to its end before the move goes on. */
+async function shortfallTopUp(ctx: PCtx, parent: Proposal, need: CoinAmount, coin: CoinAmount, vault: string, allowance: string): Promise<Proposal> {
+  const parentUsd = totalUsdOf(parent.draft);
+  const draft: VaultTopUpDraft = {
+    kind: 'vault_top_up',
+    why: 'shortfall',
+    asset: coin.asset,
+    symbol: coin.symbol,
+    decimals: coin.decimals,
+    amount: baseUnitsToDecimal(coin.base, coin.decimals),
+    amountUsd: parentUsd > 0 && need.base > 0n ? (parentUsd * Number(coin.base)) / Number(need.base) : Infinity,
+    from: vault,
+    to: allowance,
+    counterparty: VAULT_TOP_UP_COUNTERPARTY,
+    forProposal: parent.id,
+  };
+  const { row, rail } = await judgedTopUp(ctx, draft);
+  if (row.verdict.outcome === 'refuse' || rail === null || row.simulation?.ok !== true) {
+    const stopped = persist(ctx, { ...row, status: 'policy_refused', decidedBy: 'policy', decidedAt: nowIso() });
+    ctx.audit.append('policy_refused', `${row.id}: the top-up for proposal ${parent.id} was refused: ${row.verdict.reasons.at(-1) ?? row.simulation?.error ?? 'no rail'}`, { id: row.id, forProposal: parent.id });
+    return stopped;
+  }
+  const approved = persist(ctx, { ...row, status: 'approved', decidedBy: 'human', decidedAt: parent.decidedAt ?? nowIso() });
+  ctx.audit.append('approved', `${row.id}: ${amountWords(coin)} from the vault, the difference proposal ${parent.id} needs, approved by that click; the vault's Touch ID asks at its signature`, {
+    id: row.id,
+    forProposal: parent.id,
+    totalUsd: totalUsdOf(draft),
+    vaultTouch: true,
+  });
+  const running = await executeRail(ctx, approved, rail);
+  return (await ctx.inflight.get(running.id)) ?? ctx.store.get(running.id) ?? running;
+}
+
+// A top-up draft as a row: the engine's verdict and its rail's dry run, nothing landed yet.
+async function judgedTopUp(ctx: PCtx, draft: VaultTopUpDraft): Promise<{ row: Proposal; rail: Rail | null }> {
+  const verdict = evaluate(draft, buildCtx(ctx, ctx.ledger.snapshot(), loadPolicy(ctx.dataDir)));
+  const rail = ctx.rails.for(draft);
+  let simulation: SimulationResult | null = null;
+  if (verdict.outcome !== 'refuse' && rail !== null) {
+    try {
+      simulation = await rail.simulate(draft);
+    } catch (err) {
+      simulation = { ok: false, summary: `top-up simulation threw: ${errText(err)}`, error: errText(err) };
+    }
+  }
+  return { row: newProposal('vault_top_up', draft, simulation, verdict), rail };
+}
+
+/* A TOP-UP A PERSON ASKS FOR, from the window (POST /api/vault/allowance/top-up): dollars of USDC,
+   from the vault's largest USDC, never past what keeps the allowance at its size plus 10 %
+   (more would only come straight back at the next sweep). It lands pending: the engine always
+   asks, and the click then runs it behind the vault's own Touch ID. A request the app will not
+   file throws, with the sentence the window shows. */
+export async function proposeVaultTopUp(ctx: PCtx, params: VaultTopUpParams): Promise<Proposal> {
+  const service = ctx.allowance;
+  const acc = service?.accounts();
+  if (service === undefined || acc === undefined || acc.kind !== 'chip' || acc.vault === null) {
+    throw new Error("Your vault is not on this Mac's Touch ID key, so there is no vault to top up from. Nothing changed.");
+  }
+  if (acc.allowance === null) throw new Error('Open your wallet first, so Phosphor knows your allowance. Nothing changed.');
+  const usd = typeof params.usd === 'number' && Number.isFinite(params.usd) ? Math.round(params.usd * 100) / 100 : NaN;
+  if (!(usd > 0) || usd > 1_000_000) throw new Error('A top-up is an amount of dollars above zero. Nothing changed.');
+  const size = service.sizeUsd();
+  if (!(size > 0)) throw new Error('Your allowance size is $0, so a top-up would go straight back to your vault. Pick a size first. Nothing changed.');
+  const vault = acc.vault.toLowerCase();
+  const allowance = acc.allowance.toLowerCase();
+  const heldUsd = allowanceUsd(ctx, allowance);
+  const room = Math.floor(((heldUsd === null ? size : size * (1 + SWEEP_MARGIN) - heldUsd) + 1e-9) * 100) / 100;
+  if (room <= 0) throw new Error(`Your allowance already holds $${(heldUsd ?? 0).toFixed(2)} of its $${size.toFixed(2)} size. Nothing changed.`);
+  if (usd > room) throw new Error(`Your allowance can take at most $${room.toFixed(2)} more right now, or the extra goes straight back to your vault. Nothing changed.`);
+  // The vault's USDC with the most in it, by the ledger's last read: the coin and the count it is held in.
+  const read = ctx.ledger.intents();
+  const usdc = (read?.ok === true ? read.holdings : [])
+    .filter((h) => h.accountId.toLowerCase() === vault && h.symbol.toUpperCase() === 'USDC' && h.amountBase !== undefined && BigInt(h.amountBase) > 0n)
+    .sort((a, b) => (BigInt(b.amountBase!) > BigInt(a.amountBase!) ? 1 : -1))[0];
+  if (usdc === undefined) throw new Error('Your vault holds no USDC to move to your allowance. Nothing changed.');
+  const base = decimalToBaseUnits(usd.toFixed(2), usdc.decimals);
+  if (BigInt(usdc.amountBase!) < base) {
+    throw new Error(`Your vault holds ${baseUnitsToDecimal(BigInt(usdc.amountBase!), usdc.decimals)} USDC, less than the ${usd.toFixed(2)} this top-up moves. Nothing changed.`);
+  }
+  const draft: VaultTopUpDraft = {
+    kind: 'vault_top_up',
+    why: params.why === 'low' ? 'low' : 'manual',
+    asset: usdc.assetId,
+    symbol: 'USDC',
+    decimals: usdc.decimals,
+    amount: baseUnitsToDecimal(base, usdc.decimals),
+    amountUsd: usd,
+    from: vault,
+    to: allowance,
+    counterparty: VAULT_TOP_UP_COUNTERPARTY,
+  };
+  const { row } = await judgedTopUp(ctx, draft);
+  if (row.verdict.outcome !== 'refuse' && row.simulation?.ok !== true) {
+    return land(ctx, {
+      ...row,
+      verdict: {
+        outcome: 'refuse',
+        reasons: [...row.verdict.reasons, `The dry run failed, so nothing is signed: ${row.simulation?.error ?? row.simulation?.summary ?? 'no rail can run a top-up here'}`],
+        rule: 'simulation_required',
+        reasonCodes: [row.simulation?.reason ?? 'simulation_failed'],
+      },
+    });
+  }
+  return land(ctx, row);
+}
+
+// What the allowance holds in dollars, priced the engine's way; null with no read or a coin it cannot price.
+function allowanceUsd(ctx: PCtx, allowance: string): number | null {
+  const read = ctx.ledger.intents();
+  if (read === undefined || !read.ok) return null;
+  let total = 0;
+  for (const h of read.holdings) {
+    if (h.accountId.toLowerCase() !== allowance) continue;
+    const price = priceOf(ctx, h.symbol, ctx.ledger.snapshot(), h.assetId);
+    if (price === null) return null;
+    total += h.amount * price;
+  }
+  return total;
+}
+
+// ---------- the sweep ----------
+
+const sweepers = new WeakMap<PCtx, AllowanceSweep>();
+
+/* The allowance's sweep for this service (src/rails/allowance-sweep.ts), built once, on the
+   engine's own prices and the service's own rows: nothing goes home while a move is approved,
+   waiting on a Touch ID or executing. Null where there is no allowance. */
+export function sweeperFor(ctx: PCtx): AllowanceSweep | null {
+  const service = ctx.allowance;
+  if (service === undefined) return null;
+  const known = sweepers.get(ctx);
+  if (known !== undefined) return known;
+  const made = createAllowanceSweep({
+    service,
+    sizeUsd: () => service.sizeUsd(),
+    read: () => ctx.ledger.intents(),
+    price: (symbol, asset) => priceOf(ctx, symbol, ctx.ledger.snapshot(), asset),
+    busy: () => ctx.store.list().some((r) => r.status === 'approved' || r.status === 'awaiting_touch' || r.status === 'executing'),
+    frozen: () => {
+      const policy = loadPolicy(ctx.dataDir);
+      return policy === null || policy.killSwitch;
+    },
+    isOpen: () => ctx.keystore?.isUnlocked() ?? false,
+    audit: ctx.audit,
+    refresh: () => void ctx.ledger.refresh().catch(() => undefined),
+    ...(ctx.ledger.onRefresh === undefined ? {} : { onRefresh: (fn: () => void) => ctx.ledger.onRefresh!(fn) }),
+  });
+  sweepers.set(ctx, made);
+  return made;
+}
+
+// A move that touched the allowance settled: the sweep looks at the next read that shows it.
+function afterSettledMove(ctx: PCtx, row: Proposal): void {
+  if (ctx.allowance === undefined) return;
+  const spender = spenderOf(row.draft);
+  const touched = row.draft.kind === 'vault_top_up' || (moveSpend(row.draft) !== null && spender !== null && spender === ctx.allowance.accounts().allowance?.toLowerCase());
+  if (touched) sweeperFor(ctx)?.after();
 }
 
 async function applyPolicyChange(ctx: PCtx, p: Proposal): Promise<Proposal> {

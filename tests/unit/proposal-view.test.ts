@@ -477,6 +477,24 @@ test('a change to an armed trade says which change it is', () => {
   assert.equal(sentenceFor({ ...base, stop: 95000, target: 99000.5 }), 'Trade pl-1: stop 95000, target 99000.5');
 });
 
+test('a top-up names the exact amount and the two accounts, both inside NEAR Intents', () => {
+  assert.equal(
+    sentenceFor({
+      kind: 'vault_top_up',
+      why: 'manual',
+      asset: 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1',
+      symbol: 'USDC',
+      decimals: 6,
+      amount: '5.25',
+      amountUsd: 5.25,
+      from: '0x1111111111111111111111111111111111111111',
+      to: '0x2222222222222222222222222222222222222222',
+      counterparty: 'intents.near',
+    }),
+    '5.25 USDC from your vault to your allowance, inside NEAR Intents',
+  );
+});
+
 // Runs last, and reads what the cases above asserted: a kind added to the app without a line
 // of its own would draw a card and answer an agent with a blank where the move should be.
 test('every kind this app writes has a sentence of its own, asserted above', () => {

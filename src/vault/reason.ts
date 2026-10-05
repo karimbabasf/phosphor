@@ -145,6 +145,9 @@ function describe(draft: WriteDraft): string {
       return `Withdraw ${amount(draft.amount, draft.symbol)} out of Hyperliquid (${usd(draft.amountUsd)})`;
     case 'policy_change':
       return 'Change the policy that limits what the agent may do';
+    // Never asked as an approval: the vault service writes a top-up's sentence (src/vault/chip.ts).
+    case 'vault_top_up':
+      return `Move ${clean(draft.amount)} ${clean(draft.symbol)} from your vault to your allowance (${usd(draft.amountUsd)})`;
     case 'trade':
       return draft.op === 'open'
         ? `Arm a trade on Hyperliquid risking ${usd(draft.amountUsd)}`

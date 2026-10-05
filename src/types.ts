@@ -8,6 +8,7 @@ import type { PlanRisk } from './trade/risk.ts';
 import type { AddressActivity } from './chainscan/index.ts';
 import type { ProposalView } from './proposals/view.ts';
 import type { SwapAssetsParams, SwapAssetsReply, SwapCheckReply, SwapQuoteParams, SwapQuoteReply } from './proposals/swap-reads.ts';
+import type { SweepOutcome, SweepWhy } from './rails/allowance-sweep.ts';
 // Re-exported so every caller reads the one object from the one contract without importing
 // two files to describe one row.
 export type { ProposalStage, ProposalView, TxLeg } from './proposals/view.ts';
@@ -404,6 +405,26 @@ export type TradeDraft =
       counterparty: string;
     };
 
+/* Money moving from the vault to the allowance, inside the verifier, once the vault has moved to
+   this Mac's Touch ID key (PHASE2-PLAN.md C8). The vault's chip key signs it behind one Touch ID
+   whose sentence names the amount, and the gas account sends it: never the agent, never with no
+   click. `why` is who asked: a move bigger than the allowance (`shortfall`, the exact difference,
+   filed by the app when a person approved that move, `forProposal` naming it), the window's
+   offer when the allowance runs low (`low`), or the person (`manual`). See src/vault/allowance.ts. */
+export type VaultTopUpDraft = {
+  kind: 'vault_top_up';
+  why: 'shortfall' | 'low' | 'manual';
+  asset: string; // the verifier's id for the coin, e.g. nep141:17208628...36133a1
+  symbol: string;
+  decimals: number;
+  amount: string; // exact, in `symbol` units, cut to `decimals`
+  amountUsd: number;
+  from: string; // the vault, lowercased
+  to: string; // the allowance, lowercased
+  counterparty: string; // the verifier: both accounts live inside it
+  forProposal?: string;
+};
+
 export type WriteDraft =
   | { kind: 'policy_change'; patch: PolicyPatch; sentence: string }
   | SwapDraft
@@ -411,7 +432,8 @@ export type WriteDraft =
   | HlWithdrawDraft
   | IntentsSendDraft
   | IntentsPayDraft
-  | TradeDraft;
+  | TradeDraft
+  | VaultTopUpDraft;
 
 // One rail per feature, each owning exactly one module under src/rails/. The dispatch
 // table in proposals.ts is the only place that knows they all exist, which is what lets
@@ -799,6 +821,9 @@ export type LogEvent = {
     // executed line has to follow one. Neither line carries the code.
     | 'invite_claimed'
     | 'invite_failed'
+    // The allowance sent what it held over its size home to the vault, or tried to
+    // (src/rails/allowance-sweep.ts). Never 'executed': no approval comes before a sweep.
+    | 'allowance_swept'
     | 'chain_stale'
     // A view change is a thing an agent did to what a human sees, so the transcript
     // says so. 'view_refused' is HISTORICAL: the switch used to be declined while a
@@ -917,6 +942,8 @@ export type SendParams = { to: string; symbol: string; amount: number; where: st
 // No address, no recipient, no contract. The agent sends a plan or names one it drew, and
 // everything about WHERE the money is resolves from the app's own config and the venue table.
 export type TradeParams = { plan?: unknown; planId?: string; by?: string | null; clientKey?: ClientKey };
+// A top-up the window asks for, in dollars of USDC; never an agent's (there is no tool for it).
+export type VaultTopUpParams = { usd: number; why: 'low' | 'manual' };
 export type TradeChangeParams = { id: string; stop?: number; target?: number; cancel?: boolean; close?: boolean; clientKey?: ClientKey; by?: string };
 
 export type ProposalService = {
@@ -927,6 +954,12 @@ export type ProposalService = {
   proposeSend(params: SendParams): Promise<Proposal>;
   proposeTrade(params: TradeParams): Promise<Proposal>;
   proposeTradeChange(params: TradeChangeParams): Promise<Proposal>;
+  /* A top-up from the vault to the allowance (src/vault/allowance.ts): always a click, then the
+     vault's own Touch ID. Optional so a stand-in service need not carry it. */
+  proposeVaultTopUp?(params: VaultTopUpParams): Promise<Proposal>;
+  /* Send what the allowance holds over its size plus 10 % home to the vault, now, if the wallet is
+     open and nothing else is moving (src/rails/allowance-sweep.ts). Null where there is no allowance. */
+  sweepAllowance?(why: SweepWhy): Promise<SweepOutcome | null>;
   approve(id: string): Promise<Proposal>; // human path only; executes on approval
   refuse(id: string): Promise<Proposal>;
   /* Re-decide everything queued while the wallet was locked, against the policy and balances
