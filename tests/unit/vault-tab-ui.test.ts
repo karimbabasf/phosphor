@@ -891,10 +891,10 @@ test('a cancelled Touch ID on the reveal shows nothing and says nothing', async 
 
 /* ---------- a wallet with no phrase: its private key, in the same row ---------- */
 
-test('after the vault moved, the reveal still shows the words and says they open the allowance, the gas account and Hyperliquid, and no longer the vault', async () => {
+test('after the vault moved, the reveal still shows the words and says they open the allowance and Hyperliquid, and no longer the vault', async () => {
   const WORDS_LINE = 'Your vault moved to a Touch ID key, so these words no longer open it.';
   const KEY_LINE = 'Your vault moved to a Touch ID key, so this key no longer opens it.';
-  const WORDS_TAKE = 'On this screen only. Anyone who reads these words can take what your allowance, the gas account and Hyperliquid hold.';
+  const WORDS_TAKE = 'On this screen only. Anyone who reads these words can take what your allowance and Hyperliquid hold.';
   const MONEY = 'On this screen only. Anyone who reads these words can take your money.';
   const opened = async (vault: Any): Promise<World> => {
     const world = build({ vault });
@@ -924,12 +924,12 @@ test('after the vault moved, the reveal still shows the words and says they open
   // A wallet with no phrase: its key, said the same way.
   const key = await revealed({ hasMnemonic: false, chip: { state: 'done', oldOnChain: false } });
   assert.ok(key.includes(KEY_LINE));
-  assert.ok(key.includes('Anyone who has this key can take what your allowance, the gas account and Hyperliquid hold. Keep it where only you can reach it.'));
+  assert.ok(key.includes('Anyone who has this key can take what your allowance and Hyperliquid hold. Keep it where only you can reach it.'));
   // The printed sheet says the same.
   const world = await opened({ chip: { state: 'done', oldOnChain: false } });
   buttonNamed(flow(world), 'Print').click();
   const printed = world.calls.find((c) => c.route === 'print');
-  assert.ok(printed && textOf(printed.sheet).includes('Anyone who has these words has your allowance, the gas account and Hyperliquid. Keep this sheet away from your Mac.'));
+  assert.ok(printed && textOf(printed.sheet).includes('Anyone who has these words has your allowance and Hyperliquid. Keep this sheet away from your Mac.'));
 });
 
 const KEY_HEX = GROUPS.join('');

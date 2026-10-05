@@ -13,8 +13,9 @@
 
    Once this copy of Phosphor can move the vault to this Mac's Touch ID key, a
    fourth, Your vault, sits between Safety and the wallet: the move, the
-   allowance, the gas account and the trading key (ui/screens/chip.js and
-   ui/screens/allowance.js draw its rows with this page's own pieces, `kit`).
+   allowance, the old fee account while it holds NEAR, and the trading key
+   (ui/screens/chip.js and ui/screens/allowance.js draw its rows with this
+   page's own pieces, `kit`).
 
    Every row is a tile: its name and one line on the left, its value or its
    one action on the right, and anything it opens (a confirm, a flow) grows
@@ -157,7 +158,7 @@
   /* A row is a tile: its glyph on a small raised tile before its name, as
      an agent's row leads with its mark, one line under the name, its value
      or its action on the right, and anything it opens under both. */
-  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash', chip: 'mac', allowance: 'swap', gas: 'send', trading: 'long' };
+  var ROW_GLYPHS = { freeze: 'freeze', window: 'lock', backup: 'shield', rules: 'gauge', custody: 'key', recovery: 'retry', addresses: 'deposit', danger: 'trash', chip: 'mac', allowance: 'swap', 'old-fee': 'deposit', trading: 'long' };
 
   function row(title, surface) {
     var node = dom.el('div', 'vault-row');
@@ -659,7 +660,12 @@
 
   function proven() {
     popMark = true;
-    wipePhrase().then(function () { bringIntoView(refs.backupRow); });
+    wipePhrase().then(function () {
+      // A backup the vault's steps asked for: their next step comes into view instead.
+      var chip = window.PhosphorChip;
+      if (chip && typeof chip.backedUp === 'function' && chip.backedUp()) return;
+      bringIntoView(refs.backupRow);
+    });
     return window.PhosphorShell.refresh({});
   }
 
@@ -858,8 +864,8 @@
   }
 
   /* Once the vault has moved to a Touch ID key, what this row shows no longer
-     opens the vault, and the allowance, the gas account and Hyperliquid are
-     still its own (docs/known-limits.md says the same), so the reveal and its
+     opens the vault, and the allowance and Hyperliquid are still its own
+     (docs/known-limits.md says the same), so the reveal and its
      sheet say so. NEAR's reading of the wallet's key decides; with none in, a
      vault this Mac moved does. A NEAR door NEAR reads open lets the words
      reach the vault again, and then nothing here says otherwise. */
@@ -880,7 +886,7 @@
      take. The words stay on this screen; the key can go to a password
      manager, so its line says who it is for instead. */
   function takes(what) {
-    var take = vaultMoved() ? 'what your allowance, the gas account and Hyperliquid hold.' : 'your money.';
+    var take = vaultMoved() ? 'what your allowance and Hyperliquid hold.' : 'your money.';
     if (what === 'key') return 'Anyone who has this key can take ' + take + ' Keep it where only you can reach it.';
     return 'On this screen only. Anyone who reads these words can take ' + take;
   }
@@ -943,7 +949,7 @@
     if (!words || !words.length) return;
     var sheet = dom.el('div', 'print-sheet');
     sheet.appendChild(dom.el('h1', '', 'Phosphor recovery phrase'));
-    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has ' + (vaultMoved() ? 'your allowance, the gas account and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
+    sheet.appendChild(dom.el('p', '', 'Anyone who has these words has ' + (vaultMoved() ? 'your allowance and Hyperliquid' : 'the money') + '. Keep this sheet away from your Mac.'));
     var list = dom.el('ol', '');
     for (var i = 0; i < words.length; i += 1) list.appendChild(dom.el('li', '', words[i]));
     sheet.appendChild(list);
@@ -2680,10 +2686,11 @@
 
   /* ---------- your vault ----------
 
-     The move to this Mac's Touch ID key, the allowance, the gas account and
-     the trading key. The section is drawn the first time the state carries a
-     vault slice this copy of Phosphor can act on (src/http/chip.ts
-     chipVaultSlice), between Safety and the wallet, and its two screens
+     The move to this Mac's Touch ID key, the allowance, the old fee account
+     while it holds NEAR, and the trading key. The section is drawn the first
+     time the state carries a vault slice this copy of Phosphor can act on
+     (src/http/chip.ts chipVaultSlice), between Safety and the wallet, and its
+     two screens
      paint it on every render after that. A copy that cannot move a vault (a
      demo with no chain, a build with no keychain home, a Mac with no Touch
      ID) shows nothing: a worry with nothing to do is not said at all. */
@@ -2720,8 +2727,9 @@
   }
 
   /* The paper key leaves the window with the phrase: at a lock, and when the
-     tab is left. The lines a top-up or a refill left under their rows go
-     with it: back on the tab, the rows say what is true now. */
+     tab is left. The lines a top-up or a send from the old fee account left
+     under their rows go with it: back on the tab, the rows say what is true
+     now. */
   function wipePaper() {
     if (window.PhosphorChip && typeof window.PhosphorChip.wipe === 'function') window.PhosphorChip.wipe();
     if (window.PhosphorAllowance && typeof window.PhosphorAllowance.rest === 'function') window.PhosphorAllowance.rest();
@@ -2900,6 +2908,7 @@
     usdShort: usdShort,
     bringIntoView: bringIntoView,
     focusRecovery: focusRecovery,
+    startReveal: startReveal,
     openMigrate: openMigrate,
     visible: function () { return visible; },
     CANCELLED: CANCELLED
