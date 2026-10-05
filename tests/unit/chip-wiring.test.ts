@@ -626,3 +626,58 @@ test('end to end, the real backend in demo mode: at start it asks the service on
     await shell?.stop();
   }
 });
+
+/* The one gate has a state vault.json's word never had: a marker whose chain read is not back yet
+   counts as moved. A session opened before the marker was known still holds the owner key, and the
+   keystore lets go of it only at its next ask. A withdrawal approved in that moment skips its
+   approval touch; if the chain then answers that the vault never moved, the key the session held
+   would sign the send with no Touch ID at all. So the click that skips the touch also takes the
+   key out of the session (src/proposals/lifecycle.ts approve), and the send asks its own. */
+test('a gate that closes on a session still holding the owner key: the approved withdrawal still signs behind its own Touch ID once the chain says the vault never moved', async () => {
+  const v = chipVault(V.old, { moved: false });
+  await v.attach();
+  const dir = tempDir('phosphor-chip-wiring-');
+  fs.mkdirSync(path.join(dir, 'state'));
+  const prefs = createVaultPrefs(path.join(dir, 'state'));
+  let answerChain: (moved: boolean) => void = () => {};
+  const chainRead = new Promise<boolean>((resolve) => (answerChain = resolve));
+  const gate = ownerKeyGate(() => prefs.get(), v.relay, { hasPublicKey: () => chainRead });
+  v.store.keepOwnerKeyOutWhen(gate);
+  useOwnerTouch(ownerTouchVia({ vault: v.relay, keystore: v.store, ownerOut: gate }));
+  v.open();
+  assert.equal(v.store.evmPrivateKey(), `0x${V.old}`, 'a kind key wallet, open, its owner key in the session');
+
+  // While it is open the service's status names a chip marker for this vault: a rekey that stopped
+  // after its commit, say. The chain has not answered yet.
+  const read = v.relay.ask({ op: 'chipStatus' });
+  const request = await v.relay.next(1_000);
+  assert.ok(request !== null);
+  const marker = { account: v.vault.toLowerCase(), allowance: V.allowance.toLowerCase(), recovery: PAPER, at: '2026-10-04T12:00:00.000Z' };
+  v.relay.answer({ id: request.id, ok: true, keychainHome: true, chips: [{ keyRef: KEY_REF, publicKey: chipPublicKey(), fresh: false, marker }] });
+  assert.ok((await read).ok);
+  assert.equal(ownerTouchRequired(), true, 'out while the chain is asked');
+
+  // The rail waits until the chain has answered, so the order is fixed.
+  let release: () => void = () => {};
+  const held = new Promise<void>((resolve) => (release = resolve));
+  const world = withdrawWorld(v.keysPath);
+  const rail = { ...world.rail, execute: async (...args: Parameters<typeof world.rail.execute>) => (await held, world.rail.execute(...args)) };
+  const h = makeCtx({ rails: [rail], deps: { vault: v.relay, keystore: v.store } });
+  const proposed = await h.svc.proposeHlWithdraw({ amount: 8 });
+  assert.equal(proposed.status, 'pending');
+  const clicked = await h.svc.approve(proposed.id);
+  assert.notEqual(clicked.status, 'awaiting_touch', 'the click skipped the approval touch');
+
+  answerChain(false);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(gate(v.vault), false, 'the chain says the vault never moved');
+  assert.throws(() => v.store.evmPrivateKey(), OwnerTouchRequired, 'and the key the session held is gone all the same');
+
+  release();
+  const asked = await v.shell.answer();
+  assert.equal(asked.reason, 'Send 8.00 USDC from your Hyperliquid account to 0xaf4fda38...3184d954');
+  const done = await h.svc.settled(proposed.id, 5_000);
+  assert.equal(done.status, 'executed', done.result?.detail ?? '');
+  assert.equal(v.shell.asked.length, 1, 'one Touch ID, the send\'s, never none');
+  assert.equal(world.posts.length, 1);
+});

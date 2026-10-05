@@ -498,8 +498,12 @@ export async function approve(ctx: PCtx, id: string): Promise<Proposal> {
      Touch ID of its own that names the action, the amount and where it goes (ownerTouchVia,
      below). A withdrawal is nothing but those actions, so a touch here would open a session it
      never uses and put a second dialog in front of the one that matters. The click approves it,
-     the lock state does not matter, and the finger comes when the key signs. */
+     the lock state does not matter, and the finger comes when the key signs. The gate can also
+     close on a session that still holds the owner key (a chip marker learned while the wallet is
+     open, its chain read not back yet), so the session lets go of the key here: a click that
+     skipped the touch leaves the signature no way but its own. */
   if (OWNER_ONLY_KINDS.has(p.draft.kind) && ownerTouchRequired()) {
+    ctx.keystore?.dropOwnerKey();
     const approved = persist(ctx, { ...p, verdict, status: 'approved', decidedBy: 'human', decidedAt: nowIso() });
     ctx.audit.append('approved', `human approved ${p.kind} proposal ${id}; Touch ID asks at each owner signature`, { id, totalUsd: totalUsdOf(p.draft), ownerTouch: true });
     return ctx.execute(approved);
