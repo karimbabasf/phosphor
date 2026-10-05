@@ -40,7 +40,7 @@ import { chipStatusReader, ownerKeyGate } from '../../src/vault/chip.ts';
 import { paperKeyOf } from '../../src/vault/phrase24.ts';
 import { createVaultPrefs } from '../../src/vault/prefs.ts';
 import type { VaultPrefs } from '../../src/vault/prefs.ts';
-import { MOVE_VAULT_REASON, RESTORE_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
+import { MOVE_VAULT_REASON, RESTORE_REASON, RESTORE_VAULT_REASON, UNLOCK_REASON } from '../../src/vault/reason.ts';
 import { paperProbe, useChipVault } from '../../src/vault/rekey.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import type { VaultRelay } from '../../src/vault/relay.ts';
@@ -537,6 +537,45 @@ test('a restore on a new Mac takes the key backup and the paper: the paper signs
     assert.equal(chain.predecessorAuth(vault), false);
     assert.equal(b.accounts.accounts().kind, 'chip');
     assert.throws(() => b.keystore.evmPrivateKey(), (err: unknown) => isOwnerTouchRequired(err));
+  } finally {
+    await b.close();
+  }
+});
+
+/* Session S's restore (fix2b d5f88678; reaudit2 RA2-03): a second data folder on the same keychain
+   sees the vault's chip marker, so the owner key stays out of its session, while the unlock has read
+   the key's public half (Keystore.ownerPublicKey). The restore still asks its own Touch ID for that
+   half, "Restore your vault ...", before the new chip's, as the sheet says: the half an unlock read
+   counts only for resumeChip's verdict. */
+test('a restore with the owner key out of the session asks its own Restore your vault Touch ID before the chip\'s', { skip, timeout: 120_000 }, async () => {
+  const chain = createIntentsDouble({ start: T0 * 1000 });
+  const a = await chipApp(chain, { papers: [PAPER_A] });
+  let vault = '';
+  let mnemonic = '';
+  try {
+    vault = await wallet(a, chain);
+    const revealed = await a.post('/api/vault/reveal');
+    assert.equal(revealed.json.ok, true);
+    mnemonic = revealed.json.words.join(' ');
+    assert.equal((await migrate(a, PAPER_A)).result, 'done');
+  } finally {
+    await a.close();
+  }
+
+  const b = await chipApp(chain, { mac: a.mac, papers: [PAPER_B] });
+  try {
+    assert.equal((await b.post('/api/vault/restore', { mnemonic })).json.ok, true);
+    if (b.keystore.state() !== 'unlocked') assert.equal((await b.post('/api/vault/unlock')).json.ok, true);
+    assert.equal(b.keystore.addresses().evm?.toLowerCase(), vault);
+    assert.throws(() => b.keystore.evmPrivateKey(), (err: unknown) => isOwnerTouchRequired(err), 'the owner key came into a session whose keychain holds the vault\'s chip marker');
+    assert.notEqual(b.keystore.ownerPublicKey?.() ?? null, null, 'the unlock did not read the owner key\'s public half');
+    const shown = await b.post('/api/vault/chip/phrase');
+    assert.equal((await b.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
+    const from = b.shell.seen.length;
+    const started = await b.post('/api/vault/chip/restore', { words: PAPER_A.split(' ') });
+    assert.equal(started.status, 202, JSON.stringify(started.json));
+    assert.equal(await settled(b, started.json.run), 'done');
+    assert.deepEqual(touchesOf(b, from), [`unwrap: ${RESTORE_VAULT_REASON}`, 'signIntent']);
   } finally {
     await b.close();
   }
