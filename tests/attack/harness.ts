@@ -134,6 +134,10 @@ export interface BootOpts {
   noHandshake?: boolean;
   port?: number;
   bootTimeoutMs?: number;
+  // The full five-line handshake the shell sends: lines 4 and 5 add the enclave transport key and
+  // the relay secret, so the backend builds its Secure Enclave relay and only the holder of the
+  // secret may drain it. The case then plays the shell (or the stranger) on /api/vault/pending.
+  relay?: boolean;
 }
 
 export interface PostOpts {
@@ -152,6 +156,9 @@ export interface Backend {
   seat: string;
   // The boot nonce (the second handshake line), so a case can play the shell's identity check.
   nonce: string;
+  // Lines 4 and 5 of the handshake, set only when the case asked for them (BootOpts.relay).
+  transportKey?: Buffer;
+  relaySecret?: string;
   dataDir: string;
   home: string;
   // A read as the window makes it, with the window token. { headers: { 'x-phosphor-token': null } }
@@ -179,6 +186,8 @@ export async function bootBackend(opts: BootOpts = {}): Promise<Backend> {
   const token = crypto.randomBytes(32).toString('hex');
   const nonce = crypto.randomBytes(32).toString('hex');
   const seat = crypto.randomBytes(32).toString('hex');
+  const transportKey = opts.relay ? crypto.randomBytes(32) : undefined;
+  const relaySecret = opts.relay ? crypto.randomBytes(32).toString('hex') : undefined;
 
   const base_env = cleanEnv();
   for (const k of opts.stripEnv ?? []) delete base_env[k];
@@ -199,7 +208,8 @@ export async function bootBackend(opts: BootOpts = {}): Promise<Backend> {
   }) as ChildProcessByStdio<Writable, Readable, Readable>;
   LIVE.add(child);
   if (!opts.noHandshake) {
-    child.stdin.write(`${token}\n${nonce}\n${seat}\n`);
+    const enclave = transportKey !== undefined && relaySecret !== undefined ? `${transportKey.toString('hex')}\n${relaySecret}\n` : '';
+    child.stdin.write(`${token}\n${nonce}\n${seat}\n${enclave}`);
   }
   child.stdin.end();
   const out: string[] = [];
@@ -251,6 +261,8 @@ export async function bootBackend(opts: BootOpts = {}): Promise<Backend> {
     token,
     seat,
     nonce,
+    ...(transportKey !== undefined ? { transportKey } : {}),
+    ...(relaySecret !== undefined ? { relaySecret } : {}),
     dataDir,
     home,
     get: api.get,
