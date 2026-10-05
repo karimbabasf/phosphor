@@ -5,6 +5,60 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.16
+
+Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time of writing.
+
+- Move your vault to this Mac's Touch ID key. On a Touch ID wallet, Your vault in the Vault tab
+  takes you through four steps: back up your key, add NEAR to the gas account, write a 24-word paper
+  key by hand and type all 24 words back, then two Touch IDs whose sentences the window shows before
+  they come. The paper key has no Print and no Copy, and pasting is off while you type it back. One
+  call on NEAR then adds the Touch ID key and the paper key, takes your wallet's key off the vault
+  and shuts the NEAR door (auth by predecessor id), so those two keys alone open the vault. A move a
+  crash cuts short finishes on the next start, or asks only for the paper again.
+- Every Touch ID the vault asks for shows a sentence the vault service writes from the payload it
+  read itself, such as "move 5.00 USDC from your vault to your allowance". It refuses what it cannot
+  say in words before any dialog, and refuses by name a payload that adds a key or changes the NEAR
+  door. Nothing the vault signs is sent until NEAR's dry run shows exactly what it does, and no
+  vault move is ever signed twice.
+- The paper key is the only key that opens your vault away from this Mac: keep it like cash, apart
+  from your key backup. Your recovery phrase or private key no longer opens the vault, but it still
+  controls the allowance (at most its size plus 10 percent), the gas account and Hyperliquid, so
+  keep it like cash too. On a new Mac, restore the wallet from its backup, then Restore your vault
+  beside it: write a new paper key, then type the old paper's 24 words.
+- Once your vault is on Touch ID, your assistant spends from an allowance, $100 unless you pick
+  another size or turn it off. The Allowance row reads like "$63 of $100". A top-up moves USDC from
+  your vault: you ask in the Vault tab, approve its card, and give one Touch ID that names the
+  amount. Your assistant cannot ask for one. Whatever the allowance holds over its size plus 10
+  percent goes back to your vault on its own, USDC first, with a line in the log.
+- A swap, send, payout or Hyperliquid deposit bigger than your allowance waits for your click, and
+  its card says Approve asks two Touch IDs: the move's own first, then one that moves exactly the
+  difference from your vault. Cancel either and nothing is signed for it. A move nobody clicked
+  never touches the vault: if the allowance is short when it runs, it stops with nothing signed.
+- The gas account pays NEAR's small fee for every move of your vault. It is a NEAR account made from
+  your key; its row shows its NEAR, says when it runs low, and adds 0.1 to 1 NEAR with one click and
+  one Touch ID that names it.
+- After the move, the Vault tab lists who opens your vault as NEAR reads it, and shows whether the
+  NEAR door is shut. If NEAR Intents' admins ever open it again, the row says so.
+- Once your vault is on Touch ID, Allow trading on Hyperliquid approves a trading key with one Touch
+  ID that names the key and its 90 days, and your plans trade with it at once. The key is made from
+  your key each time the wallet opens and is written nowhere. Each Hyperliquid action only your
+  wallet's key can sign, such as a withdrawal's send, asks for one Touch ID of its own that names
+  the action and the amount. A wallet that has not moved trades exactly as before.
+- While your vault moves, your assistant's moves wait: it can ask for nothing new, a move it asked
+  for earlier cannot be approved until the move is done, and one already on its way stops with
+  nothing sent. The assistant's line in the window says so.
+- A portfolio held whole in what a 100 percent cap allows is no longer refused by a rounding error.
+- The attack suite tries six more ways into the Touch ID vault (a stranger asking the enclave
+  service to sign, hostile payloads, agents, the relay, a top-up an agent makes, a rewritten
+  vault.json) and shows each one held: 32 cases.
+- A release now checks, once it is signed, that the NEAR Intents verifier is the build the Touch ID
+  vault was tested on, and stops when it is not or when NEAR does not answer, until the vault's live
+  tests run on the new build. For people who build Phosphor: `node scripts/verifier-check.ts` says
+  the same, and `--simulate` also replays the vault's first proof and its move through
+  `simulate_intents` with keys made for the run.
+- Your wallet, your keys and your settings stay as they were until you move your vault.
+
 ## 0.10.15
 
 Built 2026-10-02 and 2026-10-03, the Phosphor-only pass. Tagged v0.10.15 on 2026-10-03.
