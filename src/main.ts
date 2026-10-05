@@ -62,6 +62,7 @@ import { useRailAccounts } from './intents-sign.ts';
 import { demoAccounts } from './ledger/demo.ts';
 import { ownerTouchVia } from './proposals/lifecycle.ts';
 import { useOwnerTouch } from './rails/hl-user-signed.ts';
+import { hlAgentPlan } from './hl/agent-key.ts';
 import { settleAtStart } from './http/custody.ts';
 import { mintToken, readKeyFor, readWindowToken } from './http/auth.ts';
 import { readKeyPath } from './http/read-gate.ts';
@@ -279,6 +280,9 @@ const ownerKeyStaysOut = ownerKeyGate(() => vaultPrefs.get(), vault, liveVerifie
 keystore.keepOwnerKeyOutWhen(ownerKeyStaysOut);
 // The touch each of those owner actions asks for, read for the same vault by the same gate.
 useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));
+/* The Hyperliquid trading key derived from the owner key (src/hl/agent-key.ts): which versions each
+   open makes, and which one trades once the venue approved it, read off vault.json at every ask. */
+keystore.planHlAgentsWith((v) => hlAgentPlan(vaultPrefs.get(), v));
 /* Which account the rails sign for, and with which key (src/intents-sign.ts): VAULT until the
    vault moves, then ALLOWANCE. The chip service's status answer for the key vault.json names
    tells a moved vault (`chip`) from one the service does not back (`broken`); the rails spend

@@ -128,8 +128,7 @@ sign asks for a Touch ID of its own:
 - sending USDC out of the account, which is what a withdrawal does;
 - moving USDC between the account's spot and perp sides (a standard account only; a unified account
   has one balance);
-- approving a new trading key for the account. The app has no button for this yet; when it has one,
-  it asks the same way.
+- approving a new trading key for the account (Allow trading, [below](#the-trading-key-after-the-move-to-touch-id)).
 
 The dialog names the action, the amount and where the money goes, for example "Send 25.00 USDC from
 your Hyperliquid account to 0xaf4fda38...3184d954". The app writes that sentence from the exact
@@ -151,6 +150,46 @@ One touch gives one owner action. Read the dialog before you touch it: an app th
 over could ask for a touch that looks right and use the key for something else, and one touch is
 then enough to move everything on Hyperliquid. Your vault is out of its reach, because after the move
 this key no longer signs for the vault. Keep only your trading margin on Hyperliquid.
+
+## The trading key after the move to Touch ID
+
+Plans trade with a trading key: a Hyperliquid API wallet that can place and cancel orders and cannot
+withdraw, transfer or approve another key. Before the move, the trading key is the one
+`scripts/hl-agent.ts` wrote into your wallet file, and that does not change for a wallet that has not
+moved. After the move, your wallet file takes no new key, so Phosphor makes the trading key from the
+owner key instead, every time the wallet opens, beside your allowance and gas keys. It is never
+written anywhere, and the lock wipes it. A key made this way reaches nothing new: the owner key
+already owns the trading account.
+
+Allow trading on Hyperliquid approves that key with one Touch ID. The dialog names the key and how
+long it may trade, for example "Let 0xca9aad7b...c52f1e04 trade on your Hyperliquid account for 90
+days", and the app writes that sentence from the exact approval it signs. The owner key opens for that
+one signature and is wiped once it is made. Your plans trade with the new key from that moment, with
+no second touch. Until you approve one, the key your wallet file already held keeps trading.
+
+- **90 days.** Hyperliquid retires the key on its own after that. Allow trading again before then to
+  renew it: the same one Touch ID, for a new key.
+- **One key at a time.** The new key takes the name Phosphor's trading keys have on Hyperliquid, so
+  the key it replaces stops working the same moment. A plan that holds the old key has to finish or
+  be cancelled first, and the window says so.
+- **Never the same key twice.** Each approval is a new key, numbered in `state/vault.json`. Hyperliquid
+  forgets the history of a retired key, and approving it again would let its old orders be replayed,
+  so the number only goes up. An approval that never reached Hyperliquid (a cancel, a refusal) is
+  tried again with the same key, since that key never signed anything.
+- **Open first.** The next key is made when the wallet opens, so a locked wallet is asked to open
+  before it can allow trading. If you approved a key and want another in the same session, lock and
+  open the wallet once more.
+- If Hyperliquid does not answer, Phosphor reads its list of keys for your account before saying
+  anything, and never signs the approval twice. If the list cannot say either, allow trading again.
+
+The trading key is HKDF-SHA256 of the owner key's 32 bytes, salt `phosphor`, info
+`phosphor/hl-agent/v<n>` for key number n, read as a secp256k1 key (redrawn under `/1`, `/2` in the
+rare case it is not one). Anyone rebuilding it by hand can check against this: the public test key
+`4c0883a6...f362318` gives key 1 `9bd79f61...b541cdcc`, address
+`0xCa9AAd7B7e6D078718298039b40ef289C52F1E04`, and key 2 `b0193927...b30aa966`, address
+`0x4b1495fD164fE42D80718ece02b34019fbc3aF0d` (the full vectors are in
+`tests/fixtures/hl-agent-keys.ts`). Whoever holds the owner key, or its backup, can make this key too,
+which reaches nothing the owner key does not.
 
 ## Reading the account
 

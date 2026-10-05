@@ -24,6 +24,10 @@
 // picks. A chip entry this file cannot read still counts as one: the owner key stays out of the
 // session (src/keystore/store.ts, keepOwnerKeyOutWhen) and the vault reads as broken, never as a
 // vault that did not move.
+//
+// And `hlAgent`, once the venue approved a trading key derived from the owner key: the counter
+// that names it (src/hl/agent-key.ts). Only ever written upward, so no trading key is approved
+// twice; a file edited to lower it is the same as any other edit here, not a reach to a key.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -31,6 +35,7 @@ import path from 'node:path';
 
 import { base58Decode } from '../chain/near.ts';
 import { atomicWrite } from '../fsatomic.ts';
+import { isHlAgentVersion } from '../keystore/derived.ts';
 
 export const IDLE_MINUTES_CHOICES = [5, 15, 60] as const;
 export type IdleMinutes = (typeof IDLE_MINUTES_CHOICES)[number];
@@ -54,6 +59,9 @@ const CHIP_KEY_REF = /^chip:com\.karimbabasf\.phosphor\.chip\.(?:[a-z0-9-]{1,40}
    a moved one. Empty strings are an entry this file holds and cannot read. */
 export type ChipPrefs = { keyRef: string; publicKey: string; account: string; migratedAt: string };
 export type AllowancePrefs = { sizeUsd: number };
+/* The trading key the venue last approved for the vault `account` (lower case): its HKDF version,
+   its 0x address (lower case), and the end the approval set, in milliseconds. */
+export type HlAgentPrefs = { account: string; version: number; address: string; validUntil: number; approvedAt: string };
 
 export type VaultPrefsData = {
   backedUp: boolean;
@@ -64,6 +72,8 @@ export type VaultPrefsData = {
   idleMinutes: IdleMinutes;
   chip: ChipPrefs | null;
   allowance: AllowancePrefs;
+  // Present once a trading key was approved; absent before, so the shape of every older file holds.
+  hlAgent?: HlAgentPrefs;
 };
 
 export type VaultPrefs = {
@@ -74,6 +84,8 @@ export type VaultPrefs = {
   // Null clears it. The rekey writes it once the views on chain say the move is done.
   setChip(chip: { keyRef: string; publicKey: string; account: string } | null, now?: () => number): VaultPrefsData;
   setAllowanceSize(usd: number): VaultPrefsData;
+  // The venue approved trading key `version`; refused unless it is above every version written before.
+  setHlAgent(entry: { account: string; version: number; address: string; validUntil: number }, now?: () => number): VaultPrefsData;
 };
 
 // What the file holds: the idle time and the allowance size only when they were picked.
@@ -84,6 +96,7 @@ type Stored = {
   chosen: IdleMinutes | null;
   chip: ChipPrefs | null;
   allowanceUsd: number | null;
+  hlAgent: HlAgentPrefs | null;
 };
 
 function text(value: unknown): string {
@@ -98,6 +111,19 @@ function chipFrom(raw: unknown): ChipPrefs | null {
 
 function sizeOk(usd: unknown): usd is number {
   return typeof usd === 'number' && Number.isFinite(usd) && usd >= 0 && usd <= MAX_ALLOWANCE_USD;
+}
+
+const EVM_ADDRESS = /^0x[0-9a-fA-F]{40}$/;
+
+// An entry the file cannot read is no entry: the next approval then takes version 1 again.
+function hlAgentFrom(raw: unknown): HlAgentPrefs | null {
+  if (raw === null || typeof raw !== 'object') return null;
+  const e = raw as Record<string, unknown>;
+  const { account, version, address, validUntil, approvedAt } = e;
+  if (typeof account !== 'string' || !EVM_ADDRESS.test(account) || !isHlAgentVersion(version)) return null;
+  if (typeof address !== 'string' || !EVM_ADDRESS.test(address) || typeof approvedAt !== 'string') return null;
+  if (typeof validUntil !== 'number' || !Number.isSafeInteger(validUntil) || validUntil <= 0) return null;
+  return { account: account.toLowerCase(), version, address: address.toLowerCase(), validUntil, approvedAt };
 }
 
 /* "p256:" and the base58 of x || y, 64 bytes, a point on P-256: the public key the chip service
@@ -132,9 +158,10 @@ export function createVaultPrefs(dataDir: string): VaultPrefs {
         chosen: picked ? idle : null,
         chip: chipFrom(raw.chip),
         allowanceUsd: sizeOk(size) ? size : null,
+        hlAgent: hlAgentFrom(raw.hlAgent),
       };
     } catch {
-      return { backedUp: false, backedUpAt: null, backedUpFor: null, chosen: null, chip: null, allowanceUsd: null };
+      return { backedUp: false, backedUpAt: null, backedUpFor: null, chosen: null, chip: null, allowanceUsd: null, hlAgent: null };
     }
   }
 
@@ -146,6 +173,7 @@ export function createVaultPrefs(dataDir: string): VaultPrefs {
       idleMinutes: s.chosen ?? DEFAULT_IDLE_MINUTES,
       chip: s.chip,
       allowance: { sizeUsd: s.allowanceUsd ?? DEFAULT_ALLOWANCE_USD },
+      ...(s.hlAgent === null ? {} : { hlAgent: s.hlAgent }),
     };
   }
 
@@ -157,6 +185,7 @@ export function createVaultPrefs(dataDir: string): VaultPrefs {
       ...(next.chosen === null ? {} : { idleMinutes: next.chosen, idleChosen: true }),
       ...(next.chip === null ? {} : { chip: next.chip }),
       ...(next.allowanceUsd === null ? {} : { allowance: { sizeUsd: next.allowanceUsd } }),
+      ...(next.hlAgent === null ? {} : { hlAgent: next.hlAgent }),
     };
     atomicWrite(file, JSON.stringify(body, null, 2) + '\n', { mode: 0o600 });
     return view(next);
@@ -183,6 +212,24 @@ export function createVaultPrefs(dataDir: string): VaultPrefs {
     setAllowanceSize(usd) {
       if (!sizeOk(usd)) throw new Error(`the allowance is a dollar amount from 0 to ${MAX_ALLOWANCE_USD}`);
       return write({ ...stored(), allowanceUsd: Math.round(usd * 100) / 100 });
+    },
+    setHlAgent(entry, now = Date.now) {
+      if (!EVM_ADDRESS.test(entry.account)) throw new Error('the vault account is a 0x address');
+      if (!EVM_ADDRESS.test(entry.address)) throw new Error('a trading key is a 0x address');
+      if (!isHlAgentVersion(entry.version)) throw new Error('a trading key version is a whole number from 1');
+      if (!Number.isSafeInteger(entry.validUntil) || entry.validUntil <= 0) throw new Error('a trading key ends at a time in milliseconds');
+      const current = stored();
+      if (current.hlAgent !== null && entry.version <= current.hlAgent.version) {
+        throw new Error(`trading key ${entry.version} is not above ${current.hlAgent.version}, and no trading key is approved twice`);
+      }
+      const hlAgent: HlAgentPrefs = {
+        account: entry.account.toLowerCase(),
+        version: entry.version,
+        address: entry.address.toLowerCase(),
+        validUntil: entry.validUntil,
+        approvedAt: new Date(now()).toISOString(),
+      };
+      return write({ ...current, hlAgent });
     },
   };
 }
