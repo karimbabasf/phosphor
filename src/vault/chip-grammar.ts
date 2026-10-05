@@ -10,7 +10,8 @@
 // Its words depend on what the chip's marker pins: "your allowance" for the allowance, "your paper
 // recovery key" for the paper. With the pins given, the length here is the service's; without them,
 // the shortest the pins could make it, so a payload is refused here only when the service would
-// refuse it whatever they are.
+// refuse it whatever they are. The one exception is a transfer: the service signs one only to the
+// allowance its marker pins, so a transfer is handed on only when the caller names that allowance.
 
 import { NONCE_LIFE_AFTER_DEADLINE_MS } from '../rails/intents-relay.ts';
 import { chipTokens } from './chip-tokens.ts';
@@ -100,9 +101,7 @@ function sentenceLength(p: VaultPayload, pins: GrammarPins): number {
       const token = chipTokens().get(asset)!;
       return `${sentenceAmount(amount, token.decimals)} ${token.symbol}`;
     });
-    // "move" and "send" are one length; a 0x receiver with no pins may be the allowance.
-    const to = nameOf(first.receiver_id, pins) ?? 'your allowance';
-    return `move ${list(amounts)} from ${from} to ${to}`.length;
+    return `move ${list(amounts)} from ${from} to your allowance`.length;
   }
   const keys = p.intents.map((i) => {
     if (i.intent !== 'remove_public_key') return '';
@@ -153,6 +152,11 @@ export function chipPayloadRefusal(p: VaultPayload, chip: string, nowMs: number,
   }
   if (kinds.size > 1) return { rule: 'one_kind', message: 'a payload carries one kind of intent' };
   if (receivers.size > 1) return { rule: 'one_receiver', message: 'every transfer in a payload goes to one receiver' };
+  // The chip key moves money to the pinned allowance and nowhere else; with no allowance given, no
+  // transfer is handed on.
+  if (receivers.size > 0 && (pins.allowance === undefined || !receivers.has(pins.allowance))) {
+    return { rule: 'receiver', message: 'the chip key moves money only to the allowance its marker pins' };
+  }
   const length = sentenceLength(p, pins);
   if (length > MAX_SENTENCE) return { rule: 'sentence', message: `the sentence would be ${length} characters, over ${MAX_SENTENCE}` };
   return null;

@@ -1,9 +1,10 @@
 // Builder in grammar (PHASE2-PLAN U6, risk 3): every payload the app builds for the chip to sign is
 // one the vault service's grammar (src-tauri/se-helper/IntentGrammar.swift) takes, reads exactly as
 // Node's JSON.parse does, and turns into a verb-first sentence. Fifty payloads from buildVaultPayload:
-// every token in the chip's table moved to the allowance and sent elsewhere, the rekey's empty
-// proof, and the key removals a chip may sign. The grammar runs for real, compiled with its test
-// driver (tests/swift/GrammarDriver.swift) into this file's temp folder.
+// every token in the chip's table moved to the allowance, the rekey's empty proof, and the key
+// removals a chip may sign; and the same tokens sent anywhere else, which the app never builds and
+// the grammar refuses (rule receiver, audit2 AU2-01). The grammar runs for real, compiled with its
+// test driver (tests/swift/GrammarDriver.swift) into this file's temp folder.
 //
 // The nonce. The app builds every vault nonce to live exactly seven days past its payload (the lead's
 // call, CONTRACTS.md), and the grammar takes only that life (rule `nonce`), so every payload here is
@@ -57,12 +58,13 @@ function tableTokens(): { assetId: string; symbol: string; decimals: number }[] 
   return answer!.tokens.map(([assetId, symbol, decimals]) => ({ assetId, symbol, decimals }));
 }
 
-function payloads(tokens: { assetId: string; decimals: number }[]): { why: string; payload: string }[] {
-  const out: { why: string; payload: string }[] = [];
+function payloads(tokens: { assetId: string; decimals: number }[]): { why: string; payload: string; send: boolean }[] {
+  const out: { why: string; payload: string; send: boolean }[] = [];
   let n = 0;
   const add = (why: string, intents: VaultIntent[]) => {
     n += 1;
-    out.push({ why, payload: buildVaultPayload({ signerId: VAULT, intents, deadlineMs: NOW_MS + CHIP_PAYLOAD_LIFE_MS, salt: SALT, random: () => Uint8Array.from({ length: 15 }, (_, i) => (i * 7 + n) & 0xff) }) });
+    const send = intents.some((i) => i.intent === 'transfer' && i.receiver_id !== ALLOWANCE);
+    out.push({ why, send, payload: buildVaultPayload({ signerId: VAULT, intents, deadlineMs: NOW_MS + CHIP_PAYLOAD_LIFE_MS, salt: SALT, random: () => Uint8Array.from({ length: 15 }, (_, i) => (i * 7 + n) & 0xff) }) });
   };
   const elsewhere = [`0x${'c3'.repeat(20)}`, 'alice.near', 'f'.repeat(64)];
   tokens.forEach((t, i) => {
@@ -107,7 +109,7 @@ function shortLived(payload: string): string {
 
 const parse = (payload: string) => ({ op: 'parse', payloadHex: Buffer.from(payload, 'utf8').toString('hex'), nowMs: NOW_MS, chip: CHIP.toString('hex'), pins: PINS });
 
-test('50 payloads the app builds for the chip all pass the vault service\'s grammar, read as Node reads them, each with its sentence', { skip }, (t) => {
+test('the payloads the app builds for the chip pass the vault service\'s grammar, read as Node reads them, each with its sentence, and a send anywhere but the allowance is refused', { skip }, (t) => {
   const tokens = tableTokens();
   assert.equal(tokens.length, 15);
   const built = payloads(tokens);
@@ -118,17 +120,24 @@ test('50 payloads the app builds for the chip all pass the vault service\'s gram
   }
   // As built, and again with each nonce rebuilt to die with its payload: one compile for both.
   const answers = drive([...built.map((b) => parse(b.payload)), ...built.map((b) => parse(shortLived(b.payload)))]);
-  const accepted = built.map((b, i) => ({ ...b, answer: answers[i]! }));
+  const read = built.map((b, i) => ({ ...b, answer: answers[i]! }));
+  const accepted = read.filter((b) => !b.send);
+  const sends = read.filter((b) => b.send);
+  assert.equal(sends.length, 18);
+  for (const { why, answer } of sends) {
+    assert.equal(answer.ok, false, `${why}: signed behind "${answer.sentence}"`);
+    assert.equal(answer.rule, 'receiver', `${why}: ${answer.rule}: ${answer.message}`);
+  }
   built.forEach((b, i) => {
     const older = answers[built.length + i]!;
     assert.equal(older.ok, false, `${b.why}: a nonce that dies with its payload is taken`);
     assert.equal(older.rule, 'nonce', `${b.why}: ${older.rule}: ${older.message}`);
   });
-  t.diagnostic(`the compiled grammar takes the seven-day nonce: ${built.length} of ${built.length} accepted as built, the same ${built.length} refused for the nonce alone when it dies with the payload`);
+  t.diagnostic(`the compiled grammar takes the seven-day nonce: ${accepted.length} of ${built.length} accepted as built (the other ${sends.length} are sends it refuses), all ${built.length} refused for the nonce alone when it dies with the payload`);
   for (const { why, payload, answer } of accepted) {
     assert.equal(answer.ok, true, `${why}: ${answer.rule}: ${answer.message}`);
     assert.deepEqual(answer.parsed, JSON.parse(payload), `${why}: read as JSON.parse reads it`);
-    assert.ok(answer.sentence !== undefined && answer.sentence.length <= 120 && /^(confirm|move|send|remove) /.test(answer.sentence), `${why}: ${answer.sentence}`);
+    assert.ok(answer.sentence !== undefined && answer.sentence.length <= 120 && /^(confirm|move|remove) /.test(answer.sentence), `${why}: ${answer.sentence}`);
   }
   const said = new Map(accepted.map((a) => [a.why, a.answer.sentence]));
   assert.equal(said.get('the rekey proof'), "confirm this Mac's Touch ID key for your vault");

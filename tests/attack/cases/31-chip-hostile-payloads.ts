@@ -72,7 +72,11 @@ function hostileSet(nowMs: number, chipKey: string): Hostile[] {
     refused('u128 max + 1', p([transfer(USDC, '340282366920938463463374607431768211456', ALLOWANCE)]), 'amount'),
     refused('the chip removing itself', p([{ intent: 'remove_public_key', public_key: chipKey }]), 'signing_key'),
     { name: 'signer = the allowance', payload: p([transfer(USDC, '5000000', VAULT)], { signer: ALLOWANCE }), code: 'wrong_signer' },
-    refused('a sentence over 120 characters', p([transfer(USDC, U128_MAX, LONG_NAME)]), 'sentence'),
+    // A receiver the marker does not pin, however it is named (audit2 AU2-01).
+    refused('a send to a name that reads like the allowance', p([transfer(USDC, '5000000', 'your-allowance.near')]), 'receiver'),
+    refused('a send to a long NEAR name', p([transfer(USDC, '5000000', LONG_NAME)]), 'receiver'),
+    refused('a send to an address of its own', p([transfer(USDC, '5000000', `0x${'c3'.repeat(20)}`)]), 'receiver'),
+    refused('a sentence over 120 characters', p([transfer(USDC, U128_MAX, ALLOWANCE), transfer('nep141:usdt.tether-token.near', U128_MAX, ALLOWANCE)]), 'sentence'),
     refused('over 4096 bytes', good + ' '.repeat(4096), 'size'),
     refused('non-ASCII (a Cyrillic a in signer_id)', p([], { signer: 'vаult.near' }), 'ascii'),
     refused('a backslash escape', good.replace('intents.near', 'intents\\u002enear'), 'escape'),
@@ -145,7 +149,7 @@ export const attack: AttackCase = {
     const dialogsBeforeNode = mac.dialogs().length;
     for (const h of set) {
       const before = asked;
-      const r = await chipSign(relay, { keyRef, publicKey, account: VAULT }, h.payload, { now: () => nowMs });
+      const r = await chipSign(relay, { keyRef, publicKey, account: VAULT }, h.payload, { now: () => nowMs, allowance: ALLOWANCE });
       const calls = asked - before;
       if (r.ok) {
         wrong.push(`${h.name}: chipSign SIGNED it`);

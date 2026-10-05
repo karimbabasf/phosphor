@@ -92,7 +92,6 @@ function sloppyNonce(): string {
 export const ACCEPTED: Case[] = [
   { name: 'the rekey proof carries no intents', payload: payload(), sentence: "confirm this Mac's Touch ID key for your vault" },
   { name: 'a top-up moves 100 USDC to the allowance', payload: topUp, sentence: 'move 100.00 USDC from your vault to your allowance' },
-  { name: 'a send names its receiver by both ends', payload: with1(move(USDC, '2500000', SEND_TO)), sentence: 'send 2.50 USDC from your vault to 0x12ab5678...90abcd34' },
   { name: 'retiring the pinned paper key names it in words', payload: with1(remove(RECOVERY)), sentence: 'remove your paper recovery key from your vault' },
   { name: 'another secp256k1 key is said by both ends', payload: with1(remove(SECP)), sentence: 'remove key secp256k1:TmysAU1B...H7MkuLjQ from your vault' },
   { name: 'a p256 key that is not the signing chip can go', payload: with1(remove(P256)), sentence: 'remove key p256:22NZnfeB...K51dpyMt from your vault' },
@@ -108,9 +107,6 @@ export const ACCEPTED: Case[] = [
     sentence: 'move 1.00 USDC, 2.00 USDT, 3.00 wNEAR and 4.00 ETH from your vault to your allowance',
   },
   { name: 'SOL and DAI place the point by their own decimals', payload: with1(move(SOL, '1500000000'), move(DAI, '250000000000000000')), sentence: 'move 1.50 SOL and 0.25 DAI from your vault to your allowance' },
-  { name: 'a 64-hex implicit receiver is said by both ends', payload: with1(move(USDC, '1000000', 'ab'.repeat(32))), sentence: 'send 1.00 USDC from your vault to abababab...abababab' },
-  { name: 'a NEAR name is said whole', payload: with1(move(USDC, '1000000', 'alice.near')), sentence: 'send 1.00 USDC from your vault to alice.near' },
-  { name: 'a NEAR name is said whole at 64 characters', payload: with1(move(USDC, '1000000', LONG_NAME)), sentence: `send 1.00 USDC from your vault to ${LONG_NAME}` },
   {
     name: 'a deadline exactly 120 seconds out is inside the window',
     payload: payload({ deadline: iso(NOW_MS + 120_000), nonce: nonceAt(NOW_MS + 120_000) }),
@@ -143,7 +139,6 @@ export const ACCEPTED: Case[] = [
     sentence: 'move 100.00 USDC from your vault to your allowance',
   },
   { name: 'a signer the pins do not name is said by both ends', payload: payload({ signer_id: STRANGER }), sentence: "confirm this Mac's Touch ID key for 0xc3c3c3c3...c3c3c3c3" },
-  { name: 'a move into the pinned vault is a move', payload: payload({ signer_id: STRANGER, intents: [move(USDC, '1000000', VAULT)] }), sentence: 'move 1.00 USDC from 0xc3c3c3c3...c3c3c3c3 to your vault' },
 ];
 
 const refuse = (name: string, raw: string, rule: string, says?: string): Case => ({ name, payload: raw, rule, ...(says === undefined ? {} : { says }) });
@@ -265,7 +260,19 @@ export const REFUSED: Case[] = [
   refuse('a number for the key', with1(remove(5)), 'public_key'),
   refuse('the signing chip key removing itself', with1(remove(CHIP_KEY)), 'signing_key'),
   refuse('one key removed twice', with1(remove(SECP), remove(SECP)), 'key_repeat'),
-  refuse('a sentence over 120 characters', with1(move(USDC, U128_MAX, LONG_NAME)), 'sentence'),
+  // The chip key moves money to the allowance its marker pins and nowhere else (audit2 AU2-01): a
+  // receiver Node picks is refused before any sentence, however it is spelled.
+  refuse('a send to an address, by both ends', with1(move(USDC, '2500000', SEND_TO)), 'receiver', 'allowance'),
+  refuse('a send to a 64-hex implicit account', with1(move(USDC, '1000000', 'ab'.repeat(32))), 'receiver', 'allowance'),
+  refuse('a send to a NEAR name', with1(move(USDC, '1000000', 'alice.near')), 'receiver', 'allowance'),
+  refuse('a send to a NEAR name of 64 characters', with1(move(USDC, '1000000', LONG_NAME)), 'receiver', 'allowance'),
+  refuse('a name registered to read like the allowance', with1(move(USDC, '100000000', 'your-allowance.near')), 'receiver', 'allowance'),
+  refuse('a name registered to read like the vault', with1(move(USDC, '100000000', 'your-vault.near')), 'receiver', 'allowance'),
+  refuse('a bare name that reads like the allowance', with1(move(USDC, '100000000', 'your-allowance')), 'receiver', 'allowance'),
+  refuse('a name in the shape of an address said by its ends', with1(move(USDC, '100000000', '0x12ab5678.90abcd34')), 'receiver', 'allowance'),
+  refuse('a move into the pinned vault from another signer', payload({ signer_id: STRANGER, intents: [move(USDC, '1000000', VAULT)] }), 'receiver', 'allowance'),
+  refuse('four tokens, the last to another receiver', with1(move(USDC, '1'), move(USDT, '1'), move(WNEAR, '1'), move(ETH, '1', 'alice.near')), 'one_receiver'),
+  refuse('a sentence over 120 characters', with1(move(USDC, U128_MAX), move(USDT, U128_MAX)), 'sentence'),
 ];
 
 export const CASES: Case[] = [...ACCEPTED, ...REFUSED];

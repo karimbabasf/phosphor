@@ -80,7 +80,7 @@ const parseRequest = (c: Context) => ({
   pins: c.pins ?? PINS,
 });
 
-const VERB = /^(confirm|move|send|remove) /;
+const VERB = /^(confirm|move|remove) /;
 
 /* Node's own first reading of a payload (src/vault/chip.ts chipSign, src/vault/chip-grammar.ts):
    the rule it refuses by ('shape' for readVaultPayload's), or null when it would hand the payload to

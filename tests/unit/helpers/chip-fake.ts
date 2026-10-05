@@ -126,6 +126,9 @@ export class SoftwareChipService {
       if (intent.intent === 'remove_public_key' && intent.public_key === own) return fail('grammar', 'signing_key: the chip never removes itself');
     }
     if (body.signer_id !== chip.marker.account.toLowerCase()) return fail('wrong_signer', 'the payload signs for another account than the marker pins');
+    if (body.intents.some((i) => i.intent === 'transfer' && i.receiver_id !== chip.marker!.allowance.toLowerCase())) {
+      return fail('grammar', 'receiver: the chip key moves money only to the allowance its marker pins');
+    }
     if (this.touch === 'cancel') {
       this.touch = undefined;
       return fail('user_cancel', 'the person cancelled');

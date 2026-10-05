@@ -7,7 +7,8 @@
 // vault to another key, and the dialog is the only text the owner reads before that touch. So the
 // service reads the payload itself, accepts only the shapes Phosphor needs, and writes the dialog's
 // sentence from what it read. Node never sends a sentence. The shapes: a move of tokens from the
-// table out of the vault, the removal of a key, and the empty proof a rekey asks of the new chip key.
+// table out of the vault to the allowance its marker pins, the removal of a key, and the empty proof
+// a rekey asks of the new chip key.
 //
 // WHY ITS OWN JSON PARSER. The verifier (intents.near, serde_json) reads the same bytes after this
 // file does, and wherever two parsers disagree, the sentence names one thing while the chain runs
@@ -33,7 +34,8 @@
 //   unknown_kind        any other kind but transfer and remove_public_key
 //   one_kind            one kind per payload
 //   transfer_keys       exactly intent, receiver_id, tokens (memo, msg and min_gas never pass)
-//   receiver            a NEAR account id, never the signer
+//   receiver            a NEAR account id, never the signer, and for the sentence the allowance
+//                       the marker pins: no other receiver is ever signed for
 //   one_receiver        one receiver per payload
 //   tokens, token       exactly one asset per transfer, from TokenTable.swift
 //   amount              a string of digits, no leading zero, 1 to the u128 maximum
@@ -46,12 +48,11 @@
 //
 // THE SENTENCE. Verb first, because the dialog reads "Phosphor is trying to <sentence>". Only the
 // values the chip's marker pins are named in words: the vault, the allowance and the paper
-// recovery key. Anything else is said the way src/vault/reason.ts says it: a NEAR name whole, and an
-// id that is a key's hash by its first and last eight characters. Amounts are exact, thousands
-// grouped, trailing zeros trimmed to two places.
+// recovery key. A transfer goes to the pinned allowance or is refused (rule receiver), so a
+// sentence never names a receiver Node chose. Any other key is said by its first and last eight
+// characters. Amounts are exact, thousands grouped, trailing zeros trimmed to two places.
 //   confirm this Mac's Touch ID key for your vault          (no intents: the rekey's proof)
 //   move 100.00 USDC from your vault to your allowance
-//   send 2.50 USDC from your vault to 0x12ab5678...90abcd34
 //   remove your paper recovery key from your vault
 //   remove key secp256k1:TmysAU1B...H7MkuLjQ from your vault
 //
@@ -344,13 +345,20 @@ enum IntentGrammar {
     switch payload.intents.first {
     case nil:
       said = "confirm this Mac's Touch ID key for \(from)"
-    case .transfer(let receiver, _, _)?:
+    case .transfer?:
+      // The chip key moves money to the allowance its marker pins and nowhere else. The app never
+      // asks it for another receiver, and a receiver Node picks can be a name registered to read
+      // like a pinned one ("your-allowance.near"), so no other receiver gets a sentence at all.
+      for item in payload.intents {
+        guard case .transfer(let receiver, _, _) = item, receiver == pins.allowance else {
+          throw GrammarRefusal(rule: "receiver", message: "the chip key moves money only to the allowance its marker pins")
+        }
+      }
       let amounts = payload.intents.map { item -> String in
         guard case .transfer(_, let token, let amount) = item else { return "" }
         return "\(decimal(amount, places: token.decimals)) \(token.symbol)"
       }
-      let own = receiver == pins.allowance || receiver == pins.account
-      said = "\(own ? "move" : "send") \(list(amounts)) from \(from) to \(name(receiver, pins))"
+      said = "move \(list(amounts)) from \(from) to your allowance"
     case .removeKey?:
       let recovery = intentKey(pins.recovery)
       let keys = payload.intents.map { item -> String in

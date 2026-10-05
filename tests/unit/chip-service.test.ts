@@ -337,6 +337,11 @@ test('every refusal before the key answers with no dialog: the corpus, the signe
     // The corpus's signing key is a pattern; the stand-in chip's own is held below. A leading byte
     // order mark does not survive the request's own decoding (its test is below).
     if (!('rule' in k) || k.rule === 'signing_key' || k.payload.startsWith('﻿')) continue;
+    // A payload signed for another account meets the signer check before its sentence is written.
+    if (k.rule === 'receiver' && !k.payload.includes(`"signer_id":"${VAULT}"`)) {
+      no(sign(c, k.payload), 'wrong_signer');
+      continue;
+    }
     no(sign(c, k.payload), 'grammar', `${k.rule}: `);
   }
   const corpus = count;
@@ -349,7 +354,10 @@ test('every refusal before the key answers with no dialog: the corpus, the signe
   const long = payload({ signer_id: stranger, intents: [{ intent: 'transfer', receiver_id: `${'a'.repeat(59)}.near`, tokens: { [USDC]: U128_MAX } }] });
   no(sign(c, payload({ signer_id: stranger, intents: [{ intent: 'add_public_key', public_key: c.publicKey }] })), 'grammar', 'refused_kind: ');
   no(sign(c, long), 'wrong_signer');
-  no(sign(c, payload({ intents: [{ intent: 'transfer', receiver_id: `${'a'.repeat(59)}.near`, tokens: { [USDC]: U128_MAX } }] })), 'grammar', 'sentence: ');
+  no(sign(c, payload({ intents: [{ intent: 'transfer', receiver_id: `${'a'.repeat(59)}.near`, tokens: { [USDC]: U128_MAX } }] })), 'grammar', 'receiver: ');
+  no(sign(c, payload({ intents: [{ intent: 'transfer', receiver_id: 'your-allowance.near', tokens: { [USDC]: '100000000' } }] })), 'grammar', 'receiver: ');
+  const huge = (asset: string) => ({ intent: 'transfer', receiver_id: ALLOWANCE, tokens: { [asset]: U128_MAX } });
+  no(sign(c, payload({ intents: [huge(USDC), huge('nep141:usdt.tether-token.near')] })), 'grammar', 'sentence: ');
   for (const request of [
     { op: 'signIntent', keyRef: c.keyRef },
     { op: 'signIntent', keyRef: c.keyRef, payload: JSON.parse(TOP_UP.payload) },

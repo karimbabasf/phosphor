@@ -173,7 +173,7 @@ test('chipSign: one Touch ID, and the chip\'s own signature over exactly the pay
   const w = await chipWorld();
   try {
     const payload = w.payload([{ intent: 'transfer', receiver_id: w.allowance, tokens: { [USDC]: '5000000' } }]);
-    const signed = await chipSign(w.relay, w.pin, payload);
+    const signed = await chipSign(w.relay, w.pin, payload, { allowance: w.allowance });
     assert.ok(signed.ok, JSON.stringify(signed));
     assert.equal(signed.signed.payload, payload);
     assert.equal(signed.signed.public_key, w.pin.publicKey);
@@ -249,14 +249,14 @@ test('chipSign holds the answer to the question: the payload byte for byte, the 
     ];
     for (const [what, change] of edits) {
       edit = (a) => change(a);
-      const result = await chipSign(w.relay, w.pin, asked);
+      const result = await chipSign(w.relay, w.pin, asked, { allowance: w.allowance });
       assert.ok(!result.ok && result.code === 'chip_answer', `${what}: ${JSON.stringify(result)}`);
     }
     edit = (a) => ({ ...a, keyRef: other.keyRef });
-    const garbled = await chipSign(w.relay, w.pin, asked);
+    const garbled = await chipSign(w.relay, w.pin, asked, { allowance: w.allowance });
     assert.ok(!garbled.ok && garbled.code === 'garbled', 'an answer for another chip key never reaches the checks');
     edit = null;
-    assert.ok((await chipSign(w.relay, w.pin, asked)).ok, 'the unedited answer passes');
+    assert.ok((await chipSign(w.relay, w.pin, asked, { allowance: w.allowance })).ok, 'the unedited answer passes');
   } finally {
     await w.stop();
   }
@@ -273,10 +273,11 @@ test('the service\'s refusals reach the caller by their codes, and each has a ca
     assert.ok(unmarked.ok);
     const transfer = w.payload([{ intent: 'transfer', receiver_id: w.allowance, tokens: { [USDC]: '1' } }]);
     w.service.touch = 'cancel';
-    const cancelled = await chipSign(w.relay, w.pin, transfer);
+    const toAllowance = { allowance: w.allowance };
+    const cancelled = await chipSign(w.relay, w.pin, transfer, toAllowance);
     const cases: [string, Awaited<ReturnType<typeof chipSign>>, string][] = [
       ['a cancelled Touch ID', cancelled, 'user_cancel'],
-      ['a chip with no marker', await chipSign(w.relay, { ...w.pin, keyRef: unmarked.keyRef, publicKey: unmarked.publicKey }, transfer), 'not_committed'],
+      ['a chip with no marker', await chipSign(w.relay, { ...w.pin, keyRef: unmarked.keyRef, publicKey: unmarked.publicKey }, transfer, toAllowance), 'not_committed'],
     ];
     // A key the chip never adds: refused here before the service is asked, and by the service when asked straight.
     const addKey = w.payload([{ intent: 'add_public_key', public_key: `p256:${base58Encode(Buffer.alloc(64, 7))}` }]);
@@ -288,13 +289,13 @@ test('the service\'s refusals reach the caller by their codes, and each has a ca
     assert.ok(!there.ok && there.error === 'grammar', JSON.stringify(there));
     assert.ok(knownRefusal('grammar') && calm(String(refusal('grammar').error)));
     w.service.keychainHome = false;
-    cases.push(['a build with no keychain home', await chipSign(w.relay, w.pin, transfer), 'keychain_unavailable']);
+    cases.push(['a build with no keychain home', await chipSign(w.relay, w.pin, transfer, toAllowance), 'keychain_unavailable']);
     w.service.keychainHome = true;
     // The marker pins another vault than the payload's signer.
     const elsewhere = await createChip(w.relay);
     assert.ok(elsewhere.ok);
     assert.ok((await commitChip(w.relay, { keyRef: elsewhere.keyRef, account: w.allowance, allowance: w.vault, recovery: PAPER })).ok);
-    cases.push(['a payload for another vault than the marker\'s', await chipSign(w.relay, { keyRef: elsewhere.keyRef, publicKey: elsewhere.publicKey, account: w.vault }, transfer), 'wrong_signer']);
+    cases.push(['a payload for another vault than the marker\'s', await chipSign(w.relay, { keyRef: elsewhere.keyRef, publicKey: elsewhere.publicKey, account: w.vault }, transfer, toAllowance), 'wrong_signer']);
     for (const [what, result, code] of cases) {
       assert.ok(!result.ok && result.code === code, `${what}: ${JSON.stringify(result)}`);
       assert.ok(knownRefusal(code) && calm(String(refusal(code).error)), `${code}: ${String(refusal(code).error)}`);
@@ -329,7 +330,9 @@ test('chipSign reads the service\'s grammar first: a key added, predecessor auth
       ['the chip removing itself', w.payload([{ intent: 'remove_public_key', public_key: w.pin.publicKey }]), 'signing_key'],
       ['one key removed twice', w.payload([{ intent: 'remove_public_key', public_key: other }, { intent: 'remove_public_key', public_key: other }]), 'key_repeat'],
       ['a receiver that is no NEAR name', good.replace(`"receiver_id":"${w.allowance}"`, '"receiver_id":"a"'), 'shape'],
-      ['a sentence over 120 characters', w.payload([send(USDC, '340282366920938463463374607431768211455', `${'a'.repeat(59)}.near`)]), 'sentence'],
+      ['a send to a name that reads like the allowance', w.payload([send(USDC, '100000000', 'your-allowance.near')]), 'receiver'],
+      ['a send to an address of its own', w.payload([send(USDC, '100000000', `0x${'c3'.repeat(20)}`)]), 'receiver'],
+      ['a sentence over 120 characters', w.payload([send(USDC, '340282366920938463463374607431768211455', w.allowance), send('nep141:usdt.tether-token.near', '340282366920938463463374607431768211455', w.allowance)]), 'sentence'],
       ['over 4096 bytes', good + ' '.repeat(4096), 'size'],
       ['a character past ASCII', good.replace('intents.near', 'intents.nеar'), 'ascii'],
       ['a backslash escape', good.replace('intents.near', 'intents\\u002enear'), 'escape'],

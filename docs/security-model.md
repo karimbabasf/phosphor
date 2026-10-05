@@ -144,18 +144,21 @@ build; add `-- --app <Phosphor.app>` to run it.
   for a bind and a restore; a wallet made after a start-up probe that could not read the markers
   is committed all the same; Phosphor-only only for a file the service confirmed).
 - **The backend asks the chip key to sign something its Touch ID dialog does not say.** The vault
-  service reads every payload itself, against a grammar that takes a move of known tokens out of the
-  vault, the removal of a key, or the empty rekey proof, and refuses everything else before the key
-  is touched, so a refusal never raises a dialog. The dialog's sentence is the service's, written
+  service reads every payload itself, against a grammar that takes a move of known tokens from the
+  vault to the allowance its marker pins, the removal of a key, or the empty rekey proof, and
+  refuses everything else before the key is touched, so a refusal never raises a dialog. A transfer
+  to any other receiver is refused, so no dialog ever names an account the backend chose, however
+  it is spelled ("your-allowance.near" included). The dialog's sentence is the service's, written
   from what it read; the backend never sends one. Adding a key and switching predecessor auth back
   on are refused by name, whatever the payload wraps them in. The app reads the same grammar first
   (`src/vault/chip-grammar.ts`), so such a payload never reaches the service at all; the service
-  stays the boundary. Proof: attack `31-chip-hostile-payloads` (all 34 held in the app before the
+  stays the boundary. Proof: attack `31-chip-hostile-payloads` (all 37 held in the app before the
   service is asked, and each refused by the service when asked straight); `chip-service.test.ts`
   (every refusal before the key with no signature asked for, each signed payload's sentence byte for
   byte, each signature verified in Node); `intent-grammar.test.ts` (every accept and refusal, 10 000
   mutated payloads read the same as Node reads them, and the app's first reading refuses every one
-  the grammar refuses).
+  the grammar refuses); `audit2-grammar-named-receiver.test.ts` (a name registered to read like
+  your allowance or your vault gets no dialog, and the app refuses it first).
 - **A quote changed between your Mac and 1Click.** A quote must echo the request as it was sent,
   carry 1Click's signature, and name the receiver the card shows. Proof:
   `quote-request-echo.test.ts`, `quote-signature.test.ts`, `intents-spend.test.ts`.
@@ -1274,14 +1277,16 @@ the one call that asks you: the request's form; a marker for that key; the key i
 (`src-tauri/se-helper/IntentGrammar.swift`); that the payload signs for the pinned vault; and that
 the sentence fits in 120 characters. The grammar reads a strict subset of JSON that every parser
 reads one way (printable ASCII, no escapes, no key twice, exact key sets) and takes three shapes: a
-move of tokens from the app's token table out of the vault, the removal of a key that is not the
-signing chip, and the empty proof a rekey asks of a new chip key. Every other kind the verifier
+move of tokens from the app's token table out of the vault to the allowance its marker pins, the
+removal of a key that is not the signing chip, and the empty proof a rekey asks of a new chip key.
+A transfer to any other receiver is refused (rule `receiver`): the app never asks the chip for one,
+and a name the backend registered could read like a pinned account. Every other kind the verifier
 knows is refused by name, `add_public_key` and `set_auth_by_predecessor_id` first: the first would
 give the vault to a key the backend chose, and the second would reopen the door the rekey closes.
 The deadline must fall within two minutes, and the nonce must expire exactly seven days after it,
 the life every nonce Phosphor builds carries (`NONCE_LIFE_AFTER_DEADLINE_MS`), so the app asks the
 chain about every nonce under one rule. The sentence names the pinned vault, allowance and paper
-key in words and anything else by its ends, eight characters each, and says every amount exactly:
+key in words and any other key by its ends, eight characters each, and says every amount exactly:
 "move 100.00 USDC from your vault to your allowance". The dialog reads "Phosphor is trying to"
 followed by that sentence, and its context is used for that one signature and never again.
 

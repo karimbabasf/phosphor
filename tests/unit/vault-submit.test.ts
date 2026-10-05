@@ -87,7 +87,7 @@ async function world(opts: { chipOnChain?: boolean; gas?: bigint; journal?: Vaul
       id,
       account: vault,
       async sign() {
-        const signed = await chipSign(relay, pin, await payload([{ intent: 'transfer', receiver_id: allowance, tokens: { [USDC]: amount.toString() } }]), { now: double.now });
+        const signed = await chipSign(relay, pin, await payload([{ intent: 'transfer', receiver_id: allowance, tokens: { [USDC]: amount.toString() } }]), { now: double.now, allowance });
         if (!signed.ok) return { ok: false, code: signed.code, detail: signed.detail };
         signedBundles.push([signed.signed]);
         return { ok: true, bundle: [signed.signed], before: {} };
