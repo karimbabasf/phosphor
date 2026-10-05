@@ -1534,21 +1534,31 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   /* Whether NEAR shows the swap done: this swap's own signed transfer spent at the verifier, and the
      bought coin up by at least the approved floor since the read taken before the signature. Both,
      because a rise alone is any credit of that coin and a spent nonce alone is the input gone, not
-     the coin arrived. Asked from RAN_RECHECK_MS after the submit and at most that often; a read that
-     fails proves nothing. `ask` says yes a poll after both first hold, so 1Click keeps one poll to
-     answer and a swap it answers promptly settles on its SUCCESS exactly as before. `held` is the
-     balance read that proved it. */
+     the coin arrived. Asked from RAN_RECHECK_MS after the submit and at most that often, one read at
+     a time, and never awaited by the poll: an RPC that hangs must not slow 1Click's own answer. A
+     read that fails proves nothing. `ask` says yes at the first poll after both are seen, so 1Click
+     keeps one poll to answer and a swap it answers promptly settles on its SUCCESS exactly as
+     before. `held` is the balance read that proved it. */
   function ranProof(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint): { ask: () => Promise<boolean>; held: () => bigint | null } {
     let askedAt = now();
+    let reading = false;
     let after: bigint | null = null;
+    const read = async (account: string, signed: string, base: bigint): Promise<void> => {
+      try {
+        if ((await nonceUsed(account, signed)) !== true) return;
+        const held = await verifierBalance(account, asset);
+        if (held !== null && held - base >= floor) after = held;
+      } finally {
+        reading = false;
+      }
+    };
     return {
       ask: async () => {
         if (after !== null) return true;
-        if (nonce === undefined || before === null || now() - askedAt < RAN_RECHECK_MS) return false;
+        if (nonce === undefined || before === null || reading || now() - askedAt < RAN_RECHECK_MS) return false;
         askedAt = now();
-        if ((await nonceUsed(owner.toLowerCase(), nonce)) !== true) return false;
-        const read = await verifierBalance(owner.toLowerCase(), asset);
-        if (read !== null && read - before >= floor) after = read;
+        reading = true;
+        void read(owner.toLowerCase(), nonce, before).catch(() => undefined);
         return false;
       },
       held: () => after,

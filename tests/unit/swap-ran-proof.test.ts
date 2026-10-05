@@ -117,7 +117,8 @@ function sharedClock(start: number) {
 
 type Outcome = { coin: Coin; result: RailResult; doneAt: number; ranAt: number; told: Array<{ at: number; stage: string }> };
 
-async function eightAtOnce(): Promise<Outcome[]> {
+// `chain: 'hangs'` is an RPC that takes the watch's nonce question and never answers.
+async function eightAtOnce(opts: { chain?: 'answers' | 'hangs' } = {}): Promise<Outcome[]> {
   const clock = sharedClock(START);
   const submittedAt = new Map<string, number>();
   const coinByHandle = new Map(COINS.map((c) => [handleOf(c), c]));
@@ -180,9 +181,11 @@ async function eightAtOnce(): Promise<Outcome[]> {
       const c = coinByAsset.get(asset);
       return c !== undefined && clock.now() >= ranAt(c) ? c.out : 0n;
     },
-    nonceUsed: async (_account: string, nonce: string) => {
+    nonceUsed: (_account: string, nonce: string, at?: string) => {
+      // The watch asks at NEAR's final state; the deadline proof's reads at a block are its own.
+      if (opts.chain === 'hangs' && at === undefined) return new Promise<boolean | null>(() => {});
       const c = coinByNonce.get(nonce);
-      return c !== undefined && clock.now() >= ranAt(c);
+      return Promise.resolve(c !== undefined && clock.now() >= ranAt(c));
     },
     finalBlock: async () => ({ hash: `blk-${clock.now()}`, atMs: clock.now() - 2_600 }),
     saltValid: async () => true,
@@ -260,5 +263,15 @@ test('the three 1Click answered promptly settle on its SUCCESS exactly as before
     assert.match(o.result.detail, /^swapped 1\.0168 USDC for [\d.]+ \w+ inside intents\.near, read back from the verifier rather than taken from the quote; intent /, o.coin.symbol);
     assert.doesNotMatch(o.result.detail, /signed transfer spent/, o.coin.symbol);
     assert.equal(o.told.at(-1)?.stage, 'SUCCESS', o.coin.symbol);
+  }
+});
+
+test('a chain read that never answers holds up nothing: 1Click\'s answers land when they did, and the late five wait for its word as before', async () => {
+  const answered = new Map((await eightAtOnce()).map((o) => [o.coin.symbol, o.doneAt]));
+  for (const o of await eightAtOnce({ chain: 'hangs' })) {
+    assert.equal(o.result.ok, true, `${o.coin.symbol}: ${o.result.detail}`);
+    assert.doesNotMatch(o.result.detail, /signed transfer spent/, o.coin.symbol);
+    if (o.coin.lags) assert.ok(o.doneAt >= o.ranAt + SAYS_AFTER_MS + LAGS_BY_MS, `${o.coin.symbol} ended before 1Click's word`);
+    else assert.equal(o.doneAt, answered.get(o.coin.symbol), `${o.coin.symbol} settled later than with a chain that answers`);
   }
 });
