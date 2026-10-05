@@ -85,6 +85,8 @@ type App = {
   mac: VaultDouble;
   shell: ReturnType<typeof relayTo>;
   sends: SendParams[];
+  // The owner key gate src/main.ts gives the keystore: vault.json, then a marker the chain confirms.
+  gate: (vault: string) => boolean;
   frames(): string;
   post(route: string, body?: Record<string, unknown>): Promise<{ status: number; json: any }>;
   postBare(route: string, body: Record<string, unknown>): Promise<{ status: number; json: any }>;
@@ -107,7 +109,8 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
   const relay = createVaultRelay({ transportKey: transport, secret: relaySecret });
   const cfg: AppConfig = { mode: 'live', port: 0, addresses: {}, candleProducts: ['BTC-USD'], dataDir, keysPath };
   const prefs = createVaultPrefs(dataDir);
-  keystore.keepOwnerKeyOutWhen(ownerKeyGate(() => prefs.get(), relay, chain.verifier));
+  const gate = ownerKeyGate(() => prefs.get(), relay, chain.verifier);
+  keystore.keepOwnerKeyOutWhen(gate);
   const accounts = createAccounts({ keystore, prefs, chipStatus: chipStatusReader(relay) });
   const submitter = createVaultSubmitter({
     verifier: chain.verifier,
@@ -239,6 +242,7 @@ async function chipApp(chain: IntentsDouble, opts: { mac?: VaultDouble; papers?:
     mac,
     shell,
     sends,
+    gate,
     frames: () => frameText,
     post: (route, body = {}) => send(route, { token, ...body }),
     postBare: send,
@@ -741,6 +745,104 @@ test('a key someone adds to the vault while the move is being signed is caught a
     assert.match(app.frames(), /holds a key Phosphor did not add/);
   } finally {
     await app.close();
+  }
+});
+
+/* The owner key gate (CONTRACTS.md, Wave 2 as merged): no chain answer yet, the owner key is out; neither
+   pinned key on the vault, it is in; the chip key or the paper key on the vault, out for good. A
+   restart asks the markers first, as src/main.ts does right behind the probe. */
+async function restartedOn(chain: IntentsDouble, mac: VaultDouble, dataDir: string, vault: string): Promise<App> {
+  const app = await chipApp(chain, { mac, dataDir });
+  assert.equal((await app.relay.ask({ op: 'chipStatus' })).ok, true);
+  // The gate asks the chain about any marker naming the vault; the double answers at once.
+  app.gate(vault);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal((await app.post('/api/vault/unlock')).json.ok, true);
+  return app;
+}
+
+test('the owner key gate and the move agree after a crash: a call that ran keeps the owner key out before vault.json is written, one that never went out lets it back in', { skip, timeout: 120_000 }, async () => {
+  const chain = createIntentsDouble({ start: T0 * 1000 });
+  const mac = new VaultDouble();
+  const dataDir = tempDir('phosphor-rekey-gate-');
+
+  // A move that ran, and a crash before vault.json named the chip: the disk as kill point 7 leaves it.
+  const a = await chipApp(chain, { mac, dataDir, papers: [PAPER_A] });
+  let vault = '';
+  try {
+    vault = await wallet(a, chain);
+    assert.equal((await migrate(a, PAPER_A)).result, 'done');
+  } finally {
+    await a.close();
+  }
+  const prefsFile = path.join(dataDir, 'vault.json');
+  const prefs = JSON.parse(fs.readFileSync(prefsFile, 'utf8')) as Record<string, unknown>;
+  delete prefs.chip;
+  fs.writeFileSync(prefsFile, JSON.stringify(prefs));
+  const runFile = path.join(dataDir, 'chip-run.json');
+  fs.writeFileSync(runFile, JSON.stringify({ ...JSON.parse(fs.readFileSync(runFile, 'utf8')), status: 'moving' }));
+
+  const b = await restartedOn(chain, mac, dataDir, vault);
+  try {
+    assert.equal(b.prefs.get().chip, null, 'vault.json names no chip yet');
+    assert.equal(b.gate(vault), true, 'the chip on the vault keeps the owner key out');
+    assert.throws(() => b.keystore.evmPrivateKey(), (err: unknown) => isOwnerTouchRequired(err), 'no session holds the owner key of a vault that moved');
+    // The first read of the state finishes the move from the chain's word.
+    await new Promise((r) => setTimeout(r, 0));
+    let chip = await chipState(b);
+    for (let i = 0; i < 200 && chip.state !== 'done'; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+      chip = await chipState(b);
+    }
+    assert.equal(chip.state, 'done');
+    assert.equal(b.prefs.get().chip?.account, vault);
+  } finally {
+    await b.close();
+  }
+});
+
+test('a chip committed and a call that never went out: once the chain answers, the owner key is back in and the next try finishes with that chip', { skip, timeout: 120_000 }, async () => {
+  const chain = createIntentsDouble({ start: T0 * 1000 });
+  const mac = new VaultDouble();
+  const dataDir = tempDir('phosphor-rekey-gate-');
+  // The owner key's touch cancelled after the commit: a marker names the vault and nothing was sent.
+  let cancel = true;
+  const a = await chipApp(chain, {
+    mac,
+    dataDir,
+    papers: [PAPER_A],
+    hook: (r) => {
+      if (cancel && r.op === 'unwrap' && r.reason === MOVE_VAULT_REASON) {
+        cancel = false;
+        return { kind: 'answer', answer: { ok: false, error: 'user_cancel', message: 'cancelled' } as Answer };
+      }
+      return undefined;
+    },
+  });
+  let vault = '';
+  try {
+    vault = await wallet(a, chain);
+    const shown = await a.post('/api/vault/chip/phrase');
+    assert.equal((await a.post('/api/vault/chip/phrase-proven', { words: shown.json.words })).json.ok, true);
+    const moved = await a.post('/api/vault/chip/move');
+    assert.equal(await settled(a, moved.json.run), 'failed user_cancel');
+  } finally {
+    await a.close();
+  }
+  assert.equal(chipKeysIn(mac), 1);
+
+  const b = await restartedOn(chain, mac, dataDir, vault);
+  try {
+    assert.equal(b.relay.chipMarkers(vault).length, 1, 'the restart read the marker naming the vault');
+    assert.equal(b.gate(vault), false, 'neither pinned key is on the vault: the owner key is in');
+    assert.match(b.keystore.evmPrivateKey(), /^0x[0-9a-f]{64}$/, 'kind key: the owner key signs VAULT again');
+    assert.equal((await b.post('/api/vault/chip/phrase-proven', { words: PAPER_A.split(' ') })).json.ok, true);
+    const moved = await b.post('/api/vault/chip/move');
+    assert.equal(await settled(b, moved.json.run), 'done');
+    assert.equal(chipKeysIn(mac), 1, 'the chip committed before the crash is the one that moved the vault');
+    assert.equal(b.gate(vault), true);
+  } finally {
+    await b.close();
   }
 });
 
