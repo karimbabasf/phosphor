@@ -44,6 +44,7 @@ import { ERC191_STANDARD, duplicateJsonKey, liveIntentsSigner } from '../intents
 import type { IntentsSignerPort } from '../intents-sign.ts';
 import {
   ONECLICK_BASE,
+  ONECLICK_TERMINAL,
   QuoteRefusal,
   baseUnits,
   baseUnitsToDecimal,
@@ -142,6 +143,13 @@ export const INTENTS_NO_API_KEY_REASON =
    costs a retry and never money. Until 2026-09-25 "dead" waited for the five-minute grace and the
    ten-minute sweep after the watch, and the card said the money was moving all that time. */
 export const SIGNED_DEADLINE_MS = 3 * 60 * 1000;
+
+/* HOW OFTEN THE WATCH ASKS NEAR WHETHER THE SWAP HAS RUN, beside 1Click's word: from two seconds
+   after the submit, at most every two seconds, so about once a poll. On 2026-10-05 eight swaps went
+   in at once; NEAR ran all eight, the balance panel showed every coin, and five cards still said
+   "Sent. Waiting for a buyer to take it." because 1Click went on answering PROCESSING and only its
+   word ended the watch. One view call a poll per swap until the transfer is spent, nothing signed. */
+export const RAN_RECHECK_MS = 2_000;
 
 /* The payload with its deadline brought forward to `latestMs`, as the same bytes with that one
    value replaced. Unchanged when the deadline is already that soon, and unchanged when the value
@@ -1294,9 +1302,40 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         signedQuote,
       );
 
-    const watch = await watchStatus(depositAddress, hooks, proof.ask);
+    /* AND WHEN NEAR SHOWS THE SWAP RAN, whatever 1Click still says (ranProof): the swap's own
+       transfer spent and the bought coin arrived. 1Click keeps one more poll to say SUCCESS, and a
+       terminal word from it still takes its own branch below; only a 1Click still short of an
+       answer ends on NEAR's word, as Done, read back from the verifier like a SUCCESS is. */
+    const ran = ranProof(owner, nonce, p.destinationAsset, beforeBase, p.minOutBase);
+    const ranOnChain = (afterBase: bigint, last: OneClickStatus): RailResult => {
+      const before = beforeBase ?? 0n;
+      return {
+        ok: true,
+        detail:
+          `swapped ${amountInText(draft, p)} ${draft.fromSymbol} for ${formatUnits(afterBase - before, p.destDecimals)} ${draft.toSymbol} ` +
+          `inside ${INTENTS_VERIFIER}, read back from the verifier once NEAR showed this swap's own signed transfer spent while 1click ` +
+          `still reported ${oneLine(last.status, 40)}; ${evidence}. Nothing was transferred on any chain and the proceeds are credited ` +
+          `to ${owner} inside the verifier.`,
+        txids: uniqueTxids(submitted.intentHash, last),
+        pocket: {
+          venue: 'intents',
+          account: owner.toLowerCase(),
+          assetId: p.destinationAsset,
+          symbol: draft.toSymbol,
+          decimals: p.destDecimals,
+          before: before.toString(),
+          after: afterBase.toString(),
+          floor: p.minOutBase.toString(),
+        },
+        evidence: { ...settledEvidence(last, depositAddress), quote: signedQuote },
+      };
+    };
+
+    const watch = await watchStatus(depositAddress, hooks, async () => (await proof.ask()) || (await ran.ask()));
     const provedEarly = proof.held();
     if (provedEarly !== null) return neverRan(provedEarly, watch);
+    const landed = ran.held();
+    if (landed !== null && !(ONECLICK_TERMINAL as readonly string[]).includes(watch.status)) return ranOnChain(landed, watch);
 
     if (watch.status === 'SUCCESS') {
       /* SUCCESS from the venue is the venue's word. What arrived is a number this app can read,
@@ -1489,6 +1528,30 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
         return dead !== null;
       },
       held: () => dead,
+    };
+  }
+
+  /* Whether NEAR shows the swap done: this swap's own signed transfer spent at the verifier, and the
+     bought coin up by at least the approved floor since the read taken before the signature. Both,
+     because a rise alone is any credit of that coin and a spent nonce alone is the input gone, not
+     the coin arrived. Asked from RAN_RECHECK_MS after the submit and at most that often; a read that
+     fails proves nothing. `ask` says yes a poll after both first hold, so 1Click keeps one poll to
+     answer and a swap it answers promptly settles on its SUCCESS exactly as before. `held` is the
+     balance read that proved it. */
+  function ranProof(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint): { ask: () => Promise<boolean>; held: () => bigint | null } {
+    let askedAt = now();
+    let after: bigint | null = null;
+    return {
+      ask: async () => {
+        if (after !== null) return true;
+        if (nonce === undefined || before === null || now() - askedAt < RAN_RECHECK_MS) return false;
+        askedAt = now();
+        if ((await nonceUsed(owner.toLowerCase(), nonce)) !== true) return false;
+        const read = await verifierBalance(owner.toLowerCase(), asset);
+        if (read !== null && read - before >= floor) after = read;
+        return false;
+      },
+      held: () => after,
     };
   }
 

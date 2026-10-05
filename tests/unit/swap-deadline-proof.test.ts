@@ -616,8 +616,11 @@ test('the rail\'s watch closes a swap the chain proves can never run about a min
   assert.ok(h.clock.now - DEADLINE >= 30_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline, inside the floor`);
   assert.ok(h.clock.now - DEADLINE <= 2 * FATE_RECHECK_MS + 10_000, `closed ${Math.round((h.clock.now - DEADLINE) / 1000)} s after the deadline`);
   assert.ok(h.clock.now < NOW + 5 * 60_000, 'before the watch would have run out');
-  assert.ok(h.reads.every((r) => r.at >= DEADLINE), 'the chain is asked nothing before the deadline by this clock');
-  assert.ok(h.reads.filter((r) => r.read.startsWith('nonce')).every((r) => r.read.startsWith('nonce@blk-')), 'every nonce read is at the block the clock came from');
+  // The proof reads at a block; the watch's own question whether the swap ran reads NEAR's final
+  // state from two seconds in (tests/unit/swap-ran-proof.test.ts).
+  const proofReads = h.reads.filter((r) => r.read !== 'nonce@final');
+  assert.ok(proofReads.every((r) => r.at >= DEADLINE), 'the proof asks the chain nothing before the deadline by this clock');
+  assert.ok(proofReads.filter((r) => r.read.startsWith('nonce')).every((r) => r.read.startsWith('nonce@blk-')), 'every nonce read the proof takes is at the block the clock came from');
   const blocks = h.reads.filter((r) => r.read === 'block').map((r) => r.at);
   assert.ok(blocks.every((at, i) => i === 0 || at - blocks[i - 1]! >= FATE_RECHECK_MS), 'at most every half minute');
 });

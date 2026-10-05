@@ -497,11 +497,13 @@ over: the app keeps watching, and the card moves on the moment the venue credits
 a failure are endings, and each names why.
 
 A swap inside NEAR Intents moves nothing until a buyer takes it: the transfer and the fill settle
-together. While it waits the card says "Sent. Waiting for a buyer to take it." Its signed transfer
-can run for three minutes. Once NEAR's own clock and this Mac's are both half a minute past that
-and the transfer never ran, it can never run, and the card says Didn't go through: nothing left
-your balance. The app reads NEAR's clock and the transfer's nonce itself, so it knows this even
-when the swap service does not answer.
+together. While it waits the card says "Sent. Waiting for a buyer to take it." The card says Done
+once NEAR shows the swap ran, even while the swap service still calls it working: the app reads
+the swap's own signed transfer on NEAR, spent, and the coin it bought in your balance, at least
+the amount you approved. Its signed transfer can run for three minutes. Once NEAR's own clock and
+this Mac's are both half a minute past that and the transfer never ran, it can never run, and the
+card says Didn't go through: nothing left your balance. The app reads NEAR's clock and the
+transfer's nonce itself, so it knows this even when the swap service does not answer.
 
 If the venue said success and the app could not see the money land, the row is Not confirmed
 and nothing more is signed. That is the honest state, not a failure: the money is on its way,
