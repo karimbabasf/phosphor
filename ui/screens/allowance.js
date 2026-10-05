@@ -17,7 +17,10 @@
    account. Low means a vault move would be refused before anything is
    signed, so the row says so beside the way to fill it. A vault NEAR shows
    on another Mac's keys cannot pay it (state.vault.chip.elsewhere): the row
-   then shows the account whole, to send NEAR to it from any NEAR wallet. */
+   then shows the account whole, to send NEAR to it from any NEAR wallet.
+   Add NEAR does the same when what the payout would come from, the vault or
+   after the move the allowance, holds no NEAR (state.vault.chip.sourceNear),
+   with the swap that would fill it. */
 (function () {
   'use strict';
 
@@ -43,6 +46,8 @@
   var current = {};
   // The last ask from each row, said under it while its card still waits.
   var asked = { allowance: null, gas: null };
+  // Add NEAR found nothing to pay the gas account from, and the account shows whole instead.
+  var direct = false;
 
   function button(label, kind, pending) {
     var node = dom.el('button', 'btn ' + (kind || 'btn-ghost btn-sm'));
@@ -451,10 +456,12 @@
     r.main.appendChild(refs.gasLow);
     refs.gasId = idLine('A payout to it names ', ' in its Touch ID.');
     r.main.appendChild(refs.gasId.line);
-    /* The vault opens with another Mac's key: this Mac pays nothing from it,
-       so the account is shown whole, to send NEAR to it straight. */
+    /* This Mac pays nothing to it (the vault opens with another Mac's key),
+       or what the payout would come from holds no NEAR: the account is shown
+       whole, to send NEAR to it straight. */
     refs.gasElsewhere = dom.el('div', 'vault-gas-elsewhere');
-    refs.gasElsewhere.appendChild(kit.text('vault-sub', 'Your vault opens with another Mac\'s Touch ID key now, so this Mac cannot pay NEAR from it. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+    refs.gasDirectLine = kit.text('vault-sub');
+    refs.gasElsewhere.appendChild(refs.gasDirectLine);
     refs.gasWhole = dom.el('p', 'vault-mono');
     refs.gasElsewhere.appendChild(refs.gasWhole);
     var copyTools = dom.el('div', 'vault-actions');
@@ -465,6 +472,8 @@
     refs.gasCopied.setAttribute('role', 'status');
     refs.gasCopied.hidden = true;
     refs.gasElsewhere.appendChild(refs.gasCopied);
+    refs.gasSwap = kit.text('vault-sub', 'Or ask your assistant to swap a little USDC to NEAR (0.5 NEAR is enough), then add it here.');
+    refs.gasElsewhere.appendChild(refs.gasSwap);
     refs.gasElsewhere.hidden = true;
     r.main.appendChild(refs.gasElsewhere);
     dom.on(refs.gasCopy, 'click', copyGas);
@@ -528,19 +537,24 @@
           ? 'Empty. Add NEAR before your vault can move.'
           : 'Low. Your vault\'s moves wait until it holds more NEAR.');
     dom.setHidden(refs.gasLow, !(low || !gas || near === null));
-    var elsewhere = gasElsewhere();
+    if (direct && !nothingToPay()) direct = false;
+    var straight = directOf();
+    dom.setText(refs.gasDirectLine, straight === 'elsewhere'
+      ? 'Your vault opens with another Mac\'s Touch ID key now, so this Mac cannot pay NEAR from it. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'
+      : (slice.state === 'done' ? 'Your allowance' : 'Your vault') + ' holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:');
+    dom.setHidden(refs.gasSwap, straight !== 'none');
     dom.setText(refs.gasId.id, gas && gas.account ? short(gas.account) : '');
-    dom.setHidden(refs.gasId.line, !(gas && gas.account) || elsewhere);
-    dom.setText(refs.gasWhole, elsewhere ? gas.account : '');
-    dom.setHidden(refs.gasElsewhere, !elsewhere);
+    dom.setHidden(refs.gasId.line, !(gas && gas.account) || !!straight);
+    dom.setText(refs.gasWhole, straight ? gas.account : '');
+    dom.setHidden(refs.gasElsewhere, !straight);
     dom.setHidden(refs.gasCopy, !copier());
-    if (!elsewhere) dom.setHidden(refs.gasCopied, true);
+    if (!straight) dom.setHidden(refs.gasCopied, true);
     // A form opened before NEAR's word came: the payout it would ask for is refused, so it goes.
-    if (elsewhere && !refs.gasAdd.hidden) dom.setHidden(refs.gasAdd, true);
+    if (straight === 'elsewhere' && !refs.gasAdd.hidden) dom.setHidden(refs.gasAdd, true);
     dom.setText(refs.gasAsked, asked.gas ? asked.gas.line : '');
     dom.setHidden(refs.gasAsked, !asked.gas);
     refs.gasOpen.className = 'btn ' + (low || !near ? 'btn-ghost btn-sm' : 'btn-quiet btn-sm');
-    dom.setHidden(refs.gasOpen, !refs.gasAdd.hidden || !(gas && gas.account) || elsewhere);
+    dom.setHidden(refs.gasOpen, !refs.gasAdd.hidden || !(gas && gas.account) || !!straight);
     // Where the NEAR comes from: the vault before the move, the allowance after it.
     dom.setText(refs.gasFrom, (slice.state === 'done'
       ? 'From your allowance, as a payout on NEAR.'
@@ -554,10 +568,19 @@
     dom.setText(refs.gasGo.querySelector('.btn-label'), n !== null && n > 0 ? 'Add ' + nearWords(n) : 'Add NEAR');
   }
 
-  // NEAR shows the vault on another Mac's keys, and the gas account has an id to show.
-  function gasElsewhere() {
+  /* Why NEAR goes to the gas account straight, when it does and the account
+     has an id to show: NEAR shows the vault on another Mac's keys, or Add
+     NEAR found nothing to pay it from. Null otherwise. */
+  function directOf() {
     var gas = slice && slice.gas && typeof slice.gas === 'object' ? slice.gas : null;
-    return !!slice && slice.elsewhere === true && !!gas && typeof gas.account === 'string' && !!gas.account;
+    if (!gas || typeof gas.account !== 'string' || !gas.account) return null;
+    if (slice.elsewhere === true) return 'elsewhere';
+    return direct && nothingToPay() ? 'none' : null;
+  }
+
+  // The vault (before the move) or the allowance (after it) holds no NEAR, by the ledger's last read.
+  function nothingToPay() {
+    return !!slice && slice.sourceNear === 0 && slice.state !== 'broken' && slice.state !== 'checking';
   }
 
   function copier() {
@@ -567,7 +590,7 @@
 
   // The account, copied and read back (ui/screens/netpick.js), so what lands is what is shown.
   function copyGas() {
-    if (!gasElsewhere() || !copier()) return;
+    if (!directOf() || !copier()) return;
     window.PhosphorNetPick.copyChecked(slice.gas.account, function (words) {
       dom.setText(refs.gasCopied, words);
       dom.setHidden(refs.gasCopied, !words);
@@ -577,7 +600,17 @@
   function openGas() {
     if (!mounted || !slice) return;
     kit.bringIntoView(refs.gas);
-    if (gasElsewhere()) {
+    // Nothing to pay it from: the account whole and the two ways to fill it, in place of the form.
+    if (!directOf() && nothingToPay() && slice.gas && slice.gas.account) {
+      asked.gas = null;
+      kit.grow(refs.gas, function () {
+        direct = true;
+        paintGas();
+        if (refs.gasCopy.focus && !refs.gasCopy.hidden) refs.gasCopy.focus();
+      }, refs.gasElsewhere);
+      return;
+    }
+    if (directOf()) {
       if (refs.gasCopy.focus && !refs.gasCopy.hidden) refs.gasCopy.focus();
       return;
     }
@@ -630,13 +663,25 @@
 
   // Escape puts away whatever this file has open, as the Vault's own rows do.
   function escape() {
-    return close(refs.topUp, refs.topUpOpen) || close(refs.size, refs.sizeOpen) || close(refs.gasAdd, refs.gasOpen);
+    return close(refs.topUp, refs.topUpOpen) || close(refs.size, refs.sizeOpen) || close(refs.gasAdd, refs.gasOpen) || closeDirect();
+  }
+
+  // The account Add NEAR showed when there was nothing to pay it from goes away again.
+  function closeDirect() {
+    if (directOf() !== 'none') return false;
+    kit.shrink(refs.gas, refs.gasElsewhere, function () {
+      direct = false;
+      paintGas();
+      if (!refs.gasOpen.hidden && refs.gasOpen.focus) refs.gasOpen.focus();
+    }, refs.gasOpen);
+    return true;
   }
 
   // The tab left or the window locked: the asks' lines go, and the rows say what is true now.
   function rest() {
     asked.allowance = null;
     asked.gas = null;
+    direct = false;
     if (!mounted) return;
     paintAllowance();
     paintGas();

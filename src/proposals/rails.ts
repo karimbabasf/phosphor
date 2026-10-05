@@ -39,6 +39,7 @@ import type { ChainNetwork } from '../chainscan/index.ts';
 import { recipientFor } from '../recipients.ts';
 import { amountAsk, baseUnitsToDecimal, canonicalSymbol, decimalToBaseUnits, heldSymbol, oneLine } from '../intents.ts';
 import type { AmountAsk } from '../intents.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { reasonOf } from '../rails/reasons.ts';
 import type { ReasonCode } from '../rails/reasons.ts';
 import { ourEvmAddress, ourIntentsAddress, presimulate, pricing, proposeRail, refuseDraft, usdOf } from './draft.ts';
@@ -420,7 +421,11 @@ function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, ver
     .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   if (held.length === 0) {
-    problems.push(`intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
+    // A payout's card says it as a person reads it: the gas account's NEAR comes this way.
+    const whose = railAccounts(ctx.cfg.keysPath).kind === 'key' ? 'vault' : 'allowance';
+    problems.push(verb === 'pay out'
+      ? `Your ${whose} holds no ${symbol === heldSymbol('NEAR') ? 'NEAR' : symbol}, so nothing was sent and nothing moved.`
+      : `intents.near holds no ${symbol} for ${from}, so there is nothing to ${verb}.`);
     return { assetId: '' };
   }
   if (held[0].amount < amount) {

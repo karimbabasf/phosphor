@@ -345,6 +345,15 @@ test('a Hyperliquid deposit is refused when the verifier holds none of the asset
   assert.match(p.verdict.reasons.join(' '), /holds no USDC/);
 });
 
+// The gas account's NEAR is a payout like this one: its card says why in a person's words.
+test('a payout from a vault that holds none of the coin is refused saying nothing was sent and nothing moved', async () => {
+  const h = setup();
+  const p = await h.svc.proposeSend({ to: 'a1b2c3d4' + '0'.repeat(48) + 'e5f6a7b8', symbol: 'NEAR', amount: 0.5, where: 'near' });
+  assert.equal(p.verdict.outcome, 'refuse');
+  assert.ok(p.verdict.reasons.includes('Your vault holds no NEAR, so nothing was sent and nothing moved.'), p.verdict.reasons.join(' | '));
+  assert.equal(/intents\.near|wNEAR/.test(p.verdict.reasons.join(' ')), false, 'the part underneath in a payout\'s reason');
+});
+
 test('a Hyperliquid deposit larger than the held flavor is refused and names the balance', async () => {
   const h = setup();
   const p = await h.svc.proposeHlDeposit({ amount: 400 });

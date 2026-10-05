@@ -215,7 +215,9 @@ Under Your vault, the Vault key row takes you through four steps, in order:
    and Hyperliquid after the move.
 2. **Add NEAR to the gas account.** It pays NEAR's small fee for every move of your vault. Add 0.1 to
    1 NEAR from the Gas account row: a payout you approve on its card in the conversation, with one
-   Touch ID that names the gas account.
+   Touch ID that names the gas account. If your vault holds no NEAR yet, Add NEAR shows the gas
+   account whole, with Copy: send 0.1 to 1 NEAR to it on NEAR from any NEAR wallet, or ask your
+   assistant to swap a little USDC to NEAR, then add it here.
 3. **Write your paper key.** Show my paper key puts 24 words on screen once, with your vault's
    address to write under them. Write both by hand: there is no Print and no Copy, because a
    printer, a screenshot or a clipboard keeps one more key to your vault. Then type all 24 words

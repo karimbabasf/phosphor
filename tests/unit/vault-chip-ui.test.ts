@@ -1108,6 +1108,50 @@ test('the gas account: its NEAR, low and empty said plainly, its id to check the
   assert.ok(said(rowOf(moved, 'gas')).includes('From your allowance, as a payout on NEAR.'));
 });
 
+test('step 2 for a vault that holds no NEAR: Add NEAR shows the gas account whole with Copy and the swap that fills the vault, never a payout bound to fail', async () => {
+  const w = build({ vault: { backedUp: true, chip: chipSlice({ state: 'none', needs: ['gas'], gas: { account: GAS, near: '0', low: true }, sourceNear: 0 }) } });
+  const copied: string[] = [];
+  w.sandbox.PhosphorNetPick.copyChecked = (value: string, say: (words: string) => void) => {
+    copied.push(value);
+    say('Account copied, ends in ...' + value.slice(-6));
+    return Promise.resolve(true);
+  };
+  w.chip({});
+  const gas = rowOf(w, 'gas');
+  const straight = (): Any => find(gas, '.vault-gas-elsewhere')[0];
+  assert.equal(straight().hidden, true, 'the account shows before anyone asked for NEAR');
+  press(keyRow(w), 'Add NEAR');
+  assert.equal(gas.scrolled, true);
+  assert.equal(find(gas, '.vault-gas-add')[0].hidden, true, 'a payout form for a vault with no NEAR to pay');
+  assert.equal(straight().hidden, false);
+  assert.ok(said(gas).includes('Your vault holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+  assert.deepEqual(find(gas, '.vault-mono').filter(isShown).map((n: Any) => n.textContent), [GAS], 'the account whole, not cut to its ends');
+  assert.ok(said(gas).includes('Or ask your assistant to swap a little USDC to NEAR (0.5 NEAR is enough), then add it here.'));
+  assert.equal(shownButtons(gas).some((b: Any) => b.textContent === 'Add NEAR'), false);
+  press(gas, 'Copy');
+  await flush();
+  assert.deepEqual(copied, [GAS]);
+  assert.ok(said(gas).includes('Account copied, ends in ...' + GAS.slice(-6)));
+  assert.equal(w.calls.some((c) => c.route === '/api/vault/gas/fund'), false, 'a payout was filed');
+  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
+  // Escape puts it away, and NEAR in the vault makes Add NEAR the payout again.
+  assert.equal(w.key('Escape'), true);
+  assert.equal(straight().hidden, true);
+  w.chip({ sourceNear: 2.5 });
+  press(gas, 'Add NEAR');
+  assert.equal(find(gas, '.vault-gas-add')[0].hidden, false, 'a vault with NEAR gets no form');
+  // Not read yet is not none: the form opens, and its card says why if it cannot pay.
+  const unread = build({ vault: { chip: chipSlice({ sourceNear: null }) } });
+  press(rowOf(unread, 'gas'), 'Add NEAR');
+  assert.equal(find(rowOf(unread, 'gas'), '.vault-gas-add')[0].hidden, false);
+  // After the move the payout comes from the allowance, so it is the allowance that holds none.
+  const moved = build({ vault: { chip: MOVED({ sourceNear: 0 }) } });
+  press(rowOf(moved, 'gas'), 'Add NEAR');
+  assert.ok(said(rowOf(moved, 'gas')).includes('Your allowance holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+  moved.leave();
+  assert.equal(find(rowOf(moved, 'gas'), '.vault-gas-elsewhere')[0].hidden, true, 'the account outlived the tab');
+});
+
 test('a vault on another Mac\'s keys pays no NEAR from here: Add NEAR shows the gas account whole, to send NEAR to it straight', async () => {
   const elsewhere = chipSlice({ state: 'broken', oldOnChain: false, predecessorAuth: false, elsewhere: true, needs: ['gas'], gas: { account: GAS, near: '0', low: true } });
   const w = build({ vault: { chip: elsewhere } });
