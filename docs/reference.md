@@ -810,10 +810,7 @@ answered for those markers; `resumeChip` writes the entry back once NEAR reads t
 chip and the paper on the vault, the owner key off and predecessor auth off at one block, or every
 nonce of the chip's own bundle in the move journal spent), and the tab never offers that vault a
 move meanwhile. With the run record gone too, the owner key's public half comes from the next
-unlock, so the tab reads `checking` until then. `vault.chip.chipOnChain` is whether NEAR reads this
-Mac's Touch ID key (the chip vault.json names) on the vault, null until it answers; read false, the
-`state` is `broken` and the tab offers the restore here, because the vault answers to keys this Mac
-does not hold. `POST /api/vault/gas/fund {near}` files a NEAR
+unlock, so the tab reads `checking` until then. `POST /api/vault/gas/fund {near}` files a NEAR
 payout of 0.1 to 1 NEAR (four places at most) to the gas account, whose id is derived from the
 owner key and never read from the body, and answers `{ok, proposal}`. Once NEAR says a move or a
 restore is done, the rekey writes vault.json, lets the owner key go and asks the accounts again, in

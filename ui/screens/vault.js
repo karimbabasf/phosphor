@@ -1827,11 +1827,9 @@
     var chip = has && vault.chip && typeof vault.chip === 'object' ? vault.chip : null;
     var moved = !!chip && (chip.state === 'done' || chip.state === 'broken');
     var waits = !!chip && chip.state === 'broken' && !!window.PhosphorChip;
-    dom.setText(refs.recoveryVault, waits && chip.chipOnChain === false
-      ? 'This Mac\'s Touch ID key no longer opens your vault. Your paper key brings it back to this Mac.'
-      : waits
-        ? 'Your wallet is back. Your vault comes back with your paper key.'
-        : 'On a new Mac your vault comes back after the wallet, with your paper key.');
+    dom.setText(refs.recoveryVault, waits
+      ? 'Your wallet is back. Your vault comes back with your paper key.'
+      : 'On a new Mac your vault comes back after the wallet, with your paper key.');
     dom.setHidden(refs.recoveryVault, !moved);
     dom.setHidden(refs.restoreVault, !waits || !refs.recoveryFlow.hidden);
   }

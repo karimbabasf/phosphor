@@ -100,9 +100,6 @@
   /* What the paper and the backup are, said plainly on the paper key's screen
      and under a vault that moved (PHASE2-PLAN.md U12; docs/getting-started.md
      carries the same two). */
-  // NEAR reads this Mac's Touch ID key off the vault: a restore ran on another Mac.
-  var CHIP_OFF_SAID = 'This Mac\'s Touch ID key no longer opens your vault. Your paper key brings it back to this Mac.';
-
   function plainTruth(vault) {
     return [
       'Your paper key is the only key that opens your vault away from this Mac.',
@@ -239,7 +236,7 @@
 
     var lines = {
       offer: 'Your ' + backupName(vault) + ' opens your vault today.',
-      restore: slice.chipOnChain === false ? CHIP_OFF_SAID : 'Your vault answers to a Touch ID key this Mac does not have.',
+      restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
       moved: 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
       checking: 'Checking which keys open your vault, with NEAR. This takes a moment.'
@@ -1036,12 +1033,10 @@
     }
 
     var unread = 'Not read yet';
-    var chipOn = slice.chipOnChain;
     var paperOn = slice.recoveryOnChain;
     var oldOn = slice.oldOnChain;
     var door = slice.predecessorAuth;
-    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', chipOn === true ? 'Opens it' : (chipOn === false ? 'No longer opens it' : unread), chipOn === false ? 'warn' : null,
-      chipOn === false ? CHIP_OFF_SAID : null);
+    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', 'Opens it', null, null);
     paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : unread), paperOn === false ? 'warn' : null,
       paperOn === false ? 'Your vault reads no paper key. Move your money to a fresh wallet while this Mac still opens your vault.' : null);
     paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : unread), oldOn === true ? 'warn' : null,
