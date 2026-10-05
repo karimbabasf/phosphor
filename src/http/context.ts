@@ -45,6 +45,7 @@ import type { VaultPrefs } from '../vault/prefs.ts';
 import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
 import type { InviteNet, InviteService } from '../invite/claim.ts';
+import type { Received } from '../received.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -284,6 +285,10 @@ export type ServerDeps = {
   /* The invite claim's network: the verifier, the relay, 1Click, the clock. Injected only by
      tests; absent, src/invite/claim.ts builds the live ones. */
   invite?: InviteNet;
+  /* The deposits the bridge reported, for Activity (src/received.ts). Injected only by tests;
+     absent, createServer builds one over the data directory that reads the bridge in live mode.
+     Optional on Ctx too, because the tests that build a Ctx by hand predate it. */
+  received?: Received;
 };
 
 // http.Server plus an explicit push so the wiring layer can signal the UI after

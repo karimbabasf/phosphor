@@ -896,3 +896,18 @@ test('the Vault\'s Policies row is the place Basic\'s button lands, brought into
   assert.match(SHELL, /world\.scrollTo\(\{ top: top, behavior: 'smooth' \}\)/, 'the world does not glide there');
   assert.doesNotMatch(SHELL.slice(SHELL.indexOf('function lightOnce')), /--ink|--up\b|ink\)/, 'the arrival lights in green, the live move\'s light');
 });
+
+test('money in through the bridge reads Received, on its way while the bridge is crediting it', async () => {
+  const at = new Date(Date.now() - 60_000).toISOString();
+  const rig = boot({ receipts: [
+    { id: 'received:eth:8453:usdc:0xb', kind: 'received', at, status: 'arriving', headline: 'Received 5 USDC on Base', summary: '', amount: null, symbol: null, received: null },
+    { id: 'received:btc:mainnet:native:ab', kind: 'received', at, status: 'executed', headline: 'Received 0.01 BTC on Bitcoin', summary: '', amount: null, symbol: null, received: { symbol: 'BTC', amount: 0.01 } },
+  ] });
+  rig.put(state());
+  rig.view('pro');
+  await tick();
+  const rows = withClass(one(rig.host, 'moves'), 'move');
+  assert.deepEqual(rows.map((m) => one(m, 'move-title').textContent), ['Received 5 USDC on Base', 'Received 0.01 BTC on Bitcoin']);
+  assert.deepEqual(rows.map((m) => words(one(m, 'move-state')).join('')), ['On its way', 'Done']);
+  assert.deepEqual(rows.map((m) => one(m, 'move-state').getAttribute('data-dir')), ['going', 'done']);
+});

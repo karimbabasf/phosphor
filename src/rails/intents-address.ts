@@ -421,14 +421,40 @@ export async function poaRecentDepositsOrThrow(
   if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
   const rows = body.result?.deposits;
   if (!Array.isArray(rows)) return [];
+  return rows.map(depositOf);
+}
+
+function depositOf(row: unknown): PoaDeposit {
+  const r = (row ?? {}) as Record<string, unknown>;
+  return {
+    txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
+    amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
+    status: typeof r.status === 'string' ? r.status : 'unknown',
+    asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
+    ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
+  };
+}
+
+/* The same read with no chain: the account's newest deposits on every network in one call, for
+   Activity (src/received.ts). Live with a placeholder account on 2026-10-05, the bridge answers
+   no chain with the paged list and a chain it does not know with "Network not supported", so the
+   chain is a filter and its absence is every network. A page holds 100 rows at most, whatever
+   `limit` asks. Each row's network is its asset id's first two segments, the way the token list
+   names it. Throws on any failed read, a reply with no list included, so a caller keeps what it had. */
+export async function poaAccountDepositsOrThrow(
+  accountId: string,
+  fetchImpl: typeof fetch = fetch,
+  limit = 100,
+): Promise<Array<PoaDeposit & { network: string }>> {
+  const body = (await rpc('recent_deposits', [{ account_id: accountId.toLowerCase(), limit }], fetchImpl)) as {
+    result?: { deposits?: unknown };
+    error?: unknown;
+  };
+  if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
+  const rows = body.result?.deposits;
+  if (!Array.isArray(rows)) throw new Error('poa bridge recent_deposits answered without a list');
   return rows.map((row) => {
-    const r = row as Record<string, unknown>;
-    return {
-      txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
-      amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
-      status: typeof r.status === 'string' ? r.status : 'unknown',
-      asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
-      ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
-    };
+    const d = depositOf(row);
+    return { ...d, network: d.asset.split(':').slice(0, 2).join(':') };
   });
 }
