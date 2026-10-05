@@ -59,6 +59,7 @@ import {
   handleVaultUnlock,
 } from './vault.ts';
 import { handleAllowanceSize, handleAllowanceTopUp } from './allowance.ts';
+import { handleChipMove, handleChipPhrase, handleChipPhraseProven, handleChipRestore, handleGasFund } from './chip.ts';
 import { sendHealth } from './health.ts';
 import { sendDay } from './day.ts';
 import { sendCoinImage, sendCoinImages } from './pictures.ts';
@@ -196,6 +197,12 @@ const POST: Record<string, Route> = {
   // never an op on /api/mcp. See src/http/allowance.ts.
   '/api/vault/allowance/top-up': (ctx, req, res) => handleAllowanceTopUp(ctx, req, res),
   '/api/vault/allowance/size': (ctx, req, res) => handleAllowanceSize(ctx, req, res),
+  // The move to the chip (src/http/chip.ts): the paper key, the move, the restore, the gas account. Window only.
+  '/api/vault/chip/phrase': (ctx, req, res) => handleChipPhrase(ctx, req, res),
+  '/api/vault/chip/phrase-proven': (ctx, req, res) => handleChipPhraseProven(ctx, req, res),
+  '/api/vault/chip/move': (ctx, req, res) => handleChipMove(ctx, req, res),
+  '/api/vault/chip/restore': (ctx, req, res) => handleChipRestore(ctx, req, res),
+  '/api/vault/gas/fund': (ctx, req, res) => handleGasFund(ctx, req, res),
   // The person accepted the terms of use. Window token, like every write a person makes here.
   '/api/terms/accept': (ctx, req, res) => handleTermsAccept(ctx, req, res),
   // The person's Allow or Not now for an agent started outside Phosphor (src/agents.ts).

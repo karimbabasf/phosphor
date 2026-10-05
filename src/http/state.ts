@@ -15,6 +15,7 @@ import { intParam, jsonWithEtag } from './respond.ts';
 import type { CachedJson } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { vaultStatus } from './vault.ts';
+import { chipVaultSlice } from './chip.ts';
 import { lockReasonFor } from '../keystore/lock-reason.ts';
 import { RECEIVE_NETWORKS, SPEND_NETWORKS } from '../rails/intents-address.ts';
 
@@ -171,8 +172,12 @@ export function buildState(ctx: Ctx): unknown {
     },
     /* The vault beside the lock: which custody, whether the enclave is reachable, what the
        Touch ID dialog is waiting on, whether the phrase is proven backed up. The Vault tab, the
-       first-run screen and the decision card all read it from here. Never a key. */
-    vault: vaultStatus(ctx),
+       first-run screen and the decision card all read it from here. Never a key.
+       `chip` is the move to the Touch ID key (src/vault/rekey.ts, PHASE2-PLAN.md C9): where the
+       move stands, what the chain last said about the paper key, the owner key and predecessor
+       auth, the allowance and the gas account. Fixed size, public keys only, never a word of the
+       paper key. */
+    vault: { ...vaultStatus(ctx), chip: chipVaultSlice(ctx) },
     /* Whether the terms of use are accepted at their current version. The window shows its
        terms screen ahead of everything else until this says so. */
     terms: ctx.terms.get(),

@@ -213,8 +213,10 @@ your money.
   window has not read yet, and an unread one also goes when it expires, but copies left by a
   signature, an unlock, a new wallet or words or a key shown to you can stay in memory until it is reused,
   and the check behind Prove it outlives a lock for up to half an hour with the Mac awake. What
-  closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself, so that key
-  never exists as bytes. It is planned, not built. Until then, lock the wallet when you step away.
+  closes it for the vault: the move to the chip ([below](#the-move-to-the-chip-and-the-restore)).
+  After it the vault answers only to this Mac's Touch ID key and the paper key, and the session
+  holds the allowance key, the gas key and the trading key, never the owner key; none of them
+  reaches the vault. Until you move it, lock the wallet when you step away.
 - **An older wallet's Touch ID key is bound to this Mac, not to Phosphor.** A wallet made before
   the vault service carried its provisioning profile, or by a copy you build yourself, has a key
   another app running as you can ask to use, showing its own Touch ID dialog. Approve a Touch ID
@@ -229,8 +231,28 @@ your money.
   you made. Any program running as you can load the old key from such a copy and ask for your
   Touch ID with its own dialog, and an older Phosphor build opens it too. Phosphor shreds only the
   copies it wrote itself (a write cut short), after the bound file first opens. Delete the others
-  yourself. What closes it: moving to new keys that never existed outside the keychain, so the
-  old key holds nothing. The chip vault plans that; it is not built.
+  yourself. What closes it for the vault: the move to the chip, after which the old key is no key
+  of the vault. An old copy still holds the allowance, the gas account and Hyperliquid.
+- **The paper is the only key that opens the vault away from this Mac.** After the move the vault
+  answers to this Mac's Touch ID key and the 24-word paper key, and to nothing else: the key backup
+  alone no longer reaches it, by design. If the Mac is lost and the paper is lost or wrong, the vault
+  is lost. Phosphor has you type all 24 words back before anything moves, and the paper signs an
+  empty proof on chain in the same call that adds it, but it cannot see the paper you wrote. A
+  restore on a new Mac takes both: the key backup brings back the vault's address, the allowance,
+  the gas account and Hyperliquid, and the paper brings back the vault. Keep the paper like cash,
+  apart from the key backup. The paper is also an ordinary EVM key at m/44'/60'/0'/0/0, so it signs
+  for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
+- **The key backup also controls the allowance and the gas account.** Both keys are derived from
+  the owner key, so whoever holds the key backup holds the allowance (at most its size plus 10
+  percent, $110 at the default), the gas account (about 0.5 NEAR) and Hyperliquid. Keep it like
+  cash. What closes it: nothing planned; deriving them is what keeps one backup instead of three.
+- **A program running as you during the move sees what the move sees.** The owner key and the paper
+  sign the call that changes the vault's keys in the app, not in the chip, so such a program could
+  read the paper's words as you type them, pin a wrong allowance, or add a key of its own in the same
+  call. The chip refuses to add a key at all, so after the move a program can no longer do that.
+  The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault
+  tab reads the vault's keys from the chain. What closes it: the outside audit planned for Phase 3,
+  and a signer that builds that call itself.
 - **A bound wallet's key is one keychain item.** After the bind, and for every wallet a signed
   release makes, the key lives in one item in the vault's keychain group and in no file, so no copy
   of the wallet file opens without it. If the item is gone (the Mac erased or replaced, its
@@ -321,7 +343,11 @@ your money.
   shows. A program running as you can rewrite the whole file, and nothing on chain records that a
   Touch ID happened.
 - **The venues are not Phosphor's.** The NEAR Intents verifier can be upgraded by its owners, and
-  an invite claim on the 1Click route rests on 1Click delivering.
+  an invite claim on the 1Click route rests on 1Click delivering. Its admins (the DAO and the roles
+  UnrestrictedAccountUnlocker and UnrestrictedAccountManager) can also turn auth by predecessor id
+  back on for any account (`force_enable_auth_by_predecessor_ids`), which would let the owner key
+  reach a moved vault again through the account's NEAR wallet contract. The move turns it off, and
+  the Vault tab shows the flag as the chain reads it, so a forced flip is visible.
 - **The web gate lets a little through.** Which pages the agent chooses to read can tell those
   sites a few bits each, at most 12 pages a session and 3 a site.
 - **Grok has no web search.** With Grok in the chat, the agent cannot search the web. Give it a
@@ -1213,3 +1239,58 @@ system's JSON reader decoded it, which drops one leading byte order mark, so the
 the payload it gets back byte for byte with the one it asked for. The relay in the shell carries
 twelve ops, the five chip ops among them, adds the transport key to an unwrap only, and adds nothing
 to a signature request (`src-tauri/src/enclave.rs`).
+
+## The move to the chip and the restore
+
+The vault moves from the owner key to two keys of its own in one call to the verifier, and a
+restore on a new Mac is the same call with another old signer (`src/vault/rekey.ts`). The call
+carries three signed payloads and lands whole or not at all:
+
+- P_a, the old signer: add the chip key, add the paper key, remove every old key, and turn auth by
+  predecessor id off (`set_auth_by_predecessor_id`, enabled false). On a migration the old signer is
+  the owner key behind its own Touch ID ("Move your vault to this Mac's Touch ID key and your paper
+  key"), and the old keys are the owner key and anything the verifier lists for the vault. On a
+  restore it is the paper the person brings, and the old keys are every key the verifier lists (the
+  old chip, that paper) and the owner key when `has_public_key` still names it.
+- P_c, the new paper key: an empty proof that the paper written down signs.
+- P_b, the chip key: an empty proof, behind its own Touch ID, whose sentence the vault service
+  writes ("confirm this Mac's Touch ID key for your vault").
+
+Predecessor auth is on by default for every account, and the owner key drives the 0x account's NEAR
+wallet contract, so leaving it on would leave the owner key a door to the vault after its key is
+removed. P_a closes it in the same call, and the chip's grammar refuses the intent that would open it
+again.
+
+Before anything is sent the verifier's dry run must report exactly the events the app built from
+the plan, every one on P_a's hash: the chip key added, the paper key added, each old key removed,
+predecessor auth set off (only when it read on, since a second off reports nothing), then the three
+payloads executed. For a migration that is five events. One event more, less or different and
+nothing is sent. The move is done only when the chain reads, at one final block, the chip key and
+the paper key on the vault, the owner key and every removed key off it, and predecessor auth off,
+and then only if the chip key and the paper key are the vault's only stored keys: the owner key can
+add a key until the call runs, so a key added after the last read before the signatures is caught
+there, and the window says the vault holds a key Phosphor did not add (the Vault tab names it).
+Then `state/vault.json` names the chip, the session lets go of the owner key at once, and the rails
+spend the allowance. Every check that can stop a move runs before the first Touch ID: the wallet
+open, a Touch ID wallet with a proven backup, the paper typed back, the vault still answering to
+the old signer, and a gas account that can pay for the call. The gas account's id is derived from
+the owner key and never typed; funding it is a NEAR payout to that id, one click and one Touch ID
+that names it (`POST /api/vault/gas/fund`, 0.1 to 1 NEAR).
+
+The paper's 24 words are shown once, to the window that asked, and written nowhere: no state file,
+audit line, frame or `/api/state`. While they are written down the app holds a SHA-256 of the
+phrase; once all 24 are typed back it holds the paper's private key in a buffer it zeroes after P_c
+signs, after half an hour, or at a lock. A typo is answered yes or no, never with the word. The
+strings the words travel in cannot be wiped, as for every phrase the app shows. Beside vault.json,
+`state/chip-run.json` keeps public keys only (the vault, the paper key, the owner key, the chip
+key), so a restart can finish or resume a move: a paper shown and never proven opens nothing and a
+new one is shown; a paper proven before a restart is typed again and checked against its public
+key; a chip made and never pinned is swept after ten minutes; a pinned chip is used again when the
+same paper is typed; a call written down in the vault move journal is never signed again until it is
+settled; a call that ran is finished at the next start from the chain's word alone. A chip whose call
+can no longer be proved dead or done (its nonce salt taken out) is never asked to sign that move
+again; a new chip carries it on. `tests/unit/rekey.test.ts` runs both directions through the
+window's routes against the vault service's own rules, and `node scripts/rekey-crash.ts` kills a
+real backend at each of the eight points of a migration and of a restore, starts it again on the same
+folder and the same stand-in keychain, and holds each of the 16 to those views (`--live` simulates
+the migration bundle on mainnet, read-only, for a throwaway account).

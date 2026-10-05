@@ -60,6 +60,7 @@ import { liveVerifier } from './relay/verifier.ts';
 import { createAccounts } from './vault/accounts.ts';
 import { createVaultSubmitter, fileJournal, journalPathFor } from './vault/submit.ts';
 import { SWEEP_EVERY_MS, createAllowance } from './vault/allowance.ts';
+import { useChipVault } from './vault/rekey.ts';
 import { useRailAccounts } from './intents-sign.ts';
 import { demoAccounts } from './ledger/demo.ts';
 import { ownerTouchVia } from './proposals/lifecycle.ts';
@@ -289,10 +290,12 @@ useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));
 const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });
 useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);
 void accounts.refresh();
-/* Every vault move goes through one submitter (src/vault/submit.ts): one journal, one move at a time
-   per account, nothing signed again while an earlier move may still run. The gas account's seed is
-   the session's, read at the moment of a send. */
+/* Every vault move goes through one submitter, so the journal that keeps a signed bundle from being
+   signed twice is one file and one queue per account: the allowance's top-ups and the rekey share it
+   (src/vault/submit.ts). The move to the chip (src/vault/rekey.ts) is installed where the relay may
+   make keys: a live app, or a test harness that allows it (PHOSPHOR_DEMO_ENCLAVE). A demo has none. */
 const vaultMoves = createVaultSubmitter({ verifier: liveVerifier(), gasSeed: () => keystore.gasSeed(), gasAccount: () => keystore.derivedAccounts()?.gas ?? null, journal: fileJournal(journalPathFor(cfg.dataDir)) });
+if (cfg.mode === 'live' || process.env.PHOSPHOR_DEMO_ENCLAVE === '1') useChipVault({ verifier: liveVerifier(), submitter: vaultMoves, accounts, reads: true });
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,

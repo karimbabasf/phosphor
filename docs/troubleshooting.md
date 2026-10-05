@@ -148,6 +148,43 @@ coin at all, because a contract without a receive path burns it. The card and th
 sentence both name the receiver, so you can check it once more before the click. See
 [Money](money.md#send).
 
+## Moving the vault to Touch ID
+
+The move adds this Mac's Touch ID key and your paper key to the vault and takes the owner key off,
+in one call that lands whole or not at all. It asks two Touch IDs: the first reads "Move your vault
+to this Mac's Touch ID key and your paper key", the second "confirm this Mac's Touch ID key for your
+vault". Anything else in the dialog is not the move: cancel it. What the window may say instead:
+
+- **Type your paper key back first.** The 24 words are typed back whole before anything moves. A
+  lock wipes words already typed, so after a lock type them again.
+- **Those words do not match.** One word differs from your paper or from the screen. The answer
+  never says which, so check each word.
+- **The gas account has no NEAR yet, or needs more.** The move is paid from the gas account, a NEAR
+  account derived from your key. Add 0.1 to 1 NEAR from the Vault tab: it is a payout you click
+  and confirm with Touch ID, and the dialog names the gas account. Nothing is made or signed until
+  it can pay.
+- **Touch ID took longer than the move can wait.** Each signature lives about two minutes. Start the
+  move again and answer both dialogs when they come.
+- **Your last vault move can still land on NEAR.** A call that left this Mac can run until its own
+  deadline, so Phosphor signs nothing new for a few minutes. Try again then; you may need to type
+  the paper again.
+- **Phosphor sent this move and NEAR has not confirmed it yet.** It keeps checking on its own, and
+  finishes the move the moment the chain shows it, also after a restart. Do not start it again.
+- **Your vault already answers to other keys.** The vault moved, from this Mac or another one. On a
+  new Mac, restore it from the Vault tab: restore the wallet from its key backup first, write a new
+  paper key, then type the old paper's 24 words.
+- **A paper shown before Phosphor restarted opens nothing.** It was never added to the vault. Show a
+  new one and write that down; destroy the old one.
+- **Your vault moved, and it also holds a key Phosphor did not add.** Someone with your owner key
+  added a key while the move was being signed, and that key can still move the vault's money. The
+  Vault tab names it. Treat the owner key and its backup as seen by someone else: send the money in
+  the vault, and in the allowance, to a wallet whose key was made fresh, then stop using this one.
+
+If the Mac is gone, the paper and the key backup together bring the vault back on a new one. If the
+paper is gone and this Mac still opens the vault, move the money out with Touch ID while you can:
+the Touch ID key cannot add a new paper key on its own. See
+[Known limits](known-limits.md#the-paper-is-the-only-key-that-opens-the-vault-away-from-this-mac).
+
 ## Something else
 
 Recent moves on the Pro tab lists your latest moves, and an ended one opens its receipt. An agent

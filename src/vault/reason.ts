@@ -277,3 +277,10 @@ export const RESTORE_KEY_REASON = 'Restore a wallet from its private key';
 export const FORGET_REASON = 'Forget this wallet on this Mac';
 export const BIND_REASON = 'Make your wallet Phosphor-only on this Mac';
 export const ADDRESS_REASON = 'Show your deposit address';
+/* The owner key's one signature in a migration (src/vault/rekey.ts): the payload that adds the chip
+   key and the paper key to the vault, removes the owner key and turns predecessor auth off. The
+   chip's own touch that follows shows the vault service's sentence for its empty proof. */
+export const MOVE_VAULT_REASON = "Move your vault to this Mac's Touch ID key and your paper key";
+/* A restore on a Mac whose session no longer holds the owner key: the touch only reads the key's
+   public half, so the restore can name it on chain and take it off the vault if it is still there. */
+export const RESTORE_VAULT_REASON = "Restore your vault to this Mac's Touch ID key from your paper key";

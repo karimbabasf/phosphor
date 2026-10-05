@@ -41,8 +41,11 @@ after a lock it may still find a copy. On macOS that takes a process running as 
 to attach to another process, which the hardened runtime is there to refuse. Keep the vault open
 only while you are using it.
 
-What closes it: the chip vault, where the Secure Enclave signs NEAR Intents moves itself so that
-key never exists as bytes, or a hardware signer. Neither ships here.
+What closes it for the vault: the move to the chip in the Vault tab. After it the vault answers
+only to this Mac's Touch ID key and your paper key, and the open session holds the allowance key,
+the gas key and the trading key, never the owner key. What it does not close: those three keys are
+in memory while the wallet is open, so the allowance, the gas account and trading stay as exposed as
+described here.
 
 ## Two seconds after the backend stops
 
@@ -142,9 +145,9 @@ password file: this step does not change it, and anyone with the file and the pa
 anywhere.
 
 What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
-Touch ID dialog only for something you started in Phosphor. What closes it: moving the wallet to
-new keys that never existed outside Phosphor's reach, so an old copy holds nothing. The chip vault
-plans that; it is not built.
+Touch ID dialog only for something you started in Phosphor. What closes it for the vault: the move
+to the chip, after which the old key is no key of the vault. An old copy still holds the allowance,
+the gas account and Hyperliquid.
 
 ## A readable key file is trusted only on a Mac known to have no Phosphor-only wallet
 
@@ -171,11 +174,48 @@ anything. A bridge that holds a failed deposit refunds it on its own timetable, 
 support, and the app can only keep asking and show you the state honestly. A venue outage means
 the app shows unknown, never zero, and signs nothing against a number it could not read. The NEAR
 Intents verifier can be upgraded by its owners, and an invite claim that goes through 1Click rests
-on 1Click delivering it.
+on 1Click delivering it. The verifier's admins can also turn auth by predecessor id back on for any
+account, which would let the owner key reach a moved vault again through the account's NEAR wallet
+contract; the Vault tab shows that flag as the chain reads it.
 
 What it means: a move whose card says Taking longer, or that reads Not confirmed, is money in
 the venue's hands, not lost and not the app's to recover by itself. Do not send it again.
 [Troubleshooting](troubleshooting.md#a-move-is-late-or-not-confirmed) says what to do.
+
+## The paper is the only key that opens the vault away from this Mac
+
+After the move to the chip, the vault answers to this Mac's Touch ID key and to the 24 words you
+wrote by hand, and to nothing else. The key backup alone no longer reaches the vault. A restore on a
+new Mac needs both: the key backup brings back the vault's address, the allowance, the gas account
+and Hyperliquid, and the paper brings back the vault. Phosphor has you type all 24 words back before
+anything moves, and the paper signs a proof on chain in the same call that adds it, but nothing can
+check the paper itself.
+
+What it means: if this Mac is lost and the paper is lost or wrong, the money in the vault is lost.
+Keep the paper like cash, apart from the key backup. The paper is an ordinary EVM key, so it also
+signs for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
+
+## The key backup also controls the allowance and the gas account
+
+The allowance key and the gas account's key are derived from the owner key, never stored, so the
+backup you already have brings both back. The cost: whoever holds that backup also holds the
+allowance (at most its size plus 10 percent, $110 at the default), the gas account (about 0.5 NEAR)
+and Hyperliquid, even after the vault has moved.
+
+What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the two
+keys is what keeps one backup instead of three.
+
+## A program running as you during the move
+
+The owner key and the paper sign the call that changes the vault's keys inside the app, not in the
+chip. A program running as you while the move runs could read the paper's words as you type them,
+pin a wrong allowance, or add a key of its own in that call. Afterwards it cannot: the chip refuses
+to add a key, and the paper's key is gone from memory once it signs.
+
+What it means: move the vault on a Mac you trust, with nothing else running that you did not start.
+The done screen shows the vault, the allowance and the paper key the move pinned, and the Vault tab
+reads the vault's keys from the chain. What closes it: the outside audit planned for Phase 3, and a
+signer that builds that call itself.
 
 ## Hyperliquid, and what a withdrawal needs
 
