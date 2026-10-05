@@ -228,6 +228,9 @@ type RunState = { id: string; kind: RekeyKind; status: RunStatus; reason?: strin
 type ChipView = {
   vault: string | null;
   at: number;
+  // The moves of the vault this process had seen end when the read began (Box.moves).
+  moves: number;
+  chip: boolean | null;
   recovery: boolean | null;
   old: boolean | null;
   predecessor: boolean | null;
@@ -257,6 +260,9 @@ type Box = {
   // The vault the last read of the slice found answering to keys this Mac does not hold (kind key,
   // NEAR reading the wallet's own key off it), or null (vaultMovedElsewhere).
   elsewhere: string | null;
+  // How many moves of the vault this process has seen end (finish): a read of the chain begun
+  // before the last of them shows the vault from before it, and the slice shows none of it.
+  moves: number;
 };
 
 const boxes = new WeakMap<object, Box>();
@@ -264,7 +270,7 @@ const boxes = new WeakMap<object, Box>();
 function boxOf(host: RekeyHost): Box {
   const known = boxes.get(host.keystore);
   if (known !== undefined) return known;
-  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map(), checked: null, askedFor: null, elsewhere: null };
+  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map(), checked: null, askedFor: null, elsewhere: null, moves: 0 };
   boxes.set(host.keystore, box);
   // A lock is someone stepping away: a proven paper key goes with it, and is typed again.
   host.keystore.onChange((state) => {
@@ -276,7 +282,7 @@ function boxOf(host: RekeyHost): Box {
 }
 
 function emptyView(): ChipView {
-  return { vault: null, at: 0, recovery: null, old: null, predecessor: null, others: null, gas: null };
+  return { vault: null, at: 0, moves: 0, chip: null, recovery: null, old: null, predecessor: null, others: null, gas: null };
 }
 
 function wipePaper(box: Box): void {
@@ -780,6 +786,7 @@ async function afterSubmit(host: RekeyHost, chain: ChipVaultChain, plan: Plan, c
 /* The vault moved, by the chain's word: vault.json names the chip, the session lets go of the owner
    key at once, and the rails read the accounts again (the allowance from here on). */
 async function finish(host: RekeyHost, chain: ChipVaultChain, vault: string, chip: { keyRef: string; publicKey: string }, recovery: string, kind: RekeyKind | null): Promise<void> {
+  boxOf(host).moves += 1;
   host.prefs.setChip({ keyRef: chip.keyRef, publicKey: chip.publicKey, account: vault });
   host.keystore.dropOwnerKey();
   await chain.accounts.refresh().catch(() => undefined);
@@ -956,6 +963,10 @@ export type ChipSlice = {
   // `checking`: this Mac moved the vault, or pinned a chip to it, and vault.json names no chip for
   // it, so NEAR is being asked before the tab says anything else.
   state: 'none' | 'ready' | 'moving' | 'done' | 'broken' | 'checking';
+  /* What NEAR last read about the vault's keys and its predecessor door, null when it has not
+     answered since the vault last moved: a read that began before the move ended shows the vault
+     from before it, so the tab never paints one. */
+  chipOnChain: boolean | null;
   recoveryOnChain: boolean | null;
   oldOnChain: boolean | null;
   predecessorAuth: boolean | null;
@@ -990,7 +1001,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   const box = boxOf(host);
   const moving = vaultMoveUnderWay(host.keystore);
   if (chain === null || vault === null) {
-    return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
+    return { state: moved ? 'done' : 'none', chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving, elsewhere: false };
   }
   const record = readRecord(host.dataDir, vault);
   /* A vault this Mac moved (its run record says done), or one a chip of this Mac's is pinned to,
@@ -1009,6 +1020,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
       });
   }
   const view = box.view.vault === vault ? box.view : emptyView();
+  const fresh = view.moves === box.moves;
   const accounts = chain.accounts.accounts();
   const needs: string[] = [];
   if (!host.keystore.isUnlocked()) needs.push('open');
@@ -1037,10 +1049,11 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
             : 'none';
   return {
     state,
-    recoveryOnChain: view.recovery,
-    oldOnChain: view.old,
-    predecessorAuth: view.predecessor,
-    otherKeys: view.others,
+    chipOnChain: fresh ? view.chip : null,
+    recoveryOnChain: fresh ? view.recovery : null,
+    oldOnChain: fresh ? view.old : null,
+    predecessorAuth: fresh ? view.predecessor : null,
+    otherKeys: fresh ? view.others : null,
     allowance: accounts.allowance === null ? null : allowance({ allowance: accounts.allowance }),
     gas: view.gas === null ? null : { account: view.gas.account, near: view.gas.amount === null ? null : nearText(view.gas.amount), low: view.gas.low },
     needs,
@@ -1065,13 +1078,17 @@ async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string
   const pinned = prefs.chip === null ? null : (host.relay.chipMarkers(vault).find((m) => m.publicKey === prefs.chip?.publicKey)?.recovery ?? null);
   const recovery = pinned ?? (record?.status === 'done' ? record.recovery : null);
   const old = knownOld(host, box, vault);
-  const keys = [...(recovery === null ? [] : [recovery]), ...(old === null ? [] : [old])];
+  const chip = prefs.chip !== null && (prefs.chip.account === '' || prefs.chip.account === vault) ? prefs.chip.publicKey : null;
+  const keys = [...(recovery === null ? [] : [recovery]), ...(old === null ? [] : [old]), ...(chip === null ? [] : [chip])];
+  const moves = box.moves;
   const read = await readVault(chain.verifier, vault, keys);
   const gasAccount = gasAccountOf(host.keystore);
   const gas = gasAccount === null ? null : { account: gasAccount, ...(await readGas(gasAccount, chain.near)) };
   const next: ChipView = {
     vault,
     at: clock(),
+    moves,
+    chip: chip === null || read === null ? null : (read.has.get(chip) ?? null),
     recovery: recovery === null || read === null ? null : (read.has.get(recovery) ?? null),
     old: old === null || read === null ? null : (read.has.get(old) ?? null),
     predecessor: read === null ? null : read.predecessorAuth,

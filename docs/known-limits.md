@@ -221,8 +221,8 @@ your wallet's key to act for the vault through its NEAR account. The verifier's 
 back on for any account, which would let that key reach a moved vault again.
 
 What it means: the Vault tab reads the flag from the chain and says when the door is open. If it
-does, keep your key backup like cash, and move your money to a fresh wallet if anyone else may have
-that key. What closes it: nothing Phosphor controls; the switch is the verifier's.
+does, keep your key backup like cash; if anyone else may have it, send your money to a wallet only
+you control. What closes it: nothing Phosphor controls; the switch is the verifier's.
 
 ## A backend compromised after the move writes every dialog but the chip's
 

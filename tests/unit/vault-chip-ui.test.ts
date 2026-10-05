@@ -115,7 +115,7 @@ function makeNode(tagName: string): Any {
       return prevented;
     },
     click() { node.dispatch('click'); },
-    focus() { node.focused = true; },
+    focus(options?: Any) { node.focused = true; node.focusOptions = options ?? null; },
     scrollIntoView() { node.scrolled = true; },
     getBoundingClientRect: () => ({ width: 0, height: 0, top: 0 }),
     querySelector(selector: string) { return find(node, selector)[0] ?? null; },
@@ -243,6 +243,7 @@ function chipSlice(over: Any = {}): Any {
 const MOVED = (over: Any = {}): Any =>
   chipSlice(Object.assign({
     state: 'done',
+    chipOnChain: true,
     recoveryOnChain: true,
     oldOnChain: false,
     predecessorAuth: false,
@@ -585,7 +586,8 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   const text = said(row);
   // Rule 1, on the phrase screen, for a wallet whose backup is its private key.
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'), text);
-  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'), text);
+  // Hyperliquid too, which can hold more than both; before the move the allowance has no size to name.
+  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
   assert.ok(text.includes('On this screen only. Anyone who reads these words can open your vault.'));
   assert.ok(text.includes('Under the words, write your vault\'s address:'));
   assert.equal(find(row, '.vault-mono')[0].textContent, VAULT);
@@ -598,7 +600,30 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   // A recovery phrase wallet's second sentence names its phrase.
   const phrase = build({ vault: { hasMnemonic: true } });
   await showPaper(phrase);
-  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'));
+  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
+});
+
+test('the paper key opens at its warning: the lock line comes into view, and the focus on I wrote it down scrolls nothing past it', async () => {
+  const w = build();
+  await showPaper(w);
+  const row = keyRow(w);
+  const warn = find(row, '.vault-paper')[0].parentNode.childNodes[0];
+  assert.equal(warn.textContent, 'On this screen only. Anyone who reads these words can open your vault.');
+  assert.equal(warn.scrolled, true, 'the warning is not brought into view');
+  const wrote = shownButtons(row).find((b: Any) => b.textContent === 'I wrote it down') as Any;
+  assert.equal(wrote.focused, true);
+  assert.deepEqual({ ...wrote.focusOptions }, { preventScroll: true }, 'the focus scrolls the window past the warning');
+  // Two misses bring the words back the same way.
+  press(row, 'I wrote it down');
+  w.answer.post['/api/vault/chip/phrase-proven'] = () => ({ ok: false, code: 'wrong_words', error: 'Those words do not match the paper key on screen. Check each word against your paper.' });
+  for (let i = 0; i < 2; i += 1) {
+    type(fields(w), OLD_PAPER);
+    press(row, 'Check my paper');
+    await flush();
+  }
+  const again = find(row, '.vault-paper')[0].parentNode.childNodes[0];
+  assert.equal(again.scrolled, true, 'the words came back past their warning');
+  assert.deepEqual({ ...(shownButtons(row).find((b: Any) => b.textContent === 'I wrote it down') as Any).focusOptions }, { preventScroll: true });
 });
 
 test('typed back whole: 24 fields, pasting off, a slip named by its number and never by the word, two misses show the words again', async () => {
@@ -694,15 +719,43 @@ test('a lock, the tab left and Hide words each take the paper off the screen and
   screenHoldsNoWord(w, 'typed, then the tab left');
 });
 
+test('Hide words takes the words off the screen and keeps the paper: Show the words again brings the same 24, and a lock still takes them', async () => {
+  const w = build();
+  await showPaper(w);
+  const row = keyRow(w);
+  press(row, 'Hide words');
+  await flush();
+  screenHoldsNoWord(w, 'hidden');
+  holdsNoWord(w, 'hidden');
+  assert.ok(said(row).includes('Your paper key is hidden. Show it again to finish writing it down.'));
+  assert.deepEqual(shownButtons(row).map((b: Any) => [b.textContent, b.className]), [['Show the words again', 'btn btn-sm'], ['I wrote it down', 'btn btn-quiet btn-sm']]);
+  assert.equal(said(row).includes('Show a new paper key'), false, 'Hide words threw the paper away');
+  press(row, 'Show the words again');
+  assert.deepEqual(find(find(row, '.vault-paper')[0], '.word-text').map((n: Any) => n.textContent), PAPER_WORDS, 'different words after Hide words');
+  assert.equal(w.calls.filter((c) => c.route === '/api/vault/chip/phrase').length, 1, 'a second paper key was asked for');
+  // Hidden again, I wrote it down goes on to the type-back of this same paper.
+  press(row, 'Hide words');
+  press(row, 'I wrote it down');
+  assert.equal(fields(w).length, 24);
+  assert.ok(shownButtons(row).some((b: Any) => b.textContent === 'Show the words again'));
+  // A lock takes the words for good.
+  press(row, 'Show the words again');
+  press(row, 'Hide words');
+  w.lock();
+  await flush();
+  screenHoldsNoWord(w, 'locked while hidden');
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Show the words again'), false, 'the words outlived a lock');
+});
+
 test('after a restart the paper is typed again against the one proven before, and a paper shown before it is void', () => {
   const retype = build({ vault: { chip: chipSlice({ paper: 'retype' }) } });
-  assert.ok(said(keyRow(retype)).includes('Phosphor restarted or locked, so type the paper you wrote for this move again, all 24 words.'));
+  assert.ok(said(keyRow(retype)).includes('Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'));
   assert.equal(fields(retype).length, 24);
   assert.ok(shownButtons(keyRow(retype)).some((b: Any) => b.textContent === 'Show a new paper key'), 'no way to a new paper when the old one is lost');
   const shown = build({ vault: { chip: chipSlice({ paper: 'shown' }) } });
   assert.equal(fields(shown).length, 24, 'a paper on screen in another window is not typed back here');
   const isVoid = build({ vault: { chip: chipSlice({ paper: 'void' }) } });
-  assert.ok(said(keyRow(isVoid)).includes('The paper key shown before Phosphor restarted opens nothing. Destroy it, then write a new one.'));
+  assert.ok(said(keyRow(isVoid)).includes('The paper key shown earlier opens nothing. Destroy it, then write a new one.'));
   assert.ok(shownButtons(keyRow(isVoid)).some((b: Any) => b.textContent === 'Show a new paper key'));
 });
 
@@ -740,14 +793,60 @@ test('the move names both Touch IDs before it asks, then shows each step as its 
   assert.ok(text.includes('This Mac\'s Touch ID key signs only for these two.'));
   assert.ok(find(row, '.vault-pins .vault-rule-value').map((n: Any) => n.textContent).includes('0x8902c5f1...3c4daede'));
   assert.equal(find(row, '.vault-backup-line')[0].getAttribute('data-pop'), 'true', 'the done check does not pop');
+  assert.equal(find(row, '.vault-backup-line')[0].scrolled, true, 'the done check pops above the window');
   assert.equal(find(keyRow(w), '.vault-row-value')[0].textContent, 'Touch ID');
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'));
-  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'));
+  // Once the allowance has a size, the sentence names its cap in dollars: $100 plus 10 percent.
+  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent, $110 now), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
   holdsNoWord(w, 'done');
   // Back on the tab later, the moment has rested: the row says who opens the vault.
   w.leave();
   assert.equal(find(row, '.vault-backup-line').filter(isShown).length, 0, 'the done moment outlives the tab');
   assert.ok(said(row).includes('Who opens your vault'));
+});
+
+test('the moment the move lands paints no fact NEAR has not read since: each row says Checking..., calm, until a fresh read answers', () => {
+  const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r6', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
+  const row = keyRow(w);
+  w.frame({ run: 'r6', status: 'done' });
+  // The state the backend sends at done: the read in hand began before the move, so it holds nothing.
+  w.chip(MOVED({ run: { id: 'r6', kind: 'migrate', status: 'done', reason: null, said: null }, chipOnChain: null, recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null }));
+  const facts = (): Record<string, string> => Object.fromEntries(find(row, '.vault-facts .vault-rule').map((r: Any) => [find(r, '.vault-rule-label')[0].textContent, find(r, '.vault-rule-value')[0].textContent]));
+  assert.ok(said(row).includes('Your vault is on this Mac\'s Touch ID key.'), 'the done moment is gone');
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Checking...', 'Your paper key': 'Checking...', 'Your private key': 'Checking...', 'The NEAR door': 'Checking...' });
+  assert.equal(find(row, '.vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 0, 'an unread fact in the warning tone');
+  assert.equal(find(row, '.vault-warn').filter(isShown).length, 0, 'a warning about a fact NEAR has not read');
+  assert.ok(said(row).includes('Phosphor is reading your vault from NEAR to confirm who opens it.'));
+  assert.ok(said(row).includes('Your vault moved to this Mac\'s Touch ID key and your paper key.'));
+  for (const claim of ['fresh wallet', 'nothing else does', 'can reach your vault']) assert.equal(said(row).includes(claim), false, claim);
+  // A fresh read answers: the facts from NEAR, and the quiet line goes.
+  w.chip({ chipOnChain: true, recoveryOnChain: true, oldOnChain: false, predecessorAuth: false, otherKeys: [] });
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Opens it', 'Your private key': 'No longer opens it', 'The NEAR door': 'Shut' });
+  assert.equal(said(row).includes('Phosphor is reading your vault from NEAR'), false);
+  assert.ok(said(row).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
+});
+
+test('a move that lands on an empty allowance says so at the moment it lands, with Top up beside it, and the row at $0 says Empty', async () => {
+  const w = build({ vault: { chip: chipSlice({ state: 'moving', paper: 'proven', run: { id: 'r7', kind: 'migrate', status: 'checking', reason: null, said: null } }) } });
+  w.frame({ run: 'r7', status: 'done' });
+  w.chip(MOVED({ run: { id: 'r7', kind: 'migrate', status: 'done', reason: null, said: null }, allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 0 } }));
+  const row = keyRow(w);
+  assert.ok(said(row).includes('From now on every move out of your vault asks for a Touch ID that names it. Your allowance starts empty: top it up so your assistant can spend up to $100 with no Touch ID.'), said(row));
+  assert.equal(said(row).includes('Your assistant spends from your allowance.'), false);
+  assert.equal(shownButtons(row).find((b: Any) => b.textContent === 'Top up')?.className, 'btn btn-ghost btn-sm');
+  const allowance = rowOf(w, 'allowance');
+  assert.ok(said(allowance).includes('Empty. Top it up from your vault so your assistant can spend without a Touch ID.'));
+  press(row, 'Top up');
+  assert.equal(allowance.scrolled, true, 'Top up does not take the person to the allowance');
+  assert.equal(find(allowance, '.vault-topup')[0].hidden, false, 'Top up does not open the top-up');
+  // Money in the allowance: the moment says where the assistant spends from, and offers nothing.
+  w.chip({ allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 63 } });
+  assert.ok(said(row).includes('From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.'));
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Top up'), false);
+  // Back on the tab later the moment has rested, Top up with it.
+  w.chip({ allowance: { account: ALLOWANCE, sizeUsd: 100, balanceUsd: 0 } });
+  w.leave();
+  assert.equal(shownButtons(row).some((b: Any) => b.textContent === 'Top up'), false);
 });
 
 test('a done frame that beats the state lands on the done moment, never back on the steps', () => {
@@ -833,20 +932,42 @@ test('a vault that moved says who opens it, as NEAR reads it, with the NEAR door
   const row = keyRow(w);
   const facts = (): Record<string, string> => Object.fromEntries(find(row, '.vault-facts .vault-rule').map((r: Any) => [find(r, '.vault-rule-label')[0].textContent, find(r, '.vault-rule-value')[0].textContent]));
   assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Opens it', 'Your private key': 'No longer opens it', 'The NEAR door': 'Shut' });
-  assert.ok(said(row).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
-  assert.ok(said(row).includes('A way for your private key to act for your vault through NEAR. The move shut it. NEAR Intents\' admins can open it again for any account, and this line reads it from NEAR.'));
+  const headline = (): string => find(row, '.vault-row-main .vault-text')[0].textContent;
+  assert.equal(headline(), 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.');
+  assert.ok(said(row).includes('A back way in for your private key, through NEAR. The move shut it, and Phosphor checks it each time it reads your vault.'));
   assert.ok(said(row).includes('It still opens your allowance, the gas account and Hyperliquid.'));
   assert.equal(find(row, '.vault-backup-line').filter(isShown).length, 0, 'the done moment shows on every open, not only after the move');
   assert.equal(find(row, '.vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 0);
 
-  // A forced flip by the verifier's admins is visible.
+  // A forced flip by the verifier's admins is visible, and the headline follows it.
   w.chip({ predecessorAuth: true });
   assert.equal(facts()['The NEAR door'], 'Open');
   assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
-  assert.ok(said(row).includes('NEAR Intents\' admins opened the NEAR door again, so your private key can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.'));
-  // Unread is never a yes or a no.
-  w.chip({ predecessorAuth: null, recoveryOnChain: null, oldOnChain: null });
-  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Opens it', 'Your paper key': 'Not read yet', 'Your private key': 'Not read yet', 'The NEAR door': 'Not read yet' });
+  assert.equal(headline(), 'Your private key can reach your vault again, through the NEAR door.');
+  assert.ok(said(row).includes('A way for your private key to act for your vault through NEAR. NEAR Intents\' admins opened it again.'));
+  assert.equal(said(row).includes('The move shut it'), false, 'the note says the move shut a door that reads open');
+  assert.ok(said(row).includes('NEAR Intents\' admins opened the NEAR door again, so your private key can reach your vault. Keep it like cash. If anyone else may have it, send your money to a wallet only you control.'));
+  // The headline never says nothing else opens it while a fact below says otherwise.
+  const TRUTH = 'Your paper key is the only key that opens your vault away from this Mac.';
+  w.chip({ predecessorAuth: false, oldOnChain: true });
+  assert.equal(headline(), 'Your private key still opens your vault.');
+  w.chip({ oldOnChain: false, recoveryOnChain: false });
+  assert.equal(headline(), 'Only this Mac\'s Touch ID key opens your vault. It has no paper key.');
+  assert.equal(said(row).includes(TRUTH), false, 'the paper is the key away from this Mac, with no paper on the vault');
+  w.chip({ recoveryOnChain: true, otherKeys: ['secp256k1:abc'] });
+  assert.equal(headline(), 'Your vault also answers to a key Phosphor did not add.');
+  w.chip({ otherKeys: [] });
+  assert.ok(said(row).includes(TRUTH));
+  // Unread is never a yes or a no, this Mac's Touch ID key included.
+  w.chip({ chipOnChain: null, predecessorAuth: null, recoveryOnChain: null, oldOnChain: null });
+  assert.deepEqual(facts(), { 'This Mac\'s Touch ID key': 'Checking...', 'Your paper key': 'Checking...', 'Your private key': 'Checking...', 'The NEAR door': 'Checking...' });
+  // NEAR reads this Mac's Touch ID key off the vault.
+  w.chip({ chipOnChain: false, predecessorAuth: false, recoveryOnChain: true, oldOnChain: false });
+  assert.equal(facts()['This Mac\'s Touch ID key'], 'Not on your vault');
+  assert.equal(headline(), 'This Mac\'s Touch ID key no longer opens your vault.');
+  assert.ok(said(row).includes('NEAR reads it off your vault, so this Mac cannot move your vault\'s money.'));
+  assert.equal(find(row, '.vault-facts .vault-rule-value').filter((n: Any) => n.getAttribute('data-tone') === 'warn').length, 1);
+  w.chip({ chipOnChain: true });
   // A key nobody here added is named, with what to do.
   w.chip({ predecessorAuth: false, recoveryOnChain: true, oldOnChain: false, otherKeys: ['secp256k1:TmysAU1B' + 'x'.repeat(70) + 'H7MkuLjQ'] });
   assert.ok(said(row).includes('Your vault also holds a key Phosphor did not add: secp256k1:TmysAU1B...H7MkuLjQ. It can move your vault\'s money. Send what your vault and allowance hold to a wallet whose key was made fresh, then stop using this one.'));
@@ -873,7 +994,7 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
   assert.deepEqual(stepState(w), { backup: 'done', gas: 'done', paper: 'done', old: 'now' });
   const oldFields = fields(w);
   assert.equal(oldFields.length, 24);
-  assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), ["confirm this Mac's Touch ID key for your vault", RESTORE_VAULT_REASON]);
+  assert.deepEqual(find(row, '.vault-said').map((n: Any) => n.textContent), [RESTORE_VAULT_REASON, "confirm this Mac's Touch ID key for your vault"]);
   w.answer.post['/api/vault/chip/restore'] = { ok: true, run: 'r2' };
   w.answer.onRefresh = () => w.chip({ state: 'moving', run: { id: 'r2', kind: 'restore', status: 'creating', reason: null, said: null } });
   type(oldFields, OLD_PAPER);
@@ -1011,16 +1132,27 @@ test('the gas account: its NEAR, low and empty said plainly, its id to check the
   const w = build({ vault: { chip: chipSlice({ gas: { account: GAS, near: '0.4985', low: false } }) } });
   const row = rowOf(w, 'gas');
   assert.equal(find(row, '.vault-row-value')[0].textContent, '0.4985 NEAR');
-  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault.'));
+  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault, once you move it.'));
   assert.equal(find(row, '.vault-id')[0].textContent, 'a1b2c3d4...e5f6a7b8');
   assert.ok(said(row).includes('A payout to it names a1b2c3d4...e5f6a7b8 in its Touch ID.'));
   assert.equal(find(row, '.vault-warn').filter(isShown).length, 0);
-  w.chip({ gas: { account: GAS, near: '0.04', low: true } });
+  // Before a move anyone asked for, low, empty or unread is no worry on this row.
+  for (const gas of [{ near: '0.04', low: true }, { near: '0', low: true }, { near: null, low: null }]) {
+    w.chip({ gas: { account: GAS, ...gas } });
+    assert.equal(find(row, '.vault-warn').filter(isShown).length, 0, `a warning about a move nobody asked for: ${JSON.stringify(gas)}`);
+  }
+  const fresh = build({ vault: { backedUp: false, chip: chipSlice({ state: 'none', needs: ['backup', 'gas'], gas: { account: GAS, near: '0', low: true } }) } });
+  assert.equal(find(rowOf(fresh, 'gas'), '.vault-warn').filter(isShown).length, 0, 'a wallet that never moved opens on a warning');
+  // Once a move is under way, low and empty are said plainly.
+  w.chip({ state: 'moving', gas: { account: GAS, near: '0.04', low: true } });
+  assert.ok(said(row).includes('Pays NEAR\'s small fee for every move of your vault.'));
+  assert.equal(said(row).includes('once you move it'), false);
   assert.ok(said(row).includes('Low. Your vault\'s moves wait until it holds more NEAR.'));
   w.chip({ gas: { account: GAS, near: '0', low: true } });
   assert.ok(said(row).includes('Empty. Add NEAR before your vault can move.'));
   w.chip({ gas: { account: GAS, near: null, low: null } });
   assert.ok(said(row).includes('Phosphor could not read the gas account just now. It reads it again in a minute.'));
+  w.chip({ state: 'ready' });
 
   press(row, 'Add NEAR');
   const form = find(row, '.vault-gas-add')[0];
@@ -1055,6 +1187,50 @@ test('the gas account: its NEAR, low and empty said plainly, its id to check the
   const moved = build({ vault: { chip: MOVED() } });
   press(rowOf(moved, 'gas'), 'Add NEAR');
   assert.ok(said(rowOf(moved, 'gas')).includes('From your allowance, as a payout on NEAR.'));
+});
+
+test('step 2 for a vault that holds no NEAR: Add NEAR shows the gas account whole with Copy and the swap that fills the vault, never a payout bound to fail', async () => {
+  const w = build({ vault: { backedUp: true, chip: chipSlice({ state: 'none', needs: ['gas'], gas: { account: GAS, near: '0', low: true }, sourceNear: 0 }) } });
+  const copied: string[] = [];
+  w.sandbox.PhosphorNetPick.copyChecked = (value: string, say: (words: string) => void) => {
+    copied.push(value);
+    say('Account copied, ends in ...' + value.slice(-6));
+    return Promise.resolve(true);
+  };
+  w.chip({});
+  const gas = rowOf(w, 'gas');
+  const straight = (): Any => find(gas, '.vault-gas-elsewhere')[0];
+  assert.equal(straight().hidden, true, 'the account shows before anyone asked for NEAR');
+  press(keyRow(w), 'Add NEAR');
+  assert.equal(gas.scrolled, true);
+  assert.equal(find(gas, '.vault-gas-add')[0].hidden, true, 'a payout form for a vault with no NEAR to pay');
+  assert.equal(straight().hidden, false);
+  assert.ok(said(gas).includes('Your vault holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+  assert.deepEqual(find(gas, '.vault-mono').filter(isShown).map((n: Any) => n.textContent), [GAS], 'the account whole, not cut to its ends');
+  assert.ok(said(gas).includes('Or ask your assistant to swap a little USDC to NEAR (0.5 NEAR is enough), then add it here.'));
+  assert.equal(shownButtons(gas).some((b: Any) => b.textContent === 'Add NEAR'), false);
+  press(gas, 'Copy');
+  await flush();
+  assert.deepEqual(copied, [GAS]);
+  assert.ok(said(gas).includes('Account copied, ends in ...' + GAS.slice(-6)));
+  assert.equal(w.calls.some((c) => c.route === '/api/vault/gas/fund'), false, 'a payout was filed');
+  for (const line of visible(section(w))) assert.equal(JARGON.test(line), false, line);
+  // Escape puts it away, and NEAR in the vault makes Add NEAR the payout again.
+  assert.equal(w.key('Escape'), true);
+  assert.equal(straight().hidden, true);
+  w.chip({ sourceNear: 2.5 });
+  press(gas, 'Add NEAR');
+  assert.equal(find(gas, '.vault-gas-add')[0].hidden, false, 'a vault with NEAR gets no form');
+  // Not read yet is not none: the form opens, and its card says why if it cannot pay.
+  const unread = build({ vault: { chip: chipSlice({ sourceNear: null }) } });
+  press(rowOf(unread, 'gas'), 'Add NEAR');
+  assert.equal(find(rowOf(unread, 'gas'), '.vault-gas-add')[0].hidden, false);
+  // After the move the payout comes from the allowance, so it is the allowance that holds none.
+  const moved = build({ vault: { chip: MOVED({ sourceNear: 0 }) } });
+  press(rowOf(moved, 'gas'), 'Add NEAR');
+  assert.ok(said(rowOf(moved, 'gas')).includes('Your allowance holds no NEAR yet. Send 0.1 to 1 NEAR on NEAR straight to this account, from any NEAR wallet:'));
+  moved.leave();
+  assert.equal(find(rowOf(moved, 'gas'), '.vault-gas-elsewhere')[0].hidden, true, 'the account outlived the tab');
 });
 
 test('a vault on another Mac\'s keys pays no NEAR from here: Add NEAR shows the gas account whole, to send NEAR to it straight', async () => {
@@ -1267,7 +1443,7 @@ test('after a restart mid-move the agent\'s head reads the fact that holds its m
 test('getting-started.md says the same two plain sentences as the paper key\'s screen', () => {
   const flat = GETTING_STARTED.replace(/\s+/g, ' ');
   assert.ok(flat.includes('Your paper key is the only key that opens your vault away from this Mac.'));
-  assert.ok(flat.includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'));
+  assert.ok(flat.includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
   assert.ok(flat.includes('On a wallet with no recovery phrase, that second backup is your private key.'));
   assert.ok(flat.includes(MOVE_VAULT_REASON));
   assert.ok(flat.includes("confirm this Mac's Touch ID key for your vault"));

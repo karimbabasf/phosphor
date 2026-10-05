@@ -683,6 +683,22 @@ test('a small move that waits because of where it came from says why on its face
   assert.ok(detailsOf(plain).includes('Why it asks'), detailsOf(plain).join(' | '));
 });
 
+// ux2 M1, 2026-10-05: a swap bigger than the allowance asks two Touch IDs on Approve, and the order
+// sat in the closed Details while the Vault tab says to cancel any Touch ID that reads anything
+// else. The sentence goes on the face, once, before the buttons ask.
+test('a move bigger than the allowance says its two Touch IDs on its face, once, whatever chat it came from', () => {
+  const TWO = 'Your allowance holds 63 USDC, less than this move spends. Approve asks for two Touch IDs: the first approves this move, the second moves 87.000001 USDC from your vault to your allowance.';
+  for (const stamp of [{}, { webRead: true }]) {
+    const card = cardFor(swapProposal({ ...stamp, verdict: { outcome: 'needs_approval', reasons: ['swap of $150.00 to intents.near.', TWO], why: [TWO] } }));
+    assert.ok(faceOf(card).includes(TWO), `${JSON.stringify(stamp)}: ${faceOf(card)}`);
+    assert.equal(detailsOf(card).join(' ').includes('Approve asks for two Touch IDs'), false, `${JSON.stringify(stamp)} says the two Touch IDs twice`);
+  }
+  // Wherever the sentence sits among the reasons, it is the one the face says.
+  const first = cardFor(swapProposal({ verdict: { outcome: 'needs_approval', reasons: [TWO, '$150.00 is above the $100.00 click threshold.'], why: ['$150.00 is above the $100.00 click threshold.', TWO] } }));
+  assert.ok(faceOf(first).includes(TWO), faceOf(first));
+  assert.ok(detailsOf(first).join(' ').includes('click threshold'), 'the other reason left Details');
+});
+
 // "Why it asks" is a sentence: it stands under its label and breaks between words, where a
 // hash on a figure line breaks anywhere (a 960 px window split "whatever" in two, 2026-09-23).
 test('why it asks is a sentence under its label, and the figures stay at the line end', () => {

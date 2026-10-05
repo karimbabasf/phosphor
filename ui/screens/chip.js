@@ -13,10 +13,11 @@
    THE PAPER KEY. Its words come from the backend once (POST
    /api/vault/chip/phrase), are drawn in this row only, and are held in this
    file's memory, never the store, a log or a frame, until they are typed back
-   whole, the window locks, the tab is left or the person hides them. There is
-   no Print and no Copy: a printer and a clipboard both keep a copy. They are
-   typed back by hand, one word to a field, with pasting off, so what is
-   proven is the paper and not a copy of the screen.
+   whole, the window locks or the tab is left. Hide words takes them off the
+   screen and keeps them, so the paper being written stays the one to type
+   back. There is no Print and no Copy: a printer and a clipboard both keep a
+   copy. They are typed back by hand, one word to a field, with pasting off,
+   so what is proven is the paper and not a copy of the screen.
 
    ONE NAME FOR EACH THING, the one the docs, the refusals and the Touch ID
    sentences use: your vault, your allowance, the gas account, your paper key,
@@ -101,15 +102,19 @@
      and under a vault that moved (PHASE2-PLAN.md U12; docs/getting-started.md
      carries the same two). */
   function plainTruth(vault) {
+    // Once the allowance exists (after the move), what it may hold in dollars: its size plus 10 percent.
+    var a = slice && slice.allowance && typeof slice.allowance.sizeUsd === 'number' && slice.allowance.sizeUsd > 0 ? slice.allowance : null;
+    var cap = a && kit ? ', ' + kit.usdShort(Math.floor(a.sizeUsd * 110 + 1e-6) / 100) + ' now' : '';
     return [
       'Your paper key is the only key that opens your vault away from this Mac.',
-      'Your ' + backupName(vault) + ' also controls your allowance (at most its size plus 10 percent) and the gas account (about 0.5 NEAR), so keep both like cash.'
+      'Your ' + backupName(vault) + ' also controls your allowance (at most its size plus 10 percent' + cap + '), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'
     ];
   }
 
-  // An address or a key as the Touch ID dialogs shorten it: eight and eight.
+  // An address or a key as the Touch ID dialogs shorten it: eight and eight, an address in lower case.
   function short(id) {
     var s = String(id || '');
+    if (/^0x/i.test(s)) s = s.toLowerCase();
     var prefix = s.indexOf('0x') === 0 ? '0x' : s.slice(0, s.indexOf(':') + 1);
     var body = s.slice(prefix.length);
     return body.length > 20 ? prefix + body.slice(0, 8) + '...' + body.slice(-8) : s;
@@ -238,7 +243,7 @@
       offer: 'Your ' + backupName(vault) + ' opens your vault today.',
       restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
-      moved: 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
+      moved: screen === 'moved' ? whoOpens(vault) : '',
       checking: 'Checking which keys open your vault, with NEAR. This takes a moment.'
     };
     dom.setText(refs.line, lines[screen] || '');
@@ -287,9 +292,10 @@
     return 'ask';
   }
 
-  // Where the paper step is: on screen here, waiting to be typed back, typed again after a restart, void, or none.
+  // Where the paper step is: on screen here, hidden, waiting to be typed back, typed again after a restart, void, or none.
   function paperStage() {
     if (paper && stage === 'words') return 'words';
+    if (paper && stage === 'hidden') return 'hidden';
     if (paper && stage === 'typeback') return 'typeback';
     if (slice.paper === 'shown' || slice.paper === 'retype') return 'typeback';
     if (slice.paper === 'void') return 'void';
@@ -345,8 +351,8 @@
     var vault = current.vault || {};
     flow.appendChild(dom.el('p', 'vault-flow-title', screen === 'restore' ? 'Restore your vault on this Mac' : 'Move your vault to Touch ID'));
     flow.appendChild(kit.text('vault-text', screen === 'restore'
-      ? 'Your paper key brings your vault here. Write a new paper key first, then type the old one: the restore adds the new paper and retires the old one.'
-      : 'After the move only this Mac\'s Touch ID key and a paper key you write by hand open your vault. Your assistant spends from a small allowance, and anything more asks for your Touch ID.'));
+      ? 'Have your old paper key with you before you start. Write a new paper key first, then type the old one: the restore puts the new paper on your vault and retires the old one.'
+      : 'After the move nothing on this Mac moves your vault\'s money without a Touch ID that names the move. Only this Mac\'s Touch ID key and a paper key you write by hand open your vault, and your assistant spends from a small allowance.'));
     refs.block = dom.el('p', 'vault-warn');
     kit.append(refs.block, kit.icon('warning', 'icon-16'));
     refs.blockText = dom.el('span', '');
@@ -483,6 +489,7 @@
   function drawPaperStep(body, screen) {
     var at = paperStage();
     if (at === 'words') drawWords(body);
+    else if (at === 'hidden') drawHidden(body);
     else if (at === 'typeback') drawTypeBack(body, screen);
     else drawPaperOffer(body, screen, at === 'void');
   }
@@ -492,7 +499,7 @@
     if (isVoid) {
       var gone = kit.problem();
       body.appendChild(gone);
-      kit.say(gone, 'The paper key shown before Phosphor restarted opens nothing. Destroy it, then write a new one.');
+      kit.say(gone, 'The paper key shown earlier opens nothing. Destroy it, then write a new one.');
     }
     body.appendChild(kit.text('vault-text', screen === 'restore'
       ? '24 words you write by hand. The restore puts this new paper on your vault and takes the old one off.'
@@ -579,8 +586,33 @@
       stage = 'typeback';
       paint();
     });
-    dom.on(hide, 'click', wipe);
-    if (wrote.focus) wrote.focus();
+    dom.on(hide, 'click', function () {
+      stage = 'hidden';
+      paint();
+    });
+    // The step opens at its warning, so the lock line and both plain sentences are read first.
+    if (wrote.focus) wrote.focus({ preventScroll: true });
+    kit.bringIntoView(warn);
+  }
+
+  // Hide words: off the screen, still this paper, until it is typed back, a lock or the tab left.
+  function drawHidden(body) {
+    body.appendChild(kit.text('vault-text', 'Your paper key is hidden. Show it again to finish writing it down.'));
+    var tools = dom.el('div', 'vault-actions');
+    var again = button('Show the words again', 'btn-sm');
+    var wrote = button('I wrote it down', 'btn-quiet btn-sm');
+    tools.appendChild(again);
+    tools.appendChild(wrote);
+    body.appendChild(tools);
+    dom.on(again, 'click', function () {
+      stage = 'words';
+      paint();
+    });
+    dom.on(wrote, 'click', function () {
+      stage = 'typeback';
+      paint();
+    });
+    if (again.focus) again.focus();
   }
 
   /* All 24 words typed back from the paper, one to a field. A space or Enter
@@ -650,7 +682,7 @@
     var retype = !paper && slice.paper === 'retype';
     body.appendChild(dom.el('p', 'vault-flow-title', 'Type your paper key back'));
     body.appendChild(kit.text('vault-sub', retype
-      ? 'Phosphor restarted or locked, so type the paper you wrote for this move again, all 24 words.'
+      ? 'Phosphor forgets a typed paper key after 30 minutes, a lock or a restart, so type the paper you wrote for this move again, all 24 words.'
       : 'All 24 words, from your paper, in order. It proves the paper is right before your vault depends on it.'));
     var inputs = paperFields(body, 'paper');
     refs.paperError = kit.problem();
@@ -778,7 +810,7 @@
   function drawOldStep(body) {
     body.appendChild(kit.text('vault-text', 'The 24 words of the paper you wrote when your vault moved. They never leave this Mac, and the restore retires that paper.'));
     refs.oldInputs = paperFields(body, 'old-paper');
-    drawSays(body, [['Touch ID reads', SAYS.chip], ['If it asks once more first', SAYS.restore]]);
+    drawSays(body, [['If this Mac asks for your wallet\'s key first, Touch ID reads', SAYS.restore], ['Then Touch ID reads', SAYS.chip]]);
     goTools(body, 'Restore my vault');
     dom.on(refs.go, 'click', function () {
       var read = window.PhosphorCustody.readPaper(valuesOf(refs.oldInputs));
@@ -969,6 +1001,25 @@
     dom.setHidden(under, !note);
   }
 
+  /* The row's first line once the vault moved: the worst fact NEAR read about
+     who opens it, and nothing NEAR has not read since the move. */
+  function whoOpens(vault) {
+    var name = backupName(vault);
+    if (slice.chipOnChain === false) return 'This Mac\'s Touch ID key no longer opens your vault.';
+    if (Array.isArray(slice.otherKeys) && slice.otherKeys.length) return 'Your vault also answers to a key Phosphor did not add.';
+    if (slice.oldOnChain === true) return 'Your ' + name + ' still opens your vault.';
+    if (slice.predecessorAuth === true) return 'Your ' + name + ' can reach your vault again, through the NEAR door.';
+    if (slice.recoveryOnChain === false) return 'Only this Mac\'s Touch ID key opens your vault. It has no paper key.';
+    if (unreadFacts()) return 'Your vault moved to this Mac\'s Touch ID key and your paper key.';
+    return 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.';
+  }
+
+  // A fact about who opens the vault that NEAR has not answered since the vault moved.
+  function unreadFacts() {
+    return [slice.chipOnChain, slice.recoveryOnChain, slice.oldOnChain, slice.predecessorAuth].some(function (f) { return typeof f !== 'boolean'; }) ||
+      !Array.isArray(slice.otherKeys);
+  }
+
   function warnLine() {
     var line = dom.el('p', 'vault-warn');
     kit.append(line, kit.icon('warning', 'icon-16'));
@@ -984,8 +1035,16 @@
     kit.append(refs.doneLine, kit.icon('shield', 'vault-backup-mark'));
     refs.doneLine.appendChild(dom.el('span', 'vault-backup-words', 'Your vault is on this Mac\'s Touch ID key.'));
     flow.appendChild(refs.doneLine);
-    refs.doneSub = kit.text('vault-sub', 'From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.');
+    refs.doneSub = kit.text('vault-sub');
     flow.appendChild(refs.doneSub);
+    refs.doneTools = dom.el('div', 'vault-actions');
+    var topUp = button('Top up', 'btn-ghost btn-sm');
+    dom.on(topUp, 'click', function () {
+      var allowance = window.PhosphorAllowance;
+      if (allowance && typeof allowance.topUp === 'function') allowance.topUp();
+    });
+    refs.doneTools.appendChild(topUp);
+    flow.appendChild(refs.doneTools);
     refs.pins = dom.el('ul', 'vault-rules vault-pins');
     refs.pinVault = fact('pin-vault');
     refs.pinAllowance = fact('pin-allowance');
@@ -1001,6 +1060,9 @@
     list.appendChild(refs.facts.old);
     list.appendChild(refs.facts.door);
     flow.appendChild(list);
+    refs.reading = kit.text('vault-sub', 'Phosphor is reading your vault from NEAR to confirm who opens it.');
+    refs.reading.setAttribute('role', 'status');
+    flow.appendChild(refs.reading);
     var door = warnLine();
     refs.doorOpen = door.line;
     refs.doorOpenText = door.words;
@@ -1022,6 +1084,13 @@
     var pins = slice.pins;
     dom.setHidden(refs.doneLine, !justDone);
     dom.setHidden(refs.doneSub, !justDone);
+    // The move puts nothing in the allowance: until a top-up, every move the assistant asks for asks a Touch ID.
+    var a = slice.allowance;
+    var empty = !!a && typeof a.sizeUsd === 'number' && a.sizeUsd > 0 && typeof a.balanceUsd === 'number' && a.balanceUsd < 0.005;
+    dom.setText(refs.doneSub, empty
+      ? 'From now on every move out of your vault asks for a Touch ID that names it. Your allowance starts empty: top it up so your assistant can spend up to ' + kit.usdShort(a.sizeUsd) + ' with no Touch ID.'
+      : 'From now on every move out of your vault asks for a Touch ID that names it. Your assistant spends from your allowance.');
+    dom.setHidden(refs.doneTools, !(justDone && empty));
     dom.setHidden(refs.pins, !(justDone && pins));
     if (justDone && pins) {
       paintFact(refs.pinVault, 'Your vault', short(pins.vault), null, null);
@@ -1029,21 +1098,29 @@
     }
     if (justDone && !refs.doneLine.dataset.popped) {
       refs.doneLine.dataset.popped = 'true';
+      // Move my vault sat at the foot of step 4: the tick pops where the person can see it.
+      kit.bringIntoView(refs.doneLine);
       kit.pop(refs.doneLine);
     }
 
-    var unread = 'Not read yet';
+    // A fact NEAR has not answered since the move is never a yes or a no (src/vault/rekey.ts chipSlice).
+    var checking = 'Checking...';
+    var chipOn = slice.chipOnChain;
     var paperOn = slice.recoveryOnChain;
     var oldOn = slice.oldOnChain;
     var door = slice.predecessorAuth;
-    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', 'Opens it', null, null);
-    paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : unread), paperOn === false ? 'warn' : null,
+    paintFact(refs.facts.chip, 'This Mac\'s Touch ID key', chipOn === true ? 'Opens it' : (chipOn === false ? 'Not on your vault' : checking), chipOn === false ? 'warn' : null,
+      chipOn === false ? 'NEAR reads it off your vault, so this Mac cannot move your vault\'s money.' : null);
+    paintFact(refs.facts.paper, 'Your paper key', paperOn === true ? 'Opens it' : (paperOn === false ? 'Not on your vault' : checking), paperOn === false ? 'warn' : null,
       paperOn === false ? 'Your vault reads no paper key. Move your money to a fresh wallet while this Mac still opens your vault.' : null);
-    paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : unread), oldOn === true ? 'warn' : null,
+    paintFact(refs.facts.old, 'Your ' + name, oldOn === false ? 'No longer opens it' : (oldOn === true ? 'Still opens it' : checking), oldOn === true ? 'warn' : null,
       'It still opens your allowance, the gas account and Hyperliquid.');
-    paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : unread), door === true ? 'warn' : null,
-      'A way for your ' + name + ' to act for your vault through NEAR. The move shut it. NEAR Intents\' admins can open it again for any account, and this line reads it from NEAR.');
-    dom.setText(refs.doorOpenText, 'NEAR Intents\' admins opened the NEAR door again, so your ' + name + ' can reach your vault through it. Keep it like cash, and move your money to a fresh wallet if anyone else may have it.');
+    paintFact(refs.facts.door, 'The NEAR door', door === false ? 'Shut' : (door === true ? 'Open' : checking), door === true ? 'warn' : null,
+      door === true
+        ? 'A way for your ' + name + ' to act for your vault through NEAR. NEAR Intents\' admins opened it again.'
+        : 'A back way in for your ' + name + ', through NEAR. The move shut it, and Phosphor checks it each time it reads your vault.');
+    dom.setHidden(refs.reading, !unreadFacts());
+    dom.setText(refs.doorOpenText, 'NEAR Intents\' admins opened the NEAR door again, so your ' + name + ' can reach your vault. Keep it like cash. If anyone else may have it, send your money to a wallet only you control.');
     dom.setHidden(refs.doorOpen, door !== true);
     var others = Array.isArray(slice.otherKeys) ? slice.otherKeys : [];
     dom.setText(refs.othersText, others.length
@@ -1052,6 +1129,8 @@
     dom.setHidden(refs.others, !others.length);
     var truth = plainTruth(vault);
     dom.setText(refs.truth.childNodes[0], truth[0]);
+    // With no paper key on the vault, the paper is no key at all.
+    dom.setHidden(refs.truth.childNodes[0], paperOn === false);
     dom.setText(refs.truth.childNodes[1], truth[1]);
   }
 

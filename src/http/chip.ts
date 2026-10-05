@@ -17,6 +17,8 @@ import type { Ctx } from './context.ts';
 import { guarded, knownRefusal, refusal } from './wallet.ts';
 import { backupProven } from './vault.ts';
 import { settleFor } from './custody.ts';
+import { heldSymbol } from '../intents.ts';
+import { railAccounts } from '../intents-sign.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { allowanceState } from '../vault/allowance.ts';
 import { GAS_FUND_MAX_NEAR, GAS_FUND_MIN_NEAR, fundingNear, gasAccountOf } from '../vault/gas-account.ts';
@@ -33,9 +35,9 @@ const CHIP_WORDS: Record<string, string> = {
   rekey_busy: 'Your vault is moving right now. Wait for it to finish.',
   wrong_words: 'Those words do not match the paper key on screen. Check each word against your paper.',
   wrong_paper: 'Those words are not the paper key you wrote for this move. Type that paper again, or show a new one.',
-  phrase_gone: 'There is no paper key waiting to be typed back. Show a new one and write it down: a paper shown before Phosphor restarted opens nothing.',
+  phrase_gone: 'There is no paper key waiting to be typed back. Show a new one and write it down: a paper shown earlier opens nothing.',
   bad_paper: 'Those are not the 24 words of a paper key. Check each word against your paper.',
-  not_your_paper: 'That paper key is not a key of your vault, so nothing changed.',
+  not_your_paper: 'That paper key is not on your vault, so nothing changed. Use the paper you wrote when your vault last moved; a paper from before a restore no longer works.',
   same_paper: 'Write a new paper key for the restore. The paper you restore from stops working once the restore is done.',
   rekey_slow: 'Touch ID took longer than the move can wait, so nothing was sent. Try again.',
   vault_changed: "Your vault's keys changed while it was moving, so nothing was sent. Look at the Vault tab, then try again.",
@@ -94,11 +96,22 @@ export function hostOf(ctx: Ctx): RekeyHost {
   };
 }
 
+/* The NEAR held by the account a payout to the gas account comes from (the vault before the move,
+   the allowance after it), by the ledger's last read, or null when that read is missing or failed:
+   holding none and not read yet are different facts. */
+function sourceNear(ctx: Ctx): number | null {
+  const from = railAccounts(ctx.cfg.keysPath).spend?.toLowerCase() ?? null;
+  const read = ctx.ledger.intents();
+  if (from === null || read === undefined || !read.ok) return null;
+  const near = heldSymbol('NEAR').toUpperCase();
+  return read.holdings.filter((h) => h.accountId.toLowerCase() === from && h.symbol.toUpperCase() === near).reduce((sum, h) => sum + h.amount, 0);
+}
+
 /* The Vault tab's chip slice for /api/state. The allowance's account, size and balance are the
    allowance unit's read (src/vault/allowance.ts): null while the wallet spends from its vault. */
-export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null } {
+export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null; sourceNear: number | null } {
   const slice = chipSlice(hostOf(ctx), () => allowanceState(ctx));
-  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) } };
+  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) }, sourceNear: sourceNear(ctx) };
 }
 
 // POST /api/vault/chip/phrase -> {ok, words[24]}: a new paper key, shown once.
