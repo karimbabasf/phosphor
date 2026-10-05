@@ -37,6 +37,7 @@ import type { AllowanceService } from '../vault/allowance.ts';
 import { railAccounts } from '../intents-sign.ts';
 import { ownerReason, reasonFor } from '../vault/reason.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
+import { evmAddressOf } from '../keystore/derived.ts';
 import { vaultMoveUnderWay, vaultMovedElsewhere } from '../vault/rekey.ts';
 import { OwnerTouchRefused, ownerTouchRequired, signTypedWith } from '../rails/hl-user-signed.ts';
 import type { OwnerTouch } from '../rails/hl-user-signed.ts';
@@ -745,7 +746,9 @@ function topUpGraceMs(ctx: PCtx, p: Proposal): number {
    zeroed once the signature is made. The last check runs again after the touch, because a dialog
    can stay up for a minute and Freeze binds at the signature. Nothing stays open: the next action
    asks again. `ownerOut` is the keystore's gate as src/main.ts wires it, read for the vault in
-   the file. */
+   the file. The file's header names that vault and sits outside what its encryption covers, and
+   until this process opens the payload, the rails build a move from it; so the key the touch opens
+   signs only when its own address is the one the move was built for (audit2 AU2-02). */
 export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; ownerOut: (vault: string) => boolean }): OwnerTouch {
   const { vault, keystore } = deps;
   return {
@@ -756,6 +759,8 @@ export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; own
     async sign(typed, lastCheck) {
       const reason = ownerReason(typed);
       if (reason === null) throw new OwnerTouchRefused('unnamed', 'Touch ID can only be asked for a Hyperliquid action the app can name in full, so nothing was signed');
+      const builtFor = keystore.addresses().evm?.toLowerCase() ?? null;
+      if (builtFor === null) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
       return custodyLock(keystore).run(async () => {
         const request = keystore.enclaveRequest();
         if (request === null) throw new OwnerTouchRefused('no_enclave', 'This wallet has no Touch ID key to ask, so nothing was signed');
@@ -763,6 +768,7 @@ export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; own
         if (!answer.ok) throw new OwnerTouchRefused(answer.error, touchSaid(answer.error));
         if (answer.op !== 'unwrap') throw new OwnerTouchRefused('garbled', 'Touch ID answered something else, so nothing was signed');
         const signed = keystore.withOwnerKey(answer.dek, (key) => {
+          if (evmAddressOf(key).toLowerCase() !== builtFor) throw new OwnerTouchRefused('wrong_key', OTHER_ACCOUNT_SAID);
           lastCheck?.();
           return signTypedWith(key, typed);
         });
@@ -772,6 +778,8 @@ export function ownerTouchVia(deps: { vault: VaultRelay; keystore: Keystore; own
     },
   };
 }
+
+const OTHER_ACCOUNT_SAID = 'The key Touch ID opened is not the account this move was built for, so nothing was signed. Unlock your wallet, then try again';
 
 function touchSaid(code: string): string {
   switch (code) {

@@ -1250,7 +1250,11 @@ that would wait for an unlock that cannot help. The open still parses the payloa
 copies of the EVM key can stay in memory until it is reused, as after any open; nothing in the
 session points at them. The EVM key then signs one Hyperliquid owner action
 per Touch ID of its own (`withOwnerKey`), and the buffer it lends is zeroed as soon as that
-signature is made (`tests/unit/keystore-chip-session.test.ts` reads it back). `state/vault.json` is
+signature is made (`tests/unit/keystore-chip-session.test.ts` reads it back). Before it signs, the
+key's own address must be the account the action was built for: until the payload is opened, the
+app reads that account from the wallet file's header, which its encryption does not cover, so a
+program running as you that rewrites the header gets a refusal and no signature
+(`tests/unit/audit2-gate-header-skip.test.ts`). `state/vault.json` is
 not a control on its own, so the same gate also reads the vault service's chip markers: a marker
 naming the vault keeps the EVM key out once the chain shows the vault moved (the marker's chip key,
 or the paper key it pins, is on the vault), even after a program running as you removes the chip
