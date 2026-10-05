@@ -11,7 +11,7 @@
 
 import type http from 'node:http';
 
-import { sendJson } from './respond.ts';
+import { errText, sendJson } from './respond.ts';
 import type { JsonBody } from './respond.ts';
 import type { Ctx } from './context.ts';
 import { guarded, knownRefusal, refusal } from './wallet.ts';
@@ -76,7 +76,7 @@ async function ownerTouch<T>(ctx: Ctx, reason: string, use: (key: Buffer) => T |
       if (!lent.ok) return { ok: false as const, code: lent.error, detail: 'the Touch ID did not open the wallet' };
       return { ok: true as const, value: await lent.value };
     } catch (err) {
-      return { ok: false as const, code: 'vault_bundle', detail: err instanceof Error ? err.message : String(err) };
+      return { ok: false as const, code: 'vault_bundle', detail: errText(err) };
     }
   });
 }
