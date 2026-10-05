@@ -7,7 +7,9 @@
 // order, and pays NEAR's fee, as it does for swaps. The relay can delay a bundle or drop it; it
 // cannot change it, because every payload in it is signed. A dropped bundle settles dead after its
 // deadline (below), and the move can then be sent again with new nonces. Done is what NEAR's views
-// say, never what the relay says.
+// say, never what the relay says. Checked live on 2026-10-05: a two-payload bundle, the second a
+// webauthn payload signed by the key the first adds, ran whole, in order, in one transaction
+// (4MGdLb226dYTRWjiwPFkX43KE5d59UEMGuxp7Ru63JwJ), with no NEAR from this app.
 //
 // BEFORE ANYTHING IS SENT the verifier simulates this exact bundle and must report exactly the
 // events it has to make (src/vault/payload.ts, expectedEvents), payload by payload. One changed,

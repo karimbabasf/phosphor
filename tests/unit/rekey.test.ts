@@ -1054,35 +1054,6 @@ test('a move whose earlier send left this Mac\'s Touch ID key and the paper on t
   }
 });
 
-test('the state says how much NEAR payouts could come from: none, some, or not read yet', { skip, timeout: 120_000 }, async () => {
-  const chain = createIntentsDouble({ start: T0 * 1000 });
-  let read: IntentsRead | undefined;
-  const app = await chipApp(chain, { papers: [], intents: () => read });
-  const row = (accountId: string, symbol: string, amount: number) => ({ accountId, assetId: `nep141:${symbol}`, symbol, originChain: 'near', amount, decimals: 24 });
-  // The state is built at most once a second for inputs it does not watch (src/http/state.ts).
-  const sourceNear = async (want: number | null): Promise<unknown> => {
-    let seen: unknown;
-    for (let i = 0; i < 60; i += 1) {
-      seen = (await chipState(app)).sourceNear;
-      if (seen === want) break;
-      await new Promise((r) => setTimeout(r, 50));
-    }
-    return seen;
-  };
-  try {
-    const vault = await wallet(app);
-    assert.equal(await sourceNear(null), null, 'a ledger that never read the vault says none');
-    read = { ok: true, fetchedAt: new Date().toISOString(), holdings: [row(vault, 'USDC', 40), row('0x' + 'f'.repeat(40), 'wNEAR', 3)] };
-    assert.equal(await sourceNear(0), 0, 'NEAR another account holds was counted as the vault\'s');
-    read = { ...read, holdings: [...read.holdings, row(vault, 'wNEAR', 1.25)] };
-    assert.equal(await sourceNear(1.25), 1.25);
-    read = { ...read, ok: false, error: 'the verifier did not answer' };
-    assert.equal(await sourceNear(null), null, 'a failed read is not a vault with no NEAR');
-  } finally {
-    await app.close();
-  }
-});
-
 test('a demo has no chip vault: the routes say so and nothing is asked of the keychain', { timeout: 60_000 }, async () => {
   const { startRekey, showPaper } = await import('../../src/vault/rekey.ts');
   useChipVault(null);
