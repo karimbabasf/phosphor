@@ -15,6 +15,7 @@ import path from 'node:path';
 import { recoverTypedDataAddress } from 'viem';
 import { english } from 'viem/accounts';
 
+import { STATE_CACHE_MAX_MS } from '../../src/http/state.ts';
 import { AGENTS_WAIT_SAID } from '../../src/proposals/lifecycle.ts';
 import { buildApproveAgentPayload } from '../../src/rails/hl-user-signed.ts';
 import type { Proposal } from '../../src/types.ts';
@@ -206,6 +207,76 @@ test('a start asks the chip markers right behind the probe, as src/main.ts does:
     await first?.close();
     await again?.close();
   }
+});
+
+/* A vault moved here, then vault.json's chip entry deleted (and `alsoRecord`: the move's run record
+   too) and the app started again, its first chipStatus answered by `firstStatus` when given. What the
+   Vault tab said from the first read until it read moved, and vault.json's chip then. `late`: the
+   tab is read once and left to settle, then something else asks the service for its markers, and
+   the states are counted from there. */
+async function afterChipEntryDeleted(opts: { alsoRecord?: boolean; firstStatus?: Hook; late?: boolean } = {}): Promise<{ states: string[]; named: string | undefined; keyRef: string }> {
+  const w = await wave3World({ papers: [PAPER] });
+  let first: Wave3World | null = w;
+  let again: Wave3World | null = null;
+  try {
+    await moved(w);
+    const keyRef = w.prefs.get().chip?.keyRef ?? '';
+    await w.close();
+    first = null;
+    const file = path.join(w.dataDir, 'vault.json');
+    const doc = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>;
+    delete doc.chip;
+    fs.writeFileSync(file, JSON.stringify(doc, null, 2));
+    if (opts.alsoRecord === true) fs.rmSync(path.join(w.dataDir, 'chip-run.json'));
+    let asked = false;
+    again = await wave3World({
+      chain: w.chain,
+      mac: w.mac,
+      dataDir: w.dataDir,
+      hook: (r) => {
+        if (r.op !== 'chipStatus' || asked || opts.firstStatus === undefined) return undefined;
+        asked = true;
+        return opts.firstStatus;
+      },
+    });
+    if (opts.late === true) {
+      await again.get('/api/state');
+      await new Promise((r) => setTimeout(r, 300));
+      assert.equal((await again.relay.ask({ op: 'chipStatus' })).ok, true);
+      // A state built before the markers were learned is served for at most this long.
+      await new Promise((r) => setTimeout(r, STATE_CACHE_MAX_MS + 50));
+    }
+    const states: string[] = [];
+    for (let i = 0; i < 300; i += 1) {
+      const state = String((await again.get('/api/state')).json.vault.chip.state);
+      if (states.at(-1) !== state) states.push(state);
+      if (state === 'done') break;
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    return { states, named: again.prefs.get().chip?.keyRef, keyRef };
+  } finally {
+    await first?.close();
+    await again?.close();
+  }
+}
+
+test('a vault moved here whose vault.json lost its chip entry reads checking, never none, until NEAR says the chip is on it; then vault.json names it again', { skip, timeout: 120_000 }, async () => {
+  const kept = await afterChipEntryDeleted();
+  assert.deepEqual(kept.states, ['checking', 'done']);
+  assert.equal(kept.named, kept.keyRef, 'vault.json names the chip again');
+  // The move's run record deleted too: the marker the start learned is the evidence.
+  const bare = await afterChipEntryDeleted({ alsoRecord: true });
+  assert.deepEqual(bare.states, ['checking', 'done']);
+  assert.equal(bare.named, bare.keyRef);
+  // The start's chipStatus answered nothing: the record alone makes the tab ask the service itself.
+  const unanswered = await afterChipEntryDeleted({ firstStatus: { kind: 'answer', answer: { ok: false, error: 'keychain_unavailable', message: 'the keychain did not answer' } } });
+  assert.deepEqual(unanswered.states, ['checking', 'done']);
+  assert.equal(unanswered.named, unanswered.keyRef);
+  // Neither note on disk and no marker known at first: a marker learned later is asked about at once,
+  // not a minute later.
+  const late = await afterChipEntryDeleted({ alsoRecord: true, late: true, firstStatus: { kind: 'answer', answer: { ok: false, error: 'keychain_unavailable', message: 'the keychain did not answer' } } });
+  assert.deepEqual(late.states, ['checking', 'done']);
+  assert.equal(late.named, late.keyRef);
 });
 
 /* The owner key's Touch ID for the move, held until the test lets it go: the move is under way and

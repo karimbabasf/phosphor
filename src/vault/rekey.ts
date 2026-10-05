@@ -247,6 +247,12 @@ type Box = {
   paperTimer: NodeJS.Timeout | null;
   // The owner key's public half per vault, learned from an open session that held it.
   olds: Map<string, string>;
+  /* The chip markers naming the vault, as the relay saw them, that a check against the chain last
+     finished for, and those the last refresh of the slice started with. A vault this Mac moved
+     whose vault.json lost its chip entry reads `checking` until a check finished for the markers
+     in hand (resumeChip writes vault.json back when the chip is on the vault). */
+  checked: string | null;
+  askedFor: string | null;
 };
 
 const boxes = new WeakMap<object, Box>();
@@ -254,7 +260,7 @@ const boxes = new WeakMap<object, Box>();
 function boxOf(host: RekeyHost): Box {
   const known = boxes.get(host.keystore);
   if (known !== undefined) return known;
-  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map() };
+  const box: Box = { phrase: null, paper: null, run: null, view: emptyView(), refreshing: null, askedAt: 0, poll: null, paperTimer: null, olds: new Map(), checked: null, askedFor: null };
   boxes.set(host.keystore, box);
   // A lock is someone stepping away: a proven paper key goes with it, and is typed again.
   host.keystore.onChange((state) => {
@@ -778,16 +784,22 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
   const current = host.prefs.get().chip;
   const named = current !== null && current.account === vault;
   // The common cases ask nothing: a vault that moved, or one with no move of it under way and no
-  // chip of this Mac's pinned to it.
+  // chip of this Mac's pinned to it. A record of a move this Mac finished, with vault.json naming no
+  // chip for the vault, is not one of them: the service is asked even before its markers are known.
   if (named && record?.status !== 'moving') return 'done';
-  if (record?.status !== 'moving' && host.relay.chipMarkers(vault).length === 0) return named ? 'done' : 'none';
+  if (record?.status !== 'moving' && record?.status !== 'done' && host.relay.chipMarkers(vault).length === 0) {
+    box.checked = markerKey(host, vault);
+    return named ? 'done' : 'none';
+  }
   const status = await chipStatusAll(host.relay);
   if ('code' in status) return named ? 'done' : record?.status === 'moving' ? 'moving' : 'none';
   const old = knownOld(host, box, vault);
+  let unread = false;
   for (const c of status.chips) {
     if (c.marker === null || c.publicKey === '' || c.marker.account.toLowerCase() !== vault) continue;
     const recovery = c.marker.recovery;
     const read = await readVault(chain.verifier, vault, [c.publicKey, recovery, ...(old === null ? [] : [old])]);
+    if (read === null) unread = true;
     if (read === null || read.has.get(c.publicKey) !== true || read.has.get(recovery) !== true) continue;
     // The chip vault.json names is still on the vault: look on for a newer one a restore put there,
     // unless the record shows a move to this very chip that a crash left open.
@@ -803,9 +815,16 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
     }
     return 'done';
   }
+  // NEAR answered for every chip of this Mac's pinned to the vault, and none is on it.
+  if (!unread) box.checked = markerKey(host, vault);
   if (mayStillRun(chain, vault)) keepChecking(host);
   if (named) return 'done';
   return record !== null && (record.status === 'moving' || record.status === 'proven') ? 'moving' : 'none';
+}
+
+// The chip markers naming the vault as the relay has seen them, as one comparable string.
+function markerKey(host: RekeyHost, vault: string): string {
+  return JSON.stringify(host.relay.chipMarkers(vault));
 }
 
 function deadlineOf(payload: string): number {
@@ -860,7 +879,9 @@ function keepChecking(host: RekeyHost): void {
 // ---------- what the Vault tab shows ----------
 
 export type ChipSlice = {
-  state: 'none' | 'ready' | 'moving' | 'done' | 'broken';
+  // `checking`: this Mac moved the vault, or pinned a chip to it, and vault.json names no chip for
+  // it, so NEAR is being asked before the tab says anything else.
+  state: 'none' | 'ready' | 'moving' | 'done' | 'broken' | 'checking';
   recoveryOnChain: boolean | null;
   oldOnChain: boolean | null;
   predecessorAuth: boolean | null;
@@ -894,7 +915,15 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   if (chain === null || vault === null) {
     return { state: moved ? 'done' : 'none', recoveryOnChain: null, oldOnChain: null, predecessorAuth: null, otherKeys: null, allowance: null, gas: null, needs: [], paper: 'none', run: null, pins: null, moving };
   }
-  if (chain.reads === true && box.refreshing === null && (box.view.vault !== vault || box.askedAt === 0 || clock() - box.askedAt > VIEW_FRESH_MS)) {
+  const record = readRecord(host.dataDir, vault);
+  /* A vault this Mac moved (its run record says done), or one a chip of this Mac's is pinned to,
+     while vault.json names no chip for it: someone or something deleted the entry. Until a check
+     against NEAR finished for the markers in hand, the tab says it is checking, never that the
+     vault is the wallet's own, and markers the relay learned since the last check are asked about
+     at once. */
+  const marked = markerKey(host, vault);
+  const unsure = chain.reads === true && !moved && (record?.status === 'done' || marked !== '[]') && box.checked !== marked;
+  if (chain.reads === true && box.refreshing === null && (box.view.vault !== vault || box.askedAt === 0 || clock() - box.askedAt > VIEW_FRESH_MS || (unsure && box.askedFor !== marked))) {
     box.askedAt = clock();
     box.refreshing = refreshView(host, chain, vault)
       .catch(() => undefined)
@@ -904,7 +933,6 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   }
   const view = box.view.vault === vault ? box.view : emptyView();
   const accounts = chain.accounts.accounts();
-  const record = readRecord(host.dataDir, vault);
   const needs: string[] = [];
   if (!host.keystore.isUnlocked()) needs.push('open');
   if (host.keystore.custody() !== 'secure-enclave' || !host.relay.enclaveReady()) needs.push('touch_id');
@@ -915,6 +943,7 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
   if (accounts.kind === 'chip') state = 'done';
   else if (accounts.kind === 'broken') state = 'broken';
   else if (active(box.run) || record?.status === 'moving') state = 'moving';
+  else if (unsure) state = 'checking';
   else if (view.old === false) state = 'broken';
   else state = needs.length === 0 ? 'ready' : 'none';
   const paper: ChipSlice['paper'] =
@@ -946,7 +975,11 @@ export function chipSlice(host: RekeyHost, allowance: (accounts: { allowance: st
 // The chain facts the slice shows, read at one block, and the gas account's balance.
 async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string): Promise<void> {
   const box = boxOf(host);
+  const checked = box.checked;
+  box.askedFor = markerKey(host, vault);
   if (!active(box.run)) await resumeChip(host).catch(() => undefined);
+  // The service's answer can teach the relay markers: those are what this refresh asked about.
+  box.askedFor = markerKey(host, vault);
   const record = readRecord(host.dataDir, vault);
   const prefs = host.prefs.get();
   const pinned = prefs.chip === null ? null : (host.relay.chipMarkers(vault).find((m) => m.publicKey === prefs.chip?.publicKey)?.recovery ?? null);
@@ -967,7 +1000,7 @@ async function refreshView(host: RekeyHost, chain: ChipVaultChain, vault: string
   };
   const before = JSON.stringify(box.view, (_k, v) => (typeof v === 'bigint' ? v.toString() : v));
   box.view = next;
-  if (JSON.stringify(next, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) !== before) host.changed();
+  if (JSON.stringify(next, (_k, v) => (typeof v === 'bigint' ? v.toString() : v)) !== before || box.checked !== checked) host.changed();
 }
 
 /* For a test: whether the paper key held right now is zeroed later, without handing the key out.

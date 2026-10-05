@@ -147,14 +147,17 @@
     return !!run && ACTIVE.indexOf(run.status) >= 0;
   }
 
-  /* Which of the row's four faces: the offer, the restore, a move under way,
-     or a vault that moved. A move that failed, or one a restart cut short
-     (the state still says moving, with no run in this process), goes back to
-     its steps: the paper typed again, then Try again. A restore is told by
-     its run, or by a vault whose own key is already off it. */
+  /* Which of the row's five faces: the offer, the restore, a move under way,
+     a vault that moved, or a check in progress. A move that failed, or one a
+     restart cut short (the state still says moving, with no run in this
+     process), goes back to its steps: the paper typed again, then Try again.
+     A restore is told by its run, or by a vault whose own key is already off
+     it. Checking is a vault this Mac moved whose note on disk went missing:
+     one calm line while NEAR is asked, never the offer to move it again. */
   function screenOf(run) {
     if (!slice) return 'none';
     if (underWay(run)) return 'run';
+    if (slice.state === 'checking') return 'checking';
     // A move's last frame can beat the state that says so: done is done.
     if (slice.state === 'done' || (run && run.status === 'done')) return 'moved';
     if (slice.state === 'broken') return 'restore';
@@ -235,7 +238,8 @@
       offer: 'Your ' + backupName(vault) + ' opens your vault today.',
       restore: 'Your vault answers to a Touch ID key this Mac does not have.',
       run: run && run.kind === 'restore' ? 'Your vault is coming to this Mac\'s Touch ID key.' : 'Your vault is moving to this Mac\'s Touch ID key.',
-      moved: 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'
+      moved: 'This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.',
+      checking: 'Checking which keys open your vault, with NEAR. This takes a moment.'
     };
     dom.setText(refs.line, lines[screen] || '');
     dom.setText(refs.value, screen === 'moved' ? 'Touch ID' : '');

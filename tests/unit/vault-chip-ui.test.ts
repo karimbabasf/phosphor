@@ -903,6 +903,19 @@ test('on a new Mac the vault waits for its paper: the restore sits beside the wa
   assert.equal(errorLine(keyRow(again)), 'Word 24 is still empty. Your paper key is 24 words.');
 });
 
+test('a vault moved here whose vault.json lost its chip entry reads one calm checking line, never the offer to move it, until NEAR answers', () => {
+  const w = build({ vault: { chip: chipSlice({ state: 'checking', needs: ['open', 'gas'], oldOnChain: null, predecessorAuth: null, gas: null }) } });
+  const row = keyRow(w);
+  assert.ok(isShown(section(w)), 'the section shows while it checks');
+  assert.ok(said(row).includes('Checking which keys open your vault, with NEAR. This takes a moment.'));
+  for (const offer of ['opens your vault today', 'Move your vault to Touch ID', 'Restore your vault on this Mac']) assert.equal(said(row).includes(offer), false, offer);
+  assert.equal(find(row, '.vault-step').filter(isShown).length, 0, 'no steps while it checks');
+  for (const line of visible(row)) assert.equal(JARGON.test(line), false, line);
+  // NEAR answered and vault.json names the chip again: who opens the vault.
+  w.chip(MOVED());
+  assert.ok(said(keyRow(w)).includes('This Mac\'s Touch ID key and your paper key open your vault, and nothing else does.'));
+});
+
 test('a restore that a failure or a restart cut short goes back to its own steps, never the move\'s', () => {
   const failed = build({ vault: { chip: chipSlice({ state: 'moving', oldOnChain: false, paper: 'retype', run: { id: 'r3', kind: 'restore', status: 'failed', reason: 'user_cancel', said: 'Touch ID was cancelled. Nothing changed.' } }) } });
   assert.ok(said(keyRow(failed)).includes('Restore your vault on this Mac'));

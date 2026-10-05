@@ -2582,7 +2582,7 @@
     var chip = vault && vault.chip;
     if (!chip || typeof chip !== 'object' || !vault.custody) return null;
     var needs = Array.isArray(chip.needs) ? chip.needs : [];
-    if (chip.state === 'done' || chip.state === 'broken' || chip.state === 'moving' || chip.run) return chip;
+    if (chip.state === 'done' || chip.state === 'broken' || chip.state === 'moving' || chip.state === 'checking' || chip.run) return chip;
     if (chip.state !== 'ready' && chip.state !== 'none') return null;
     if (chip.state === 'none' && !needs.length) return null;
     if (needs.indexOf('keychain') >= 0) return null;
