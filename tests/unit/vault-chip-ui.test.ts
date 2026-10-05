@@ -592,7 +592,7 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   // Rule 1, on the phrase screen, for a wallet whose backup is its private key.
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'), text);
   // Hyperliquid too, which can hold more than both; before the move the allowance has no size to name.
-  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
+  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
   assert.ok(text.includes('On this screen only. Anyone who reads these words can open your vault.'));
   assert.ok(text.includes('Under the words, write your vault\'s address:'));
   assert.equal(find(row, '.vault-mono')[0].textContent, VAULT);
@@ -605,7 +605,7 @@ test('the paper key: 24 numbered words once, both plain sentences, the vault\'s 
   // A recovery phrase wallet's second sentence names its phrase.
   const phrase = build({ vault: { hasMnemonic: true } });
   await showPaper(phrase);
-  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
+  assert.ok(said(keyRow(phrase)).includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
 });
 
 test('the paper key opens at its warning: the lock line comes into view, and the focus on I wrote it down scrolls nothing past it', async () => {
@@ -826,7 +826,7 @@ test('the move names both Touch IDs before it asks, then shows each step as its 
   assert.equal(find(keyRow(w), '.vault-row-value')[0].textContent, 'Touch ID');
   assert.ok(text.includes('Your paper key is the only key that opens your vault away from this Mac.'));
   // Once the allowance has a size, the sentence names its cap in dollars: $100 plus 10 percent.
-  assert.ok(text.includes('Your private key also controls your allowance (at most its size plus 10 percent, $110 now), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
+  assert.ok(text.includes('Your private key also controls your allowance (its size plus 10 percent, $110 now, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'), text);
   holdsNoWord(w, 'done');
   // Back on the tab later, the moment has rested: the row says who opens the vault.
   w.leave();
@@ -1472,7 +1472,7 @@ test('after a restart mid-move the agent\'s head reads the fact that holds its m
 test('getting-started.md says the same two plain sentences as the paper key\'s screen', () => {
   const flat = GETTING_STARTED.replace(/\s+/g, ' ');
   assert.ok(flat.includes('Your paper key is the only key that opens your vault away from this Mac.'));
-  assert.ok(flat.includes('Your recovery phrase also controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
+  assert.ok(flat.includes('Your recovery phrase also controls your allowance (its size plus 10 percent, more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'));
   assert.ok(flat.includes('On a wallet with no recovery phrase, that second backup is your private key.'));
   assert.ok(flat.includes(MOVE_VAULT_REASON));
   assert.ok(flat.includes("confirm this Mac's Touch ID key for your vault"));

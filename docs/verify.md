@@ -123,7 +123,7 @@ PASS  33-relay-ops               only the shell, holding the relay secret, takes
 PASS  34-agent-top-up            an agent cannot make or approve a vault top-up: the chip key moves vault money only after a person clicks
 ```
 
-### 5. The allowance holds at most its size plus 10 percent
+### 5. The allowance holds at most its size plus 10 percent while no move is under way
 
 Agents spend the allowance with no Touch ID ($100 unless you pick another size). A top-up asks for
 at most the room under the size plus 10 percent ($110), or the size alone while the allowance's

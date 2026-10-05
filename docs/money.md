@@ -76,8 +76,8 @@ derives from your wallet key, about 0.0005 NEAR a move):
   writes one line in the log, `allowance_swept`, naming every coin and amount.
 
 A size of $0 sends everything priced home at the next sweep. What a Mac running someone else's
-code could spend with no Touch ID is the allowance (at most its size plus 10 %, $110 at the
-default) and the gas account; the vault needs your finger.
+code could spend with no Touch ID is the allowance (its size plus 10 %, $110 at the default, more
+while a move is under way) and the gas account; the vault needs your finger.
 
 ## Deposit
 

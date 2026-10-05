@@ -276,9 +276,10 @@ your money.
   apart from the key backup. The paper is also an ordinary EVM key at m/44'/60'/0'/0/0, so it signs
   for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
 - **The key backup also controls the allowance and the gas account.** Both keys are derived from
-  the owner key, so whoever holds the key backup holds the allowance (at most its size plus 10
-  percent, $110 at the default), the gas account (about 0.5 NEAR) and Hyperliquid. Keep it like
-  cash. What closes it: nothing planned; deriving them is what keeps one backup instead of three.
+  the owner key, so whoever holds the key backup holds the allowance (its size plus 10 percent,
+  $110 at the default, more while a move is under way), the gas account (about 0.5 NEAR) and
+  Hyperliquid. Keep it like cash. What closes it: nothing planned; deriving them is what keeps one
+  backup instead of three.
 - **After the move, your wallet's words still open the allowance, the gas account and
   Hyperliquid.** The move takes your wallet's key off the vault, not out of use: the recovery
   phrase or private key the Vault tab still shows after the move no longer opens the vault, but the
@@ -1253,9 +1254,10 @@ group order. GAS takes info `phosphor-gas-v1` as an ed25519 seed, and its accoun
 public key. The keystore holds both as buffers beside the EVM key and the lock zeroes them with it.
 Derived rather than kept, so no new key enters the wallet file and the backup a person already has
 brings both back. The cost of that: whoever holds the EVM key, or its backup, also holds ALLOWANCE
-(at most its size plus 10 %, $110 at the default) and GAS (about 0.5 NEAR). Keep the key backup
-like cash. The published vectors, checked outside this code with Python's hmac, foundry's `cast`
-and the OpenSSL command line, and checked again by `tests/unit/keystore-derived.test.ts`:
+(its size plus 10 %, $110 at the default, more while a move is under way) and GAS (about 0.5
+NEAR). Keep the key backup like cash. The published vectors, checked outside this code with
+Python's hmac, foundry's `cast` and the OpenSSL command line, and checked again by
+`tests/unit/keystore-derived.test.ts`:
 
 ```
 owner      4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318   0x2c7536E3605D9C16a7a3D7b1898e529396a65c23

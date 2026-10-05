@@ -204,10 +204,10 @@ every move out of the vault asks for a Touch ID that names it, and your assistan
 small allowance.
 
 Your paper key is the only key that opens your vault away from this Mac. Your recovery phrase also
-controls your allowance (at most its size plus 10 percent), the gas account (about 0.5 NEAR) and
-your Hyperliquid account, so keep both like cash. On a wallet with no recovery phrase, that second
-backup is your private key. Once the vault has moved, the Vault tab names the allowance's cap in
-dollars: $110 at the default size of $100.
+controls your allowance (its size plus 10 percent, more while a move is under way), the gas account
+(about 0.5 NEAR) and your Hyperliquid account, so keep both like cash. On a wallet with no recovery
+phrase, that second backup is your private key. Once the vault has moved, the Vault tab names the
+allowance's cap in dollars: $110 at the default size of $100.
 
 Under Your vault, the Vault key row takes you through four steps, in order:
 

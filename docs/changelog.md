@@ -24,9 +24,10 @@ Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time
   exactly what it does, and no vault move is signed twice.
 - The paper key is the only key that opens your vault away from this Mac: keep it like cash, apart
   from your key backup. Your recovery phrase or private key no longer opens the vault, but it still
-  controls the allowance (at most its size plus 10 percent), the gas account and Hyperliquid, so
-  keep it like cash too. On a new Mac, restore the wallet from its backup, then Restore your vault
-  beside it: write a new paper key, then type the old paper's 24 words.
+  controls the allowance (its size plus 10 percent, more while a move is under way), the gas
+  account and Hyperliquid, so keep it like cash too. On a new Mac, restore the wallet from its
+  backup, then Restore your vault beside it: write a new paper key, then type the old paper's 24
+  words.
 - Once your vault is on Touch ID, your assistant spends from an allowance, $100 unless you pick
   another size or turn it off. It starts empty. A top-up moves USDC from your vault: you ask in the
   Vault tab, approve its card and give one Touch ID. Your assistant cannot ask for one. A top-up

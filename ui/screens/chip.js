@@ -108,12 +108,13 @@
      and under a vault that moved (PHASE2-PLAN.md U12; docs/getting-started.md
      carries the same two). */
   function plainTruth(vault) {
-    // Once the allowance exists (after the move), what it may hold in dollars: its size plus 10 percent.
+    // Once the allowance exists (after the move), its size plus 10 percent in dollars. While a
+    // move is under way the sweep also keeps what it will spend (src/vault/allowance.ts sweepPlan).
     var a = slice && slice.allowance && typeof slice.allowance.sizeUsd === 'number' && slice.allowance.sizeUsd > 0 ? slice.allowance : null;
     var cap = a && kit ? ', ' + kit.usdShort(Math.floor(a.sizeUsd * 110 + 1e-6) / 100) + ' now' : '';
     return [
       'Your paper key is the only key that opens your vault away from this Mac.',
-      'Your ' + backupName(vault) + ' also controls your allowance (at most its size plus 10 percent' + cap + '), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'
+      'Your ' + backupName(vault) + ' also controls your allowance (its size plus 10 percent' + cap + ', more while a move is under way), the gas account (about 0.5 NEAR) and your Hyperliquid account, so keep both like cash.'
     ];
   }
 

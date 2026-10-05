@@ -199,8 +199,8 @@ signs for the vault in any EVM wallet if Phosphor is gone. What closes it: nothi
 
 The allowance key and the gas account's key are derived from the owner key, never stored, so the
 backup you already have brings both back. The cost: whoever holds that backup also holds the
-allowance (at most its size plus 10 percent, $110 at the default), the gas account (about 0.5 NEAR)
-and Hyperliquid, even after the vault has moved.
+allowance (its size plus 10 percent, $110 at the default, more while a move is under way), the gas
+account (about 0.5 NEAR) and Hyperliquid, even after the vault has moved.
 
 What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the two
 keys is what keeps one backup instead of three.
@@ -247,10 +247,11 @@ Mac locked when you leave it. What closes it: nothing in this build.
 
 The app reads NEAR through one provider, FastNEAR. Phosphor checks what it can: a move is called
 done only when the whole move reads right at one block, and a top-up the RPC turned down after it
-saw the signed bundle waits on NEAR rather than reading as nothing moved. Two gaps stay. A lying
+saw the signed bundle waits on NEAR rather than reading as nothing moved. Three gaps stay. A lying
 RPC can make a top-up whose call landed look dead, because the check that calls a bundle dead
-trusts a final block whose time is not tied to its hash and asks no second RPC, and it can hide a
-forced switch of the NEAR door from the Vault tab.
+trusts a final block whose time is not tied to its hash and asks no second RPC; it can make a
+stopped move look done, by lying about the whole move at one block; and it can hide a forced
+switch of the NEAR door from the Vault tab.
 
 What it means: in the first case your next approval of the same top-up moves the money a second
 time, still inside your own accounts, and the sweep sends what is over the size back to the vault.
