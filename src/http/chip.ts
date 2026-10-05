@@ -17,8 +17,6 @@ import type { Ctx } from './context.ts';
 import { depositRoute, guarded, knownRefusal, refusal } from './wallet.ts';
 import { backupProven } from './vault.ts';
 import { settleFor } from './custody.ts';
-import { heldSymbol } from '../intents.ts';
-import { railAccounts } from '../intents-sign.ts';
 import { custodyLock } from '../vault/custody-lock.ts';
 import { allowanceState } from '../vault/allowance.ts';
 import { returnOldGas } from '../vault/gas-account.ts';
@@ -96,22 +94,11 @@ export function hostOf(ctx: Ctx): RekeyHost {
   };
 }
 
-/* The NEAR held by the account payouts come from (the vault before the move, the allowance after
-   it), by the ledger's last read, or null when that read is missing or failed: holding none and not
-   read yet are different facts. */
-function sourceNear(ctx: Ctx): number | null {
-  const from = railAccounts(ctx.cfg.keysPath).spend?.toLowerCase() ?? null;
-  const read = ctx.ledger.intents();
-  if (from === null || read === undefined || !read.ok) return null;
-  const near = heldSymbol('NEAR').toUpperCase();
-  return read.holdings.filter((h) => h.accountId.toLowerCase() === from && h.symbol.toUpperCase() === near).reduce((sum, h) => sum + h.amount, 0);
-}
-
 /* The Vault tab's chip slice for /api/state. The allowance's account, size and balance are the
    allowance unit's read (src/vault/allowance.ts): null while the wallet spends from its vault. */
-export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null; sourceNear: number | null } {
+export function chipVaultSlice(ctx: Ctx): ChipSlice & { run: (ChipSlice['run'] & { said: string | null }) | null } {
   const slice = chipSlice(hostOf(ctx), () => allowanceState(ctx));
-  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) }, sourceNear: sourceNear(ctx) };
+  return { ...slice, run: slice.run === null ? null : { ...slice.run, said: slice.run.reason === null ? null : chipSaid(slice.run.reason) } };
 }
 
 // POST /api/vault/chip/phrase -> {ok, words[24]}: a new paper key, shown once.
