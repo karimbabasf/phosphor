@@ -2194,7 +2194,15 @@
   }
 
   /* The roster, as the state frame carries it: the clients attached over MCP, named by
-     themselves. Text, never markup. */
+     themselves. Text, never markup. A client the ask card knows reads as the agent it is
+     ("Claude Code", not "claude-code"), by that card's own list (ui/screens/agentask.js). */
+  function rosterName(m) {
+    var said = String(m.label || m.client || m.session || 'an agent');
+    var ask = window.PhosphorAgentAsk;
+    var known = ask && typeof ask.knownName === 'function' ? ask.knownName(said) : null;
+    return known || said;
+  }
+
   function onAgents(slice) {
     var members = slice && Array.isArray(slice.members) ? slice.members : [];
     var next = [];
@@ -2203,7 +2211,7 @@
       var waits = m.origin === 'outside' && m.allowed !== true;
       next.push({
         session: String(m.session || ''),
-        name: String(m.label || m.client || m.session || 'an agent'),
+        name: rosterName(m),
         role: String(m.role || ''),
         calls: typeof m.ops === 'number' ? m.ops : 0,
         // Started outside Phosphor and not allowed yet (ui/screens/agentask.js asks).

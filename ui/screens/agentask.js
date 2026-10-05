@@ -117,6 +117,13 @@
     return { mark: 'mcp', name: '', said: key === NO_NAME ? '' : said };
   }
 
+  /* The plain name for a client this card knows ("Claude Code" for claude-code), or null for any
+     other name. The roster row (ui/screens/agent.js) says the agent the same way. */
+  function knownName(name) {
+    var key = String(name || '').trim().toLowerCase();
+    return own(KNOWN, key) ? KNOWN[key].name : null;
+  }
+
   function titleOf(who) {
     return (who.name || SOMEONE) + ' wants to use Phosphor';
   }
@@ -425,5 +432,5 @@
     render();
   }
 
-  window.PhosphorAgentAsk = { boot: boot, asking: asking, reopen: reopen };
+  window.PhosphorAgentAsk = { boot: boot, asking: asking, reopen: reopen, knownName: knownName };
 })();
