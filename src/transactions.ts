@@ -619,11 +619,11 @@ function inviteEntry(r: ClaimRecord, selfAddresses: Set<string>): TxEntry | null
 }
 
 /* A deposit the bridge credited, or is crediting, as a row: money in from an exchange or another
-   wallet, with no proposal and no signature of ours behind it. Its time is the bridge's, or the
-   first time this app saw it (src/received.ts). The bridge's word is the status: COMPLETED is in
-   the wallet, FAILED never arrived, anything else is on its way. The place it came from is the
-   receive registry's id ('base', 'tron'), which names networks the five-chain place type does not;
-   the window prints a place by its id. */
+   wallet, with no proposal and no signature of ours behind it. Its time is the bridge's, the
+   first time this app saw it, or none (src/received.ts). The bridge's word is the status:
+   COMPLETED is in the wallet, FAILED never arrived, anything else is on its way. The place it
+   came from is the receive registry's id ('base', 'tron'), which names networks the five-chain
+   place type does not; the window prints a place by its id. */
 function receivedEntry(d: ReceivedDeposit, selfAddresses: Set<string>): TxEntry {
   const net = receiveNetworkByBridge(d.network);
   const place = (net?.id ?? d.network) as TxPlace;
@@ -633,7 +633,8 @@ function receivedEntry(d: ReceivedDeposit, selfAddresses: Set<string>): TxEntry 
   const status = d.status === 'COMPLETED' ? 'executed' : d.status === 'FAILED' ? 'failed' : 'executing';
   return {
     id: `received:${d.asset}:${d.txHash}`,
-    ts: d.at,
+    // '' when nobody knows when it came: it sorts below every dated row and the window says "Earlier".
+    ts: d.at ?? '',
     action: 'deposit',
     kind: 'received',
     status,

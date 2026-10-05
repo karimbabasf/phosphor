@@ -719,23 +719,23 @@ const BASE_USDC = 'eth:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const DEPOSIT_TX = '0x' + 'b'.repeat(64);
 
 // The POA bridge, answering recent_deposits with `rows` (or failing while `down`) and supported_tokens with Base USDC.
-function bridge(rows: unknown[]): { fetchImpl: typeof fetch; down: boolean; asked: string[] } {
-  const world = { down: false, asked: [] as string[], fetchImpl: (async () => new Response('', { status: 500 })) as unknown as typeof fetch };
+function bridge(rows: unknown[]): { fetchImpl: typeof fetch; rows: unknown[]; down: boolean; asked: string[] } {
+  const world = { rows, down: false, asked: [] as string[], fetchImpl: (async () => new Response('', { status: 500 })) as unknown as typeof fetch };
   world.fetchImpl = (async (_url: unknown, init?: RequestInit) => {
     const call = JSON.parse(String(init?.body)) as { method: string; params: Array<Record<string, unknown>> };
     world.asked.push(call.method + (call.params[0]?.chain === undefined ? '' : `:${String(call.params[0].chain)}`));
     if (world.down) return new Response('bad gateway', { status: 502 });
     const result =
       call.method === 'recent_deposits'
-        ? { deposits: rows, total: rows.length, hasMore: false, limit: 100, offset: 0 }
+        ? { deposits: world.rows, total: world.rows.length, hasMore: false, limit: 100, offset: 0 }
         : { tokens: [{ defuse_asset_identifier: BASE_USDC, asset_name: 'USDC', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near' }] };
     return new Response(JSON.stringify({ id: 'phosphor', jsonrpc: '2.0', result }), { status: 200 });
   }) as unknown as typeof fetch;
   return world;
 }
 
-const baseDeposit = (status: string, createdAt?: string): unknown => ({
-  tx_hash: DEPOSIT_TX, chain: 'eth:8453', defuse_asset_identifier: BASE_USDC, decimals: 6, amount: '5000000', account_id: SELF.toLowerCase(), status,
+const baseDeposit = (status: string, createdAt?: string, tx = DEPOSIT_TX): unknown => ({
+  tx_hash: tx, chain: 'eth:8453', defuse_asset_identifier: BASE_USDC, decimals: 6, amount: '5000000', account_id: SELF.toLowerCase(), status,
   ...(createdAt === undefined ? {} : { created_at: createdAt }),
 });
 
@@ -763,11 +763,16 @@ test('money sent in through the bridge is a Received row with its amount, coin a
 
 test('a failed bridge read never empties the list, and a row keeps the time it was first seen', async () => {
   const dataDir = tempDir('phosphor-received-');
-  const world = bridge([baseDeposit('PENDING')]);
+  // The first read finds nothing; the deposit comes after it, so it is dated when it is first seen.
+  const world = bridge([]);
   const received = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  await received.read();
+  world.rows = [baseDeposit('PENDING')];
+  const before = Date.now();
   await received.read();
   const [first] = received.list();
   assert.equal(first.status, 'PENDING');
+  assert.ok(first.at !== null && Date.parse(first.at) >= before - 1000, 'a deposit seen after the first read is not dated when it was seen');
 
   world.down = true;
   await assert.rejects(received.read());
@@ -786,4 +791,25 @@ test('a failed bridge read never empties the list, and a row keeps the time it w
   // The next boot reads the same row, at the same time, before the bridge has said anything.
   const again = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: false });
   assert.deepEqual(again.list(), [first]);
+});
+
+test('deposits the first read finds with no time are Earlier, below every dated row, and a later one is dated', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const older = (n: string): string => '0x' + n.repeat(64);
+  const world = bridge([baseDeposit('COMPLETED', undefined, older('c')), baseDeposit('COMPLETED', undefined, older('d'))]);
+  const received = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  await received.read();
+  assert.deepEqual(received.list().map((d) => d.at), [null, null], 'a deposit from before the first read was dated now');
+
+  // A month-old move still sits above them, and a deposit seen on a later read is dated today.
+  world.rows = [baseDeposit('COMPLETED', undefined, older('e')), ...world.rows];
+  await received.read();
+  const h = await boot([settled('month', 'executed', { createdAt: ago(24 * 30), decidedAt: ago(24 * 30) })], { received });
+  try {
+    const list = await receipts(h.url);
+    assert.deepEqual(list.map((r) => (r.kind === 'received' ? r.txids[0].hash.slice(2, 3) : r.id)), ['e', 'month', 'c', 'd']);
+    assert.deepEqual(list.map((r) => r.at === ''), [false, false, true, true], 'an old deposit carries a time');
+  } finally {
+    await h.close();
+  }
 });

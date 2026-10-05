@@ -103,6 +103,7 @@ type ReceiptTx = { chain: string; hash: string; url: string | null; explorer: st
 export type Receipt = {
   id: string;
   kind: string;
+  // '' for a received deposit nobody knows the time of (src/received.ts): it pages last.
   at: string;
   headline: string;
   summary: string;

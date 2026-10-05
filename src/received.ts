@@ -8,8 +8,11 @@
 //
 // WHAT IS KEPT. Each deposit as the bridge last described it, with its time: the row's own
 // created_at, or, for a row that carries none that reads, the first time this app saw it, written
-// down so that it does not move at the next boot. Rows stay after the bridge's page has moved past
-// them (it answers the newest 100), so a deposit seen once stays in Activity.
+// down so that it does not move at the next boot. Except on the account's FIRST read: what the
+// bridge lists then was sent before this app looked, and "just now" over a month-old deposit
+// reads false (13 of them on Karim's account), so those rows keep no time and sit below every
+// dated row as "Earlier". Rows stay after the bridge's page has moved past them (it answers the
+// newest 100), so a deposit seen once stays in Activity.
 //
 // WHEN IT IS READ. When the window reads its activity (src/http/receipts.ts), at most once a
 // minute, and never in demo mode. The read runs behind the answer: the list served is the one
@@ -44,12 +47,13 @@ export type ReceivedDeposit = {
   symbol: string | null;
   // The bridge's word: COMPLETED is credited, FAILED did not arrive, anything else is on its way.
   status: string;
-  // ISO: the bridge's created_at, or the first time this app saw it when the row gave none.
-  at: string;
+  // ISO: the bridge's created_at, or the first time this app saw it when the row gave none. null
+  // for a row the account's first read found with no time: nobody knows when it came.
+  at: string | null;
 };
 
 export type Received = {
-  // This wallet's deposits, newest first.
+  // This wallet's deposits, newest first, the ones with no time last.
   list(): ReceivedDeposit[];
   // Ask the bridge again when the last ask is a minute old. Never waits and never throws.
   refresh(): void;
@@ -79,8 +83,16 @@ function isDeposit(value: unknown): value is ReceivedDeposit {
     (r.decimals === null || typeof r.decimals === 'number') &&
     (r.symbol === null || typeof r.symbol === 'string') &&
     typeof r.status === 'string' &&
-    typeof r.at === 'string'
+    (r.at === null || typeof r.at === 'string')
   );
+}
+
+// Newest first, and a row with no time below every row with one.
+function byTime(a: ReceivedDeposit, b: ReceivedDeposit): number {
+  if (a.at === b.at) return 0;
+  if (a.at === null) return 1;
+  if (b.at === null) return -1;
+  return a.at < b.at ? 1 : -1;
 }
 
 // The token a deposit row names: same network, and the same contract, or none for the chain's own coin.
@@ -98,6 +110,9 @@ export function createReceived(deps: ReceivedDeps): Received {
   const file = path.join(deps.dataDir, RECEIVED_FILE);
   const now = deps.now ?? Date.now;
   let rows: ReceivedDeposit[] | null = null;
+  // The accounts whose first read is behind them, kept in the file beside the rows: a first read
+  // that found nothing is still the first, and the next deposit is dated.
+  let readFor = new Set<string>();
   let tokens: PoaToken[] = [];
   let tokensAt = -Infinity;
   let askedAt = -Infinity;
@@ -106,8 +121,9 @@ export function createReceived(deps: ReceivedDeps): Received {
   function load(): ReceivedDeposit[] {
     if (rows !== null) return rows;
     try {
-      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { deposits?: unknown };
+      const raw = JSON.parse(fs.readFileSync(file, 'utf8')) as { read?: unknown; deposits?: unknown };
       rows = Array.isArray(raw.deposits) ? raw.deposits.filter(isDeposit) : [];
+      readFor = new Set(Array.isArray(raw.read) ? raw.read.filter((a): a is string => typeof a === 'string') : []);
     } catch {
       // No file yet, or one this app cannot read: nothing seen. The next write replaces it.
       rows = [];
@@ -130,7 +146,8 @@ export function createReceived(deps: ReceivedDeps): Received {
       }
     }
     const held = new Map(load().map((r) => [keyOf(r), r]));
-    let changed = false;
+    const first = !readFor.has(account);
+    let changed = first;
     fresh.forEach((d, i) => {
       if (d.txHash === '' || d.asset === '') return;
       const token = tokenOf(d.asset, tokens);
@@ -144,18 +161,20 @@ export function createReceived(deps: ReceivedDeps): Received {
         decimals: d.decimals ?? token?.decimals ?? prior?.decimals ?? null,
         symbol: token?.symbol ?? prior?.symbol ?? null,
         status: d.status,
-        // With no created_at, the first time seen; the bridge's page is newest first, so rows first
-        // seen together keep its order a millisecond apart.
-        at: d.at ?? prior?.at ?? new Date(at - i).toISOString(),
+        // With no created_at: none on the account's first read, else the first time seen. The
+        // bridge's page is newest first, so rows first seen together keep its order a millisecond apart.
+        at: d.at ?? (prior !== undefined ? prior.at : first ? null : new Date(at - i).toISOString()),
       };
       if (prior !== undefined && JSON.stringify(prior) === JSON.stringify(next)) return;
       held.set(keyOf(next), next);
       changed = true;
     });
     if (!changed) return;
-    const next = [...held.values()].sort((a, b) => (a.at < b.at ? 1 : a.at > b.at ? -1 : 0)).slice(0, RECEIVED_KEPT);
-    atomicWriteJson(file, { version: 1, deposits: next });
+    const next = [...held.values()].sort(byTime).slice(0, RECEIVED_KEPT);
+    const nextRead = new Set(readFor).add(account);
+    atomicWriteJson(file, { version: 1, read: [...nextRead], deposits: next });
     rows = next;
+    readFor = nextRead;
   }
 
   return {

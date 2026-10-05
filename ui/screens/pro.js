@@ -1091,7 +1091,8 @@
         title: titleOf(r.kind, moneyOfReceipt(r, p), r.status === 'executed') || r.headline || r.summary || 'Something moved',
         state: endWord(r),
         dir: endDir(r),
-        meta: upper(dom.ago(r.at)) + (own ? ', on its own' : ''),
+        /* A deposit from before the app first looked has no time (src/received.ts). */
+        meta: (r.at ? upper(dom.ago(r.at)) : 'Earlier') + (own ? ', on its own' : ''),
         receipt: r
       };
     });
