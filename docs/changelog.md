@@ -7,7 +7,7 @@ without a git tag say so.
 
 ## 0.10.16
 
-Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Not tagged at the time of writing.
+Built 2026-10-04 and 2026-10-05, the Touch ID vault pass. Tagged v0.10.16 on 2026-10-05.
 
 - Move your vault to this Mac's Touch ID key. On a Touch ID wallet, Your vault in the Vault tab
   takes you through four steps: back up your key, add NEAR to the gas account, write a 24-word paper
