@@ -58,6 +58,8 @@ import { createVaultPrefs } from './vault/prefs.ts';
 import { chipStatusReader, ownerKeyGate } from './vault/chip.ts';
 import { liveVerifier } from './relay/verifier.ts';
 import { createAccounts } from './vault/accounts.ts';
+import { createVaultSubmitter, fileJournal, journalPathFor } from './vault/submit.ts';
+import { SWEEP_EVERY_MS, createAllowance } from './vault/allowance.ts';
 import { useRailAccounts } from './intents-sign.ts';
 import { demoAccounts } from './ledger/demo.ts';
 import { ownerTouchVia } from './proposals/lifecycle.ts';
@@ -287,6 +289,10 @@ useOwnerTouch(ownerTouchVia({ vault, keystore, ownerOut: ownerKeyStaysOut }));
 const accounts = createAccounts({ keystore, prefs: vaultPrefs, chipStatus: chipStatusReader(vault) });
 useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) : accounts.accounts);
 void accounts.refresh();
+/* Every vault move goes through one submitter (src/vault/submit.ts): one journal, one move at a time
+   per account, nothing signed again while an earlier move may still run. The gas account's seed is
+   the session's, read at the moment of a send. */
+const vaultMoves = createVaultSubmitter({ verifier: liveVerifier(), gasSeed: () => keystore.gasSeed(), gasAccount: () => keystore.derivedAccounts()?.gas ?? null, journal: fileJournal(journalPathFor(cfg.dataDir)) });
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),
   idleMs: () => vaultPrefs.get().idleMinutes * 60_000,
@@ -572,12 +578,17 @@ const tradeDeps: TradeDeps = {
    stages against the fixture, signing nothing and reaching for no chain. `refresh` is theirs:
    a demo move changes the fixture's balances and the row waiting on them is judged against the
    read that shows it. */
+/* The allowance's vault side (src/vault/allowance.ts): the top-up the vault's chip key signs behind
+   one Touch ID, and the sweep home the allowance key signs with none. Live only: a demo moves no vault. */
+const allowance =
+  cfg.mode === 'live' ? createAllowance({ accounts, prefs: vaultPrefs, relay: vault, verifier: liveVerifier(), submitter: vaultMoves }) : undefined;
 const rails = createRails({
   cfg,
   tokens,
   trade: tradeDeps,
   prices: () => ledger.snapshot().prices,
   refresh: () => ledger.refresh(),
+  allowance,
 });
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
@@ -628,6 +639,7 @@ const proposals = createProposalService({
   venueCredited,
   vault,
   keystore,
+  allowance,
   /* What the chain says about a send's receiver (transaction count, balance, contract or
      not), read once at propose time so the card can say "never used on Ethereum, check it
      twice". Live only: a demo holds nothing and asks nobody. Bounded to eight seconds because
@@ -682,6 +694,14 @@ function sweepOpenProposals(): void {
 }
 sweepOpenProposals();
 setInterval(sweepOpenProposals, RECONCILE_SWEEP_MS).unref?.();
+
+/* The allowance goes home when it is worth more than its size plus 10 %: after every settled move
+   that touched it (src/proposals/execute.ts), every ten minutes while the wallet is open, and at
+   every unlock. Each look reads the balances and signs nothing when nothing is over. */
+setInterval(() => void proposals.sweepAllowance?.('timer'), SWEEP_EVERY_MS).unref?.();
+keystore.onChange((state) => {
+  if (state === 'unlocked') void proposals.sweepAllowance?.('unlock');
+});
 
 /* And a faster tick that asks nothing of anybody: a row past its deadline with nothing having
    changed says so itself. The venue sweep above reads 1Click over the network and runs every

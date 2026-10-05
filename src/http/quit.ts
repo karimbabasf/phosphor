@@ -60,6 +60,7 @@ const NOUN: Record<WriteDraft['kind'], string> = {
   hl_withdraw: 'transfer from your trading account',
   trade: 'trade',
   policy_change: 'change',
+  vault_top_up: 'top-up from your vault',
 };
 
 function one(rows: Proposal[], single: (noun: string) => string, many: (n: number) => string): string {

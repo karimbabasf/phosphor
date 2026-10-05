@@ -757,6 +757,12 @@ function pct(share: number): string {
   return (share * 100).toFixed(2) + '%';
 }
 
+/* A share is a sum of float ratios (src/composition.ts), so a portfolio held whole in what a cap
+   allows whole can sum a hair past it: 1.0000000000000002 of a 100 % cap, read with the vault's and
+   the allowance's rows side by side. A share counts as over its cap only past this much, a
+   billionth of the portfolio. */
+const SHARE_TOLERANCE = 1e-9;
+
 // The composition rules, over the state a move would leave behind. The engine judges the
 // resulting state rather than the delta: a portfolio already past a cap cannot make further
 // moves until a human changes the policy or the caps stop being breached.
@@ -773,7 +779,7 @@ function compositionProblem(draft: RailDraft, policy: Policy, ctx: EngineCtx, re
   const post = classify(postPositions(draft, ctx), riskRowsFor(ctx));
   for (const [issuer, share] of Object.entries(post.byIssuer)) {
     const cap = issuerCap(issuer, policy.composition.maxIssuerShare);
-    if (share > cap) {
+    if (share > cap + SHARE_TOLERANCE) {
       return refusal(
         reasons,
         'max_issuer_share',
@@ -781,7 +787,7 @@ function compositionProblem(draft: RailDraft, policy: Policy, ctx: EngineCtx, re
       );
     }
   }
-  if (post.freezableShare > policy.composition.maxFreezableShare) {
+  if (post.freezableShare > policy.composition.maxFreezableShare + SHARE_TOLERANCE) {
     return refusal(
       reasons,
       'max_freezable_share',
@@ -789,6 +795,29 @@ function compositionProblem(draft: RailDraft, policy: Policy, ctx: EngineCtx, re
     );
   }
   return null;
+}
+
+/* A TOP-UP NEVER RUNS ON THE POLICY'S WORD (PHASE2-PLAN.md C8). Money leaves the vault only behind a
+   person's click and the vault's own Touch ID, whatever its size: the allowance is the most a move
+   with no click can take, and a top-up is the one thing that makes it bigger. It is checked for a
+   priced amount and for two accounts that are both ours (the vault it leaves, the allowance it
+   lands in), and it asks. The outbound caps do not bind it: nothing leaves the person's own
+   accounts, and the move it pays for is governed on its own. */
+function evaluateTopUp(draft: Extract<WriteDraft, { kind: 'vault_top_up' }>, ctx: EngineCtx, reasons: string[]): Verdict {
+  const usd = draft.amountUsd;
+  reasons.push(Number.isFinite(usd) ? `A top-up of ${money(usd)} from your vault to your allowance.` : 'A top-up from your vault to your allowance, unpriced.');
+  if (!Number.isFinite(usd) || usd <= 0) {
+    return refusal(reasons, 'invalid_amount', `This top-up cannot be valued in dollars: the app has no price for ${draft.symbol}, so it is refused.`);
+  }
+  const own = addressSet(ctx.selfAddresses);
+  for (const [side, account] of [['comes from', draft.from], ['lands in', draft.to]] as const) {
+    if (!isOurs(own, account)) {
+      return refusal(reasons, 'destination_not_allowed', `This top-up ${side} ${account}, which is not one of this wallet's own accounts.`);
+    }
+  }
+  if (lower(draft.from) === lower(draft.to)) return refusal(reasons, 'invalid_amount', 'A top-up from an account to itself moves nothing.');
+  reasons.push('Money leaves your vault only with your click and your Touch ID, whatever the amount.');
+  return { outcome: 'needs_approval', reasons };
 }
 
 // A rail hands funds to a venue. What is checked is the size of the move, who is receiving
@@ -889,6 +918,9 @@ export function evaluate(draft: WriteDraft, ctx: EngineCtx): Verdict {
 
   // 3. Policy changes.
   if (draft.kind === 'policy_change') return evaluatePolicyChange(draft, policy, reasons);
+
+  // 3a. A top-up from the vault: before the rail branch, which would let a small one run alone.
+  if (draft.kind === 'vault_top_up') return evaluateTopUp(draft, ctx, reasons);
 
   // 3b. Rails: a swap, the Hyperliquid moves, the intents moves, a trade.
   if (isRailDraft(draft)) return evaluateRail(draft, policy, ctx, reasons);

@@ -36,6 +36,8 @@ import { INTENTS_RELAY_VENUE, intentsRelayRail } from './intents-relay.ts';
 import { swapRailOf } from '../config.ts';
 import { intentsSendRail } from './intents-send.ts';
 import { intentsPayRail } from './intents-pay.ts';
+import { vaultTopUpRail } from './vault-topup.ts';
+import type { AllowanceService } from '../vault/allowance.ts';
 import { createLivePreflight } from '../preflight/live.ts';
 import { createRouteHealth } from '../preflight/route-health.ts';
 import type { RouteHealth } from '../preflight/route-health.ts';
@@ -110,6 +112,9 @@ export type RailDeps = {
   // the settling row has to be judged against the read that shows it. Absent means a demo move
   // waits for the app's own poll instead.
   refresh?: () => Promise<unknown>;
+  /* The vault's side of the allowance (src/vault/allowance.ts): what a top-up runs on. Absent, a
+     top-up is refused at its simulation, which is every wallet that has not moved to the chip. */
+  allowance?: AllowanceService;
 };
 
 export function createRails(deps: RailDeps): RailRegistry {
@@ -195,6 +200,8 @@ export function createRails(deps: RailDeps): RailRegistry {
       routes,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,
+    // Vault to allowance, behind a click and the vault's own Touch ID; never to anyone else.
+    vault_top_up: vaultTopUpRail({ allowance: deps.allowance }) as Rail,
   };
 
   const relayReads = relayClient();

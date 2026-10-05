@@ -288,7 +288,20 @@ word alone.
 Every amount the engine reads is priced by the app, never supplied by the agent. A token the app
 cannot price is never assumed to be worth a dollar, because a value it cannot establish is a value
 its caps cannot bound: a swap that spends one is valued off its quote and waits for a click, and
-any other move with one is refused.
+any other move with one is refused. A composition share is a sum of float ratios, so a cap is
+breached only past a billionth of the portfolio (a portfolio held whole in what a 100 % cap allows
+sums to 1.0000000000000002 with the vault's and the allowance's rows side by side).
+
+A top-up from the vault (`vault_top_up`, `src/vault/allowance.ts`) takes its own branch ahead of
+the rails: it is checked for a priced amount and for two accounts that are both the wallet's own,
+and it always lands on `needs_approval`, at any size and under any click threshold. The outbound
+caps do not bind it (nothing leaves the person's accounts, and the move a shortfall top-up pays for
+is charged in full on its own row), and it is not counted in the day's spend. Approving one asks no
+approval Touch ID: the finger is the vault chip key's own, at its signature. Once the vault has
+moved to the chip, `src/proposals/execute.ts` also turns an `allow` into `needs_approval` for any
+send, payout or Hyperliquid deposit that spends more of a coin than the allowance holds (the swap
+builder does the same off its live read), and its shortfall step tops up exactly the difference
+behind that Touch ID, only for a move a person approved, before the move's rail runs.
 
 Policy changes take a shorter path: `killSwitch`, `version` and the rendered sentences are not
 patchable at all; any other patch is schema-checked, held under the ceiling ($1,000,000 per
@@ -714,6 +727,48 @@ write is touched. `vault-bind.test.ts` runs all of it against the service's own 
 stand-in keychain, including a crash matrix that kills real backends before the commit, between
 the commit and the rename, and after the rename.
 
+**The allowance** (`src/vault/allowance.ts`, `src/rails/vault-topup.ts`, `src/rails/allowance-sweep.ts`).
+Once the vault has moved to the chip, two window routes keep the allowance near its size, both
+behind the window token through `guarded()`, neither an op on `/api/mcp` nor a tool in
+`src/mcp.ts`:
+
+    POST /api/vault/allowance/top-up   {usd, why?: 'low' | 'manual'}  ->  {ok, proposal}
+    POST /api/vault/allowance/size     {usd}                          ->  {ok, sizeUsd}
+
+A top-up is filed, never run, by its route: USDC from the vault's largest USDC holding, cents only,
+refused past what keeps the allowance at its size plus 10 % and from a vault that holds too little.
+It lands pending, and the click runs it: `accounts.refresh()` asks the service about the chip right
+before the signature, the gas account is checked before the Touch ID (`gas_low`, `gas_unfunded`
+and the rest stop it with no dialog), the vault chip key signs one transfer to the allowance through
+`signIntent` (the service writes the sentence, "move 5.00 USDC from your vault to your allowance"),
+and the submitter (`src/vault/submit.ts`) simulates it, checks the events, sends it with the gas
+account and reads both balances at the block that shows it ran. A send with no final answer is
+waited on by the submitter's settle rule, never signed again: it ran, or NEAR proves it never can
+(the row closes as nothing moved), or the row waits on the allowance's balance. The size is kept in
+`vault.json` (0 to 1,000,000, cents) and a change is logged and asks for a sweep at once.
+
+The sweep is a payload the allowance key signs (erc191, only one that names the allowance as its
+signer, and never through the owner key's signer), one transfer per coin to the vault, at most four
+coins a sweep, sent by the gas account through the same submitter. Its prices are the engine's own
+(`src/proposals/draft.ts` priceOf, fresh or nothing), its amounts the verifier's, read live a moment
+before. Every vault and allowance nonce is `buildNonce` at the payload deadline plus seven days, and
+both payloads live 110 seconds, so an unanswered send settles within about four minutes.
+
+**The vault's move to the chip** (`src/http/chip.ts`, `src/vault/rekey.ts`; window only behind
+`guarded()`, none on `/api/mcp`):
+
+    POST /api/vault/chip/phrase          ->  {ok, words[24]}, once
+    POST /api/vault/chip/phrase-proven   {words[24]}  ->  {ok, recovery}
+    POST /api/vault/chip/move            ->  202 {ok, run}
+    POST /api/vault/chip/restore         {words[24]}  ->  202 {ok, run}
+    POST /api/vault/gas/fund             {near}  ->  {ok, proposal: {id, status}}
+
+A run reports on the frame `{type: 'chip', kind: 'chip', run, status, reason?, said?}`, its status
+one of creating, touch_old, touch_chip, simulating, checking, done and failed. No answer and no
+audit line carries a word of a paper. The rekey writes vault.json, lets the owner key go and asks
+the accounts again, in that order, once NEAR says the move is done; the top-up asks the accounts
+again right before its own signature.
+
 **What is still open.** The key is in this process's memory whenever the wallet is unlocked, and
 the answer to that is a separate signing process or a hardware device, neither of which ships
 here. Treat the balance behind these keys as the amount you are willing to lose to something that
@@ -764,7 +819,9 @@ an `/exchange` POST the venue rejects for its signature, and twenty seconds of t
     src/policy/        engine (pure) + policy file + sentence renderer + the venue gap
     src/proposals.ts   a thin door onto src/proposals/
     src/proposals/     the work: lifecycle, execute, draft, rails, trade, reconcile
-    src/rails/         the rail registry: intents, hyperliquid
+    src/rails/         the rail registry: intents, hyperliquid, the vault top-up, the allowance sweep
+    src/vault/         the vault's chip key, its relay, payloads, submitter, and the allowance
+                       (allowance.ts: top-up, sweep plan, shortfall)
     src/trade/         plan, risk, plans on disk, the watcher, the rail, the surface
     src/runner/        the host (registry, watcher, fills watch) and the child that signs
     src/chain/         the EVM readers and explorer prefixes, the NEAR RPC and account id rules

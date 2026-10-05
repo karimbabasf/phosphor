@@ -37,7 +37,7 @@ import {
 } from './proposals/lifecycle.ts';
 import type { PCtx, ProposalDeps } from './proposals/lifecycle.ts';
 import { finishTouch } from './proposals/lifecycle.ts';
-import { executeApproved, land, markStalled, watchSettling } from './proposals/execute.ts';
+import { executeApproved, land, markStalled, proposeVaultTopUp, sweeperFor, watchSettling } from './proposals/execute.ts';
 import { acknowledge, reconcileOnBoot, reconcileOpen, reconcileProposal, watchDeadlines } from './proposals/reconcile.ts';
 import { proposePolicyChange } from './proposals/draft.ts';
 import { decideSwap, prepareSwap, proposeHlDeposit, proposeHlWithdraw, proposeSend } from './proposals/rails.ts';
@@ -140,6 +140,10 @@ export function createProposalService(deps: ProposalDeps): ProposalService {
       const asked = stamped(p);
       return serialise(() => proposeTradeChange(ctx, asked));
     },
+    // A top-up the window asks for; the agent has no door to it. The sweep runs outside the queue:
+    // it reserves no budget and holds back while any move is under way (src/rails/allowance-sweep.ts).
+    proposeVaultTopUp: (p) => serialise(() => proposeVaultTopUp(ctx, p)),
+    sweepAllowance: async (why) => (await sweeperFor(ctx)?.now(why)) ?? null,
     // approve() executes, so it shares the queue: a human click landing next to an
     // auto-approval must not be able to double-spend the cap either.
     approve: (id: string) => serialise(() => approve(ctx, id)),
