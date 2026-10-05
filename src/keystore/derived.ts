@@ -33,6 +33,7 @@ import crypto from 'node:crypto';
 import { toHex } from 'viem';
 import { publicKeyToAddress } from 'viem/accounts';
 
+import { base58Encode } from '../chain/near.ts';
 import { wipe } from './envelope.ts';
 
 export const DERIVE_SALT = 'phosphor';
@@ -104,6 +105,14 @@ export function evmAddressOf(key: Buffer): `0x${string}` {
   const ecdh = crypto.createECDH('secp256k1');
   ecdh.setPrivateKey(key);
   return publicKeyToAddress(toHex(ecdh.getPublicKey()));
+}
+
+/* OLD's public key as the verifier names it, secp256k1: and the base58 of its 64 bytes (x || y):
+   what has_public_key is asked about, public. */
+export function ownerKeyName(key: Buffer): string {
+  const ecdh = crypto.createECDH('secp256k1');
+  ecdh.setPrivateKey(key);
+  return `secp256k1:${base58Encode(ecdh.getPublicKey().subarray(1))}`;
 }
 
 export function ed25519PublicKey(seed: Buffer): Buffer {

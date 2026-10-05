@@ -40,9 +40,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { privateKeyToAccount } from 'viem/accounts';
+import { privateKeyToAccount, publicKeyToAddress } from 'viem/accounts';
 
 import type { MultiPayload, NearRpcDeps } from '../chain/near-tx.ts';
+import { base58Decode } from '../chain/near.ts';
 import { atomicWrite } from '../fsatomic.ts';
 import { ERC191_STANDARD, erc191SignatureField } from '../intents-sign.ts';
 import type { Keystore } from '../keystore/index.ts';
@@ -268,6 +269,8 @@ function boxOf(host: RekeyHost): Box {
   // A lock is someone stepping away: a proven paper key goes with it, and is typed again.
   host.keystore.onChange((state) => {
     if (state !== 'unlocked') wipePaper(box);
+    // An open can teach the owner key's public half (Keystore.ownerPublicKey): the next read asks NEAR again.
+    else box.askedAt = 0;
   });
   return box;
 }
@@ -365,9 +368,22 @@ function knownOld(host: RekeyHost, box: Box, vault: string): string | null {
   } catch {
     // Locked, or the owner key is out of the session.
   }
-  const fromRecord = readRecord(host.dataDir, vault)?.old ?? null;
-  if (fromRecord !== null) box.olds.set(vault, fromRecord);
-  return fromRecord;
+  // The public half any open of this process read, or the run record's: a file, so its key counts
+  // only when it is the key whose address is the vault.
+  for (const name of [host.keystore.ownerPublicKey?.() ?? null, readRecord(host.dataDir, vault)?.old ?? null]) {
+    if (name === null || addressOfKey(name) !== vault) continue;
+    box.olds.set(vault, name);
+    return name;
+  }
+  return null;
+}
+
+// The 0x address a verifier secp256k1 key signs for, or null for a name that is not one.
+function addressOfKey(name: string): string | null {
+  if (!SECP_KEY.test(name)) return null;
+  const raw = base58Decode(name.slice('secp256k1:'.length));
+  if (raw.length !== 64) return null;
+  return publicKeyToAddress(`0x04${Buffer.from(raw).toString('hex')}`).toLowerCase();
 }
 
 // ---------- the paper key ----------
@@ -798,6 +814,7 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
   if ('code' in status) return named ? 'done' : record?.status === 'moving' ? 'moving' : 'none';
   const old = knownOld(host, box, vault);
   let unread = false;
+  let mismatch = false;
   for (const c of status.chips) {
     if (c.marker === null || c.publicKey === '' || c.marker.account.toLowerCase() !== vault) continue;
     const recovery = c.marker.recovery;
@@ -808,7 +825,22 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
     // unless the record shows a move to this very chip that a crash left open.
     const closes = record?.status === 'moving' && record.chip?.keyRef === c.keyRef;
     if (named && current.keyRef === c.keyRef && !closes) continue;
-    // This chip and its paper are on the vault: it is the vault's chip now.
+    /* This chip and its paper read on the vault. Two reads are not enough to write vault.json and
+       let the owner key go for good (audit2 AU2-04): the rest of the move must read done at the same
+       block (the owner key off, predecessor auth off), or every nonce of the bundle this Mac wrote
+       down for this chip must read spent. Anything else is a mismatch, and nothing is written. */
+    const views = read.predecessorAuth === false && old !== null && read.has.get(old) === false;
+    if (!views && !(await chipBundleRan(chain, vault, c.keyRef))) {
+      mismatch = true;
+      host.audit.append('app_start', "NEAR reads this Mac's Touch ID key and the paper key on the vault, and not the rest of the move: vault.json is left as it is", {
+        chip: c.publicKey,
+        oldOnChain: old === null ? null : (read.has.get(old) ?? null),
+        predecessorAuth: read.predecessorAuth,
+      });
+      if (report && box.run !== null && active(box.run)) say(host, box.run.id, 'failed', 'vault_mismatch');
+      continue;
+    }
+    // This chip and its paper are on the vault, and the move ran: it is the vault's chip now.
     await finish(host, chain, vault, { keyRef: c.keyRef, publicKey: c.publicKey }, recovery, record?.kind ?? null);
     const others = read.listed.filter((k) => k !== c.publicKey && k !== recovery);
     const confirmed = read.predecessorAuth === false && (old === null || read.has.get(old) === false);
@@ -818,11 +850,32 @@ export async function resumeChip(host: RekeyHost, report = true): Promise<'done'
     }
     return 'done';
   }
-  // NEAR answered for every chip of this Mac's pinned to the vault, and none is on it.
-  if (!unread) box.checked = markerKey(host, vault);
+  // NEAR answered for every chip of this Mac's pinned to the vault, and none is on it. Reads that
+  // disagree are no answer: the tab keeps checking.
+  if (!unread && !mismatch) box.checked = markerKey(host, vault);
   if (mayStillRun(chain, vault)) keepChecking(host);
   if (named) return 'done';
   return record !== null && (record.status === 'moving' || record.status === 'proven') ? 'moving' : 'none';
+}
+
+/* Whether the rekey bundle this Mac wrote down for the chip `keyRef` ran, by NEAR's word: every
+   nonce in it reads spent at one final block. No entry, or a read with no answer, is no. */
+async function chipBundleRan(chain: ChipVaultChain, vault: string, keyRef: string): Promise<boolean> {
+  const entry = chain.submitter.pending(vault).find((e) => e.id === `rekey:${keyRef}`);
+  const verifier = chain.verifier;
+  if (entry === undefined || entry.signed.length === 0 || verifier.finalBlock === undefined) return false;
+  const block = await verifier.finalBlock().catch(() => null);
+  if (block === null) return false;
+  const nonces = entry.signed.map((s) => {
+    try {
+      return readVaultPayload(s.payload).nonce;
+    } catch {
+      return null;
+    }
+  });
+  if (nonces.some((n) => n === null)) return false;
+  const spent = await Promise.all(nonces.map((n) => verifier.nonceUsed(vault, n!, block.hash).catch(() => null)));
+  return spent.every((u) => u === true);
 }
 
 // The chip markers naming the vault as the relay has seen them, as one comparable string.

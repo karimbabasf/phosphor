@@ -251,6 +251,20 @@ async function afterChipEntryDeleted(opts: { alsoRecord?: boolean; firstStatus?:
       await new Promise((r) => setTimeout(r, STATE_CACHE_MAX_MS + 50));
     }
     const states: string[] = [];
+    if (opts.alsoRecord === true) {
+      /* Both notes gone, and nothing this process read names the owner key's public half: NEAR's
+         word that the chip and the paper are on the vault is two reads, not the move (audit2
+         AU2-04), so the tab says checking and nothing is written until an unlock reads that half
+         and the owner key's view joins them. */
+      for (let i = 0; i < 25; i += 1) {
+        const state = String((await again.get('/api/state')).json.vault.chip.state);
+        if (states.at(-1) !== state) states.push(state);
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      assert.deepEqual(states, ['checking'], 'checking before the unlock, never none');
+      assert.equal(again.prefs.get().chip, null, 'nothing written on two reads');
+      assert.equal((await again.post('/api/vault/unlock')).json.ok, true);
+    }
     for (let i = 0; i < 300; i += 1) {
       const state = String((await again.get('/api/state')).json.vault.chip.state);
       if (states.at(-1) !== state) states.push(state);
@@ -268,7 +282,8 @@ test('a vault moved here whose vault.json lost its chip entry reads checking, ne
   const kept = await afterChipEntryDeleted();
   assert.deepEqual(kept.states, ['checking', 'done']);
   assert.equal(kept.named, kept.keyRef, 'vault.json names the chip again');
-  // The move's run record deleted too: the marker the start learned is the evidence.
+  // The move's run record deleted too: the marker the start learned, and the owner key's public half
+  // an unlock reads, are the evidence.
   const bare = await afterChipEntryDeleted({ alsoRecord: true });
   assert.deepEqual(bare.states, ['checking', 'done']);
   assert.equal(bare.named, bare.keyRef);

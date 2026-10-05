@@ -1351,7 +1351,13 @@ key), so a restart can finish or resume a move: a paper shown and never proven o
 new one is shown; a paper proven before a restart is typed again and checked against its public
 key; a chip made and never pinned is swept after ten minutes; a pinned chip is used again when the
 same paper is typed; a call written down in the vault move journal is never signed again until it is
-settled; a call that ran is finished at the next start from the chain's word alone. A chip whose call
+settled; a call that ran is finished at the next start from the chain's word alone, and that word
+must be the whole move: the chip and the paper on the vault, the owner key off it and predecessor
+auth off at one block, or every nonce of the bundle written down for that chip spent. Two of those
+reads alone write nothing and drop nothing, so an RPC that lies about the chip and the paper cannot
+make a stopped move look done (`tests/unit/audit2-rekey-resume-weak.test.ts`). The owner key's
+public half comes from the run record only when it is the key whose address is the vault, or from
+any unlock in this process. A chip whose call
 can no longer be proved dead or done (its nonce salt taken out) is never asked to sign that move
 again; a new chip carries it on. `tests/unit/rekey.test.ts` runs both directions through the
 window's routes against the vault service's own rules, and `node scripts/rekey-crash.ts` kills a

@@ -37,7 +37,7 @@ import { defaultParams, deriveKek } from './kdf.ts';
 import type { KdfParams } from './kdf.ts';
 import { addressesFromKeys, newWallet, normaliseMnemonic, walletFromMnemonic } from './derive.ts';
 import type { RailKeys, Wallet } from './derive.ts';
-import { accountsOf, deriveHlAgentKey, deriveKeys, evmAddressOf } from './derived.ts';
+import { accountsOf, deriveHlAgentKey, deriveKeys, evmAddressOf, ownerKeyName } from './derived.ts';
 import type { DerivedAccounts } from './derived.ts';
 import { seWrap } from './sewrap.ts';
 import type { SeWrapped } from './sewrap.ts';
@@ -275,6 +275,10 @@ export type Keystore = {
   /* The accounts those keys sign for, public and kept after a lock the way the addresses are.
      Null until this process has decrypted the wallet. */
   derivedAccounts(): DerivedAccounts | null;
+  /* The owner key's public key as the verifier names it (secp256k1:...), learned the same way and
+     kept the same way: what NEAR is asked about to tell whether the owner key still opens the
+     vault. Null until this process has decrypted the wallet. */
+  ownerPublicKey(): string | null;
   /* The vault moved to the chip: from the next open the session holds the API wallet, ALLOWANCE
      and GAS only. The payload, the owner key and the data key are wiped at the open, and keys(),
      evmPrivateKey() and everything built on them refuse with OwnerTouchRequired. `test` gets the
@@ -552,7 +556,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
   let heldVault: string | null = null;
   let ownerOutTest: (vault: string) => boolean = () => false;
   // The accounts the derived keys sign for, and the vault (lower case) they were derived for.
-  let derivedIds: (DerivedAccounts & { vault: string }) | null = null;
+  let derivedIds: (DerivedAccounts & { vault: string; owner: string | null }) | null = null;
   let failures = 0;
   let backoffUntil = 0;
   /* The addresses this process has DECRYPTED, which is the only version of them worth serving.
@@ -760,9 +764,18 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     if (derivedIds?.vault === lower) return;
     const made = keys ?? deriveKeys(owner);
     try {
-      derivedIds = { vault: lower, ...accountsOf(made) };
+      derivedIds = { vault: lower, ...accountsOf(made), owner: nameOf(owner) };
     } finally {
       if (keys === null) wipe(made.allowance, made.gas);
+    }
+  }
+
+  // The owner key's verifier name, or null for bytes the curve refuses (a key that signs nothing).
+  function nameOf(owner: Buffer): string | null {
+    try {
+      return ownerKeyName(owner);
+    } catch {
+      return null;
     }
   }
 
@@ -851,6 +864,11 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     const vault = addresses().evm?.toLowerCase() ?? null;
     if (derivedIds === null || vault === null || derivedIds.vault !== vault) return null;
     return { allowance: derivedIds.allowance, gas: derivedIds.gas };
+  }
+
+  function ownerPublicKey(): string | null {
+    const vault = addresses().evm?.toLowerCase() ?? null;
+    return derivedIds === null || vault === null || derivedIds.vault !== vault ? null : derivedIds.owner;
   }
 
   async function write(password: string, payload: KeysPayload, kdf: KdfParams): Promise<StoredAddresses> {
@@ -1649,6 +1667,7 @@ export function createKeystore(opts: { keysPath: string; mode?: string; now?: ()
     allowanceKey: () => sessionKey(allowKey),
     gasSeed: () => sessionKey(gasKey),
     derivedAccounts,
+    ownerPublicKey,
     keepOwnerKeyOutWhen: (test) => {
       ownerOutTest = test;
     },
