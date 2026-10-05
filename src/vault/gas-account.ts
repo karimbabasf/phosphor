@@ -1,29 +1,22 @@
-// The gas account (GAS): the NEAR implicit account that puts every vault move on chain with one
-// execute_intents call (src/vault/submit.ts), paid for in NEAR it holds.
+// The old fee account: the NEAR implicit account a 0.10.16 wallet paid NEAR into, so that it could
+// put every vault move on chain itself. Phosphor pays NEAR's fee for every vault move now, as it
+// does for swaps (src/vault/submit.ts sends each one through the NEAR Intents relay), so nothing
+// is ever paid into this account again, and what it holds goes back to the vault in one transfer.
 //
-// ITS ID IS DERIVED, NEVER TYPED. The keystore derives GAS's ed25519 seed from the owner key at
-// every open (src/keystore/derived.ts) and its id is the hex of that key's public half. A NEAR
-// payout cannot be refunded once it leaves (a native NEAR transfer cannot fail), so the one address
-// this app pays NEAR to for its own use comes from that derivation and from nothing a person or an
-// agent can type.
-//
-// FUNDING, the R4 route (reports/spike2.md R4, CONTRACTS.md "1Click (U7, U10)"): an ordinary payout
-// of NEAR on the NEAR chain to the 64-hex id, through the pay rail (src/rails/intents-pay.ts).
-// 1Click turns wNEAR held inside NEAR Intents into native NEAR (native_withdraw), fee 0, and the
-// first payment creates the account. It is a proposal like any payout: a click and a Touch ID that
-// names the gas account.
-//
-// LOW means a submit would be refused: NEP-642 holds the attached gas at its purchase price, so GAS
-// needs gasNeededYocto free before anything is signed (src/chain/near-tx.ts, GAS_LOW_YOCTO 0.06 NEAR
-// at today's price). The window shows it beside a refill.
+// ITS ID IS DERIVED, NEVER TYPED. The keystore derives its ed25519 seed from the owner key at every
+// open (src/keystore/derived.ts) and its id is the hex of that key's public half. The NEAR goes to
+// the vault's own NEAR deposit address, the one the Receive row shows for NEAR (src/http/wallet.ts
+// intentsReceiveReport): computed here, never taken from a request, so no person and no agent can
+// name where it goes.
 
-import { GAS_LOW_YOCTO, YOCTO_PER_NEAR, viewAccount } from '../chain/near-tx.ts';
-import type { NearRpcDeps } from '../chain/near-tx.ts';
+import { NearTxError, YOCTO_PER_NEAR, transferAll, viewAccount } from '../chain/near-tx.ts';
+import type { NearRpcDeps, SubmitDeps, TransferOutcome } from '../chain/near-tx.ts';
 
-// What one funding may pay: enough for hundreds of moves, and no more than the loss the docs name
-// for a compromised Node (about 0.5 NEAR), with room for a refill on top.
-export const GAS_FUND_MIN_NEAR = 0.1;
-export const GAS_FUND_MAX_NEAR = 1;
+/* What the account keeps when its NEAR goes back: its own storage (an implicit account with its one
+   key stores 182 bytes, 0.00182 NEAR) and the transfer's fee, well under the rest. */
+export const OLD_GAS_KEEP_YOCTO = 3n * 10n ** 21n;
+// The least a return carries: under 0.01 NEAR the window offers none.
+export const OLD_GAS_LEAST_YOCTO = 10n ** 22n;
 
 export function isGasAccount(id: unknown): id is string {
   return typeof id === 'string' && /^[0-9a-f]{64}$/.test(id);
@@ -44,24 +37,35 @@ export function nearText(yocto: bigint): string {
   return places === '' ? whole.toString() : `${whole}.${places}`;
 }
 
-export type GasRead = { amount: bigint | null; low: boolean | null };
-
-/* What GAS holds now: an account NEAR has never seen holds nothing yet. Null when NEAR did not
-   answer. */
-export async function readGas(account: string, near: NearRpcDeps = {}): Promise<GasRead> {
+/* What a return would bring to the vault: what the account holds less what it keeps, when that is
+   at least OLD_GAS_LEAST_YOCTO. Null for an account NEAR never saw or one with less; undefined when
+   NEAR did not answer. */
+export async function readOldGas(account: string, near: NearRpcDeps = {}): Promise<{ near: string } | null | undefined> {
   try {
     const view = await viewAccount(account, near);
-    const amount = view.found ? view.amount : 0n;
-    return { amount, low: amount < GAS_LOW_YOCTO };
+    const back = view.found ? view.amount - OLD_GAS_KEEP_YOCTO : 0n;
+    return back >= OLD_GAS_LEAST_YOCTO ? { near: nearText(back) } : null;
   } catch {
-    return { amount: null, low: null };
+    return undefined;
   }
 }
 
-// The funding amount the route takes, in NEAR, or null.
-export function fundingNear(raw: unknown): number | null {
-  if (typeof raw !== 'number' || !Number.isFinite(raw)) return null;
-  if (raw < GAS_FUND_MIN_NEAR || raw > GAS_FUND_MAX_NEAR) return null;
-  // Four places at most: what a person types, and what the card shows.
-  return Number(raw.toFixed(4)) === raw ? raw : null;
+export type OldGasReturn =
+  | { ok: true; near: string; txHash: string }
+  | { ok: false; code: 'gas_empty' | 'gas_return_failed'; detail: string; txHash: string | null };
+
+/* Sends what the old fee account holds, less what it keeps, to `to` (the vault's NEAR deposit
+   address) in one transfer signed by the account's own seed. Done only when NEAR says the transfer
+   ran; a send with no final answer is never signed again here, and the next read of the account
+   says what became of it. */
+export async function returnOldGas(request: { seed: Uint8Array; to: string }, near: SubmitDeps = {}): Promise<OldGasReturn> {
+  let outcome: TransferOutcome;
+  try {
+    outcome = await transferAll({ seed: request.seed, receiverId: request.to, keep: OLD_GAS_KEEP_YOCTO, least: OLD_GAS_LEAST_YOCTO }, near);
+  } catch (err) {
+    if (err instanceof NearTxError && err.code === 'gas_empty') return { ok: false, code: 'gas_empty', detail: err.message, txHash: null };
+    return { ok: false, code: 'gas_return_failed', detail: err instanceof Error ? err.message : String(err), txHash: null };
+  }
+  if (outcome.status === 'executed') return { ok: true, near: nearText(outcome.amount), txHash: outcome.txHash };
+  return { ok: false, code: 'gas_return_failed', detail: `${outcome.status}: ${outcome.reason ?? ''}`, txHash: outcome.txHash };
 }

@@ -22,7 +22,7 @@ import path from 'node:path';
 import { generatePrivateKey, privateKeyToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../../src/chain/near.ts';
-import type { MultiPayload } from '../../src/chain/near-tx.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import type { VerifierPort } from '../../src/relay/verifier.ts';
 import { CHIP_PAYLOAD_LIFE_MS } from '../../src/vault/chip.ts';
 import { buildVaultPayload } from '../../src/vault/payload.ts';
@@ -114,7 +114,7 @@ async function resumeAgainst(lies: Lies, opts: { ownerKnown?: boolean; journal?:
   };
   useChipVault({
     verifier: lying,
-    submitter: createVaultSubmitter({ verifier: lying, gasSeed: () => new Uint8Array(32), journal, near: double.near, now: double.now }),
+    submitter: createVaultSubmitter({ verifier: lying, relay: double.relay, journal, now: double.now }),
     accounts: { accounts: () => ({}) as never, refresh: async () => ({}) as never },
     near: double.near,
     now: double.now,

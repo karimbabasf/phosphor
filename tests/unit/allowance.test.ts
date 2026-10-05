@@ -3,7 +3,8 @@
 //
 // The pure rules first (the sweep plan, what a move spends, the payloads), then the whole app on the
 // chain double (tests/unit/helpers/allowance-world.ts): every top-up and sweep there is simulated,
-// sent by the gas account and read back to the base unit. No dialog, nothing signed for real money.
+// published to the relay the double plays, and read back to the base unit. No dialog, nothing
+// signed for real money.
 //
 // Run: node --test tests/unit/allowance.test.ts
 
@@ -308,17 +309,19 @@ test('a cancelled Touch ID on the shortfall stops the move: the vault and the al
   }
 });
 
-test('a top-up asks no approval Touch ID, only the vault chip key at its signature; a shut wallet keeps it pending', async () => {
+test('a top-up asks no approval Touch ID, only the vault chip key at its signature, with the wallet open or shut', async () => {
   const service = new SoftwareChipService();
   const w = await allowanceWorld({ service });
   try {
     const filed = await w.svc.proposeVaultTopUp!({ usd: 20, why: 'low' });
     assert.equal(filed.status, 'pending');
     assert.equal((filed.draft as VaultTopUpDraft).why, 'low');
+    // Nothing in the open session sends it: the relay does, and pays NEAR's fee.
     w.keys.lock();
-    await assert.rejects(() => w.svc.approve(filed.id), /Open your wallet first: the gas account that sends a top-up opens with it/);
-    assert.equal(w.rows.get(filed.id)?.status, 'pending', 'the click can be made again');
-    assert.equal(service.signatures, 0);
+    const row = await settledRow(w, w.svc.approve(filed.id));
+    assert.equal(row.status, 'executed', JSON.stringify(row.result));
+    assert.equal(service.signatures, 1);
+    assert.equal(w.chain.balanceOf(w.account, USDC), usdc(20));
     const ops = service.seen.map((r) => r.op);
     assert.ok(!ops.includes('unwrap'), 'no unwrap was ever asked');
   } finally {
@@ -430,12 +433,12 @@ test('after a settled move the sweep looks at the next read that shows it, and s
   }
 });
 
-test('a top-up whose send times out and lands is confirmed by NEAR, with one signature and one Touch ID', async () => {
+test('a top-up whose publish gets no answer and runs is confirmed by NEAR, with one signature and one Touch ID', async () => {
   const service = new SoftwareChipService();
   const w = await allowanceWorld({ service });
   try {
     const filed = await w.svc.proposeVaultTopUp!({ usd: 7, why: 'manual' });
-    w.chain.sends.push({ kind: 'timeout', land: true });
+    w.chain.publishes.push({ kind: 'lost', land: true });
     const row = await settledRow(w, w.svc.approve(filed.id));
     assert.equal(row.status, 'executed', JSON.stringify(row.result));
     assert.equal(service.signatures, 1);
@@ -452,7 +455,7 @@ test('a top-up whose send never lands is waited out, never signed again, and clo
   const w = await allowanceWorld({ service });
   try {
     const filed = await w.svc.proposeVaultTopUp!({ usd: 7, why: 'manual' });
-    w.chain.sends.push({ kind: 'lost', land: false });
+    w.chain.publishes.push({ kind: 'lost', land: false });
     const row = await settledRow(w, w.svc.approve(filed.id));
     assert.equal(row.status, 'failed', JSON.stringify(row.result));
     assert.equal(row.result?.reason, 'venue_failed_nothing_moved', 'NEAR proved it never ran: over, and nothing moved');
@@ -461,21 +464,6 @@ test('a top-up whose send never lands is waited out, never signed again, and clo
     assert.equal(w.chain.executions(), 0);
     assert.equal(w.chain.balanceOf(w.vault, USDC), usdc(1850));
     assert.equal(w.chain.balanceOf(w.account, USDC), 0n);
-  } finally {
-    await w.stop();
-  }
-});
-
-test('a gas account that cannot pay stops a top-up before the Touch ID', async () => {
-  const service = new SoftwareChipService();
-  const w = await allowanceWorld({ service });
-  try {
-    w.chain.fundGas(V.gas, 10n ** 21n);
-    const filed = await w.svc.proposeVaultTopUp!({ usd: 7, why: 'manual' });
-    const row = await settledRow(w, w.svc.approve(filed.id));
-    assert.equal(row.status, 'failed');
-    assert.match(row.result?.detail ?? '', /\(gas_low\)/);
-    assert.equal(service.signatures, 0, 'no Touch ID for a move the gas account cannot send');
   } finally {
     await w.stop();
   }

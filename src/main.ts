@@ -57,6 +57,7 @@ import { createVaultRelay } from './vault/relay.ts';
 import { createVaultPrefs } from './vault/prefs.ts';
 import { chipStatusReader, ownerKeyGate } from './vault/chip.ts';
 import { liveVerifier } from './relay/verifier.ts';
+import { relayClient } from './relay/client.ts';
 import { createAccounts } from './vault/accounts.ts';
 import { createVaultSubmitter, fileJournal, journalPathFor } from './vault/submit.ts';
 import { SWEEP_EVERY_MS, createAllowance } from './vault/allowance.ts';
@@ -302,9 +303,10 @@ useRailAccounts(cfg.mode === 'demo' ? () => demoAccounts(intentsAccountId(cfg)) 
 void accounts.refresh();
 /* Every vault move goes through one submitter, so the journal that keeps a signed bundle from being
    signed twice is one file and one queue per account: the allowance's top-ups and the rekey share it
-   (src/vault/submit.ts). The move to the chip (src/vault/rekey.ts) is installed where the relay may
-   make keys: a live app, or a test harness that allows it (PHOSPHOR_DEMO_ENCLAVE). A demo has none. */
-const vaultMoves = createVaultSubmitter({ verifier: liveVerifier(), gasSeed: () => keystore.gasSeed(), gasAccount: () => keystore.derivedAccounts()?.gas ?? null, journal: fileJournal(journalPathFor(cfg.dataDir)) });
+   (src/vault/submit.ts), and the solver relay puts every one on chain and pays NEAR's fee. The move
+   to the chip (src/vault/rekey.ts) is installed where the relay may make keys: a live app, or a test
+   harness that allows it (PHOSPHOR_DEMO_ENCLAVE). A demo has none. */
+const vaultMoves = createVaultSubmitter({ verifier: liveVerifier(), relay: relayClient(), journal: fileJournal(journalPathFor(cfg.dataDir)) });
 if (cfg.mode === 'live' || process.env.PHOSPHOR_DEMO_ENCLAVE === '1') useChipVault({ verifier: liveVerifier(), submitter: vaultMoves, accounts, reads: true });
 const session = createSession({
   isUnlocked: () => keystore.isUnlocked(),

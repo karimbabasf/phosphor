@@ -196,8 +196,8 @@ export function buildState(ctx: Ctx): unknown {
        first-run screen and the decision card all read it from here. Never a key.
        `chip` is the move to the Touch ID key (src/vault/rekey.ts, PHASE2-PLAN.md C9): where the
        move stands, what the chain last said about the paper key, the owner key and predecessor
-       auth, the allowance and the gas account. Fixed size, public keys only, never a word of the
-       paper key. */
+       auth, the allowance and the old fee account's NEAR. Fixed size, public keys only, never a
+       word of the paper key. */
     vault: { ...vaultStatus(ctx), chip: chipVaultSlice(ctx) },
     /* Whether the terms of use are accepted at their current version. The window shows its
        terms screen ahead of everything else until this says so. */

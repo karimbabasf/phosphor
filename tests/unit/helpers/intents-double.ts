@@ -1,5 +1,6 @@
-// The chain double for the chip vault (PHASE2-PLAN U6): intents.near as a vault meets it, and the
-// NEAR RPC its gas account sends execute_intents through.
+// The chain double for the chip vault (PHASE2-PLAN U6): intents.near as a vault meets it, the solver
+// relay that puts a vault bundle on chain, and the NEAR RPC the old fee account sends its one
+// transfer back through.
 //
 // The verifier runs each payload the way 0.4.4 does (CONTRACTS.md, "Verifier facts (Phase 2)"):
 // the signature (erc191 recovered with viem; webauthn held to the same wrapper rules the app holds a
@@ -12,12 +13,18 @@
 // src/relay/verifier.ts simulationOf, and every view reads at a block hash when given one, from that
 // block's own copy of the state.
 //
+// The relay answers publish_intents and get_status (`relay`, the shape src/relay/client.ts gives
+// src/vault/submit.ts). It refuses a bundle the verifier would refuse, as the live relay does, and
+// a test scripts what each publish does (`publishes`, the last entry repeating): run and answer OK;
+// answer FAILED, run or not; lose the reply, run or not; answer OK and run later; answer OK and
+// never run; answer OK and run only the first payloads.
+//
 // The RPC answers what src/chain/near-tx.ts asks (block, view_account, view_access_key, send_tx,
-// tx) and decodes and checks the signed transaction itself: the gas key's ed25519 signature, its
-// access key nonce, one execute_intents call and no deposit. A test scripts what each send does
-// (`sends`, the last entry repeating): land and answer; land and time out; land and lose the reply;
-// land and answer INVALID_TRANSACTION, as nearcore does for a forwarded copy it re-checks; never
-// land; land later. The same bytes sent again run once.
+// tx) and decodes and checks the signed transaction itself: the account key's ed25519 signature,
+// its access key nonce, one Transfer. A test scripts what each send does (`sends`, the last entry
+// repeating): land and answer; land and time out; land and lose the reply; land and answer
+// INVALID_TRANSACTION, as nearcore does for a forwarded copy it re-checks; never land; land later.
+// The same bytes sent again run once.
 //
 // One clock for this Mac and the chain. Every read makes a new final block when the clock moved, so
 // a block is stamped with the time it was read at, and near-tx's sleep moves the clock, so a 60
@@ -28,7 +35,7 @@ import crypto from 'node:crypto';
 import { bytesToHex, hashMessage, hexToBytes, keccak256, recoverPublicKey } from 'viem';
 
 import { base58Decode, base58Encode } from '../../../src/chain/near.ts';
-import type { MultiPayload } from '../../../src/chain/near-tx.ts';
+import type { MultiPayload, RelayBundleClient, RelayStatus } from '../../../src/relay/client.ts';
 import { decodeNonce } from '../../../src/relay/payload.ts';
 import { SPIKED_VERIFIER, simulationOf } from '../../../src/relay/verifier.ts';
 import type { ExecutedEntry, FinalBlock, Simulation, SignedIntent, VerifierPort } from '../../../src/relay/verifier.ts';
@@ -41,8 +48,8 @@ export const SALT = Uint8Array.from(Buffer.from(SALT_HEX, 'hex'));
 export const DOUBLE_RPC = 'https://rpc.double.invalid';
 const VERIFIER = 'intents.near';
 const GAS_PRICE = '100000000';
-// What one execute_intents burns here: about what 68 live calls burnt (CONTRACTS.md, "Gas (C4)").
-export const BURNT_YOCTO = 1_200_000_000_000_000_000n;
+// What one transfer burns here: about what a NEAR transfer burns at today's gas price.
+export const BURNT_YOCTO = 44_600_000_000_000_000_000n;
 const ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
 
 type ChainState = {
@@ -67,6 +74,18 @@ export type Send =
   | { kind: 'invalid'; land: boolean; variant?: unknown }
   | { kind: 'rate_limited' }
   | { kind: 'later'; afterMs: number };
+
+/* What one publish_intents does. ok: the relay runs the bundle in one call and answers OK. failed:
+   it answers FAILED, and runs the bundle anyway when `land`. lost: no answer, run or not. later: OK
+   now, run once the clock passes afterMs. dropped: OK, and it never runs. part: OK, and only the
+   first `count` payloads run, in a call of their own. */
+export type Publish =
+  | { kind: 'ok' }
+  | { kind: 'failed'; land: boolean; reason?: string }
+  | { kind: 'lost'; land: boolean }
+  | { kind: 'later'; afterMs: number }
+  | { kind: 'dropped' }
+  | { kind: 'part'; count: number };
 
 type RpcAnswer = { http?: number; body: unknown } | 'network';
 
@@ -246,7 +265,7 @@ class Reader {
   }
 }
 
-type DecodedTx = { body: Buffer; hash: string; signerId: string; publicKey: Buffer; nonce: bigint; receiverId: string; blockHash: Buffer; method: string; args: Buffer; deposit: bigint; signature: Buffer; actions: number };
+type DecodedTx = { body: Buffer; hash: string; signerId: string; publicKey: Buffer; nonce: bigint; receiverId: string; blockHash: Buffer; deposit: bigint; signature: Buffer; actions: number };
 
 function decodeSignedTx(bytes: Buffer): DecodedTx {
   const r = new Reader(bytes);
@@ -257,16 +276,13 @@ function decodeSignedTx(bytes: Buffer): DecodedTx {
   const receiverId = r.string();
   const blockHash = r.take(32);
   const actions = r.u32();
-  if (r.u8() !== 2) throw new Error('not a FunctionCall');
-  const method = r.string();
-  const args = r.take(r.u32());
-  r.u64();
+  if (r.u8() !== 3) throw new Error('not a Transfer');
   const deposit = r.u128();
   const body = bytes.subarray(0, r.at);
   if (r.u8() !== 0) throw new Error('not an ed25519 signature');
   const signature = r.take(64);
   if (r.at !== bytes.length) throw new Error('bytes after the signature');
-  return { body, hash: base58Encode(sha256(body)), signerId, publicKey, nonce, receiverId, blockHash, method, args, deposit, signature, actions };
+  return { body, hash: base58Encode(sha256(body)), signerId, publicKey, nonce, receiverId, blockHash, deposit, signature, actions };
 }
 
 // ---------- the double ----------
@@ -291,6 +307,13 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
   const sends: Send[] = [];
   let sendCount = 0;
   let executions = 0;
+  // NEAR that transfers carried to accounts the double does not hold (a deposit address).
+  const received = new Map<string, bigint>();
+  // The relay: what each intent hash it took became, and the bundles it runs later.
+  const relayed = new Map<string, { status: 'PENDING' | 'SETTLED' | 'NOT_FOUND_OR_NOT_VALID'; txHash: string | null }>();
+  const relayLater: { at: number; signed: MultiPayload[]; hashes: string[] }[] = [];
+  const publishes: Publish[] = [];
+  let publishCount = 0;
   // A test sets these to make the verifier's reads fail, or to change what simulate reports.
   const faults = { reads: false, simulate: null as null | ((sim: Simulation) => Simulation) };
 
@@ -303,13 +326,83 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
     return block;
   }
 
-  // Lands every transaction whose time has come. Every read asks first.
+  // Lands every transaction and relayed bundle whose time has come. Every read asks first.
   async function due(): Promise<void> {
     for (const ready of later.filter((l) => l.at <= wall)) {
       later.splice(later.indexOf(ready), 1);
       await land(ready.tx);
     }
+    for (const ready of relayLater.filter((l) => l.at <= wall)) {
+      relayLater.splice(relayLater.indexOf(ready), 1);
+      await runRelayed(ready.signed, ready.hashes);
+    }
   }
+
+  /* The relay's own call of execute_intents: the bundle runs whole or not at all, and every intent
+     hash in it reads SETTLED with the call's hash, or NOT_FOUND_OR_NOT_VALID when it did not run. */
+  async function runRelayed(signed: MultiPayload[], hashes: string[]): Promise<boolean> {
+    try {
+      await runIntents(state, signed, wall);
+    } catch {
+      for (const h of hashes) relayed.set(h, { status: 'NOT_FOUND_OR_NOT_VALID', txHash: null });
+      return false;
+    }
+    executions += 1;
+    const txHash = base58Encode(sha256(`relay ${hashes.join(',')}`));
+    for (const h of hashes) relayed.set(h, { status: 'SETTLED', txHash });
+    produce();
+    return true;
+  }
+
+  const relay: RelayBundleClient = {
+    async publishIntents(signedIn) {
+      const signed = signedIn.map((x) => ({ ...x }));
+      calls.push({ method: 'publish_intents', params: { quote_hashes: [], signed_datas: signed } });
+      await due();
+      const script = publishes.length > 1 ? publishes.shift()! : (publishes[0] ?? { kind: 'ok' });
+      publishCount += 1;
+      const hashes = signed.map((x) => signedIntentHash(x));
+      const unheld = (from: number) => hashes.slice(from).forEach((h) => relayed.set(h, { status: 'NOT_FOUND_OR_NOT_VALID', txHash: null }));
+      // The live relay checks a bundle against the verifier before it takes it.
+      if (script.kind !== 'failed' && script.kind !== 'lost') {
+        try {
+          await runIntents(structuredClone(state), signed, wall);
+        } catch (err) {
+          unheld(0);
+          return { status: 'FAILED', reason: err instanceof Error ? err.message : String(err) };
+        }
+      }
+      switch (script.kind) {
+        case 'ok':
+          await runRelayed(signed, hashes);
+          return { status: 'OK', intentHashes: hashes };
+        case 'failed':
+          if (script.land) await runRelayed(signed, hashes);
+          else unheld(0);
+          return { status: 'FAILED', reason: script.reason ?? 'internal' };
+        case 'lost':
+          if (script.land) await runRelayed(signed, hashes);
+          throw new Error('relay publish_intents failed: fetch failed');
+        case 'later':
+          for (const h of hashes) relayed.set(h, { status: 'PENDING', txHash: null });
+          relayLater.push({ at: wall + script.afterMs, signed, hashes });
+          return { status: 'OK', intentHashes: hashes };
+        case 'dropped':
+          unheld(0);
+          return { status: 'OK', intentHashes: hashes };
+        case 'part':
+          await runRelayed(signed.slice(0, script.count), hashes.slice(0, script.count));
+          unheld(script.count);
+          return { status: 'OK', intentHashes: hashes };
+      }
+    },
+    async status(intentHash): Promise<RelayStatus> {
+      calls.push({ method: 'get_status', params: { intent_hash: intentHash } });
+      await due();
+      const r = relayed.get(intentHash);
+      return { intentHash, status: r?.status ?? 'NOT_FOUND_OR_NOT_VALID', statusDetails: null, nearTxHash: r?.txHash ?? null, filledAmounts: [] };
+    },
+  };
 
   // The newest final block, a new one when the clock moved since the last.
   function head(): Block {
@@ -327,33 +420,24 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
 
   async function land(tx: DecodedTx): Promise<void> {
     if (outcomes.has(tx.hash)) return;
-    const gas = gasAccounts.get(tx.signerId)!;
-    gas.keyNonce = tx.nonce;
-    gas.amount -= BURNT_YOCTO;
-    let signed: MultiPayload[] = [];
-    let run: Run | null = null;
-    let failure: string | null = null;
-    try {
-      signed = (JSON.parse(tx.args.toString('utf8')) as { signed: MultiPayload[] }).signed;
-      run = await runIntents(state, signed, wall);
-      executions += 1;
-    } catch (err) {
-      failure = err instanceof Panic ? err.message : `JSON: ${err instanceof Error ? err.message : String(err)}`;
-    }
+    const from = gasAccounts.get(tx.signerId)!;
+    from.keyNonce = tx.nonce;
+    from.amount -= BURNT_YOCTO + tx.deposit;
+    received.set(tx.receiverId, (received.get(tx.receiverId) ?? 0n) + tx.deposit);
+    executions += 1;
     const main = `R1${tx.hash.slice(0, 8)}`;
-    const refund = `R2${tx.hash.slice(0, 8)}`;
-    const status = failure === null ? { SuccessValue: '' } : { Failure: { ActionError: { index: 0, kind: { FunctionCallError: { ExecutionError: `Smart contract panicked: ${failure}` } } } } };
     outcomes.set(tx.hash, {
       final_execution_status: 'FINAL',
-      status,
-      transaction: { hash: tx.hash, signer_id: tx.signerId, receiver_id: VERIFIER, priority_fee: 0 },
-      transaction_outcome: { id: tx.hash, outcome: { executor_id: tx.signerId, gas_burnt: 311464827482, tokens_burnt: '31146482748200000000', logs: [], receipt_ids: [main], status: { SuccessReceiptId: main } } },
-      receipts_outcome: [
-        { id: main, outcome: { executor_id: VERIFIER, gas_burnt: 8705507179296, tokens_burnt: '870550717929600000000', logs: run === null ? [] : [...run.logs.slice(0, -1), ...run.chainLogs, ...run.logs.slice(-1)], receipt_ids: [refund], status } },
-        { id: refund, outcome: { executor_id: tx.signerId, gas_burnt: 0, tokens_burnt: '0', logs: [], receipt_ids: [], status: { SuccessValue: '' } } },
-      ],
+      status: { SuccessValue: '' },
+      transaction: { hash: tx.hash, signer_id: tx.signerId, receiver_id: tx.receiverId, priority_fee: 0 },
+      transaction_outcome: { id: tx.hash, outcome: { executor_id: tx.signerId, gas_burnt: 223182562500, tokens_burnt: '22318256250000000000', logs: [], receipt_ids: [main], status: { SuccessReceiptId: main } } },
+      receipts_outcome: [{ id: main, outcome: { executor_id: tx.receiverId, gas_burnt: 223182562500, tokens_burnt: '22318256250000000000', logs: [], receipt_ids: [], status: { SuccessValue: '' } } }],
     });
     produce();
+  }
+
+  function from(tx: DecodedTx): Gas {
+    return gasAccounts.get(tx.signerId)!;
   }
 
   function checkTx(tx: DecodedTx): string | null {
@@ -362,7 +446,8 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
     if (tx.publicKey.toString('hex') !== tx.signerId) return 'InvalidAccessKeyError';
     const key = crypto.createPublicKey({ key: Buffer.concat([ED25519_SPKI, tx.publicKey]), format: 'der', type: 'spki' });
     if (!crypto.verify(null, sha256(tx.body), key, tx.signature)) return 'InvalidSignature';
-    if (tx.receiverId !== VERIFIER || tx.method !== 'execute_intents' || tx.deposit !== 0n || tx.actions !== 1) return 'ActionsValidation';
+    if (tx.deposit <= 0n || tx.actions !== 1) return 'ActionsValidation';
+    if (!outcomes.has(tx.hash) && from(tx).amount < tx.deposit + BURNT_YOCTO) return 'NotEnoughBalance';
     if (!outcomes.has(tx.hash) && tx.nonce <= gas.keyNonce) return 'InvalidNonce';
     if (!blocks.some((b) => Buffer.from(b.hashBytes).equals(tx.blockHash))) return 'Expired';
     return null;
@@ -500,7 +585,11 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
 
   return {
     verifier,
-    // What submitExecuteIntents, gasReady and the lookups take as their RPC.
+    // What src/vault/submit.ts takes as its relay.
+    relay,
+    publishes,
+    publishCount: () => publishCount,
+    // What near-tx's transfer and the old fee account's reads take as their RPC.
     near: { fetchImpl, rpcUrl: DOUBLE_RPC, now: () => wall, sleep: async (ms: number) => void (wall += Math.max(0, Math.ceil(ms))) },
     now: () => wall,
     advance(ms: number): void {
@@ -541,6 +630,8 @@ export function createIntentsDouble(opts: { start?: number } = {}) {
       produce();
     },
     gasAmount: (accountId: string): bigint | null => gasAccounts.get(accountId)?.amount ?? null,
+    // NEAR a transfer carried to an account the double does not hold, such as a deposit address.
+    nearReceived: (accountId: string): bigint => received.get(accountId) ?? 0n,
     // Someone holding the signed intents runs them in a call of their own (they left this Mac).
     async runAsStranger(signed: readonly MultiPayload[]): Promise<{ ok: boolean; panic?: string }> {
       try {

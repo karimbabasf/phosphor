@@ -110,6 +110,29 @@ test('publishIntent sends the signed bytes untouched under a write deadline and 
   await assert.rejects(() => client.publishIntent(req), (err: Error) => err.message.includes(`status ${venueSaid('The solver relay', 'MAYBE', 40)}, which this app does not know`));
 });
 
+test('publishIntents sends a bundle with no quote, in order, and takes OK only with one intent hash per signed intent', async () => {
+  const one = { standard: 'erc191', payload: '{"signer_id":"0xabc","intents":[]}', signature: 'secp256k1:abc' };
+  const two = { standard: 'webauthn', payload: '{"intents":[]}', public_key: 'p256:pk', signature: 'p256:sig', client_data_json: '{}', authenticator_data: 'AA' };
+  const t = transport([
+    rpc({ status: 'OK', intent_hashes: ['9cM3Y6Q4', 'Bq7ZtR2k'] }),
+    rpc({ status: 'OK', intent_hashes: ['9cM3Y6Q4'] }),
+    rpc({ status: 'OK', intent_hashes: ['9cM3Y6Q4', 'not a hash!'] }),
+    rpc({ status: 'FAILED', reason: 'error simulating intents: nonce was already used', intent_hashes: ['9cM3Y6Q4', 'Bq7ZtR2k'] }),
+    rpc({ status: 'MAYBE' }),
+  ]);
+  const client = relayClient({ fetchImpl: t.fetchImpl, apiKey: '' });
+
+  assert.deepEqual(await client.publishIntents([one, two]), { status: 'OK', intentHashes: ['9cM3Y6Q4', 'Bq7ZtR2k'] });
+  assert.equal(t.calls[0].body['method'], 'publish_intents');
+  assert.deepEqual((t.calls[0].body['params'] as unknown[])[0], { quote_hashes: [], signed_datas: [one, two] }, 'every field of every payload, untouched, in order');
+  assert.ok(t.calls[0].signal instanceof AbortSignal);
+  for (const short of ['one hash for two signed intents', 'a hash that is not one']) {
+    await assert.rejects(() => client.publishIntents([one, two]), /said OK without one intent hash for each of the 2 signed intents/, short);
+  }
+  assert.deepEqual(await client.publishIntents([one, two]), { status: 'FAILED', reason: venueSaid('The solver relay', 'error simulating intents: nonce was already used', 300) });
+  await assert.rejects(() => client.publishIntents([one]), (err: Error) => err.message.includes(`status ${venueSaid('The solver relay', 'MAYBE', 40)}, which this app does not know`));
+});
+
 test('status carries the word as spelled, the NEAR hash when there is one, and the filled amounts', async () => {
   const t = transport([
     rpc({ intent_hash: 'h1', status: 'PENDING' }),

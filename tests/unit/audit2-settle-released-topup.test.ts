@@ -10,7 +10,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
-import type { MultiPayload } from '../../src/chain/near-tx.ts';
+import type { MultiPayload } from '../../src/relay/client.ts';
 import { CHIP_PAYLOAD_LIFE_MS } from '../../src/vault/chip.ts';
 import { VAULT_SETTLE_FLOOR_MS } from '../../src/vault/submit.ts';
 import type { Proposal } from '../../src/types.ts';

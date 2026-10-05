@@ -407,7 +407,7 @@ export type TradeDraft =
 
 /* Money moving from the vault to the allowance, inside the verifier, once the vault has moved to
    this Mac's Touch ID key (PHASE2-PLAN.md C8). The vault's chip key signs it behind one Touch ID
-   whose sentence names the amount, and the gas account sends it: never the agent, never with no
+   whose sentence names the amount, and the NEAR Intents relay sends it: never the agent, never with no
    click. `why` is who asked: a move bigger than the allowance (`shortfall`, the exact difference,
    filed by the app when a person approved that move, `forProposal` naming it), the window's
    offer when the allowance runs low (`low`), or the person (`manual`). See src/vault/allowance.ts. */

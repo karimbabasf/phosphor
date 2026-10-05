@@ -46,9 +46,9 @@ only while you are using it.
 
 What closes it for the vault: the move to the chip in the Vault tab. After it the vault answers
 only to this Mac's Touch ID key and your paper key, and the open session holds the allowance key,
-the gas key and the trading key, never the owner key. What it does not close: those three keys are
-in memory while the wallet is open, so the allowance, the gas account and trading stay as exposed as
-described here.
+the old fee account's key and the trading key, never the owner key. What it does not close: those
+three keys are in memory while the wallet is open, so the allowance, any NEAR left in the old fee
+account and trading stay as exposed as described here.
 
 ## Two seconds after the backend stops
 
@@ -149,8 +149,8 @@ anywhere.
 
 What it means: once a wallet is Phosphor-only, delete the old copies you know of, and approve a
 Touch ID dialog only for something you started in Phosphor. What closes it for the vault: the move
-to the chip, after which the old key is no key of the vault. An old copy still holds the allowance,
-the gas account and Hyperliquid.
+to the chip, after which the old key is no key of the vault. An old copy still holds the allowance
+and Hyperliquid.
 
 ## A readable key file is trusted only on a Mac known to have no Phosphor-only wallet
 
@@ -187,8 +187,8 @@ the venue's hands, not lost and not the app's to recover by itself. Do not send 
 
 After the move to the chip, the vault answers to this Mac's Touch ID key and to the 24 words you
 wrote by hand, and to nothing else. The key backup alone no longer reaches the vault. A restore on a
-new Mac needs both: the key backup brings back the vault's address, the allowance, the gas account
-and Hyperliquid, and the paper brings back the vault. Phosphor has you type three of the words back
+new Mac needs both: the key backup brings back the vault's address, the allowance and Hyperliquid,
+and the paper brings back the vault. Phosphor has you type three of the words back
 before anything moves, so a slip in another word is caught only when you restore, and the paper
 signs a proof on chain in the same call that adds it, but nothing can check the paper itself. Check
 each word as you write it.
@@ -197,25 +197,25 @@ What it means: if this Mac is lost and the paper is lost or wrong, the money in 
 Keep the paper like cash, apart from the key backup. The paper is an ordinary EVM key, so it also
 signs for the vault in any EVM wallet if Phosphor is gone. What closes it: nothing in this build.
 
-## The key backup also controls the allowance and the gas account
+## The key backup also controls the allowance
 
-The allowance key and the gas account's key are derived from the owner key, never stored, so the
-backup you already have brings both back. The cost: whoever holds that backup also holds the
-allowance (its size plus 10 percent, $110 at the default, more while a move is under way), the gas
-account (about 0.5 NEAR) and Hyperliquid, even after the vault has moved.
+The allowance key is derived from the owner key, never stored, so the backup you already have
+brings it back. The cost: whoever holds that backup also holds the allowance (its size plus 10
+percent, $110 at the default, more while a move is under way), any NEAR left in the old fee account
+a 0.10.16 wallet paid into, and Hyperliquid, even after the vault has moved.
 
-What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the two
-keys is what keeps one backup instead of three.
+What it means: keep the key backup like cash too. What closes it: nothing planned; deriving the
+keys is what keeps one backup instead of several.
 
-## After the move, your wallet's words still open the allowance, the gas account and Hyperliquid
+## After the move, your wallet's words still open the allowance and Hyperliquid
 
 The move takes your wallet's key off the vault, not out of use. The Vault tab still shows your
 recovery phrase, or your private key, after the move, behind the same Touch ID, and says beside
-them what follows. Those words no longer open the vault, but the allowance key and the gas key are
-derived from them, and they still own your Hyperliquid account.
+them what follows. Those words no longer open the vault, but the allowance key is derived from them,
+and they still own your Hyperliquid account.
 
-What it means: whoever reads those words can spend the allowance, the gas account's NEAR and your
-Hyperliquid collateral, though never the vault. Show them only to write your backup. What closes
+What it means: whoever reads those words can spend the allowance and your Hyperliquid collateral,
+though never the vault. Show them only to write your backup. What closes
 it: nothing planned.
 
 ## NEAR Intents' admins can switch predecessor auth back on

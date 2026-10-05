@@ -1,9 +1,9 @@
 // The allowance: what the agent spends with no click once the vault has moved to this Mac's Touch
 // ID key, kept near the size the person picked (PHASE2-PLAN.md section 1, C8, P2.6).
 //
-// Two moves, both inside the verifier, both sent by the gas account through the vault submitter
-// (src/vault/submit.ts: the exact events simulated before anything leaves, one signature per move,
-// and nothing signed again while an earlier move may still run):
+// Two moves, both inside the verifier, both sent through the vault submitter and the NEAR Intents
+// relay, which pays NEAR's fee (src/vault/submit.ts: the exact events simulated before anything
+// leaves, one signature per move, and nothing signed again while an earlier move may still run):
 //   TOP-UP, vault to allowance. The vault's chip key signs (src/vault/chip.ts) behind one Touch ID,
 //     and the vault service writes the sentence from the payload it signs ("move 5.00 USDC from
 //     your vault to your allowance"). Always behind a click (src/policy/engine.ts), never the
@@ -13,8 +13,8 @@
 //     is worth more than its size plus 10 %: USDC first, then the other coins by dollar value, down
 //     to the size (src/rails/allowance-sweep.ts decides when). A coin the app cannot price never
 //     moves this way, and with no price at all nothing does.
-// The allowance key and the gas seed are derived from the owner key at every open (src/keystore/
-// derived.ts) and live only in the open session, so a sweep runs only while the wallet is open.
+// The allowance key is derived from the owner key at every open (src/keystore/derived.ts) and lives
+// only in the open session, so a sweep runs only while the wallet is open.
 
 import { randomUUID } from 'node:crypto';
 import { privateKeyToAccount } from 'viem/accounts';
@@ -95,8 +95,8 @@ export function shortfallOf(need: bigint, held: bigint): bigint {
 
 /* The card's line for a move bigger than the allowance: what the allowance holds, and the two Touch
    IDs its Approve asks, in the order they come (wave 3's touch order, tests/unit/wave3-wiring.test.ts):
-   the move's own approval first, which opens the session the allowance key and the gas account live
-   in, then the vault's for the difference, whose dialog reads "move ... from your vault to your
+   the move's own approval first, which opens the session the allowance key lives in, then the
+   vault's for the difference, whose dialog reads "move ... from your vault to your
    allowance". swap_quote says the same amount to the agent (src/proposals/swap-reads.ts). */
 export function shortfallSentence(coin: Pick<CoinAmount, 'symbol' | 'decimals'>, held: bigint, short: bigint): string {
   const name = coin.symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : coin.symbol;
@@ -365,7 +365,7 @@ export function createAllowance(deps: AllowanceDeps): AllowanceService {
 
   async function sweep({ id, moves, lastCheck }: { id: string; moves: readonly CoinAmount[]; lastCheck?: () => void }): Promise<VaultResult> {
     const acc = deps.accounts.accounts();
-    // ALLOWANCE and GAS do not depend on the chip (src/vault/accounts.ts): a `broken` vault still sweeps home.
+    // ALLOWANCE does not depend on the chip (src/vault/accounts.ts): a `broken` vault still sweeps home.
     if (acc.kind === 'key') return refused('invalid_request', 'nothing sweeps before the vault has moved to the chip');
     if (acc.allowance === null || acc.vault === null) return refused('wallet_locked', 'the allowance is not known until this process has opened the wallet');
     if (moves.length === 0 || moves.some((m) => m.base <= 0n)) return refused('invalid_request', 'a sweep moves at least one base unit of each coin it names');

@@ -423,7 +423,7 @@ function heldFlavor(ctx: PCtx, from: string, symbol: string, amount: number, ver
     .filter((h) => h.symbol.toUpperCase() === symbol.toUpperCase() && h.amount > 0)
     .sort((a, b) => b.amount - a.amount);
   if (held.length === 0) {
-    // A payout's card says it as a person reads it: the gas account's NEAR comes this way.
+    // A payout's card says it as a person reads it.
     const whose = railAccounts(ctx.cfg.keysPath).kind === 'key' ? 'vault' : 'allowance';
     problems.push(verb === 'pay out'
       ? `Your ${whose} holds no ${symbol === heldSymbol('NEAR') ? 'NEAR' : symbol}, so nothing was sent and nothing moved.`

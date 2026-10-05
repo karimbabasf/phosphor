@@ -8,10 +8,11 @@
 //   the Mac's keychain and enclave: the vault service's own rules compiled with the stand-in
 //     keychain (tests/unit/helpers/vault-double.ts), its store a JSON file, relayed by this script
 //     the way the shell relays (src-tauri/src/enclave.rs), no Touch ID;
-//   the chain: intents.near and the NEAR RPC as the chain double plays them
+//   the chain: intents.near, the solver relay and the NEAR RPC as the chain double plays them
 //     (tests/unit/helpers/intents-double.ts), served over HTTP by this script. A preload written to
-//     the case's temp folder points the backend's NEAR RPC at it, refuses every other host, and can
-//     run the backend's clock ahead (a restart minutes later, when a signed bundle has expired).
+//     the case's temp folder points the backend's NEAR RPC and its solver relay at it, refuses every
+//     other host, and can run the backend's clock ahead (a restart minutes later, when a signed
+//     bundle has expired).
 // Nothing here reaches mainnet or a real keychain.
 //
 // After every step the data folder and the state the window reads are searched for the paper key:
@@ -38,7 +39,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { generatePrivateKey, mnemonicToAccount, privateKeyToAccount } from 'viem/accounts';
 
 import { base58Encode } from '../src/chain/near.ts';
-import type { MultiPayload } from '../src/chain/near-tx.ts';
+import { RELAY_URL } from '../src/relay/client.ts';
+import type { MultiPayload } from '../src/relay/client.ts';
 import { identityProof } from '../src/http/respond.ts';
 import { isSpikedVerifier, liveVerifier } from '../src/relay/verifier.ts';
 import type { VerifierEvent } from '../src/relay/verifier.ts';
@@ -53,7 +55,6 @@ import { VaultDouble, relayTo, swiftc } from '../tests/unit/helpers/vault-double
 import type { Hook, Request } from '../tests/unit/helpers/vault-double.ts';
 
 const ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-const HALF_NEAR = 500_000_000_000_000_000_000_000n;
 const NEAR_RPC = 'https://free.rpc.fastnear.com';
 // A restart this long after the kill: past a signed bundle's deadline and two minutes, and past a
 // chip key's first ten minutes.
@@ -67,17 +68,22 @@ function words(text: string): string[] {
 
 // ---------- the chain, over HTTP ----------
 
-type RpcTrap = 'simulate' | 'send_tx' | 'confirm';
+type RpcTrap = 'simulate' | 'publish' | 'confirm';
 
-/* The chain double as NEAR's RPC: what near-tx asks goes to the double's own RPC, and intents.near's
-   views go to its verifier, answered in the shape the RPC answers (a view's result as UTF-8 bytes, a
-   contract's refusal flat inside `result`). `trap` kills the backend at one call: a dry run (before
-   the answer), a send (after the call landed, before the answer) or the first nonce read after a
-   send was answered (the views before done). */
+/* The chain double as NEAR's RPC and the solver relay: intents.near's views go to its verifier,
+   answered in the shape the RPC answers (a view's result as UTF-8 bytes, a contract's refusal flat
+   inside `result`), publish_intents and get_status to its relay. `trap` kills the backend at one
+   call: a dry run (before the answer), a publish (after the relay ran it, before the answer) or the
+   first nonce read of the views, once the publish was answered and its nonces read spent (the move
+   heard, before done). */
 function chainServer(chain: IntentsDouble) {
   let offset = 0;
   let trap: { at: RpcTrap; kill: () => void } | null = null;
   let sentOnce = false;
+  // The publish's payloads, and the nonce reads since: the submitter reads them all spent once
+  // before it writes the move down as ran, then again with the views.
+  let published = 0;
+  let nonceReads = 0;
 
   async function call(method: string, params: Json): Promise<Json> {
     if (method === 'query' && params.request_type === 'call_function' && params.account_id === 'intents.near') {
@@ -116,6 +122,15 @@ function chainServer(chain: IntentsDouble) {
           return refusal(`MethodResolveError(MethodNotFound) ${String(params.method_name)}`);
       }
     }
+    if (method === 'publish_intents') {
+      const answer = await chain.relay.publishIntents((params as unknown as Json[])[0]!.signed_datas as MultiPayload[]).catch(() => null);
+      if (answer === null) return { error: { code: -32000, message: 'the relay lost the answer' } };
+      return { result: answer.status === 'OK' ? { status: 'OK', intent_hashes: answer.intentHashes } : { status: 'FAILED', reason: answer.reason, intent_hashes: [] } };
+    }
+    if (method === 'get_status') {
+      const s = await chain.relay.status(String((params as unknown as Json[])[0]!.intent_hash));
+      return { result: { status: s.status, intent_hash: s.intentHash, ...(s.nearTxHash === null ? {} : { data: { hash: s.nearTxHash } }) } };
+    }
     const res = await chain.near.fetchImpl(NEAR_RPC, { method: 'POST', body: JSON.stringify({ jsonrpc: '2.0', id: 'phosphor', method, params }) } as RequestInit);
     return (await res.json()) as Json;
   }
@@ -143,7 +158,7 @@ function chainServer(chain: IntentsDouble) {
           res.destroy();
           return;
         }
-        if (trap?.at === 'confirm' && sentOnce && method === 'query' && params?.method_name === 'is_nonce_used') {
+        if (trap?.at === 'confirm' && sentOnce && method === 'query' && params?.method_name === 'is_nonce_used' && (nonceReads += 1) > published) {
           trap.kill();
           trap = null;
           res.destroy();
@@ -155,14 +170,18 @@ function chainServer(chain: IntentsDouble) {
         } catch (err) {
           answer = { error: { name: 'HANDLER_ERROR', cause: { name: 'INTERNAL_ERROR', info: {} }, code: -32000, message: String(err), data: String(err) } };
         }
-        if (method === 'send_tx' && trap?.at === 'send_tx') {
-          // The call landed (the double ran it); the backend dies before it hears.
+        if (method === 'publish_intents' && trap?.at === 'publish') {
+          // The relay ran it (the double did); the backend dies before it hears.
           trap.kill();
           trap = null;
           res.destroy();
           return;
         }
-        if (method === 'send_tx') sentOnce = true;
+        if (method === 'publish_intents') {
+          sentOnce = true;
+          published = ((params as unknown as Json[])[0]?.signed_datas as unknown[] | undefined)?.length ?? 0;
+          nonceReads = 0;
+        }
         res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id, ...answer }));
       })();
     });
@@ -192,7 +211,7 @@ const offset = Number(process.env.PHOSPHOR_CRASH_CLOCK_MS || '0');
 const real = globalThis.fetch;
 globalThis.fetch = async (input, init) => {
   const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-  if (url.startsWith(${JSON.stringify(NEAR_RPC)})) return real(target, init);
+  if (url.startsWith(${JSON.stringify(NEAR_RPC)}) || url.startsWith(${JSON.stringify(RELAY_URL)})) return real(target, init);
   if (url.startsWith('http://127.0.0.1')) return real(input, init);
   throw new TypeError('fetch failed: the crash harness reaches no outside host');
 };
@@ -399,8 +418,9 @@ async function until<T>(what: string, read: () => Promise<T>, ok: (v: T) => bool
   throw new Error(`${what}: still ${JSON.stringify(last)}`);
 }
 
-// A Touch ID wallet made by the window, opened, its backup proven by three words, its gas funded.
-async function newWallet(b: Backend, chain: IntentsDouble): Promise<{ vault: string; mnemonic: string }> {
+// A Touch ID wallet made by the window, opened, its backup proven by three words. No NEAR: the relay
+// pays NEAR's fee.
+async function newWallet(b: Backend): Promise<{ vault: string; mnemonic: string }> {
   const made = await b.post('/api/vault/create');
   if (made.json?.ok !== true) throw new Error(`create: ${JSON.stringify(made.json)}`);
   if ((await b.get('/api/vault')).json?.state !== 'unlocked') {
@@ -412,8 +432,6 @@ async function newWallet(b: Backend, chain: IntentsDouble): Promise<{ vault: str
   const list = revealed.json.words as string[];
   const proven = await b.post('/api/vault/backup-proven', { words: (revealed.json.prove as number[]).map((index) => ({ index, word: list[index] })) });
   if (proven.json?.ok !== true) throw new Error(`backup: ${JSON.stringify(proven.json)}`);
-  const gas = (await until('the gas account', () => chip(b), (c) => typeof c.gas?.account === 'string')).gas.account as string;
-  chain.fundGas(gas, HALF_NEAR);
   return { vault: String(made.json.addresses.evm).toLowerCase(), mnemonic: list.join(' ') };
 }
 
@@ -492,14 +510,14 @@ async function runCase(kind: 'migrate' | 'restore', point: Point, root: string):
     if (kind === 'migrate') {
       target = newMac(root, `${kind}-${point}`);
       const b = await boot(target);
-      const w = await newWallet(b, chain);
+      const w = await newWallet(b);
       vault = w.vault;
       old = oldKeyOf(w.mnemonic);
       await checkLeaks(target.dir, b, phrases, 'the wallet was made');
     } else {
       const first = newMac(root, `${kind}-${point}-first`);
       const a = await boot(first);
-      const w = await newWallet(a, chain);
+      const w = await newWallet(a);
       vault = w.vault;
       old = oldKeyOf(w.mnemonic);
       oldPaper = await showPaper(a);
@@ -538,7 +556,7 @@ async function runCase(kind: 'migrate' | 'restore', point: Point, root: string):
         if (point === 3) relay.trap = 'chipCommit';
         if (point === 4) relay.trap = kind === 'migrate' ? 'unwrap-move' : 'signIntent';
         if (point === 5) rpc.setTrap('simulate', kill);
-        if (point === 6) rpc.setTrap('send_tx', kill);
+        if (point === 6) rpc.setTrap('publish', kill);
         if (point === 7) rpc.setTrap('confirm', kill);
         const run = await start(b, kind, oldPaper ?? undefined);
         if (point === 8) {

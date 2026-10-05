@@ -363,7 +363,7 @@ test('a vault moved here whose vault.json lost its chip entry reads checking, ne
   assert.equal(late.named, late.keyRef);
 });
 
-test('after the move the reveal still returns the wallet\'s words behind its Touch ID: they derive the allowance and the gas account, and open the vault no more', { skip, timeout: 120_000 }, async () => {
+test('after the move the reveal still returns the wallet\'s words behind its Touch ID: they derive the allowance and the old fee account, and open the vault no more', { skip, timeout: 120_000 }, async () => {
   const w = await wave3World({ papers: [PAPER] });
   try {
     const { vault } = await moved(w);
@@ -375,7 +375,7 @@ test('after the move the reveal still returns the wallet\'s words behind its Tou
     const derived = accountsOf(deriveKeys(old));
     old.fill(0);
     const chip = (await w.get('/api/state')).json.vault.chip;
-    assert.deepEqual([derived.allowance.toLowerCase(), derived.gas], [chip.allowance.account, chip.gas.account], 'they derive the allowance and the gas account the Vault tab shows');
+    assert.deepEqual([derived.allowance.toLowerCase(), derived.gas], [chip.allowance.account, w.keystore.derivedAccounts()!.gas], 'they derive the allowance the Vault tab shows and the old fee account');
     assert.equal(chip.oldOnChain, false, 'and NEAR reads their key off the vault');
   } finally {
     await w.close();
@@ -412,10 +412,10 @@ async function movedElsewhere(w: Wave3World, vault: string): Promise<void> {
   throw new Error('the Vault tab never read the vault on another Mac\'s keys');
 }
 
-test('on a Mac whose vault moved to another Mac\'s keys, a spend from the vault and Add NEAR refuse in words before anything is signed, and Add NEAR names the gas account', { skip, timeout: 120_000 }, async () => {
+test('on a Mac whose vault moved to another Mac\'s keys, a spend from the vault refuses in words before anything is signed', { skip, timeout: 120_000 }, async () => {
   const w = await wave3World();
   try {
-    const { vault, gas } = await w.wallet();
+    const { vault } = await w.wallet();
     w.chain.fund(vault, USDC, usdc(1850));
     w.ledger.reread();
     const swap = (amountIn: string) => ({ op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn } });
@@ -453,13 +453,6 @@ test('on a Mac whose vault moved to another Mac\'s keys, a spend from the vault 
     assert.equal(clicked.status, 'policy_refused');
     assert.equal(w.svc.view(clicked).reason?.sentence, VAULT_ELSEWHERE_SAID);
     assert.deepEqual(w.seen.slice(from).map((r) => r.op), [], 'no Touch ID was asked');
-
-    // Add NEAR: refused at the route, with the gas account's id to send NEAR to straight; nothing filed.
-    const rows = w.svc.list().length;
-    const fund = await w.post('/api/vault/gas/fund', { near: 0.5 });
-    assert.deepEqual([fund.json.ok, fund.json.code, fund.json.gas], [false, 'fund_elsewhere', gas]);
-    assert.match(String(fund.json.error), /another Mac's Touch ID key now, so this Mac cannot pay NEAR from it/);
-    assert.equal(w.svc.list().length, rows, 'no payout was filed');
     assert.equal(w.publishes.length, 0, 'nothing was signed');
   } finally {
     await w.close();
@@ -607,7 +600,7 @@ test('after a restart, a move to the chip written down and still able to run kee
     w.chain.fund(vault, USDC, usdc(1850));
     w.ledger.reread();
     const swap = { op: 'propose', kind: 'swap', params: { chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '2' } };
-    // What a crash leaves: no run in this process, and the journal holding a bundle that went out.
+    // What a crash leaves (an entry as 0.10.16 wrote it, with its gas account): no run in this process, and the journal holding a bundle that went out.
     const deadline = w.chain.now() + 60_000;
     const entry = (id: string) => ({ id, account: vault, gas, signed: [{ standard: 'erc191', payload: JSON.stringify({ deadline: new Date(deadline).toISOString() }), signature: 'secp256k1:x' }], txHashes: ['tx'], state: 'sent' as const, at: w.chain.now() });
     const journal = fileJournal(journalPathFor(w.dataDir));
