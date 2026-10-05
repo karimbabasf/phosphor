@@ -113,6 +113,9 @@ export type SweepPlan = {
   // What the priced coins are worth, and the size, in dollars.
   totalUsd: number;
   sizeUsd: number;
+  // What moves under way will spend of the priced coins, in dollars: the plan keeps the larger of
+  // this and the size.
+  reservedUsd: number;
   // Coins the sweep left where they are because nothing prices them.
   unpriced: string[];
 };
@@ -133,29 +136,44 @@ function microUsd(coin: HeldCoin): bigint | null {
    everything over the size: USDC first, then the rest by dollar value, largest first. A coin taken
    whole is its whole balance, to the base unit; a coin taken in part is cut down, never up, so the
    allowance keeps at least its size. A coin with no price is neither counted nor moved: a sweep
-   that cannot value a coin cannot say how much of it is over. */
-export function sweepPlan(held: readonly HeldCoin[], sizeUsd: number, maxCoins: number = MAX_SWEEP_COINS): SweepPlan {
+   that cannot value a coin cannot say how much of it is over.
+   `reserved` is what moves under way will spend from the allowance, base units by asset
+   (moveSpend): those coins stay whatever the plan, and the plan keeps the larger of the size and
+   their worth, so a move a person approved keeps its money while a held row of an agent's holds
+   back no more than its own spend (audit2 AU2-05). */
+export function sweepPlan(held: readonly HeldCoin[], sizeUsd: number, maxCoins: number = MAX_SWEEP_COINS, reserved: ReadonlyMap<string, bigint> = new Map()): SweepPlan {
   const size = Number.isFinite(sizeUsd) && sizeUsd > 0 ? BigInt(Math.round(sizeUsd * 100)) * 10_000n : 0n;
-  const priced: { coin: HeldCoin; value: bigint }[] = [];
+  const priced: { coin: HeldCoin; value: bigint; kept: bigint }[] = [];
   const unpriced: string[] = [];
+  let reservedValue = 0n;
   for (const coin of held) {
     if (coin.base <= 0n) continue;
     const value = microUsd(coin);
-    if (value === null) unpriced.push(coin.symbol);
-    else priced.push({ coin, value });
+    if (value === null) {
+      unpriced.push(coin.symbol);
+      continue;
+    }
+    const want = reserved.get(coin.asset) ?? 0n;
+    reservedValue += want > 0n ? (microUsd({ ...coin, base: want }) ?? 0n) : 0n;
+    priced.push({ coin, value, kept: want < coin.base ? want : coin.base });
   }
   const total = priced.reduce((sum, p) => sum + p.value, 0n);
-  const plan: SweepPlan = { moves: [], totalUsd: Number(total) / 1e6, sizeUsd: Number(size) / 1e6, unpriced };
-  if (total * 10n <= size * 11n) return plan;
+  const keep = reservedValue > size ? reservedValue : size;
+  const plan: SweepPlan = { moves: [], totalUsd: Number(total) / 1e6, sizeUsd: Number(size) / 1e6, reservedUsd: Number(reservedValue) / 1e6, unpriced };
+  if (total * 10n <= keep * 11n) return plan;
   const usdc = (c: HeldCoin): boolean => c.symbol.toUpperCase() === 'USDC';
   priced.sort((a, b) => Number(usdc(b.coin)) - Number(usdc(a.coin)) || (b.value > a.value ? 1 : b.value < a.value ? -1 : 0));
-  let excess = total - size;
-  for (const { coin, value } of priced) {
+  let excess = total - keep;
+  for (const { coin, value, kept } of priced) {
     if (excess <= 0n || plan.moves.length >= maxCoins) break;
-    const take = value < excess ? value : excess;
-    const base = take === value ? coin.base : coin.priceUsd === 1 ? (take * 10n ** BigInt(coin.decimals)) / MICRO : (coin.base * take) / value;
+    // What of this coin no move under way spends, and its worth.
+    const free = coin.base - kept;
+    const freeValue = kept === 0n ? value : (microUsd({ ...coin, base: free }) ?? 0n);
+    if (free <= 0n || freeValue <= 0n) continue;
+    const take = freeValue < excess ? freeValue : excess;
+    const base = take === freeValue ? free : coin.priceUsd === 1 ? (take * 10n ** BigInt(coin.decimals)) / MICRO : (free * take) / freeValue;
     if (base <= 0n) continue;
-    plan.moves.push({ asset: coin.asset, symbol: coin.symbol, decimals: coin.decimals, base: base > coin.base ? coin.base : base });
+    plan.moves.push({ asset: coin.asset, symbol: coin.symbol, decimals: coin.decimals, base: base > free ? free : base });
     excess -= take;
   }
   return plan;

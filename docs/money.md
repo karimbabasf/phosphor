@@ -66,9 +66,12 @@ derives from your wallet key, about 0.0005 NEAR a move):
   the other coins from the largest dollar value down, and the allowance keeps at least its size.
   It looks after every settled move that touched the allowance, every ten minutes while your
   wallet is open, when you unlock, and when you change the size. A coin the app has no price for
-  never moves this way, and with no price at all nothing does. It waits while any move is
-  approved, waiting on a Touch ID or running, and Freeze stops it. Each sweep writes one line in
-  the log, `allowance_swept`, naming every coin and amount.
+  never moves this way, and with no price at all nothing does. While moves are approved,
+  waiting on a Touch ID or running, the coins they will spend stay: the sweep keeps the larger of
+  the size and their spend, and sends home only what is over that plus 10 %, so a big move you
+  approved keeps its money and a move an agent's rules hold back keeps no more than its own. A
+  move whose spend the app cannot read holds the sweep back, and Freeze stops it. Each sweep
+  writes one line in the log, `allowance_swept`, naming every coin and amount.
 
 A size of $0 sends everything priced home at the next sweep. What a Mac running someone else's
 code could spend with no Touch ID is the allowance (at most its size plus 10 %, $110 at the

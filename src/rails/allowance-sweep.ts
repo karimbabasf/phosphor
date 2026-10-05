@@ -8,8 +8,11 @@
 //   - a coin with no price is never moved, and with no price at all nothing is (the prices are the
 //     engine's own, src/proposals/draft.ts priceOf, the ones every no-click move is governed by);
 //   - Freeze stops it, read again as the last thing before the key signs;
-//   - nothing goes while a move is approved, waiting on a Touch ID or executing: such a move may
-//     need what the allowance holds (a shortfall top-up lands there a moment before its move);
+//   - what a move that is approved (a held one too), waiting on a Touch ID or executing will spend
+//     stays: the sweep keeps the larger of the size and that spend, and sends home only what is over
+//     it plus 10 %. A held row of an agent's so holds back its own spend and no more (audit2 AU2-05),
+//     and a move a person approved keeps its money (a shortfall top-up lands there a moment before
+//     its move). A move whose spend cannot be read holds every sweep back;
 //   - every amount is the verifier's own figure, read live a moment before, never a guess.
 // One sweep at a time. A sweep whose send came back without a final answer holds the next one back
 // through the vault journal (src/vault/submit.ts) until NEAR has settled it.
@@ -32,7 +35,9 @@ export type SweepDeps = {
   // The ledger's last verifier read: which coins the allowance holds, and 1Click's prices.
   read(): IntentsRead | undefined;
   price(symbol: string, asset: string): number | null;
-  busy(): boolean;
+  /* What moves under way will spend from the allowance, base units by asset, or null when one of
+     them spends something the app cannot read (src/proposals/execute.ts reservedSpends). */
+  reserved(): ReadonlyMap<string, bigint> | null;
   // Freeze, or rules that will not load: either stops every no-click move.
   frozen(): boolean;
   // Whether the session holds the allowance key and the gas seed.
@@ -75,10 +80,14 @@ export function createAllowanceSweep(deps: SweepDeps): AllowanceSweep {
       void now('after_move');
     }) ?? (() => {});
 
-  // Freeze, and a move that started since the plan was made, as the last thing before the key.
-  function lastCheck(): void {
+  // Freeze, and a move that started since the plan was made and spends more than it kept, as the
+  // last thing before the key.
+  function lastCheck(kept: ReadonlyMap<string, bigint>): void {
     if (deps.frozen()) throw new ReasonError('kill_switch', 'Everything is frozen, so nothing was signed.');
-    if (deps.busy()) throw new ReasonError('not_sent', 'A move started that may need what the allowance holds, so nothing was signed.');
+    const now = deps.reserved();
+    if (now === null || [...now].some(([asset, base]) => base > (kept.get(asset) ?? 0n))) {
+      throw new ReasonError('not_sent', 'A move started that may need what the allowance holds, so nothing was signed.');
+    }
   }
 
   async function once(why: SweepWhy): Promise<SweepOutcome> {
@@ -88,7 +97,8 @@ export function createAllowanceSweep(deps: SweepDeps): AllowanceSweep {
     if (acc.kind === 'key') return no('the vault has not moved to the chip');
     if (acc.allowance === null || acc.vault === null) return no('the allowance is not known until the wallet has opened');
     if (deps.frozen()) return no('everything is frozen');
-    if (deps.busy()) return no('a move is under way and may need what the allowance holds');
+    const reserved = deps.reserved();
+    if (reserved === null) return no('a move is under way whose spend cannot be read, and it may need what the allowance holds');
     const allowance = acc.allowance.toLowerCase();
 
     // The coins the last read names, each priced the engine's way and read again live, exactly.
@@ -96,11 +106,12 @@ export function createAllowanceSweep(deps: SweepDeps): AllowanceSweep {
     if (listed.length === 0) return no('the last read shows nothing in the allowance');
     const live = await Promise.all(listed.map(async (c) => ({ ...c, base: await deps.service.balance(allowance, c.asset) })));
     if (live.some((c) => c.base === null)) return no('a balance could not be read, and nothing moves on a guess');
-    const plan = sweepPlan(live as HeldCoin[], deps.sizeUsd());
-    if (plan.moves.length === 0) return no(`the allowance is worth $${plan.totalUsd.toFixed(2)}, within its $${plan.sizeUsd.toFixed(2)} size and the 10 % over it`);
+    const plan = sweepPlan(live as HeldCoin[], deps.sizeUsd(), undefined, reserved);
+    const kept = plan.reservedUsd > plan.sizeUsd ? `, keeping $${plan.reservedUsd.toFixed(2)} for moves under way` : '';
+    if (plan.moves.length === 0) return no(`the allowance is worth $${plan.totalUsd.toFixed(2)}, within its $${plan.sizeUsd.toFixed(2)} size${kept} and the 10 % over it`);
 
     const id = sweepId();
-    const result = await deps.service.sweep({ id, moves: plan.moves, lastCheck });
+    const result = await deps.service.sweep({ id, moves: plan.moves, lastCheck: () => lastCheck(reserved) });
     const moved = plan.moves.map(amountWords).join(', ');
     const left = plan.unpriced.length === 0 ? '' : `; left in place with no price: ${[...new Set(plan.unpriced)].join(', ')}`;
     const data = {
@@ -112,10 +123,11 @@ export function createAllowanceSweep(deps: SweepDeps): AllowanceSweep {
       moves: plan.moves.map((m) => ({ asset: m.asset, base: m.base.toString() })),
       totalUsd: plan.totalUsd,
       sizeUsd: plan.sizeUsd,
+      ...(plan.reservedUsd > 0 ? { reservedUsd: plan.reservedUsd } : {}),
     };
     if (result.state === 'done') {
       lastRefusal = null;
-      deps.audit.append('allowance_swept', `${moved} went from your allowance to your vault: it was worth $${plan.totalUsd.toFixed(2)} over a $${plan.sizeUsd.toFixed(2)} size${left}`, data);
+      deps.audit.append('allowance_swept', `${moved} went from your allowance to your vault: it was worth $${plan.totalUsd.toFixed(2)} over a $${plan.sizeUsd.toFixed(2)} size${kept}${left}`, data);
       deps.refresh?.();
       return { tried: true, moves: plan.moves, result };
     }

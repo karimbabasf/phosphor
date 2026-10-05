@@ -1034,8 +1034,8 @@ function allowanceUsd(ctx: PCtx, allowance: string): number | null {
 const sweepers = new WeakMap<PCtx, AllowanceSweep>();
 
 /* The allowance's sweep for this service (src/rails/allowance-sweep.ts), built once, on the
-   engine's own prices and the service's own rows: nothing goes home while a move is approved,
-   waiting on a Touch ID or executing. Null where there is no allowance. */
+   engine's own prices and the service's own rows: what a move that is approved, waiting on a Touch
+   ID or executing will spend stays in the allowance. Null where there is no allowance. */
 export function sweeperFor(ctx: PCtx): AllowanceSweep | null {
   const service = ctx.allowance;
   if (service === undefined) return null;
@@ -1046,7 +1046,7 @@ export function sweeperFor(ctx: PCtx): AllowanceSweep | null {
     sizeUsd: () => service.sizeUsd(),
     read: () => ctx.ledger.intents(),
     price: (symbol, asset) => priceOf(ctx, symbol, ctx.ledger.snapshot(), asset),
-    busy: () => ctx.store.list().some((r) => r.status === 'approved' || r.status === 'awaiting_touch' || r.status === 'executing'),
+    reserved: () => reservedSpends(ctx),
     frozen: () => {
       const policy = loadPolicy(ctx.dataDir);
       return policy === null || policy.killSwitch;
@@ -1059,6 +1059,25 @@ export function sweeperFor(ctx: PCtx): AllowanceSweep | null {
   sweepers.set(ctx, made);
   return made;
 }
+
+/* What moves under way will spend from the allowance, base units by asset: every row approved (a
+   held one too), waiting on a Touch ID or executing whose spender is the allowance, whoever decided
+   it. Null when such a row's spend cannot be read: then the sweep holds back. */
+function reservedSpends(ctx: PCtx): Map<string, bigint> | null {
+  const allowance = ctx.allowance?.accounts().allowance?.toLowerCase() ?? null;
+  const out = new Map<string, bigint>();
+  for (const r of ctx.store.list()) {
+    if (r.status !== 'approved' && r.status !== 'awaiting_touch' && r.status !== 'executing') continue;
+    if (!SPENDS_ALLOWANCE.has(r.draft.kind) || allowance === null || spenderOf(r.draft) !== allowance) continue;
+    const spend = moveSpend(r.draft);
+    if (spend === null) return null;
+    out.set(spend.asset, (out.get(spend.asset) ?? 0n) + spend.base);
+  }
+  return out;
+}
+
+// The kinds whose rail spends from the allowance once the vault is on the chip (moveSpend's).
+const SPENDS_ALLOWANCE = new Set<string>(['swap', 'intents_send', 'intents_pay', 'hl_deposit']);
 
 // A move that touched the allowance settled: the sweep looks at the next read that shows it.
 function afterSettledMove(ctx: PCtx, row: Proposal): void {

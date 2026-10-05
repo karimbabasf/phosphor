@@ -76,6 +76,24 @@ test('a coin with no price never moves, and with no price at all nothing does', 
   assert.deepEqual(mixed.moves.map((m) => [m.symbol, m.base]), [['USDC', usdc(40)]]);
 });
 
+test('what moves under way will spend stays: the plan keeps the larger of the size and their spend, and goes above that plus 10 % (audit2 AU2-05)', () => {
+  const held = [coin('USDC', usdc(300), 1), coin('USDT', usdc(100), 1)];
+  const spends = (n: number) => new Map([[held[0]!.asset, usdc(n)]]);
+  // A held $2 of an agent's holds back $2: the size is the larger, and $400 is over $110.
+  const small = sweepPlan(held, 100, undefined, spends(2));
+  assert.equal(small.reservedUsd, 2);
+  assert.deepEqual(small.moves.map((m) => [m.symbol, m.base]), [['USDC', usdc(298)], ['USDT', usdc(2)]], 'the held 2 USDC stay, the rest down to the size goes');
+  // A person's $250 stays whole, even with USDC first in line: $400 is over $275, $150 goes.
+  const big = sweepPlan(held, 100, undefined, spends(250));
+  assert.equal(big.reservedUsd, 250);
+  assert.deepEqual(big.moves.map((m) => [m.symbol, m.base]), [['USDC', usdc(50)], ['USDT', usdc(100)]]);
+  // Under the larger line plus 10 %, nothing goes.
+  assert.deepEqual(sweepPlan(held, 100, undefined, spends(370)).moves, [], '$400 is within $370 plus 10 %');
+  // A move spending more than the allowance holds of its coin keeps all of that coin.
+  assert.deepEqual(sweepPlan(held, 100, undefined, spends(500)).moves, [], '$400 is within $500');
+  assert.deepEqual(sweepPlan([coin('USDC', usdc(50), 1), coin('USDT', usdc(400), 1)], 100, undefined, new Map([[held[0]!.asset, usdc(80)]])).moves.map((m) => [m.symbol, m.base]), [['USDT', usdc(350)]], 'the short coin stays whole, the rest goes down to the larger line');
+});
+
 test('one sweep carries at most four coins, USDC among them first', () => {
   const many = ['A', 'B', 'C', 'D', 'E'].map((s, i) => coin(s, usdc(10 + i), 1));
   const plan = sweepPlan([...many, coin('USDC', usdc(1), 1)], 0);
@@ -370,18 +388,22 @@ test('no price, no sweep: a coin nothing prices stays in the allowance, and the 
   }
 });
 
-test('the sweep waits for every move under way, a shut wallet, and a vault that has not moved', async () => {
+test('the sweep holds back for a move under way whose spend it cannot read and for a shut wallet; a top-up under way spends nothing from the allowance', async () => {
   const w = await allowanceWorld({ allowanceUsdc: usdc(300), sizeUsd: 100 });
   try {
     const filed = await w.svc.proposeVaultTopUp!({ usd: 1, why: 'manual' }).catch(() => null);
     assert.equal(filed, null, 'over its size: no top-up');
     w.prefs.setAllowanceSize(1000);
     const pending = await w.svc.proposeVaultTopUp!({ usd: 1, why: 'manual' });
-    w.rows.put({ ...pending, status: 'approved' });
     w.prefs.setAllowanceSize(100);
-    const busy = await w.svc.sweepAllowance!('timer');
-    assert.deepEqual(busy, { tried: false, why: 'a move is under way and may need what the allowance holds' });
-    w.rows.put({ ...pending, status: 'refused' });
+    // A swap from the allowance under way whose coin cannot be read (no pinned assets): nothing goes home.
+    const draft = { kind: 'swap', venue: 'intents-relay', chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: 2, amountUsd: 2, minAmountOut: 1.9, from: w.account, to: w.account, counterparty: 'intents.near', quote: null };
+    const unread = { ...pending, id: 'swap-unread', kind: 'swap', status: 'approved', draft } as unknown as Proposal;
+    w.rows.put(unread);
+    assert.deepEqual(await w.svc.sweepAllowance!('timer'), { tried: false, why: 'a move is under way whose spend cannot be read, and it may need what the allowance holds' });
+    w.rows.put({ ...unread, status: 'refused' });
+    // A top-up under way adds to the allowance and holds nothing back; a shut wallet stops the sweep.
+    w.rows.put({ ...pending, status: 'approved' });
     w.keys.lock();
     assert.deepEqual(await w.svc.sweepAllowance!('timer'), { tried: false, why: 'the wallet is shut, so the allowance key is not here' });
     assert.equal(w.chain.balanceOf(w.account, USDC), usdc(300));
