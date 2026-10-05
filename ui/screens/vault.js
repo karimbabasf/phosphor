@@ -636,6 +636,7 @@
   function wipePhrase() {
     phrase = null;
     shownKey = null;
+    clearClip();
     if (!refs.phraseFlow) return Promise.resolve();
     var closing = Promise.resolve();
     if (!refs.phraseFlow.hidden || refs.phraseFlow.childNodes.length) {
@@ -1183,10 +1184,12 @@
     flow.appendChild(tools);
 
     dom.on(show, 'click', function () {
+      // Hide is a click, so the clear inside it is one WebKit lets through.
+      if (open) clearClip();
       open = !open;
       paintSecret();
     });
-    dom.on(copy, 'click', function () { copyKey(copy, error); });
+    dom.on(copy, 'click', function () { copyKey(copy, error, backed ? 'Done' : 'I saved it'); });
     if (saved) dom.on(saved, 'click', function () { keySaved(saved, error); });
     dom.on(close, 'click', wipePhrase);
     var first = saved || show;
@@ -1195,7 +1198,7 @@
 
   /* The whole key, as a wallet imports it, onto the clipboard. The button
      says Copied for a moment; nothing else on screen repeats the key. */
-  function copyKey(copy, error) {
+  function copyKey(copy, error, nextClick) {
     if (!shownKey) return;
     say(error, '');
     var clip = window.navigator ? window.navigator.clipboard : null;
@@ -1205,16 +1208,46 @@
     }
     clip.writeText('0x' + shownKey.groups.join(''))
       .then(function () {
-        setLabel(copy, 'Copied');
-        window.setTimeout(function () { setLabel(copy, 'Copy'); }, 1600);
+        clipHeld = copy;
+        setLabel(copy, 'Copied. Phosphor clears it when you click ' + nextClick + ', or in 30 seconds.');
+        if (clipTimer !== null) window.clearTimeout(clipTimer);
+        clipTimer = window.setTimeout(clearClip, CLIP_CLEAR_MS);
       })
       .catch(function () { say(error, 'The key did not reach the clipboard. Try Copy again, or show it and write it down.'); });
+  }
+
+  /* The key leaves the clipboard at the panel's next click (I saved it
+     somewhere safe, Hide, Close or Done), which WebKit allows because a
+     person clicked; else 30 seconds after Copy, or at once when the wallet
+     locks or the tab is left, which WebKit may refuse with no click behind
+     them: then the key stays until something else is copied
+     (docs/known-limits.md). Never when Copy was not pressed. `clipHeld` is
+     the Copy button whose key is on the clipboard, or false. */
+  var CLIP_CLEAR_MS = 30000;
+  var clipTimer = null;
+  var clipHeld = false;
+
+  function clearClip() {
+    if (clipTimer !== null) window.clearTimeout(clipTimer);
+    clipTimer = null;
+    if (!clipHeld) return;
+    setLabel(clipHeld, 'Copy');
+    clipHeld = false;
+    var clip = window.navigator ? window.navigator.clipboard : null;
+    if (!clip || typeof clip.writeText !== 'function') return;
+    try {
+      clip.writeText('').catch(function () { /* best effort, as above */ });
+    } catch (err) {
+      // best effort, as above
+    }
   }
 
   /* The proof: the person's word, just after the key was shown. A proof the
      app can no longer tie to that reveal (half an hour on, or a restart)
      closes the key and asks for it to be shown again. */
   function keySaved(saved, error) {
+    // Here, in the click, where WebKit lets the clipboard be written, and not after the answer.
+    clearClip();
     say(error, '');
     window.PhosphorShell.setPending(saved, true);
     api.vaultKeyProven()
@@ -1222,6 +1255,7 @@
         if (answer && answer.ok === true) return proven();
         if (answer && answer.code === 'reveal_again') {
           shownKey = null;
+          clearClip();
           flowProblem(answer.error || 'Show your key once more with Back it up, then save it.');
           return null;
         }
