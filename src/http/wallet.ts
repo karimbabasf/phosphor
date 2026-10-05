@@ -41,7 +41,7 @@ import { wipe } from '../keystore/envelope.ts';
 import { mayStillSign } from '../proposals.ts';
 import { rememberKeyShown, rememberPhrase } from '../vault/phrase-proof.ts';
 import type { Ctx } from './context.ts';
-import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, routeGate, routeLink, routeSentence, withReason } from '../preflight/route-health.ts';
+import { ADDRESS_WAIT_MS, STATUS_LINK, bridgeReason, depositConfirmed, routeLink, routeSentence, unconfirmedSentence, withReason } from '../preflight/route-health.ts';
 import type { RouteAudience, RouteGate, RouteState, RouteVerdict } from '../preflight/route-health.ts';
 
 // Long enough that a four-digit guess is not the whole search space, short enough that it does
@@ -1116,10 +1116,17 @@ function withRoute(row: IntentsReceiveNetwork, verdict: RouteVerdict | undefined
 
 /* The route for the exact asset a card is about to be opened for, which the report's row (asked
    about the network's own coin) does not answer: TON USDT is its own question. Both doors that
-   open a deposit card ask it, the window's and the agent's. */
-export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null }> {
-  const gate = await routeGate(ctx.routeHealth, { network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS }, 'deposit', audience);
-  return { ...gate, link: gate.closed !== null || gate.notice !== null ? STATUS_LINK : null };
+   open a deposit card ask it, the window's and the agent's. An address needs 1Click's own yes
+   (depositConfirmed); without it, `unconfirmed` is the sentence both doors refuse with. No
+   checker (demo mode, a test server) refuses nothing. */
+export async function depositRoute(ctx: Ctx, chain: string, account: string, assetId: string, audience: RouteAudience = 'person'): Promise<RouteGate & { link: string | null; unconfirmed: string | null }> {
+  const routes = ctx.routeHealth;
+  if (routes === undefined) return { closed: null, notice: null, link: null, unconfirmed: null };
+  const verdict = await routes.check({ network: chain, direction: 'in', account, asset: assetId === '' ? undefined : assetId, waitMs: ADDRESS_WAIT_MS });
+  const sentence = routeSentence(verdict, 'deposit', audience);
+  if (verdict.state === 'closed') return { closed: sentence, notice: null, link: STATUS_LINK, unconfirmed: null };
+  if (!depositConfirmed(verdict)) return { closed: null, notice: null, link: null, unconfirmed: unconfirmedSentence(chain) };
+  return { closed: null, notice: sentence, link: sentence === null ? null : STATUS_LINK, unconfirmed: null };
 }
 
 /* The bridge addresses and what each network credits, as one report. The route above serves
