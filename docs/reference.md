@@ -775,7 +775,10 @@ simulation's: exactly `transfer`, then `intents_executed`. The call's receipt on
 `mt_transfer` line after them; the submitter confirms a move by views, never by its receipt, so a
 check of receipt events added later must expect that line. A send with no final answer is
 waited on by the submitter's settle rule, never signed again: it ran, or NEAR proves it never can
-(the row closes as nothing moved), or the row waits on the allowance's balance. The size is kept in
+(the row closes as nothing moved), or the row waits on the allowance's balance. A refusal that came
+after the signed bundle left this Mac (a simulation the RPC refused or did not answer, a send it
+turned down) is waited on the same way, because whoever saw the bytes can run them until their
+deadline (`audit2-settle-released-topup.test.ts`). The size is kept in
 `vault.json` (0 to 1,000,000, cents) and a change is logged and asks for a sweep at once.
 
 The sweep is a payload the allowance key signs (erc191, only one that names the allowance as its

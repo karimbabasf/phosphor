@@ -394,7 +394,9 @@ export function createAllowance(deps: AllowanceDeps): AllowanceService {
     const account = req.account.toLowerCase();
     const balances = req.balances.map(({ account: a, asset }) => ({ account: a, asset }));
     const dead = async (): Promise<{ ok: false; code: string; detail: string }> => ({ ok: false, code: 'vault_dead', detail: 'the send never ran and never can: nothing moved' });
-    while (now() < until && (last.state === 'sent' || last.state === 'checking' || last.state === 'settling')) {
+    // A refusal after the bundle left this Mac is a send NEAR has not settled yet (audit2 AU2-03).
+    const waiting = (r: VaultResult): boolean => r.state === 'sent' || r.state === 'checking' || r.state === 'settling' || (r.state === 'refused' && r.released);
+    while (now() < until && waiting(last)) {
       const notBefore = last.state === 'settling' && last.notBefore !== null ? last.notBefore : now() + 2_000;
       await sleep(Math.max(1_000, Math.min(notBefore - now(), 15_000)));
       last = await deps.submitter.move({ id: req.id, account, sign: dead, balances });

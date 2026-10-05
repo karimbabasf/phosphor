@@ -9,7 +9,9 @@
 // the app's own, read when it runs: a draft naming any other vault or allowance is refused before
 // the touch. A send that comes back without a final answer is waited on here, by the submitter's
 // rule and never by signing again, until NEAR says it ran or never can; past that the row settles
-// by the allowance's balance, as every rail's does.
+// by the allowance's balance, as every rail's does. A refusal that came after the signed bundle
+// left this Mac (simulate was asked) is such a send: the RPC saw the bytes, and anyone holding them
+// can run them until their deadline, so the row waits on NEAR and never says nothing was sent.
 
 import { baseUnitsToDecimal, decimalToBaseUnits } from '../intents.ts';
 import { INTENTS_VERIFIER } from '../ledger/intents.ts';
@@ -106,14 +108,14 @@ export function vaultTopUpRail(deps: VaultTopUpDeps): Rail<VaultTopUpDraft> {
 
     const first = await s.topUp({ id: proposalId, coin, lastCheck: hooks?.lastCheck });
     const sentHash = first.state === 'sent' || first.state === 'checking' ? first.txHash : null;
+    const left = first.state === 'sent' || first.state === 'checking' || (first.state === 'refused' && first.released);
     // A send left this Mac: the row carries its hash and the allowance's balance before it, so a
     // process that stops in the wait below is settled by that balance, never signed again.
-    if (sentHash !== null) hooks?.onEvidence?.({ txids: [sentHash], ...(pocket(null) === undefined ? {} : { pocket: pocket(null) }) });
-    const result: VaultResult =
-      first.state === 'sent' || first.state === 'checking'
-        ? await s.awaitSettled({ id: proposalId, account: vault, balances: [{ account: vault, asset: coin.asset, amount: null }, { account: allowance, asset: coin.asset, amount: null }] }, first)
-        : first;
-    return railResult(result, coin, vault, allowance, pocket, sentHash);
+    if (left) hooks?.onEvidence?.({ txids: sentHash === null ? [] : [sentHash], ...(pocket(null) === undefined ? {} : { pocket: pocket(null) }) });
+    const result: VaultResult = left
+      ? await s.awaitSettled({ id: proposalId, account: vault, balances: [{ account: vault, asset: coin.asset, amount: null }, { account: allowance, asset: coin.asset, amount: null }] }, first)
+      : first;
+    return railResult(result, coin, vault, allowance, pocket, sentHash, left);
   }
 
   return {
@@ -124,7 +126,7 @@ export function vaultTopUpRail(deps: VaultTopUpDeps): Rail<VaultTopUpDraft> {
   };
 }
 
-function railResult(result: VaultResult, coin: CoinAmount, vault: string, allowance: string, pocket: (after: bigint | null) => PocketRead | undefined, sentHash: string | null): RailResult {
+function railResult(result: VaultResult, coin: CoinAmount, vault: string, allowance: string, pocket: (after: bigint | null) => PocketRead | undefined, sentHash: string | null, left: boolean): RailResult {
   const what = `${words(coin)} from your vault ${vault} to your allowance ${allowance}`;
   switch (result.state) {
     case 'done': {
@@ -138,11 +140,12 @@ function railResult(result: VaultResult, coin: CoinAmount, vault: string, allowa
       };
     }
     case 'refused':
+      if (result.released) return unsettled(`${result.code}: ${result.detail}`, what, sentHash, pocket, true);
       return { ok: false, reason: causeOf(result.code, result.detail), detail: `the top-up of ${what} did not go (${result.code}): ${result.detail}` };
     case 'settling':
-      return sentHash === null
-        ? { ok: false, reason: 'not_sent', detail: `the top-up of ${what} was not signed (vault_settling): ${result.detail}` }
-        : unsettled(result.detail, what, sentHash, pocket, true);
+      return left
+        ? unsettled(result.detail, what, sentHash, pocket, true)
+        : { ok: false, reason: 'not_sent', detail: `the top-up of ${what} was not signed (vault_settling): ${result.detail}` };
     case 'sent':
     case 'checking':
       return unsettled(result.detail, what, result.txHash ?? sentHash, pocket, true);
