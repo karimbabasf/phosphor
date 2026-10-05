@@ -93,12 +93,14 @@ export function shortfallOf(need: bigint, held: bigint): bigint {
   return need > held ? need - held : 0n;
 }
 
-/* The card's line for a move bigger than the allowance, in the words swap_quote gives the agent
-   (src/proposals/swap-reads.ts): what the allowance holds, what moves from the vault first, and the
-   Touch ID that confirms that move. */
+/* The card's line for a move bigger than the allowance: what the allowance holds, and the two Touch
+   IDs its Approve asks, in the order they come (wave 3's touch order, tests/unit/wave3-wiring.test.ts):
+   the move's own approval first, which opens the session the allowance key and the gas account live
+   in, then the vault's for the difference, whose dialog reads "move ... from your vault to your
+   allowance". swap_quote says the same amount to the agent (src/proposals/swap-reads.ts). */
 export function shortfallSentence(coin: Pick<CoinAmount, 'symbol' | 'decimals'>, held: bigint, short: bigint): string {
   const name = coin.symbol.toUpperCase() === 'WNEAR' ? 'NEAR' : coin.symbol;
-  return `Your allowance holds ${baseUnitsToDecimal(held, coin.decimals)} ${name}, less than this move spends, so ${baseUnitsToDecimal(short, coin.decimals)} ${name} moves from your vault first; you confirm that move with Touch ID.`;
+  return `Your allowance holds ${baseUnitsToDecimal(held, coin.decimals)} ${name}, less than this move spends. Approve asks for two Touch IDs: the first approves this move, the second moves ${baseUnitsToDecimal(short, coin.decimals)} ${name} from your vault to your allowance.`;
 }
 
 // ---------- the sweep plan ----------

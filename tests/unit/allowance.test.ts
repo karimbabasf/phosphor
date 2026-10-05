@@ -209,7 +209,7 @@ test('a clicked swap bigger than the allowance takes exactly the shortfall from 
     const proposed = await w.svc.proposeSwap({ chain: 'near', toChain: 'near', fromSymbol: 'USDC', toSymbol: 'USDT', amountIn: '3.000001' });
     assert.equal(proposed.status, 'pending', 'a move bigger than the allowance waits for a click, whatever its size');
     assert.ok(
-      proposed.verdict.reasons.includes('Your allowance holds 1 USDC, less than this move spends, so 2.000001 USDC moves from your vault first; you confirm that move with Touch ID.'),
+      proposed.verdict.reasons.includes('Your allowance holds 1 USDC, less than this move spends. Approve asks for two Touch IDs: the first approves this move, the second moves 2.000001 USDC from your vault to your allowance.'),
       JSON.stringify(proposed.verdict),
     );
     assert.equal(service.signatures, 0);
@@ -238,7 +238,7 @@ test('a clicked send bigger than the allowance takes the shortfall first; a move
     // A send always waits for a click, and its card says the vault adds the difference.
     const send = await w.svc.proposeSend({ to: SINK, symbol: 'USDC', amount: 10, where: 'intents' });
     assert.equal(send.status, 'pending', JSON.stringify(send.verdict));
-    assert.ok(send.verdict.reasons.some((r) => r.startsWith('Your allowance holds 4 USDC, less than this move spends, so 6 USDC moves')), JSON.stringify(send.verdict));
+    assert.ok(send.verdict.reasons.some((r) => r.startsWith('Your allowance holds 4 USDC, less than this move spends. Approve asks for two Touch IDs: the first approves this move, the second moves 6 USDC')), JSON.stringify(send.verdict));
     const sent = await settledRow(w, w.svc.approve(send.id));
     assert.equal(sent.status, 'executed', JSON.stringify(sent.result));
     assert.equal(w.chain.balanceOf(w.vault, USDC), usdc(494));

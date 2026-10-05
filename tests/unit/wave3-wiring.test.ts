@@ -122,7 +122,7 @@ test('after the move, a clicked swap bigger than the allowance moves exactly the
     const id = String(asked.json.id);
     const pending = w.svc.get(id)!;
     assert.equal(pending.status, 'pending', 'bigger than the allowance: it waits for a click, whatever its size');
-    assert.ok(pending.verdict.reasons.some((r) => r.includes('2.000001 USDC moves from your vault first')), JSON.stringify(pending.verdict));
+    assert.ok(pending.verdict.reasons.some((r) => r.includes('the first approves this move, the second moves 2.000001 USDC from your vault to your allowance')), JSON.stringify(pending.verdict));
 
     const from = w.seen.length;
     const clicked = await w.post('/api/approve', { id });
