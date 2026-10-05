@@ -306,8 +306,10 @@ async function waitFor(page: Json, expression: string, timeout = 15_000): Promis
   }
 }
 
-const ASKS_ABOUT = (name: string): string =>
-  `(function(){var a=document.querySelector('.agent-ask');return !!a&&!a.hidden&&a.getClientRects().length>0&&a.innerText.indexOf('"${name}"')>=0})()`;
+// The card names an agent it knows plainly ("Claude Code wants to use Phosphor") and any other by
+// the words it gave ("It calls itself codex").
+const ASKS_ABOUT = (words: string): string =>
+  `(function(){var a=document.querySelector('.agent-ask');return !!a&&!a.hidden&&a.getClientRects().length>0&&a.innerText.indexOf(${JSON.stringify(words)})>=0})()`;
 
 async function main(): Promise<void> {
   const require = createRequire(import.meta.url);
@@ -349,7 +351,7 @@ async function main(): Promise<void> {
 
     // 3. An agent started in a terminal takes its seat, and asks for a $25 move.
     const first = await outsider('claude-code');
-    await waitFor(page, ASKS_ABOUT('claude-code'));
+    await waitFor(page, ASKS_ABOUT('Claude Code wants to use Phosphor'));
     await sleep(1200);
     results.outsideMove = (await deposit(first, 25)).status;
     await sleep(2500);
@@ -370,7 +372,7 @@ async function main(): Promise<void> {
     // 6. Ask each time (Not now before the change) on the first: the second takes its place.
     await sleep(700);
     results.putOffFirst = await press(page, '.agent-ask button', /^(Ask each time|Not now)$/);
-    await waitFor(page, ASKS_ABOUT('codex'));
+    await waitFor(page, ASKS_ABOUT('It calls itself codex'));
     await sleep(250);
     await shoot(page, 'allow-card-next');
     await sleep(1200);
@@ -380,7 +382,7 @@ async function main(): Promise<void> {
 
     // 7. The first is allowed after all: its roster row's Change brings the card back, then Allow.
     results.reopened = await page.evaluate(`(function(){var row=Array.from(document.querySelectorAll('.agent-client')).filter(function(r){var n=r.querySelector('.agent-client-name');return n&&n.textContent.indexOf('claude-code,')===0})[0];var b=row?row.querySelector('.agent-client-change'):null;if(!b||b.disabled)return false;b.click();return true})()`);
-    await waitFor(page, ASKS_ABOUT('claude-code'), 5_000);
+    await waitFor(page, ASKS_ABOUT('Claude Code wants to use Phosphor'), 5_000);
     await sleep(1000);
     await shoot(page, 'allow-card-reopened');
     results.allowed = await press(page, '.agent-ask button', /^Allow$/);
@@ -391,7 +393,7 @@ async function main(): Promise<void> {
     await press(page, '.tabs .tab', /^Pro$/);
     await sleep(1200);
     await outsider('grok');
-    await waitFor(page, ASKS_ABOUT('grok'));
+    await waitFor(page, ASKS_ABOUT('It calls itself grok'));
     await sleep(1500);
     await shoot(page, 'allow-card-pro');
     await page.click('#btn-freeze');
@@ -428,12 +430,12 @@ async function main(): Promise<void> {
   check('F5 a cancelled card says when you said no, never that you approved it', cardsWith(r['card-cancelled-details'], 'You said no at') && !cardsWith(r['card-cancelled-details'], 'You approved it at'), r['card-cancelled-details']?.cards);
   check('F9 the harmless answer is Ask each time', (r['allow-card']?.ask?.keys ?? []).includes('Ask each time'), r['allow-card']?.ask?.keys);
   check('F9 a put-off agent keeps a way back on its roster row', (r['roster-after-ask-each-time']?.roster ?? []).some((row: Json) => row.text.includes('claude-code') && row.keys.includes('Change')), r['roster-after-ask-each-time']?.roster);
-  check('F9 the roster key asks again with the whole card', String(r['allow-card-reopened']?.ask?.text ?? '').includes('"claude-code"'), r['allow-card-reopened']?.ask?.text);
+  check('F9 the roster key asks again with the whole card', String(r['allow-card-reopened']?.ask?.text ?? '').includes('Claude Code wants to use Phosphor'), r['allow-card-reopened']?.ask?.text);
   check('F9 once allowed, the row says it can ask', (r['roster-after-allow']?.roster ?? []).some((row: Json) => row.text.startsWith('claude-code, can ask') && !row.keys.includes('Change')), r['roster-after-allow']?.roster);
   check('F10 one more agent waiting is said on the card', String(r['allow-card-two-waiting']?.ask?.text ?? '').includes('1 more agent is waiting'), r['allow-card-two-waiting']?.ask?.text);
-  check('F10 the next agent takes the card', String(r['allow-card-next']?.ask?.text ?? '').includes('"codex"'), r['allow-card-next']?.ask?.text);
-  check('F19 the card says what Allow does and does not do', String(r['allow-card']?.ask?.text ?? '').includes("the same as from Phosphor's own chat") && String(r['allow-card']?.ask?.text ?? '').includes('Moves it already asked for still wait for your OK.'), r['allow-card']?.ask?.text);
-  check('F20 a screen reader hears that an agent asks', (r['allow-card']?.live ?? []).some((t: string) => t.includes('An agent started outside Phosphor asks to be allowed.')), r['allow-card']?.live);
+  check('F10 the next agent takes the card', String(r['allow-card-next']?.ask?.text ?? '').includes('It calls itself codex'), r['allow-card-next']?.ask?.text);
+  check('F19 the card says what Allow does and does not do', String(r['allow-card']?.ask?.text ?? '').includes("Phosphor's own chat works the same way.") && String(r['allow-card']?.ask?.text ?? '').includes('Moves it already asked for still wait for your OK.'), r['allow-card']?.ask?.text);
+  check('F20 a screen reader hears that an agent asks', (r['allow-card']?.live ?? []).some((t: string) => t.includes('Claude Code wants to use Phosphor.')), r['allow-card']?.live);
   const noise = log.filter((l) => l.startsWith('[page]') || l.startsWith('[console'));
   check('the page threw nothing', noise.length === 0, noise.slice(0, 5));
 
