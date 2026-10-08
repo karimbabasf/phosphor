@@ -54,7 +54,7 @@ $ node scripts/run-tests.ts tests/unit/rekey-core.test.ts tests/unit/rekey.test.
 ✔ the migration bundle simulates to exactly C7's five events on P_a's hash, and runs to the four views
 ✔ a key someone adds to the vault while the move is being signed is caught after it: the vault moved, and the window is told it holds a key the move did not add
 $ node scripts/verifier-check.ts --simulate
-intents.near 0.4.4 EHTzkK...Wvqb spiked: yes
+intents.near 0.4.5 BtA1BE...othk spiked: yes
 PASS simulate move to the chip (own key adds chip and paper, removes itself, predecessor auth off; paper []; chip []): executed=3 events=public_key_added,public_key_added,public_key_removed,set_auth_by_predecessor_id(enabled=false),intents_executed exact: yes
 ```
 

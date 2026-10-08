@@ -304,10 +304,12 @@ function typedEvent(parsed: unknown, line: string): VerifierEvent {
 export type VerifierSource = { version: string; link: string | null; codeHash: string };
 
 /* The verifier the chip vault was spiked against: every payload shape it signs, the events it
-   expects and the views it reads were run live on this build of near/intents (rev
-   a2dd140892b68140bf7e70814604d3ba074d656c) on 2026-10-04, before any of it was written. Another
-   version or code hash is a verifier nobody here has tested yet. */
-export const SPIKED_VERIFIER = { version: '0.4.4', codeHash: 'EHTzkKyabhTGuKpvET5hBi7xPdKacuesMc91dDGkWvqb' } as const;
+   expects and the views it reads were run live on 0.4.4 (rev a2dd140892b68140bf7e70814604d3ba074d656c)
+   on 2026-10-04, before any of it was written. 0.4.5 (rev 16d04f6ec4401263f8914638710260da50bb46b0) replaced it on mainnet
+   by 2026-10-07; its diff touches only deposit notifications and key derivation, and both of
+   scripts/verifier-check.ts --simulate's chip bundles passed on it exactly that day. Another version
+   or code hash is a verifier nobody here has tested yet. */
+export const SPIKED_VERIFIER = { version: '0.4.5', codeHash: 'BtA1BEFNS619KkvXFsgcpQ21Tb5yMm32aaUkn7xNothk' } as const;
 
 export function isSpikedVerifier(source: VerifierSource): boolean {
   return source.version === SPIKED_VERIFIER.version && source.codeHash === SPIKED_VERIFIER.codeHash;
