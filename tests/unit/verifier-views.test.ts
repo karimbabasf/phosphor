@@ -260,20 +260,20 @@ test("a flat view failure, the missing-account one among them, is no answer and 
 // contract_source_metadata and view_account for intents.near as they answered on 2026-10-04.
 // The metadata's build_info (a container digest and the build command) is left out: nothing reads it.
 const METADATA = {
-  version: '0.4.4',
+  version: '0.4.5',
   link: 'https://github.com/near/intents/tree/a2dd140892b68140bf7e70814604d3ba074d656c',
   standards: [{ standard: 'dip4', version: '0.1.0' }, { standard: 'nep245', version: '1.0.0' }, { standard: 'nep330', version: '1.3.0' }],
 };
-const ACCOUNT = { amount: '124894964753447687473831213827', block_hash: '2KR9yoTPkcDmdJEkRrTmZVScbmvq7RZDPkTJHhFRy4rz', block_height: 218539660, code_hash: 'EHTzkKyabhTGuKpvET5hBi7xPdKacuesMc91dDGkWvqb', locked: '0', storage_paid_at: 0, storage_usage: 12427357549 };
+const ACCOUNT = { amount: '124894964753447687473831213827', block_hash: '2KR9yoTPkcDmdJEkRrTmZVScbmvq7RZDPkTJHhFRy4rz', block_height: 218539660, code_hash: 'BtA1BEFNS619KkvXFsgcpQ21Tb5yMm32aaUkn7xNothk', locked: '0', storage_paid_at: 0, storage_usage: 12427357549 };
 
 test('the deployed verifier is named by version and code hash, and only the spiked pair is spiked', async () => {
   const { fetchImpl, asked } = answering((p: Record<string, unknown>) => (p.request_type === 'view_account' ? { jsonrpc: '2.0', id: 1, result: ACCOUNT } : viewAnswer(METADATA)));
   const source = await liveVerifier(fetchImpl).sourceMetadata!();
-  assert.deepEqual(source, { version: '0.4.4', link: METADATA.link, codeHash: SPIKED_VERIFIER.codeHash });
+  assert.deepEqual(source, { version: '0.4.5', link: METADATA.link, codeHash: SPIKED_VERIFIER.codeHash });
   assert.equal(isSpikedVerifier(source!), true);
   assert.deepEqual(asked.map((a) => [a.request_type, a.method_name ?? null, a.account_id]).sort(), [['call_function', 'contract_source_metadata', 'intents.near'], ['view_account', null, 'intents.near']]);
 
-  assert.equal(isSpikedVerifier({ ...source!, version: '0.4.5' }), false, 'a new version');
+  assert.equal(isSpikedVerifier({ ...source!, version: '0.4.6' }), false, 'a new version');
   assert.equal(isSpikedVerifier({ ...source!, codeHash: '7zv5vXAajgX7XvJorxmeMLE48EuJQdGjTHXSyFmhU2r7' }), false, 'the same version string on other code');
   assert.equal(verifierSourceOf({ ...METADATA, link: undefined }, ACCOUNT)?.link, null);
   assert.equal(verifierSourceOf({ version: 7 }, ACCOUNT), null);

@@ -23,11 +23,11 @@ const ROOT = path.dirname(path.dirname(path.dirname(fileURLToPath(import.meta.ur
 
 // What intents.near answered on 2026-10-04 (spike2, block 218539660).
 const METADATA = {
-  version: '0.4.4',
+  version: '0.4.5',
   link: 'https://github.com/near/intents/tree/a2dd140892b68140bf7e70814604d3ba074d656c',
   standards: [{ standard: 'dip4', version: '0.1.0' }, { standard: 'nep245', version: '1.0.0' }, { standard: 'nep330', version: '1.3.0' }],
 };
-const ACCOUNT = { amount: '124894964753447687473831213827', block_hash: '2KR9yoTPkcDmdJEkRrTmZVScbmvq7RZDPkTJHhFRy4rz', block_height: 218539660, code_hash: 'EHTzkKyabhTGuKpvET5hBi7xPdKacuesMc91dDGkWvqb', locked: '0', storage_paid_at: 0, storage_usage: 12427357549 };
+const ACCOUNT = { amount: '124894964753447687473831213827', block_hash: '2KR9yoTPkcDmdJEkRrTmZVScbmvq7RZDPkTJHhFRy4rz', block_height: 218539660, code_hash: 'BtA1BEFNS619KkvXFsgcpQ21Tb5yMm32aaUkn7xNothk', locked: '0', storage_paid_at: 0, storage_usage: 12427357549 };
 const OTHER_CODE = '7zv5vXAajgX7XvJorxmeMLE48EuJQdGjTHXSyFmhU2r7';
 
 const viewResult = (value: unknown) => ({ result: [...Buffer.from(JSON.stringify(value), 'utf8')], logs: [], block_height: 218539660, block_hash: ACCOUNT.block_hash });
@@ -56,7 +56,7 @@ const both = (first: DeployedVerifier | null, second: DeployedVerifier | null = 
   { ...NEAR_RPCS[0]!, deployed: first },
   { ...NEAR_RPCS[1]!, deployed: second },
 ];
-const SPIKED_PAIR: DeployedVerifier = { version: '0.4.4', codeHash: SPIKED.codeHash };
+const SPIKED_PAIR: DeployedVerifier = { version: '0.4.5', codeHash: SPIKED.codeHash };
 
 test('the gate pins the same verifier, RPC and account the app does', () => {
   assert.deepEqual({ ...SPIKED }, { ...SPIKED_VERIFIER }, 'rerunning the spike pins the new pair in both places');
@@ -78,17 +78,17 @@ test('the gate asks two keyless NEAR RPCs that two different companies run', () 
 });
 
 test('the deployed verifier is read from contract_source_metadata and view_account on intents.near', async () => {
-  assert.deepEqual(deployedVerifierOf(viewResult(METADATA), ACCOUNT), { version: '0.4.4', codeHash: SPIKED.codeHash });
+  assert.deepEqual(deployedVerifierOf(viewResult(METADATA), ACCOUNT), { version: '0.4.5', codeHash: SPIKED.codeHash });
   const { fetchImpl, asked } = rpc(viewResult(METADATA), ACCOUNT);
   const deployed = await readDeployedVerifier({ fetchImpl, rpcUrl: 'http://rpc.test', pauseMs: 0 });
-  assert.deepEqual(deployed, { version: '0.4.4', codeHash: SPIKED.codeHash });
+  assert.deepEqual(deployed, { version: '0.4.5', codeHash: SPIKED.codeHash });
   assert.equal(isSpiked(deployed!), true);
   assert.deepEqual(asked.map((p) => `${p.request_type} ${p.account_id} ${p.method_name ?? ''}`.trim()).sort(), ['call_function intents.near contract_source_metadata', 'view_account intents.near']);
 });
 
 test('a busy RPC is asked again, and an RPC that never answers is no answer, never a verifier', async () => {
   const busy = rpc(viewResult(METADATA), ACCOUNT, 2);
-  assert.deepEqual(await readDeployedVerifier({ fetchImpl: busy.fetchImpl, rpcUrl: 'http://rpc.test', pauseMs: 0 }), { version: '0.4.4', codeHash: SPIKED.codeHash });
+  assert.deepEqual(await readDeployedVerifier({ fetchImpl: busy.fetchImpl, rpcUrl: 'http://rpc.test', pauseMs: 0 }), { version: '0.4.5', codeHash: SPIKED.codeHash });
   const down = (async () => {
     throw new TypeError('fetch failed');
   }) as typeof fetch;
@@ -104,11 +104,11 @@ test('a busy RPC is asked again, and an RPC that never answers is no answer, nev
 
 test('only the spiked build passes; another version, other code under the same version, or no answer stops a release', () => {
   assert.deepEqual(verifierProblems(both(SPIKED_PAIR)), []);
-  const upgraded = verifierProblems(both({ version: '0.4.5', codeHash: OTHER_CODE }));
+  const upgraded = verifierProblems(both({ version: '0.4.6', codeHash: OTHER_CODE }));
   assert.equal(upgraded.length, 1);
-  assert.match(upgraded[0]!, /intents\.near is 0\.4\.5 \(code 7zv5vX.*\), not 0\.4\.4 \(code EHTzkK.*\), the build the chip vault was spiked on: rerun the spike/);
+  assert.match(upgraded[0]!, /intents\.near is 0\.4\.6 \(code 7zv5vX.*\), not 0\.4\.5 \(code BtA1BE.*\), the build the chip vault was spiked on: rerun the spike/);
   assert.match(upgraded[0]!, /scripts\/verifier-gate\.ts and src\/relay\/verifier\.ts/);
-  assert.equal(verifierProblems(both({ version: '0.4.4', codeHash: OTHER_CODE })).length, 1, 'the hash pins the build, not the version string');
+  assert.equal(verifierProblems(both({ version: '0.4.5', codeHash: OTHER_CODE })).length, 1, 'the hash pins the build, not the version string');
   const unread = verifierProblems(both(null));
   assert.deepEqual(unread.map((p) => /could not be read from (FastNEAR \(free\.rpc\.fastnear\.com\)|dRPC \(near\.drpc\.org\)): the NEAR RPC did not answer/.test(p)), [true, true]);
 });
@@ -117,12 +117,12 @@ test('the two providers must agree: one silent, or two answers that differ, fail
   const oneSilent = verifierProblems(both(SPIKED_PAIR, null));
   assert.equal(oneSilent.length, 1);
   assert.match(oneSilent[0]!, /^intents\.near could not be read from dRPC \(near\.drpc\.org\): the NEAR RPC did not answer/);
-  const split = verifierProblems(both(SPIKED_PAIR, { version: '0.4.5', codeHash: OTHER_CODE }));
+  const split = verifierProblems(both(SPIKED_PAIR, { version: '0.4.6', codeHash: OTHER_CODE }));
   assert.equal(split.length, 1);
-  assert.match(split[0]!, /^the NEAR RPCs disagree about intents\.near: FastNEAR \(free\.rpc\.fastnear\.com\) says 0\.4\.4 \(code EHTzkKyabhTGuKpvET5hBi7xPdKacuesMc91dDGkWvqb\), dRPC \(near\.drpc\.org\) says 0\.4\.5 \(code 7zv5vXAajgX7XvJorxmeMLE48EuJQdGjTHXSyFmhU2r7\), so nobody can say which build is deployed/);
+  assert.match(split[0]!, /^the NEAR RPCs disagree about intents\.near: FastNEAR \(free\.rpc\.fastnear\.com\) says 0\.4\.5 \(code BtA1BEFNS619KkvXFsgcpQ21Tb5yMm32aaUkn7xNothk\), dRPC \(near\.drpc\.org\) says 0\.4\.6 \(code 7zv5vXAajgX7XvJorxmeMLE48EuJQdGjTHXSyFmhU2r7\), so nobody can say which build is deployed/);
   // A spiked answer beside a stranger's never passes, whichever provider gives which.
-  assert.match(verifierProblems(both({ version: '0.4.4', codeHash: OTHER_CODE }, SPIKED_PAIR))[0]!, /disagree/);
-  assert.equal(agreedVerifier(both(SPIKED_PAIR, { version: '0.4.4', codeHash: OTHER_CODE })), null);
+  assert.match(verifierProblems(both({ version: '0.4.5', codeHash: OTHER_CODE }, SPIKED_PAIR))[0]!, /disagree/);
+  assert.equal(agreedVerifier(both(SPIKED_PAIR, { version: '0.4.5', codeHash: OTHER_CODE })), null);
   assert.match(verifierProblems([{ ...NEAR_RPCS[0]!, deployed: SPIKED_PAIR }])[0]!, /fewer than two NEAR RPCs/);
   // Each provider is asked at its own address, both views each.
   const asked: string[] = [];
@@ -133,7 +133,7 @@ test('the two providers must agree: one silent, or two answers that differ, fail
     return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: params.request_type === 'view_account' ? account : viewResult(METADATA) }), { status: 200 });
   }) as typeof fetch;
   const answers = await readDeployedVerifiers({ fetchImpl, pauseMs: 0 });
-  assert.deepEqual(answers.map((a) => [a.name, a.deployed]), [['FastNEAR', SPIKED_PAIR], ['dRPC', { version: '0.4.4', codeHash: OTHER_CODE }]]);
+  assert.deepEqual(answers.map((a) => [a.name, a.deployed]), [['FastNEAR', SPIKED_PAIR], ['dRPC', { version: '0.4.5', codeHash: OTHER_CODE }]]);
   assert.deepEqual(asked.sort(), ['free.rpc.fastnear.com call_function', 'free.rpc.fastnear.com view_account', 'near.drpc.org call_function', 'near.drpc.org view_account']);
   assert.match(verifierProblems(answers)[0]!, /disagree/);
 });
@@ -156,20 +156,20 @@ test('the signed stage asks which verifier is deployed and fails on any but the 
       });
       return { code, text: lines.join('\n'), reads };
     };
-    const upgraded = await run('signed', { version: '0.4.5', codeHash: OTHER_CODE });
+    const upgraded = await run('signed', { version: '0.4.6', codeHash: OTHER_CODE });
     assert.equal(upgraded.code, 1);
     assert.equal(upgraded.reads, 1);
     assert.match(upgraded.text, /has no payload at Contents\/Resources\/phosphor/);
-    assert.match(upgraded.text, /intents\.near is 0\.4\.5 .*rerun the spike/);
+    assert.match(upgraded.text, /intents\.near is 0\.4\.6 .*rerun the spike/);
     const unread = await run('signed', null);
     assert.match(unread.text, /intents\.near could not be read/);
-    const split = await run('signed', SPIKED_PAIR, { version: '0.4.5', codeHash: OTHER_CODE });
+    const split = await run('signed', SPIKED_PAIR, { version: '0.4.6', codeHash: OTHER_CODE });
     assert.equal(split.code, 1);
     assert.match(split.text, /the NEAR RPCs disagree about intents\.near/);
-    const spiked = await run('signed', { version: '0.4.4', codeHash: SPIKED.codeHash });
+    const spiked = await run('signed', { version: '0.4.5', codeHash: SPIKED.codeHash });
     assert.equal(spiked.code, 1, 'the missing payload still fails it');
     assert.doesNotMatch(spiked.text, /intents\.near/);
-    const built = await run('built', { version: '0.4.5', codeHash: OTHER_CODE });
+    const built = await run('built', { version: '0.4.6', codeHash: OTHER_CODE });
     assert.equal(built.reads, 0);
     assert.doesNotMatch(built.text, /intents\.near/);
   } finally {

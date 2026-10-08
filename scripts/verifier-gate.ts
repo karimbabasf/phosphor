@@ -29,9 +29,9 @@ export const NEAR_RPCS: readonly NearRpc[] = [
   { name: 'dRPC', url: SECOND_NEAR_RPC },
 ];
 
-// The build every payload shape, event and view the chip vault relies on was run live against,
-// rev a2dd140892b68140bf7e70814604d3ba074d656c, on 2026-10-04.
-export const SPIKED = { version: '0.4.4', codeHash: 'EHTzkKyabhTGuKpvET5hBi7xPdKacuesMc91dDGkWvqb' } as const;
+// The build the chip vault is held to: 0.4.4 was spiked live on 2026-10-04, and 0.4.5 replaced it
+// on mainnet by 2026-10-07 and passed --simulate that day (src/relay/verifier.ts SPIKED_VERIFIER).
+export const SPIKED = { version: '0.4.5', codeHash: 'BtA1BEFNS619KkvXFsgcpQ21Tb5yMm32aaUkn7xNothk' } as const;
 
 export type DeployedVerifier = { version: string; codeHash: string };
 

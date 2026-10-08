@@ -5,10 +5,11 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
-## 0.11.1
+## 0.11.2
 
-Built 2026-10-07, the any-coin vault fix. Tagged v0.11.1 on 2026-10-07. There is no 0.11.0 release: that
-tag was pushed by mistake on 2026-09-25 and never published.
+Built 2026-10-07, the any-coin vault fix. Tagged v0.11.2 on 2026-10-07. There is no 0.11.0 or 0.11.1
+release: v0.11.0 was pushed by mistake on 2026-09-25, and v0.11.1 stopped at the release gate
+because NEAR had upgraded its verifier. Neither was published.
 
 - Every coin in your vault can leave it. Before, the Touch ID key moved only the 15 coins in its own
   table, so a swap or top-up of any other coin (GRAM first) failed with nothing signed, every time.
@@ -16,6 +17,9 @@ tag was pushed by mistake on 2026-09-25 and never published.
   its id, such as "move 641,867,112,059 units of nep245:v2_1.omni.hot.tg:1117_ from your vault to
   your allowance". A coin in the table still reads "move 100.00 USDC". The receiver is still only
   your allowance.
+- The app now holds itself to NEAR Intents' verifier 0.4.5, which replaced 0.4.4 on mainnet. Its
+  changes touch deposit notifications and key derivation only, and both vault test bundles passed
+  on it before this release.
 
 ## 0.10.19
 

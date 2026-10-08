@@ -212,10 +212,10 @@ Phosphor code involved in the check.
    ```
 
 3. The digest the release's source builds, on a Mac with Node 24 and Xcode's command line tools.
-   Use the tag of the version you have, such as v0.11.1:
+   Use the tag of the version you have, such as v0.11.2:
 
    ```
-   git clone --depth 1 --branch v0.11.1 https://github.com/karimbabasf/phosphor.git
+   git clone --depth 1 --branch v0.11.2 https://github.com/karimbabasf/phosphor.git
    cd phosphor && npm run bundle
    ```
 
@@ -253,7 +253,7 @@ window and WebKit state in the throwaway home, not in the installed app's `~/Lib
 The NEAR Intents verifier is not part of a release, and its owners can upgrade it. In the same
 clone, `node scripts/verifier-check.ts` reads which verifier is deployed (its version and the hash
 of its code) and prints `spiked: yes` only for the build the Touch ID vault was tested against,
-0.4.4. Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
+0.4.5 (0.4.4 until NEAR upgraded it, by 2026-10-07). Add `--simulate` to also run the vault's first proof and its move to a Touch ID key through
 `simulate_intents`, signed by keys made for that run, and check that the verifier reports exactly
 the events the app expects. Neither sends anything. A release asks the same question: once the app
 is signed, `scripts/release-check.ts` reads the deployed verifier from two keyless NEAR RPCs run by
