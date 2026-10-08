@@ -66,7 +66,7 @@ function hostileSet(nowMs: number, chipKey: string): Hostile[] {
     refused('a transfer with min_gas', p([{ ...transfer(USDC, '1', ALLOWANCE), min_gas: '30000000000000' }]), 'transfer_keys'),
     refused('two receivers', p([transfer(USDC, '1', ALLOWANCE), transfer('nep141:usdt.tether-token.near', '1', 'evil.near')]), 'one_receiver'),
     refused('two kinds', p([transfer(USDC, '1', ALLOWANCE), { intent: 'remove_public_key', public_key: P256_OTHER }]), 'one_kind'),
-    refused('a token outside the table', p([transfer('nep141:evil.near', '1', ALLOWANCE)]), 'token'),
+    refused('an asset id with no token id', p([transfer('nep245:mt.near', '1', ALLOWANCE)]), 'token'),
     refused('amount 0', p([transfer(USDC, '0', ALLOWANCE)]), 'amount'),
     refused('a leading zero', p([transfer(USDC, '05000000', ALLOWANCE)]), 'amount'),
     refused('u128 max + 1', p([transfer(USDC, '340282366920938463463374607431768211456', ALLOWANCE)]), 'amount'),

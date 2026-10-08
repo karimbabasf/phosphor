@@ -324,7 +324,7 @@ test('chipSign reads the service\'s grammar first: a key added, predecessor auth
       ['a key added', w.payload([{ intent: 'add_public_key', public_key: other }]), 'refused_kind'],
       ['two receivers', w.payload([send(USDC, '1', w.allowance), send('nep141:usdt.tether-token.near', '1', 'evil.near')]), 'one_receiver'],
       ['two kinds', w.payload([send(USDC, '1', w.allowance), { intent: 'remove_public_key', public_key: other }]), 'one_kind'],
-      ['a token outside the table', w.payload([send('nep141:evil.near', '1', w.allowance)]), 'token'],
+      ['an asset id with no token id', w.payload([send('nep245:mt.near', '1', w.allowance)]), 'token'],
       ['USDC twice', w.payload([send(USDC, '1', w.allowance), send('nep141:eth-0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48.omft.near', '1', w.allowance)]), 'token_repeat'],
       ['five transfers', w.payload([1, 2, 3, 4, 5].map((n) => send(USDC, String(n), w.allowance))), 'intents'],
       ['the chip removing itself', w.payload([{ intent: 'remove_public_key', public_key: w.pin.publicKey }]), 'signing_key'],
