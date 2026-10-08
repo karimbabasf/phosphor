@@ -33,6 +33,7 @@ const WNEAR = 'nep141:wrap.near';
 const ETH = 'nep141:eth.omft.near';
 const SOL = 'nep141:sol.omft.near';
 const DAI = 'nep141:eth-0x6b175474e89094c44da98b954eedeac495271d0f.omft.near';
+const GRAM = 'nep245:v2_1.omni.hot.tg:1117_'; // outside the table: TON's coin over HOT, held by Karim's vault on 2026-10-07
 const USDS = 'nep141:eth-0xdc035d45d973e3ec169d2276ddab16f1e407384f.omft.near'; // in the registry with no pinned id
 export const U128_MAX = '340282366920938463463374607431768211455';
 const SEND_TO = '0x12ab5678deadbeefdeadbeefdeadbeef90abcd34';
@@ -97,6 +98,11 @@ export const ACCEPTED: Case[] = [
   { name: 'a p256 key that is not the signing chip can go', payload: with1(remove(P256)), sentence: 'remove key p256:22NZnfeB...K51dpyMt from your vault' },
   { name: 'an ed25519 key can go', payload: with1(remove(ED)), sentence: 'remove key ed25519:5bV6jUfh...xr3joew5 from your vault' },
   { name: 'two removals in one touch', payload: with1(remove(RECOVERY), remove(SECP)), sentence: 'remove your paper recovery key and key secp256k1:TmysAU1B...H7MkuLjQ from your vault' },
+  { name: 'a coin outside the table moves, said by its base units and id', payload: with1(move(GRAM, '641867112059')), sentence: 'move 641,867,112,059 units of nep245:v2_1.omni.hot.tg:1117_ from your vault to your allowance' },
+  { name: 'a nep141 outside the table moves', payload: with1(move('nep141:evil.near', '1')), sentence: 'move 1 units of nep141:evil.near from your vault to your allowance' },
+  { name: 'a registry coin with no pinned id moves, its long id said by both ends', payload: with1(move(USDS, '1500')), sentence: 'move 1,500 units of nep141:e...6f1e407384f.omft.near from your vault to your allowance' },
+  { name: 'a nep171 asset moves', payload: with1(move('nep171:nft.near:42', '1')), sentence: 'move 1 units of nep171:nft.near:42 from your vault to your allowance' },
+  { name: 'a raw coin and a table coin in one touch', payload: with1(move(USDC, '1000000'), move(GRAM, '5')), sentence: 'move 1.00 USDC and 5 units of nep245:v2_1.omni.hot.tg:1117_ from your vault to your allowance' },
   { name: 'one base unit of USDC is said exactly', payload: with1(move(USDC, '1')), sentence: 'move 0.000001 USDC from your vault to your allowance' },
   { name: 'one yoctoNEAR is said exactly', payload: with1(move(WNEAR, '1')), sentence: 'move 0.000000000000000000000001 wNEAR from your vault to your allowance' },
   { name: 'thousands are grouped and trailing zeros trimmed', payload: with1(move(USDC, '1234567891000')), sentence: 'move 1,234,567.891 USDC from your vault to your allowance' },
@@ -230,11 +236,17 @@ export const REFUSED: Case[] = [
   refuse('no asset in tokens', with1({ intent: 'transfer', receiver_id: ALLOWANCE, tokens: {} }), 'tokens'),
   refuse('two assets in one transfer', with1({ intent: 'transfer', receiver_id: ALLOWANCE, tokens: { [USDC]: '1', [USDT]: '1' } }), 'tokens'),
   refuse('tokens as a string', with1({ intent: 'transfer', receiver_id: ALLOWANCE, tokens: USDC }), 'tokens'),
-  refuse('an asset outside the table', with1(move('nep141:evil.near', '1')), 'token'),
   refuse('a capital in the asset id', with1(move('NEP141:wrap.near', '1')), 'token'),
-  refuse('a nep245 asset', with1(move('nep245:mt.near:1', '1')), 'token'),
-  refuse('a registry coin with no pinned id', with1(move(USDS, '1')), 'token'),
   refuse('native NEAR by name', with1(move('near', '1')), 'token'),
+  refuse('a nep141 id with a token id after it', with1(move('nep141:wrap.near:1', '1')), 'token'),
+  refuse('a nep245 id with no token id', with1(move('nep245:mt.near', '1')), 'token'),
+  refuse('a nep245 id with an empty token id', with1(move('nep245:mt.near:', '1')), 'token'),
+  refuse('a nep245 token id with a space', with1(move('nep245:mt.near:1 1', '1')), 'token'),
+  refuse('a nep245 token id with a slash', with1(move('nep245:mt.near:a/b', '1')), 'token'),
+  refuse('a nep245 token id of 97 characters', with1(move(`nep245:mt.near:${'a'.repeat(97)}`, '1')), 'token'),
+  refuse('a nep245 contract that is not an account id', with1(move('nep245:MT.near:1', '1')), 'token'),
+  refuse('a kind of asset the verifier does not have', with1(move('nep999:mt.near:1', '1')), 'token'),
+  refuse('one raw asset in two transfers', with1(move(GRAM, '1'), move(GRAM, '2')), 'token_repeat'),
   refuse('an amount of zero', with1(move(USDC, '0')), 'amount'),
   refuse('a leading zero', with1(move(USDC, '007')), 'amount'),
   refuse('a plus sign', with1(move(USDC, '+5')), 'amount'),

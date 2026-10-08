@@ -305,6 +305,12 @@ your money.
   whether that is USDC on NEAR or USDC bridged from Ethereum; both are in the chip's token table,
   and a payload names each ticker once, so one sentence never says USDC twice. The value is the
   same either way. What closes it: nothing planned.
+- **A coin outside the chip's token table is said in base units.** The chip trusts a ticker and
+  decimals only from its own table, built into the vault service. Any other coin still leaves the
+  vault, so nothing is ever stuck there, but its sentence says the raw base units and the coin's id
+  ("move 641,867,112,059 units of nep245:v2_1.omni.hot.tg:1117_"), because a ticker or decimals
+  from the backend could be a lie. Read the leading digits against the move card. The receiver is
+  still only your pinned allowance. What closes it: nothing planned.
 - **One marker refuses every device-bound file on the Mac.** Markers are one pool for the whole
   Mac, and while any exists the service refuses every device-bound key file. So the first wallet a
   signed release binds, makes or restores, from any copy and in any data folder, stops every
@@ -1335,7 +1341,8 @@ the one call that asks you: the request's form; a marker for that key; the key i
 (`src-tauri/se-helper/IntentGrammar.swift`); that the payload signs for the pinned vault; and that
 the sentence fits in 120 characters. The grammar reads a strict subset of JSON that every parser
 reads one way (printable ASCII, no escapes, no key twice, exact key sets) and takes three shapes: a
-move of tokens from the app's token table out of the vault to the allowance its marker pins, the
+move of any token out of the vault to the allowance its marker pins (a token in the app's table said
+by its ticker, any other by its base units and id), the
 removal of a key that is not the signing chip, and the empty proof a rekey asks of a new chip key.
 A transfer to any other receiver is refused (rule `receiver`): the app never asks the chip for one,
 and a name the backend registered could read like a pinned account. Every other kind the verifier

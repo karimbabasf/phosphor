@@ -37,7 +37,9 @@
 //   receiver            a NEAR account id, never the signer, and for the sentence the allowance
 //                       the marker pins: no other receiver is ever signed for
 //   one_receiver        one receiver per payload
-//   tokens, token       exactly one asset per transfer, from TokenTable.swift
+//   tokens, token       exactly one asset per transfer: nep141:<account>, or nep245: or nep171:
+//                       <account>:<token id>. One in TokenTable.swift is said by its ticker; any
+//                       other by its raw base units and its id, so no coin is ever stuck in a vault
 //   amount              a string of digits, no leading zero, 1 to the u128 maximum
 //   token_repeat        a token symbol once per payload
 //   remove_keys         exactly intent, public_key
@@ -53,6 +55,7 @@
 // characters. Amounts are exact, thousands grouped, trailing zeros trimmed to two places.
 //   confirm this Mac's Touch ID key for your vault          (no intents: the rekey's proof)
 //   move 100.00 USDC from your vault to your allowance
+//   move 641,867,112,059 units of nep245:v2_1.omni.hot.tg:1117_ from your vault to your allowance
 //   remove your paper recovery key from your vault
 //   remove key secp256k1:TmysAU1B...H7MkuLjQ from your vault
 //
@@ -70,11 +73,16 @@ struct GrammarRefusal: Error, Equatable {
 
 /* An asset the chip key may move: the verifier's id, the ticker the sentence says, and the decimals
    that place the point in its amount. The rows are TokenTable.swift, which scripts/gen-chip-tokens.ts
-   writes from the app's own registry. */
+   writes from the app's own registry. An asset outside the table has no ticker and no decimals the
+   chip can trust, since Node would be the one to say them, so it is `raw`: the sentence says its
+   base units and its id exactly as the verifier will read them. */
 struct ChipToken: Equatable {
   let assetId: String
   let symbol: String
   let decimals: Int
+
+  static func raw(_ assetId: String) -> ChipToken { ChipToken(assetId: assetId, symbol: "", decimals: 0) }
+  var isRaw: Bool { symbol.isEmpty }
 }
 
 /* What the chip's marker pins: the vault, the allowance it tops up, and the paper recovery key. */
@@ -356,6 +364,7 @@ enum IntentGrammar {
       }
       let amounts = payload.intents.map { item -> String in
         guard case .transfer(_, let token, let amount) = item else { return "" }
+        if token.isRaw { return "\(grouped(Array(amount))) units of \(assetName(token.assetId))" }
         return "\(decimal(amount, places: token.decimals)) \(token.symbol)"
       }
       said = "move \(list(amounts)) from \(from) to your allowance"
@@ -416,9 +425,11 @@ enum IntentGrammar {
     guard case .object(let tokens)? = f["tokens"], tokens.count == 1 else {
       throw GrammarRefusal(rule: "tokens", message: "tokens must hold exactly one asset")
     }
-    guard let token = chipTokens.first(where: { $0.assetId == tokens[0].key }) else {
-      throw GrammarRefusal(rule: "token", message: "\(tokens[0].key) is not in the chip token table")
+    let asset = tokens[0].key
+    guard isAssetId(asset) else {
+      throw GrammarRefusal(rule: "token", message: "\(asset) is not a nep141, nep245 or nep171 asset id")
     }
+    let token = chipTokens.first(where: { $0.assetId == asset }) ?? .raw(asset)
     guard case .string(let amount) = tokens[0].value, isAmount(amount) else {
       throw GrammarRefusal(rule: "amount", message: "an amount must be a string of digits from 1 to the u128 maximum, with no leading zero")
     }
@@ -452,7 +463,8 @@ enum IntentGrammar {
   }
 
   /* What holds across the intents: one kind, one receiver, a token symbol once and a key once. A
-     symbol and not an id, so a sentence never says USDC twice for two different USDC. */
+     symbol and not an id, so a sentence never says USDC twice for two different USDC; a raw asset,
+     said by its id, is held to its id. */
   static func together(_ intents: [VaultIntent]) throws {
     var kinds = Set<String>()
     var receivers = Set<String>()
@@ -463,8 +475,9 @@ enum IntentGrammar {
       case .transfer(let receiver, let token, _):
         kinds.insert("transfer")
         receivers.insert(receiver)
-        guard symbols.insert(token.symbol).inserted else {
-          throw GrammarRefusal(rule: "token_repeat", message: "\(token.symbol) appears twice; a payload moves each token once")
+        let said = token.isRaw ? token.assetId : token.symbol
+        guard symbols.insert(said).inserted else {
+          throw GrammarRefusal(rule: "token_repeat", message: "\(said) appears twice; a payload moves each token once")
         }
       case .removeKey(let key):
         kinds.insert("remove_public_key")
@@ -508,6 +521,26 @@ enum IntentGrammar {
     }
     return !afterSeparator
   }
+
+  /* A verifier asset id: nep141:<account>, or nep245: or nep171: then <account>:<token id>, the
+     token id 1 to 96 of A-Z, a-z, 0-9, dot, dash and underscore. */
+  static func isAssetId(_ s: String) -> Bool {
+    let parts = s.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
+    switch parts.first {
+    case "nep141"?: return parts.count == 2 && isAccountId(parts[1])
+    case "nep245"?, "nep171"?:
+      guard parts.count == 3, isAccountId(parts[1]) else { return false }
+      let id = Array(parts[2].utf8)
+      return !id.isEmpty && id.count <= 96 && id.allSatisfy { c in
+        (c >= 0x61 && c <= 0x7a) || (c >= 0x41 && c <= 0x5a) || (c >= 0x30 && c <= 0x39) || c == 0x2e || c == 0x2d || c == 0x5f
+      }
+    default: return false
+    }
+  }
+
+  /* A raw asset as the sentence says it: whole up to 32 characters, past that its first 8 and its
+     last 21, which keep the part that tells two bridged tokens apart (the contract's address). */
+  static func assetName(_ id: String) -> String { id.utf8.count <= 32 ? id : "\(id.prefix(8))...\(id.suffix(21))" }
 
   /* Exactly the digits a u128 prints: no sign, no leading zero, 1 to 2^128 - 1. */
   static func isAmount(_ s: String) -> Bool {
@@ -596,12 +629,17 @@ enum IntentGrammar {
     var fraction = Array(digits[(digits.count - places)...])
     while fraction.count > 2, fraction.last == "0" { fraction.removeLast() }
     while fraction.count < 2 { fraction.append("0") }
-    var grouped = ""
+    return grouped(whole) + "." + String(fraction)
+  }
+
+  /* Whole digits with their thousands grouped. */
+  static func grouped(_ whole: [Character]) -> String {
+    var out = ""
     for (i, c) in whole.enumerated() {
-      if i > 0, (whole.count - i) % 3 == 0 { grouped.append(",") }
-      grouped.append(c)
+      if i > 0, (whole.count - i) % 3 == 0 { out.append(",") }
+      out.append(c)
     }
-    return grouped + "." + String(fraction)
+    return out
   }
 }
 

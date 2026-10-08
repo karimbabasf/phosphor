@@ -5,6 +5,17 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.10.20
+
+Built 2026-10-07, the any-coin vault fix. Tagged v0.10.20 on 2026-10-07.
+
+- Every coin in your vault can leave it. Before, the Touch ID key moved only the 15 coins in its own
+  table, so a swap or top-up of any other coin (GRAM first) failed with nothing signed, every time.
+  Now a coin outside the table moves too, and the Touch ID sentence says its exact base units and
+  its id, such as "move 641,867,112,059 units of nep245:v2_1.omni.hot.tg:1117_ from your vault to
+  your allowance". A coin in the table still reads "move 100.00 USDC". The receiver is still only
+  your allowance.
+
 ## 0.10.19
 
 Built 2026-10-05, the deposit fix. Tagged v0.10.19 on 2026-10-05.

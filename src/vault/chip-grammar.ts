@@ -31,6 +31,8 @@ const NONCE_LIFE_NS = BigInt(NONCE_LIFE_AFTER_DEADLINE_MS) * 1_000_000n;
 const ACCOUNT_ID = /^(?=.{2,64}$)[a-z0-9]+(?:[-_.][a-z0-9]+)*$/;
 const EVM = /^0x[0-9a-f]{40}$/;
 const HEX64 = /^[0-9a-f]{64}$/;
+// IntentGrammar.swift isAssetId: nep141:<account>, or nep245: / nep171: then <account>:<token id>.
+const TOKEN_ID = /^[A-Za-z0-9._-]{1,96}$/;
 const DEADLINE = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?Z$/;
 
 /* The bytes, before anything parses them: at most 4096, printable ASCII and JSON whitespace only,
@@ -62,6 +64,21 @@ function nonceExpiryNs(nonce: string): bigint {
 
 const ends = (s: string): string => `${s.slice(0, 8)}...${s.slice(-8)}`;
 
+export function isAssetId(id: string): boolean {
+  const parts = id.split(':');
+  if (parts[0] === 'nep141') return parts.length === 2 && ACCOUNT_ID.test(parts[1]!);
+  if (parts[0] === 'nep245' || parts[0] === 'nep171') return parts.length === 3 && ACCOUNT_ID.test(parts[1]!) && TOKEN_ID.test(parts[2]!);
+  return false;
+}
+
+/* What the sentence says for one asset and amount (IntentGrammar.swift sentence): a table token by
+   its ticker and decimals, any other by its raw base units and its id. */
+function said(asset: string, amount: string): string {
+  const token = chipTokens().get(asset);
+  if (token !== undefined) return `${sentenceAmount(amount, token.decimals)} ${token.symbol}`;
+  return `${grouped(amount)} units of ${asset.length <= 32 ? asset : `${asset.slice(0, 8)}...${asset.slice(-21)}`}`;
+}
+
 /* An account as the sentence names it (IntentGrammar.swift name), or null when it hangs on a pin the
    caller did not give: a 0x account may be the allowance. */
 function nameOf(account: string, pins: GrammarPins): string | null {
@@ -77,6 +94,12 @@ function list(items: string[]): string {
   return items.length > 1 ? `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}` : (items[0] ?? '');
 }
 
+function grouped(whole: string): string {
+  let out = '';
+  for (let i = 0; i < whole.length; i += 1) out += (i > 0 && (whole.length - i) % 3 === 0 ? ',' : '') + whole[i];
+  return out;
+}
+
 // Base units as the sentence says them: exact, thousands grouped, trailing zeros trimmed to two places.
 export function sentenceAmount(amount: string, places: number): string {
   const digits = amount.length <= places ? '0'.repeat(places + 1 - amount.length) + amount : amount;
@@ -84,9 +107,7 @@ export function sentenceAmount(amount: string, places: number): string {
   let fraction = digits.slice(digits.length - places);
   while (fraction.length > 2 && fraction.endsWith('0')) fraction = fraction.slice(0, -1);
   fraction = fraction.padEnd(2, '0');
-  let grouped = '';
-  for (let i = 0; i < whole.length; i += 1) grouped += (i > 0 && (whole.length - i) % 3 === 0 ? ',' : '') + whole[i];
-  return `${grouped}.${fraction}`;
+  return `${grouped(whole)}.${fraction}`;
 }
 
 /* The shortest the service's sentence can be: its exact length when the pins are given. */
@@ -98,8 +119,7 @@ function sentenceLength(p: VaultPayload, pins: GrammarPins): number {
     const amounts = p.intents.map((i) => {
       if (i.intent !== 'transfer') return '';
       const [asset, amount] = Object.entries(i.tokens)[0]!;
-      const token = chipTokens().get(asset)!;
-      return `${sentenceAmount(amount, token.decimals)} ${token.symbol}`;
+      return said(asset, amount);
     });
     return `move ${list(amounts)} from ${from} to your allowance`.length;
   }
@@ -128,7 +148,7 @@ export function chipPayloadRefusal(p: VaultPayload, chip: string, nowMs: number,
     if (intent.intent === 'transfer') {
       if (!ACCOUNT_ID.test(intent.receiver_id)) return { rule: 'receiver', message: 'receiver_id is not a NEAR account id' };
       const asset = Object.keys(intent.tokens)[0]!;
-      if (!chipTokens().has(asset)) return { rule: 'token', message: `${asset} is not in the chip token table` };
+      if (!isAssetId(asset)) return { rule: 'token', message: `${asset} is not a nep141, nep245 or nep171 asset id` };
     } else if (intent.public_key === chip) {
       return { rule: 'signing_key', message: 'the chip key never removes itself' };
     }
@@ -141,7 +161,8 @@ export function chipPayloadRefusal(p: VaultPayload, chip: string, nowMs: number,
   for (const intent of p.intents) {
     kinds.add(intent.intent);
     if (intent.intent === 'transfer') {
-      const symbol = chipTokens().get(Object.keys(intent.tokens)[0]!)!.symbol;
+      const asset = Object.keys(intent.tokens)[0]!;
+      const symbol = chipTokens().get(asset)?.symbol ?? asset;
       if (symbols.has(symbol)) return { rule: 'token_repeat', message: `${symbol} appears twice; a payload moves each token once` };
       symbols.add(symbol);
       receivers.add(intent.receiver_id);
