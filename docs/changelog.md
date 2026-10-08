@@ -5,9 +5,10 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
-## 0.10.20
+## 0.11.1
 
-Built 2026-10-07, the any-coin vault fix. Tagged v0.10.20 on 2026-10-07.
+Built 2026-10-07, the any-coin vault fix. Tagged v0.11.1 on 2026-10-07. There is no 0.11.0 release: that
+tag was pushed by mistake on 2026-09-25 and never published.
 
 - Every coin in your vault can leave it. Before, the Touch ID key moved only the 15 coins in its own
   table, so a swap or top-up of any other coin (GRAM first) failed with nothing signed, every time.
