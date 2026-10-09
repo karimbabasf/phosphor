@@ -44,13 +44,13 @@
     "node": ">=24"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.31.0",
-    "viem": "^2.57.1",
+    "@modelcontextprotocol/sdk": "^1.32.1",
+    "viem": "^2.57.3",
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.12.0",
-    "@types/node": "^26.6.3",
+    "@tauri-apps/cli": "^2.12.1",
+    "@types/node": "^26.6.4",
     "typescript": "^7.0.2"
   }
 }
