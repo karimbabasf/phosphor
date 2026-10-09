@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 
-import type { HlDepositDraft } from '../../src/types.ts';
+import type { HlDepositDraft, Proposal } from '../../src/types.ts';
 import { ReasonError } from '../../src/rails/reasons.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
 import { toBaseUnits } from '../../src/intents.ts';
 import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../../src/rails/intents-native.ts';
 import { INTENTS_VERIFIER } from '../../src/rails/intents-native.ts';
-import type { HlSignPort, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
+import type { HlSignPort, HlUsdcCredit, HlUserSignedDeps } from '../../src/rails/hl-user-signed.ts';
 import {
   HYPERCORE_COUNTERPARTY,
   HYPERCORE_FEE_BPS,
@@ -115,6 +115,8 @@ type ApiOverrides = {
   quote?: Partial<OneClickQuote>;
   echo?: Record<string, unknown> | null;
   status?: OneClickStatus['status'];
+  // 1Click's word at the moment it is asked, for a test that runs a clock.
+  statusAt?: () => OneClickStatus['status'];
   refundedAmount?: string;
   refundReason?: string;
   settledAmountOut?: string;
@@ -165,7 +167,7 @@ function fakeApi(over: ApiOverrides = {}): { api: IntentsApiPort; signer: Intent
     },
     async status() {
       if (over.statusThrows) throw new Error('status endpoint down');
-      const status = over.status ?? 'SUCCESS';
+      const status = over.statusAt?.() ?? over.status ?? 'SUCCESS';
       return {
         found: true,
         status,
@@ -980,4 +982,251 @@ test('Freeze met after the deposit landed on spot leaves it there, signs no move
   assert.equal(exchange.length, 0, 'no move to perp was signed or posted');
   assert.match(out.detail, /move to perp threw: Everything is frozen, so nothing was signed/);
   assert.match(out.detail, /not margin yet; do not deposit again/);
+});
+
+// ---------- the credit on the account's own ledger ends the wait ----------
+//
+// 2026-10-09, Karim: "the hyperliquid depositing works but it is relying mostly on the 1click api
+// status instead of checking on chain which leads to like a 30 second delay". The money was on
+// the account and the card waited for 1Click's SUCCESS, which trails the credit while 1Click holds
+// the order on its side. The venue's ledger names each credit with its amount the moment it
+// lands, so a credit there that can only be this deposit's ends the wait. 1Click's word still
+// decides a refund or a failure, and still settles a deposit the ledger never shows.
+//
+// One clock runs the world, and every wait the rail asks for moves it. After the submit, NEAR
+// runs the signed transfer at RUNS_AFTER_MS, the venue credits at CREDITED_AFTER_MS, and 1Click
+// says SUCCESS at SAYS_AFTER_MS.
+
+const RUNS_AFTER_MS = 2_000;
+const CREDITED_AFTER_MS = 6_000;
+const SAYS_AFTER_MS = 36_000;
+const CREDITED = 9.6594;
+const NONCE = 'Vij2xgAlKBKzwEtQGN8wzBgg5wAN1h+JO1SSpSw/VVo=';
+
+function ledgerCredit(over: Partial<HlUsdcCredit> = {}): HlUsdcCredit {
+  return { atMs: NOW + CREDITED_AFTER_MS, hash: '0xc511', usdc: CREDITED, book: 'perp', delivery: true, ...over };
+}
+
+type World = {
+  // What the ledger holds at a moment of the clock, before any "since" is applied.
+  ledger?: (at: number) => HlUsdcCredit[] | null;
+  nearRuns?: boolean;
+  status?: (sinceSubmitMs: number) => OneClickStatus['status'];
+  // The account at a moment, counted from the submit.
+  account?: (sinceSubmitMs: number) => AccountShape;
+  // How far this Mac's clock runs ahead of the venue's: the venue stamps its reads and its ledger on its own.
+  macAheadMs?: number;
+  // The proposal store as the rail reads it (otherMoneyToAccount).
+  proposals?: () => Proposal[];
+};
+
+function clockedRail(w: World = {}) {
+  let clock = NOW;
+  const since = (): number => clock - NOW;
+  const nonceAsks: Array<[string, string]> = [];
+  const exchange: any[] = [];
+  const shapeAt =
+    w.account ?? ((t: number): AccountShape => (t >= CREDITED_AFTER_MS ? { perp: 0, spot: CREDITED, unifiedAvailable: CREDITED } : { perp: 0, spot: 0, unifiedAvailable: 0 }));
+  const json = (body: unknown): Response => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
+  const fetchImpl: typeof fetch = async (url, init) => {
+    const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+    if (String(url).endsWith('/exchange')) {
+      exchange.push(body);
+      return json({ status: 'ok', response: { type: 'default' } });
+    }
+    const shape = shapeAt(since());
+    if (body.type === 'clearinghouseState') return json({ marginSummary: { accountValue: String(shape.perp), totalMarginUsed: '0' }, withdrawable: String(shape.perp), assetPositions: [], time: clock - (w.macAheadMs ?? 0) });
+    if (body.type === 'userAbstraction') return json(shape.unifiedAvailable !== undefined ? 'unifiedAccount' : 'standard');
+    return json({
+      balances: [{ coin: 'USDC', token: 0, total: String(shape.spot), hold: '0' }],
+      ...(shape.unifiedAvailable !== undefined ? { tokenToAvailableAfterMaintenance: [[0, String(shape.unifiedAvailable)]] } : {}),
+    });
+  };
+  const sign: HlSignPort = {
+    address: () => SELF,
+    signTypedData: async () => ({ r: `0x${'1'.repeat(64)}`, s: `0x${'2'.repeat(64)}`, v: 27 }),
+  };
+  const status = w.status ?? ((t: number): OneClickStatus['status'] => (t >= SAYS_AFTER_MS ? 'SUCCESS' : 'PROCESSING'));
+  const { api, signer, calls } = fakeApi({ statusAt: () => status(since()) });
+  const ledger = w.ledger ?? ((at: number): HlUsdcCredit[] => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit()] : []));
+  const r = hypercoreDepositRail({
+    keysPath: KEYS,
+    api,
+    signer,
+    hl: { keysPath: KEYS, fetchImpl, sign, now: () => clock },
+    now: () => clock,
+    // Every wait moves the clock, then lets whatever the rail started in the background land.
+    sleep: async (ms) => {
+      clock += ms;
+      await new Promise((resolve) => setImmediate(resolve));
+    },
+    pollIntervalMs: 1_000,
+    pollTimeoutMs: 180_000,
+    quoteKey: TEST_QUOTE_KEY,
+    settleSchedule: { firstMs: 500, maxMs: 1_000, timeoutMs: 10_000 },
+    credits: async () => ledger(clock),
+    ...(w.proposals === undefined ? {} : { proposals: w.proposals }),
+    nonceUsed: async (account, nonce) => {
+      nonceAsks.push([account, nonce]);
+      return w.nearRuns === false ? false : since() >= RUNS_AFTER_MS;
+    },
+    creditRecheckMs: 1_000,
+  });
+  return { rail: r, calls, nonceAsks, exchange, elapsed: () => since() };
+}
+
+test('a credit on the account\'s own ledger settles the deposit while 1Click still says PROCESSING, with the amount credited', async () => {
+  const w = clockedRail();
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on 1Click's word rather than the venue's`);
+  assert.ok(w.elapsed() >= CREDITED_AFTER_MS, 'and never before the venue showed it');
+  assert.match(out.detail, /funded Hyperliquid with 9\.6594 USDC/);
+  assert.match(out.detail, /Hyperliquid's own ledger shows it credited \(0xc511\) while 1click still reported PROCESSING/);
+  assert.match(out.detail, /intent HASH1/);
+  // What the card and the receipt print as arrived: the venue's figure, not the quote.
+  assert.equal(out.evidence?.settledAmountOut, '9.6594');
+  assert.equal(out.evidence?.handle, HANDLE);
+  assert.equal(out.pocket?.after, String(Math.round(CREDITED * 10 ** HYPERCORE_USDC_DECIMALS)));
+  assert.equal(w.calls.signed.length, 1, 'signed exactly once');
+  assert.deepEqual(w.nonceAsks[0], [ACCOUNT, NONCE], 'NEAR was asked about this deposit\'s own signed transfer');
+  assert.equal(w.exchange.length, 0, 'a unified account moves nothing between books');
+});
+
+// The ledger is stamped on the venue's clock, and the window it is read from opened on this Mac's,
+// so a Mac running 30 s fast put every credit before the window and the card waited for 1Click.
+// The window opens on the venue's own clock, off the account read taken before the signature.
+test('a Mac clock that runs ahead of the venue still settles on the credit, the window being on the venue clock', async () => {
+  const AHEAD = 30_000;
+  const w = clockedRail({
+    macAheadMs: AHEAD,
+    ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ atMs: NOW - AHEAD + CREDITED_AFTER_MS })] : []),
+  });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on 1Click's word: the credit fell outside a window on this Mac's clock`);
+  assert.equal(out.evidence?.settledAmountOut, '9.6594');
+});
+
+test('a unified account whose free collateral did not rise still settles on the credit its ledger names', async () => {
+  // A position lost what the deposit added in the same minute: the balance rule sees no rise and
+  // would wait two minutes to call it settling. The ledger names the credit itself.
+  const w = clockedRail({ account: () => ({ perp: 0, spot: 0, unifiedAvailable: 0 }) });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit`);
+  assert.match(out.detail, /margin already: 9\.6594 USDC was credited/);
+});
+
+// A credit on the spot book is not the shape 1Click delivers (spot into our perp), so it is no early
+// proof (review 2026-10-09). On 1Click's SUCCESS the balance says where the money sits, and exactly
+// what the spot side gained moves to perp.
+test('a standard account credited on its spot book waits for 1Click, then has exactly the spot gain moved to perp', async () => {
+  const w = clockedRail({
+    ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ book: 'spot', delivery: false })] : []),
+    account: (t) => (t >= CREDITED_AFTER_MS ? { perp: 0, spot: CREDITED } : { perp: 0, spot: 0 }),
+  });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, before 1Click said so`);
+  assert.match(out.detail, /moved to perp/);
+  assert.equal(w.exchange.length, 1);
+  assert.equal(w.exchange[0].action.type, 'usdClassTransfer');
+  assert.equal(w.exchange[0].action.amount, '9.6594');
+});
+
+// What the ledger shows and is NOT this deposit. Each one waits for 1Click, and then settles
+// on its SUCCESS exactly as before.
+for (const [what, ledger] of [
+  ['a credit stamped before the deposit was signed', () => [ledgerCredit({ atMs: NOW - 1 })]],
+  ['a credit under the floor the card promised', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 9.5 })] : [])],
+  ['a credit larger than everything the deposit spent', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 25 })] : [])],
+  // Review 2026-10-09: the cap was the draft's larger of dollars and coins, which a coin under a
+  // dollar makes ten times the deposit. It is the signed quote's output now: 9.6594, and 2% over.
+  ['a credit over the signed quote though under the draft', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 9.95 })] : [])],
+  ['a credit that is not a 1Click delivery', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ delivery: false })] : [])],
+  ['a ledger that cannot be read', () => null],
+] as const) {
+  test(`${what} does not settle the deposit: it waits for 1Click's SUCCESS`, async () => {
+    const w = clockedRail({ ledger });
+    const out = await w.rail.execute(draft());
+    assert.equal(out.ok, true, out.detail);
+    assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, before 1Click said so`);
+    assert.doesNotMatch(out.detail, /own ledger shows/);
+    assert.match(out.detail, /funded Hyperliquid with a quoted 9\.6594 USDC/);
+  });
+}
+
+// Review 2026-10-09: the rail's own memory of deposits in flight ends with the process, so a deposit
+// stuck from before a restart, or one whose order outlived the hold, left its credit free for the
+// next deposit of the same size, which then said "funded" while 1Click refunded it. The proposal
+// store outlives the process; while other money to the account is open there, nothing settles on
+// the ledger.
+const OTHER = (over: Partial<Proposal>): Proposal =>
+  ({
+    id: 'p-other',
+    kind: 'hl_deposit',
+    createdAt: new Date(NOW - 60_000).toISOString(),
+    decidedAt: new Date(NOW - 60_000).toISOString(),
+    status: 'needs_reconciliation',
+    draft: draft(),
+    simulation: null,
+    verdict: { decision: 'allow', reasons: [] },
+    ...over,
+  }) as unknown as Proposal;
+
+for (const [what, row] of [
+  ['another deposit to the account still settling from before a restart', OTHER({})],
+  ['another deposit that failed after it signed and was never refunded', OTHER({ status: 'failed', result: { ok: false, detail: 'x', evidence: { handle: 'h', providerStage: 'PROCESSING' } } })],
+  ['a payout to the same Hyperliquid address still running', OTHER({ kind: 'intents_pay', status: 'executing', draft: { kind: 'intents_pay', network: 'hypercore', to: SELF } as any })],
+  ['another deposit settled two minutes ago, whose credit may land after it', OTHER({ status: 'executed', settledAt: new Date(NOW - 120_000).toISOString() })],
+] as const) {
+  test(`with ${what} in the store, a deposit waits for 1Click`, async () => {
+    const w = clockedRail({ proposals: () => [row] });
+    const out = await w.rail.execute(draft(), 'p-self');
+    assert.equal(out.ok, true, out.detail);
+    assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit on a credit that could be the other one's`);
+    assert.doesNotMatch(out.detail, /own ledger shows/);
+  });
+}
+
+test('money to the account that is long settled, refunded, or to another account leaves the ledger path open', async () => {
+  const rows = [
+    OTHER({ id: 'old', status: 'executed', settledAt: new Date(NOW - 3_600_000).toISOString() }),
+    OTHER({ id: 'refunded', status: 'failed', result: { ok: false, detail: 'x', evidence: { handle: 'h', providerStage: 'REFUNDED' } } }),
+    OTHER({ id: 'elsewhere', draft: draft({ hlAccount: '0x3333333333333333333333333333333333333333' as Address }) }),
+    OTHER({ id: 'p-self', status: 'executing' }),
+  ];
+  const w = clockedRail({ proposals: () => rows });
+  const out = await w.rail.execute(draft(), 'p-self');
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on 1Click's word`);
+  assert.match(out.detail, /own ledger shows/);
+});
+
+test('no credit counts until NEAR shows the deposit\'s own signed transfer spent', async () => {
+  const w = clockedRail({ nearRuns: false });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on a credit nothing tied to this deposit`);
+  assert.doesNotMatch(out.detail, /own ledger shows/);
+  assert.ok(w.nonceAsks.length > 0, 'NEAR was asked');
+});
+
+test('two deposits in flight on one account: the ledger cannot say whose credit is whose, so both wait for 1Click', async () => {
+  const w = clockedRail({ ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit(), ledgerCredit({ hash: '0xc512', atMs: NOW + CREDITED_AFTER_MS + 1 })] : []) });
+  const [a, b] = await Promise.all([w.rail.execute(draft(), 'p1'), w.rail.execute(draft(), 'p2')]);
+  for (const out of [a, b]) {
+    assert.equal(out.ok, true, out.detail);
+    assert.doesNotMatch(out.detail, /own ledger shows/);
+  }
+  assert.ok(w.elapsed() >= SAYS_AFTER_MS);
+});
+
+test('1Click still decides a refund: an order it refunds is a refund, whatever lands on the account', async () => {
+  const w = clockedRail({ status: (t) => (t >= 1_000 ? 'REFUNDED' : 'PROCESSING') });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, false);
+  assert.match(out.detail, /REFUNDED/);
+  assert.doesNotMatch(out.detail, /own ledger shows/);
 });

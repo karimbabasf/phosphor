@@ -23,10 +23,12 @@
    the coin and its side, the size, the profit, and entry, mark, liquidation,
    stop and target, each in words when there is none ("No stop").
 
-   ONE COLOUR RULE. Green in this window is the mark, the live move and
-   Approve, and red is a real loss: a position's side, a buy or a sell, the
-   day's change and a price tick are words and signs, never a colour. A loss
-   on a position or a plan is the one figure here that takes red.
+   ONE COLOUR RULE. Green in this window is the mark, the live move, Approve
+   and a gain, and red is a real loss: a position's side, a buy or a sell,
+   the day's change and a price tick are words and signs, never a colour.
+   The person's own result is the one figure here that takes its sign's
+   colour: a position's profit and return, and what a closing fill or an
+   ended plan made, green when it is up and red when it is down.
 
    PANES CAN BE HIDDEN. The chart and the deck each carry an eye-off control in
    their header, the bar's Layout menu (ui/screens/shell.js) lists every pane
@@ -1767,9 +1769,9 @@
     var exits = exitsOf(key);
     var result = row.children[1];
     var pnl = result.children[0];
-    var loss = isNum(p.unrealisedUsd) && p.unrealisedUsd < 0;
-    pnl.className = 'trade-pnl pos-pnl num' + (loss ? ' loss' : '');
+    pnl.className = 'trade-pnl pos-pnl num' + signClass(p.unrealisedUsd, 0);
     dom.setNumber(pnl, isNum(p.unrealisedUsd) ? signedUsd(p.unrealisedUsd) : '--');
+    result.children[1].className = 'pos-roe num' + signClass(p.roePct, 0.05);
     dom.setText(result.children[1], isNum(p.roePct) ? signedPct(p.roePct) : '');
     dom.setHidden(result.children[1], !isNum(p.roePct));
 
@@ -1936,6 +1938,13 @@
   function signedPct(value) {
     var rounded = Math.abs(value) < 0.05 ? 0 : value;
     return (rounded > 0 ? '+' : rounded < 0 ? '-' : '') + Math.abs(rounded).toFixed(1) + '%';
+  }
+
+  /* The colour a signed figure takes, matching the sign it is written with:
+     `flat` is the size under which the figure is written unsigned. */
+  function signClass(value, flat) {
+    if (!isNum(value) || value === 0 || Math.abs(value) < flat) return '';
+    return value > 0 ? ' gain' : ' loss';
   }
 
   /* Which way a position or a plan leans: the icon family's arrow and the
@@ -2231,8 +2240,8 @@
   }
 
   /* An ended plan: the clock, the glyph, the sentence across the middle, and
-     what it closed for in the result column, signed and red only for a loss,
-     or nothing when the payload carries no figure. */
+     what it closed for in the result column, signed and in its sign's
+     colour, or nothing when the payload carries no figure. */
   function endedRow(row) {
     var node = dom.el('div', 'done-row ended-row');
     node.appendChild(dom.el('span', 'tx-when meta num'));
@@ -2359,7 +2368,7 @@
         price: px !== null ? priceText(px) : '',
         amount: notional !== null ? dom.usd(notional) : '',
         result: closed !== null ? signedUsd(closed) : '',
-        dir: closed !== null && closed < 0 ? 'loss' : '',
+        dir: closed === null ? '' : (closed < 0 ? 'loss' : 'gain'),
         sub: px !== null ? 'at ' + priceText(px) + ', ' + dom.clock(fill.atMs) : '',
         url: fill.url || ''
       });
@@ -2382,7 +2391,7 @@
         text: ended.text,
         title: ended.title,
         amount: pnl !== null ? signedUsd(pnl) : '',
-        dir: pnl !== null && pnl < 0 ? 'loss' : ''
+        dir: pnl === null ? '' : (pnl < 0 ? 'loss' : pnl > 0 ? 'gain' : '')
       });
     }
     out.sort(function (a, b) { return timeOf(b.at) - timeOf(a.at); });

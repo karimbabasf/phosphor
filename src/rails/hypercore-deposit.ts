@@ -48,6 +48,13 @@
 //      to (settleToPerp). On a unified account, which is what Karim's is, there is one balance
 //      and the step is a no-op that says so.
 //
+// AND IT IS DONE WHEN HYPERLIQUID'S OWN LEDGER SHOWS IT, whatever 1Click still says. On
+// 2026-10-09 a deposit sat about 30 s on 1Click's PROCESSING with the money already on the
+// account: 1Click holds an order on its side for a while, and the watch ended on its word alone.
+// The venue pushes every credit to the account on the trade feed's socket the moment it lands,
+// so a credit there that can only be this deposit's (creditProof) settles it. 1Click's word
+// still decides a refund or a failure, and still settles a deposit the ledger never shows.
+//
 // The signature this rail releases is an intents `transfer` with the EVM key (the allowance key
 // once a vault has moved to the chip). The settle step on a standard account signs a second,
 // different thing: an EIP-712 usdClassTransfer with the owner key, which on a vault on the chip
@@ -55,12 +62,14 @@
 // should know that a module called "deposit" can produce a user-signed venue action.
 
 import { formatUnits, isAddress } from 'viem';
-import type { AssetPin, HlDepositDraft, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
-import { baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
+import type { AssetPin, HlDepositDraft, Proposal, Rail, RailHooks, RailResult, SimulationResult } from '../types.ts';
+import { ONECLICK_TERMINAL, baseUnits, oneLine, quoteEchoProblems, toBaseUnits } from '../intents.ts';
 import type { OneClickClient, OneClickQuote, OneClickToken, QuoteEcho } from '../intents.ts';
-import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner } from './intents-native.ts';
-import type { IntentsApiPort, IntentsSignerPort } from './intents-native.ts';
+import { INTENTS_VERIFIER, intentsApi, liveIntentsSigner, liveNonceUsed } from './intents-native.ts';
+import type { IntentsApiPort, IntentsSignerPort, NonceUsedPort } from './intents-native.ts';
 import { appFeeBpsOf, spendFromIntents } from './intents-spend.ts';
+import { ranProof } from './watch.ts';
+import type { RanProof } from './watch.ts';
 import { heldToPin, pinnedAssets } from './asset-pin.ts';
 import { TYPICAL_SEC } from '../proposals/view.ts';
 import type { PreflightRunner } from '../preflight/live.ts';
@@ -69,7 +78,7 @@ import type { RouteHealth } from '../preflight/route-health.ts';
 import { describeHeld, deliveredAmount, deliveredNote, describeIncompleteDeposit, describeRefund, describeUnconfirmedSubmit, settledEvidence, uniqueTxids, withQuote } from './oneclick-words.ts';
 import { reasonOf } from './reasons.ts';
 import { accountSummary, liveSignPort, ownerTouchRequired, usdClassTransfer } from './hl-user-signed.ts';
-import type { HlAccountSummary, HlUserSignedDeps } from './hl-user-signed.ts';
+import type { HlAccountSummary, HlUsdcCredit, HlUserSignedDeps } from './hl-user-signed.ts';
 import { HYPERLIQUID_SETTLE, SETTLING_SENTENCE, watchRise } from '../ledger/settle.ts';
 import type { PocketRead, RiseSchedule } from '../ledger/settle.ts';
 
@@ -143,6 +152,76 @@ export function floorUsdc(floorBase: bigint): string {
   return formatUnits((floorBase / cut) * cut, HYPERCORE_USDC_DECIMALS);
 }
 
+// ---------- the credit, off the venue's own ledger ----------
+
+// The account's USDC credits since a moment, or null when nothing could answer.
+export type HlCreditReader = (account: string, sinceMs: number) => Promise<HlUsdcCredit[] | null>;
+
+// How often a deposit in flight asks the ledger, and NEAR, whether it has landed. Free while the
+// trade feed carries the ledger; one /info read of weight 20 when it does not.
+export const CREDIT_RECHECK_MS = 2_000;
+
+/* How long a deposit that signed and did not end funded keeps any new deposit to the same
+   account from settling on the ledger. Its money may still land in that window, and a credit
+   that could be either one's settles neither (creditProof). */
+export const UNSETTLED_HOLD_MS = 10 * 60_000;
+
+/* How far over the signed quote's expected output a credit may be and still be this deposit's.
+   A solver delivers about what it quoted; the cap is the quote, not the draft, because a draft of
+   a coin under a dollar counts coins, and 100 coins at $0.10 capped a $10 deposit at 100 USDC
+   (review 2026-10-09: it settled on an unrelated 60 USDC credit and moved 60 to perp). */
+export const CREDIT_OVER_QUOTE = 0.02;
+
+// How far back the proposal store is asked for other money on its way to the same account.
+export const OTHER_MONEY_WINDOW_MS = 24 * 60 * 60_000;
+const OPEN = new Set<Proposal['status']>(['approved', 'awaiting_touch', 'executing', 'needs_reconciliation']);
+
+/* OTHER MONEY ON ITS WAY TO THIS ACCOUNT, off the proposal store, which outlives the process and so
+   sees what the rail's own memory cannot: a deposit from before a restart still settling, a stuck
+   order past UNSETTLED_HOLD_MS, a payout to the same Hyperliquid address running beside this one.
+   Any of them could be the credit the ledger shows, so while one is open, decided in the last day,
+   no deposit settles on the ledger and 1Click's word decides, as before (review 2026-10-09):
+     - another hl_deposit to the account, or an intents_pay to it on hypercore, still open;
+     - one that failed after it signed, unless 1Click said REFUNDED;
+     - one settled within UNSETTLED_HOLD_MS, whose credit may land after the balance said it rose. */
+export function otherMoneyToAccount(rows: readonly Proposal[], account: string, selfId: string | undefined, nowMs: number): boolean {
+  const target = account.trim().toLowerCase();
+  for (const p of rows) {
+    if (p.id === selfId) continue;
+    const d = p.draft as { hlAccount?: unknown; network?: unknown; to?: unknown };
+    const toThis =
+      (p.kind === 'hl_deposit' && String(d.hlAccount ?? '').toLowerCase() === target) ||
+      (p.kind === 'intents_pay' && d.network === 'hypercore' && String(d.to ?? '').toLowerCase() === target);
+    if (!toThis) continue;
+    const decided = Date.parse(p.decidedAt ?? p.createdAt);
+    if (!Number.isFinite(decided) || nowMs - decided > OTHER_MONEY_WINDOW_MS) continue;
+    if (OPEN.has(p.status)) return true;
+    const signed = p.result?.evidence?.handle !== undefined || (p.result?.txids?.length ?? 0) > 0;
+    if (p.status === 'failed' && signed && p.result?.evidence?.providerStage !== 'REFUNDED') return true;
+    const settled = Date.parse(p.settledAt ?? '');
+    if (p.status === 'executed' && Number.isFinite(settled) && nowMs - settled < UNSETTLED_HOLD_MS) return true;
+  }
+  return false;
+}
+
+/* Where the credits are read: the trade feed's socket when it is carrying the account's ledger
+   (src/trade/feed-ws.ts), which has each credit the moment the venue pushes it, and the venue's
+   /info ledger only when it is not. A read that fails is null, never "nothing landed". */
+export function hlCreditReader(o: {
+  pushed: (account: string) => HlUsdcCredit[] | null;
+  rest: (account: string, sinceMs: number) => Promise<HlUsdcCredit[]>;
+}): HlCreditReader {
+  return async (account, sinceMs) => {
+    try {
+      const pushed = o.pushed(account);
+      if (pushed !== null) return pushed.filter((c) => c.atMs >= sinceMs);
+      return await o.rest(account, sinceMs);
+    } catch {
+      return null;
+    }
+  };
+}
+
 // ---------- the seams ----------
 
 export type HypercoreDepositDeps = {
@@ -170,6 +249,16 @@ export type HypercoreDepositDeps = {
   // Whether NEAR Intents is taking transfers to HyperCore right now (src/preflight/route-health.ts).
   // The registry wires the live one; absent, no route is called closed.
   routes?: RouteHealth;
+  // The account's credits off the venue's ledger (hlCreditReader). The registry wires the live
+  // one; absent, only 1Click's word ends the watch, as before 2026-10-09.
+  credits?: HlCreditReader;
+  // Every proposal, for other money on its way to the same account (otherMoneyToAccount). Absent,
+  // only this process's own deposits are known.
+  proposals?: () => readonly Proposal[];
+  // Whether the verifier has spent a nonce: the proof the deposit's own signed transfer ran.
+  nonceUsed?: NonceUsedPort;
+  // How often the watch asks the ledger and NEAR. Defaults to CREDIT_RECHECK_MS; the tests set it.
+  creditRecheckMs?: number;
 };
 
 export type HypercoreDepositRail = Rail<HlDepositDraft> & {
@@ -183,6 +272,10 @@ type Plan = {
   amountBase: bigint;
   minCreditedBase: bigint;
 };
+
+// One deposit's place among those to the same account, and the credit its proof settled on.
+// quotedOut: the expected output of the quote this deposit signed, the cap on its credit.
+type Flight = { crowded: boolean; credit: HlUsdcCredit | null; quotedOut: number | null };
 
 function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -198,6 +291,13 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
   const pollIntervalMs = deps.pollIntervalMs ?? 3000;
   const pollTimeoutMs = deps.pollTimeoutMs ?? 180_000;
   const settleSchedule = deps.settleSchedule ?? HYPERLIQUID_SETTLE;
+  const nonceUsed = deps.nonceUsed ?? liveNonceUsed(deps.fetchImpl);
+  const creditRecheckMs = deps.creditRecheckMs ?? CREDIT_RECHECK_MS;
+  // Deposits to each Hyperliquid account from the account read before their signature until they
+  // end, or for UNSETTLED_HOLD_MS after an end that was not funded; and the credits a deposit has
+  // already settled on. Both live as long as the rail, which is the process.
+  const inFlight = new Map<string, Array<{ flight: Flight; untilMs: number }>>();
+  const claimed = new Set<string>();
   // Four days, matching the swap rail. See MAX_DEADLINE_MS there for why the deadline is not
   // what prevents replay and the nonce is.
   const maxDeadlineMs = deps.maxDeadlineMs ?? 4 * 24 * 60 * 60 * 1000;
@@ -548,6 +648,77 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
   }
 
+  /* A deposit joins its account's list at the read before its signature. Any other deposit to the
+     same account on that list, or held there after an unfunded end, crowds both. */
+  function enter(account: string): { flight: Flight; leave: (unfunded: boolean) => void } {
+    const at = now();
+    const others = (inFlight.get(account) ?? []).filter((o) => o.untilMs > at);
+    const flight: Flight = { crowded: others.length > 0, credit: null, quotedOut: null };
+    for (const o of others) o.flight.crowded = true;
+    const entry = { flight, untilMs: Infinity };
+    inFlight.set(account, [...others, entry]);
+    return {
+      flight,
+      leave: (unfunded) => {
+        // The money of a deposit that signed and did not end funded may still land.
+        if (unfunded) entry.untilMs = now() + UNSETTLED_HOLD_MS;
+        else inFlight.set(account, (inFlight.get(account) ?? []).filter((o) => o !== entry));
+      },
+    };
+  }
+
+  /* WHICH CREDIT IS THIS DEPOSIT'S. The ledger names every credit with its amount, and a credit is
+     any money arriving: another deposit, a transfer from someone, a bridge deposit made by hand.
+     Fills and funding are not on it at all; they move the balance, which is why the balance is
+     not the rule here. A credit settles this deposit only when all of these hold, and otherwise
+     the watch waits for 1Click as it always did, which costs seconds and never money:
+       - NEAR shows this deposit's own signed transfer spent. Before that the solver holds nothing
+         of ours to deliver, so whatever lands is somebody else's.
+       - The venue stamped it at or after the account read taken just before the signature.
+       - It is a 1Click delivery (HlUsdcCredit.delivery): a USDC send from another account's spot
+         book into our perp book, never a bridge deposit, a friend's transfer or our own dexes.
+       - It is at least the floor the card promised (cut to six places, floorUsdc), and no more
+         than the signed quote's expected output and CREDIT_OVER_QUOTE over it.
+       - No other deposit to this account was in flight at any moment of this one's watch, or
+         ended unfunded within UNSETTLED_HOLD_MS. With two, the ledger cannot say whose credit
+         is whose, so neither settles on one.
+       - No deposit has settled on it already, and no other money to this account is open in the
+         proposal store (otherMoneyToAccount), which survives a restart.
+     The earliest credit that passes is claimed, so it can settle nothing else. Asked at most
+     every creditRecheckMs, and through ranProof (./watch.ts), never awaited by the status poll. */
+  function creditProof(draft: HlDepositDraft, p: Plan, owner: string, sinceMs: number, flight: Flight, proposalId?: string): ((nonce: string) => RanProof) | undefined {
+    const read = deps.credits;
+    if (read === undefined) return undefined;
+    const account = draft.hlAccount.toLowerCase();
+    const floor = Number(floorUsdc(p.minCreditedBase));
+    const elsewhere = (): boolean => deps.proposals !== undefined && otherMoneyToAccount(deps.proposals(), account, proposalId, now());
+    const key = (c: HlUsdcCredit): string => `${c.hash}|${c.atMs}|${c.usdc}`;
+    return (nonce) => {
+      let ran = false;
+      return ranProof({
+        now,
+        everyMs: creditRecheckMs,
+        spent: async () => (ran ||= (await nonceUsed(owner, nonce)) === true),
+        read: async () => {
+          // No signed quote to cap the credit by is no credit this deposit can claim.
+          const quoted = flight.quotedOut;
+          if (flight.crowded || quoted === null || !(quoted > 0) || elsewhere()) return null;
+          const most = quoted * (1 + CREDIT_OVER_QUOTE);
+          const credits = await read(account, sinceMs);
+          if (credits === null || flight.crowded || elsewhere()) return null;
+          const ours = credits
+            .filter((c) => c.delivery === true && c.atMs >= sinceMs && c.usdc + 1e-9 >= floor && c.usdc <= most + 1e-9 && !claimed.has(key(c)))
+            .sort((a, b) => a.atMs - b.atMs)[0];
+          if (ours === undefined) return null;
+          claimed.add(key(ours));
+          flight.credit = ours;
+          return BigInt(Math.round(ours.usdc * 10 ** HYPERCORE_USDC_DECIMALS));
+        },
+        landed: () => true,
+      });
+    };
+  }
+
   // The last step, and the one that makes this rail's promise true.
   //
   // "The money arrived" and "the money is usable as margin" are different claims on a standard
@@ -582,15 +753,20 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     | { kind: 'unseen'; sentence: string; after: HlAccountSummary | null }
     | { kind: 'unread'; sentence: string };
 
-  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary, hooks?: RailHooks): Promise<Settled> {
+  /* `credit` is the ledger's credit this deposit claimed. `byLedger` is true only on the early path,
+     where that credit is the whole proof; on 1Click's own SUCCESS the book the money sits on is read
+     off the balance, as it always was, so a credit claimed in error never decides what moves. */
+  async function settleToPerp(draft: HlDepositDraft, before: HlAccountSummary, hooks?: RailHooks, credit?: HlUsdcCredit, byLedger = false): Promise<Settled> {
     /* READ UNTIL IT SHOWS. A credit to HyperCore crosses a bridge after 1Click says SUCCESS, so
        the one read this took saw the account from before the deposit and the sentence said
        "the venue has not shown the credit yet" over money that landed a few seconds later.
        The loop stops at the first read that shows the floor; only the window running out is
-       a decision, and that decision is "settling", never "failed". */
+       a decision, and that decision is "settling", never "failed". With the ledger's credit in
+       hand (creditProof) the money is on the account already, and the first read that answers
+       is only for the book it sits on and the pocket. */
     const watched = await watchRise({
       read: () => accountState(draft.hlAccount).catch(() => null),
-      rose: (after) => collateralOf(after) - collateralOf(before) + 1e-9 >= draft.minCredited,
+      rose: (after) => credit !== undefined || collateralOf(after) - collateralOf(before) + 1e-9 >= draft.minCredited,
       schedule: settleSchedule,
       sleep,
       now,
@@ -622,26 +798,34 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     // A UNIFIED account has no two sides. The money is collateral the moment it lands, and
     // usdClassTransfer against one is rejected outright.
     if (after.unified || before.unified) {
-      return { kind: 'rose', after, sentence: ` The account is unified, so it is margin already: free collateral rose by ${gain.toFixed(4)} USDC.` };
+      // The ledger's figure when there is one: free collateral also moves with every open position.
+      const rose = credit === undefined ? `free collateral rose by ${gain.toFixed(4)} USDC` : `${credit.usdc} USDC was credited`;
+      return { kind: 'rose', after, sentence: ` The account is unified, so it is margin already: ${rose}.` };
     }
 
     const perpGain = after.perpAccountValueUsd - before.perpAccountValueUsd;
     const spotGain = after.spotUsdc - before.spotUsdc;
+    // What this deposit put on the spot side: the credit's own book when the ledger names one,
+    // and otherwise what the spot side gained. Without a credit the watch above has seen the two
+    // books rise by the floor between them, so a spot side that did not rise means perp did.
+    // Never more than the spot side actually gained: a move to perp is bounded by money seen there.
+    const onSpot =
+      !byLedger || credit === undefined || credit.book === null ? spotGain : credit.book === 'spot' ? Math.min(credit.usdc, spotGain) : 0;
 
-    if (perpGain > 0.01 && spotGain <= 0.01) {
-      return { kind: 'rose', after, sentence: ` Credited to the perp side directly; ${perpGain.toFixed(4)} USDC is margin now.` };
+    if (onSpot <= 0.01) {
+      return { kind: 'rose', after, sentence: ` Credited to the perp side directly; ${(credit?.usdc ?? perpGain).toFixed(4)} USDC is margin now.` };
     }
 
     // On the spot side, which is observed money that is not margin yet. Nothing here says to
     // deposit again: a second proposal signs a second intent and spends a second time.
     try {
       // A signature like any other: the executor's last check (Freeze) runs first.
-      const moved = await usdClassTransfer({ ...hl, lastCheck: hooks?.lastCheck }, { amount: spotGain, toPerp: true });
+      const moved = await usdClassTransfer({ ...hl, lastCheck: hooks?.lastCheck }, { amount: onSpot, toPerp: true });
       return {
         kind: 'rose',
         after,
         sentence: moved.ok
-          ? ` Landed on the spot side and was moved to perp: ${spotGain.toFixed(4)} USDC is margin now.`
+          ? ` Landed on the spot side and was moved to perp: ${onSpot.toFixed(4)} USDC is margin now.`
           : ` Landed on the spot side and the move to perp failed: ${oneLine(moved.detail, 120)}. ` +
             `The collateral is on the spot side of the account and is not margin yet; do not deposit again, ` +
             'move it to the perp side in Hyperliquid by hand.',
@@ -666,7 +850,7 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     return Math.max(a, b);
   }
 
-  async function execute(draft: HlDepositDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+  async function execute(draft: HlDepositDraft, proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
     try {
       pinnedAssets(draft.assets);
     } catch (err) {
@@ -693,11 +877,30 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
       return { ok: false, detail: `could not read the Hyperliquid account before funding it: ${errText(err)}. Nothing was signed.` };
     }
 
+    // From here the deposit is in flight on its account: the ledger's credits count from this
+    // moment, and another deposit to the same account meanwhile crowds both (creditProof). The
+    // moment is the venue's own, off the read just taken, because the ledger is stamped on the
+    // venue's clock and this Mac's may sit seconds either side of it.
+    const sinceMs = before.venueTimeMs ?? now();
+    const { flight, leave } = enter(draft.hlAccount.toLowerCase());
+    let result: RailResult | undefined;
+    try {
+      result = await fund(draft, p, owner, before, sinceMs, flight, hooks, proposalId);
+      return result;
+    } finally {
+      // A deposit that got as far as a handle and did not end funded may still land.
+      leave(result === undefined || (!result.ok && (result.evidence?.handle !== undefined || (result.txids?.length ?? 0) > 0)));
+    }
+  }
+
+  // The spend and what came of it, once execute has read the account and joined the list.
+  async function fund(draft: HlDepositDraft, p: Plan, owner: string, before: HlAccountSummary, sinceMs: number, flight: Flight, hooks?: RailHooks, proposalId?: string): Promise<RailResult> {
     // The four shared steps. Every refusal before the signature throws out of spendFromIntents
     // and is reported here as exactly that; after the signature nothing throws, and a submit
     // that did not answer comes back as signed and unsubmitted.
     let spent;
     const preflight = deps.preflight;
+    const proof = creditProof(draft, p, owner, sinceMs, flight, proposalId);
     try {
       spent = await spendFromIntents(
         {
@@ -726,7 +929,14 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
           echo: echoWant(draft, p),
           // The app fee is read off the echo for the sentence only; the ceiling reads the
           // total, which needs no echo, so the live check prices with none.
-          checkQuote: (quote) => checkQuote(draft, p, quote, priceLines(draft, p, quote, null).feePct),
+          checkQuote: (quote) => {
+            // The quote this deposit signs through (src/rails/intents-spend.ts checks exactly that one).
+            const out = Number(quote.amountOutFormatted);
+            flight.quotedOut = Number.isFinite(out) && out > 0 ? out : null;
+            return checkQuote(draft, p, quote, priceLines(draft, p, quote, null).feePct);
+          },
+          // The venue's ledger, beside 1Click's word: the first to show the money ends the watch.
+          ...(proof === undefined ? {} : { ran: proof }),
         },
         hooks,
       );
@@ -743,9 +953,28 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
     const { quote, depositAddress, watch, signedQuote } = spent;
     const evidence = `intent ${spent.intentHash}, quote handle ${oneLine(depositAddress, 80)}`;
+    const credit = flight.credit ?? undefined;
+
+    // The venue's own word, while 1Click is still short of one: a terminal word from 1Click takes
+    // its own branch below, so a refund or a failure is still 1Click's to call.
+    if (credit !== undefined && !(ONECLICK_TERMINAL as readonly string[]).includes(watch.status)) {
+      const settled = await settleToPerp(draft, before, hooks, credit, true);
+      const shown =
+        `${credit.usdc} USDC from ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}; Hyperliquid's own ledger shows it ` +
+        `credited (${oneLine(credit.hash, 80)}) while 1click still reported ${oneLine(watch.status, 40)}`;
+      const txids = uniqueTxids(spent.intentHash, watch);
+      // The venue's figure is what arrived: the card and the receipt print it (src/proposals/view.ts amountOutOf).
+      const recorded = { ...settledEvidence(watch, depositAddress), settledAmountOut: String(credit.usdc), quote: signedQuote };
+      const pocket = pocketOf(draft, before, settled.kind === 'rose' ? settled.after : null);
+      if (settled.kind !== 'rose') {
+        // The money is on the account and the account would not answer for the step after it.
+        return { ok: false, settling: true, detail: `${shown}; ${evidence}.${settled.sentence}`, txids, pocket, evidence: recorded };
+      }
+      return { ok: true, detail: `funded Hyperliquid with ${shown}; ${evidence}.${settled.sentence}`, txids, pocket, evidence: recorded };
+    }
 
     if (watch.status === 'SUCCESS') {
-      const settled = await settleToPerp(draft, before, hooks);
+      const settled = await settleToPerp(draft, before, hooks, credit);
       const amount = `${deliveredAmount(watch, quote.amountOutFormatted)} USDC from ${draft.amount} ${draft.symbol} held inside ${INTENTS_VERIFIER}`;
       const txids = uniqueTxids(spent.intentHash, watch);
       const recorded = { ...settledEvidence(watch, depositAddress), quote: signedQuote };

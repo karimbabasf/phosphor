@@ -300,3 +300,27 @@ test('the panel is one surface, reads only the view above, and has no Freeze of 
   }
   assert.ok(!source.includes('Freeze everything'), 'two copies of the brake on one screen');
 });
+
+// Karim, 2026-10-09: "I want the trading account balance to be taken into account on pro and basic
+// mode". Basic's total has counted it since the trading account had a row; this pins it, on the
+// unified account he holds (its USDC is the single balance), beside a coin only 1Click prices.
+test('the trading account counts in the total, beside the NEAR money', async () => {
+  const { buildWallet } = await import('../../src/wallet.ts');
+  const at = new Date().toISOString();
+  const wallet = buildWallet(
+    { mode: 'live', fetchedAt: at, prices: {} },
+    {
+      ok: true,
+      fetchedAt: at,
+      failures: 0,
+      holdings: [
+        { accountId: '0xa', assetId: 'nep245:v2_1.omni.hot.tg:1117_', symbol: 'GRAM', originChain: 'ton', amount: 640, decimals: 9, priceUsd: 1.46 },
+        { accountId: '0xb', assetId: 'nep141:usdt.tether-token.near', symbol: 'USDT', originChain: 'near', amount: 8.89, decimals: 6, priceUsd: 1 },
+      ],
+    },
+    { ok: true, fetchedAt: at, account: '0xa', collateralUsdc: 99.28, availableUsdc: 99.28, marginUsedUsd: 0, openPositions: 0, unified: true },
+  );
+  const view = buildBasic({ wallet, proposals: [], policyReadable: true, killSwitch: false, readAt: at });
+  assert.equal(view.totalLine, '$1,042.57');
+  assert.ok(view.holdings.some((h) => h.symbol === 'USDC' && h.valueLine === '$99.28'), JSON.stringify(view.holdings));
+});

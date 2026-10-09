@@ -449,9 +449,13 @@ export type HlAccountSummary = {
   marginUsedUsd: number;
   openPositions: number;
   fetchedAt: string;
+  // The venue's own clock when it answered (clearinghouseState.time), so a window measured against
+  // the venue's ledger stamps is on one clock. Absent when the venue sent none.
+  venueTimeMs?: number;
 };
 
 type ClearinghouseState = {
+  time?: number;
   marginSummary?: { accountValue?: string; totalMarginUsed?: string };
   withdrawable?: string;
   assetPositions?: unknown[];
@@ -540,6 +544,7 @@ export async function accountSummary(deps: HlUserSignedDeps, address?: string): 
     marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
     openPositions: Array.isArray(perp.assetPositions) ? perp.assetPositions.length : 0,
     fetchedAt: new Date().toISOString(),
+    ...(typeof perp.time === 'number' && Number.isFinite(perp.time) && perp.time > 0 ? { venueTimeMs: perp.time } : {}),
   };
 }
 
@@ -573,28 +578,81 @@ export async function extraAgents(deps: HlUserSignedDeps, account: string): Prom
 // accounts or between the account's own books. Every number is a string, like every read here.
 type LedgerUpdate = { time?: number; hash?: string; delta?: Record<string, unknown> };
 
-/* USDC credited to an account since a moment, off the venue's own ledger of what moved: bridge
-   deposits, and USDC transfers on either book whose destination is this account. Money leaving,
-   money moving between the account's own books, and any other token are not credits.
+/* One USDC credit to an account, off that ledger: when the venue stamped it, its hash, the
+   amount, and the book it landed on where the row names one (a bridge deposit and a transfer
+   between accounts land on perp; a spotTransfer on spot; a `send` on its destinationDex, where
+   "" is the perp book and any other dex is not one this app trades). A 1Click delivery is a
+   `send` out of the solver's spot book into our perp book (read off the ledger 2026-10-09). */
+export type HlUsdcCredit = {
+  atMs: number;
+  hash: string;
+  usdc: number;
+  book: 'perp' | 'spot' | null;
+  /* The shape of a 1Click delivery and nothing wider: a USDC `send` from another account, out of
+     its spot book into our perp book. A bridge deposit, a transfer from a friend and a move between
+     our own dexes are credits too, and count in a sum (usdcCreditedSince), never as a deposit's own
+     early proof (src/rails/hypercore-deposit.ts creditProof; review 2026-10-09). */
+  delivery?: boolean;
+};
+
+/* Whether a ledger row is a USDC credit to `account`: bridge deposits, and USDC transfers on
+   either book whose destination is the account. Money leaving, money moving between the
+   account's own books, any other token, and an amount that does not read as a positive number
+   are not. A row with no time keeps NaN, so the deposit rail's "since" never lets it through.
+   Shared by the REST read below and the trade feed's socket (src/trade/feed-ws.ts), so the two
+   cannot disagree about what a credit is. */
+export function usdcCreditOf(row: unknown, account: string): HlUsdcCredit | null {
+  const r = (row ?? {}) as LedgerUpdate;
+  const delta = r.delta;
+  if (typeof delta !== 'object' || delta === null) return null;
+  const toUs = String(delta.destination ?? '').toLowerCase() === account.trim().toLowerCase();
+  let usdc: number;
+  let book: HlUsdcCredit['book'];
+  if (delta.type === 'deposit') {
+    usdc = num(String(delta.usdc ?? ''));
+    book = 'perp';
+  } else if (delta.type === 'internalTransfer' && toUs) {
+    usdc = num(String(delta.usdc ?? ''));
+    book = 'perp';
+  } else if ((delta.type === 'spotTransfer' || delta.type === 'send') && toUs && delta.token === 'USDC') {
+    usdc = num(String(delta.amount ?? ''));
+    book = delta.type === 'spotTransfer' || delta.destinationDex === 'spot' ? 'spot' : delta.destinationDex === '' ? 'perp' : null;
+  } else {
+    return null;
+  }
+  if (!(usdc > 0)) return null;
+  const delivery =
+    delta.type === 'send' &&
+    delta.token === 'USDC' &&
+    toUs &&
+    typeof delta.user === 'string' &&
+    delta.user.toLowerCase() !== account.trim().toLowerCase() &&
+    delta.sourceDex === 'spot' &&
+    delta.destinationDex === '';
+  return { atMs: typeof r.time === 'number' ? r.time : NaN, hash: typeof r.hash === 'string' ? r.hash : '', usdc, book, delivery };
+}
+
+/* The USDC credits to an account since a moment, one row each. No key, a public /info POST.
+   Throws when the ledger will not answer, so a caller never reads a failure as "nothing arrived". */
+export async function usdcCreditsSince(deps: HlUserSignedDeps, account: string, sinceMs: number): Promise<HlUsdcCredit[]> {
+  const user = account.trim().toLowerCase();
+  if (!isAddress(user)) throw new Error(`hyperliquid usdcCreditsSince: ${account} is not an address`);
+  const rows = await info<unknown>(deps, { type: 'userNonFundingLedgerUpdates', user, startTime: sinceMs });
+  if (!Array.isArray(rows)) throw new Error('hyperliquid userNonFundingLedgerUpdates answered with something that is not a list');
+  return rows.flatMap((row) => {
+    const credit = usdcCreditOf(row, user);
+    // A row with no time was always counted in the sum below, and still is.
+    return credit === null || credit.atMs < sinceMs ? [] : [credit];
+  });
+}
+
+/* USDC credited to an account since a moment, summed.
    The reconcile sweep reads this to confirm a Hyperliquid deposit 1Click calls SUCCESS: after
    the fact a balance comparison cannot answer it (the rail's before-read is gone with the
    process, and trading moves the same figure), and the ledger names each credit with its amount.
-   No key, a public /info POST. Throws when the ledger will not answer, so the caller can leave a
-   row unconfirmed rather than read a failure as "nothing arrived". */
+   Throws when the ledger will not answer, so the caller can leave a row unconfirmed. */
 export async function usdcCreditedSince(deps: HlUserSignedDeps, account: string, sinceMs: number): Promise<number> {
-  const user = account.trim().toLowerCase();
-  if (!isAddress(user)) throw new Error(`hyperliquid usdcCreditedSince: ${account} is not an address`);
-  const rows = await info<unknown>(deps, { type: 'userNonFundingLedgerUpdates', user, startTime: sinceMs });
-  if (!Array.isArray(rows)) throw new Error('hyperliquid userNonFundingLedgerUpdates answered with something that is not a list');
-  let credited = 0;
-  for (const row of rows as LedgerUpdate[]) {
-    const delta = row.delta;
-    if (delta === undefined || (typeof row.time === 'number' && row.time < sinceMs)) continue;
-    const toUs = String(delta.destination ?? '').toLowerCase() === user;
-    if (delta.type === 'deposit') credited += num(String(delta.usdc ?? ''));
-    else if (delta.type === 'internalTransfer' && toUs) credited += num(String(delta.usdc ?? ''));
-    else if ((delta.type === 'spotTransfer' || delta.type === 'send') && toUs && delta.token === 'USDC') credited += num(String(delta.amount ?? ''));
-  }
+  const credited = (await usdcCreditsSince(deps, account, sinceMs)).reduce((sum, c) => sum + c.usdc, 0);
   // Six decimals is the venue's own precision for USDC; summing strings as doubles drifts past it.
   return Math.round(credited * 1e6) / 1e6;
 }

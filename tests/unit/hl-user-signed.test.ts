@@ -18,6 +18,7 @@ import {
   sendAsset,
   toAmountString,
   usdClassTransfer,
+  usdcCreditOf,
   usdcCreditedSince,
   userRole,
 } from '../../src/rails/hl-user-signed.ts';
@@ -544,6 +545,38 @@ test('usdcCreditedSince sums the deposits and incoming USDC transfers since a ti
   assert.equal(seen, 25.47);
   assert.equal(posts.length, 1);
   assert.deepEqual(posts[0].body, { type: 'userNonFundingLedgerUpdates', user: OWN, startTime: NOW - 60_000 });
+});
+
+/* One credit at a time, for the deposit rail: it settles on a single credit it can name, so each
+   row carries its own amount, its hash, its time, and the book it landed on. The shape of a real
+   1Click delivery is the first row, read off the venue's ledger on 2026-10-09: a `send` from the
+   solver, out of its spot book into the perp book ("") of ours. */
+test('usdcCreditOf names each incoming USDC credit with its book, and nothing else is a credit', () => {
+  const send = {
+    time: NOW - 1_000,
+    hash: '0xc511',
+    delta: { type: 'send', user: '0x6b9e773128f453f5c2c60935ee2de2cbc5390a24', destination: OWN.toLowerCase(), sourceDex: 'spot', destinationDex: '', token: 'USDC', amount: '84.60577', usdcValue: '84.60577', fee: '0.0', nonce: 3992421 },
+  };
+  assert.deepEqual(usdcCreditOf(send, OWN), { atMs: NOW - 1_000, hash: '0xc511', usdc: 84.60577, book: 'perp', delivery: true });
+  // Only that shape is a 1Click delivery (review 2026-10-09): from another account, spot into our perp.
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, destinationDex: 'spot' } }, OWN)?.delivery, false);
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, user: OWN } }, OWN)?.delivery, false, 'our own dex to our own dex');
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, sourceDex: 'xyz' } }, OWN)?.delivery, false);
+  assert.equal(usdcCreditOf({ time: NOW, hash: '0xi', delta: { type: 'internalTransfer', usdc: '9.7', user: '0x1', destination: OWN } }, OWN)?.delivery, false, "a friend's transfer");
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, destinationDex: 'spot' } }, OWN)?.book, 'spot');
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, destinationDex: 'xyz' } }, OWN)?.book, null, 'a dex this app does not trade is no book it can name');
+  assert.equal(usdcCreditOf({ time: NOW, hash: '0xb', delta: { type: 'spotTransfer', token: 'USDC', amount: '9.97', destination: OWN } }, OWN)?.book, 'spot');
+  assert.deepEqual(usdcCreditOf({ time: NOW, hash: '0xa', delta: { type: 'deposit', usdc: '10.0' } }, OWN), { atMs: NOW, hash: '0xa', usdc: 10, book: 'perp', delivery: false });
+  assert.equal(usdcCreditOf({ time: NOW, hash: '0xc', delta: { type: 'internalTransfer', usdc: '5.5', destination: OWN.toUpperCase() } }, OWN)?.usdc, 5.5);
+
+  // Leaving, moving between our own books, another coin, a bad number, and no row at all.
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, destination: '0xelse' } }, OWN), null);
+  assert.equal(usdcCreditOf({ time: NOW, hash: '0xe', delta: { type: 'accountClassTransfer', usdc: '50', toPerp: true } }, OWN), null);
+  assert.equal(usdcCreditOf({ ...send, delta: { ...send.delta, token: 'PURR' } }, OWN), null);
+  assert.equal(usdcCreditOf({ time: NOW, hash: '0xh', delta: { type: 'deposit', usdc: 'not-a-number' } }, OWN), null);
+  assert.equal(usdcCreditOf(null, OWN), null);
+  // A row with no time keeps NaN, which no "since" comparison lets through.
+  assert.ok(Number.isNaN(usdcCreditOf({ hash: '0xa', delta: { type: 'deposit', usdc: '10.0' } }, OWN)?.atMs));
 });
 
 test('usdcCreditedSince throws when the ledger will not answer, so the caller can leave the row unconfirmed', async () => {

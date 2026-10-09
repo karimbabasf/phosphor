@@ -5,6 +5,23 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.4
+
+Built 2026-10-09, the trading account release. Tagged v0.11.4 on 2026-10-09. There is no 0.11.3
+release: v0.11.3 was tagged and built, and 0.11.4 replaced it before it was published, so 0.11.4
+carries everything listed under 0.11.3 below.
+
+- Funding the trading account says it landed the moment Hyperliquid's own ledger shows the credit,
+  with the amount credited. It used to wait for the swap service to report success, which could
+  trail the money by half a minute. The credit counts only once NEAR shows the deposit's own
+  transfer spent and only within what the card promised and what was spent; the swap service still
+  decides a refund.
+- Pro's total counts the trading account, as Basic's always has, and says so: "in your coins and
+  trading account". The trading account keeps its own line.
+- Trade's account panel reads more clearly: the account's worth is the largest figure, each
+  position's entry, mark, liquidation, stop and target stand in columns that line up across cards,
+  and a profit is green and a loss red.
+
 ## 0.11.3
 
 Built 2026-10-09, the quiet agents and live balance release. Tagged v0.11.3 on 2026-10-09.

@@ -276,13 +276,17 @@ function row(rig: Rig, symbol: string): Any {
 
 /* ---------- the total ---------- */
 
-test('the total is the NEAR money alone: the trading account is its own line, never in the figure', () => {
+// Karim, 2026-10-09: "I want the trading account balance to be taken into account on pro and basic
+// mode". The figure counts the trading account at the figure its own line shows; the coins under it
+// stay the NEAR money, and the trading account keeps its own line.
+test('the total is the NEAR money and the trading account, and the trading account keeps its own line', () => {
   const rig = boot();
   assert.equal(one(rig.host, 'stmt-total').hidden, true, 'a figure before the first state frame');
   rig.put(state());
-  assert.equal(one(rig.host, 'stmt-total').textContent, '$12,534.39', 'the total counted the trading account');
+  assert.equal(one(rig.host, 'stmt-total').textContent, '$13,581.21', 'the total left out the trading account');
   assert.equal(one(rig.host, 'stmt-total').hidden, false);
-  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins');
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins and trading account');
+  assert.equal(one(rig.host, 'stmt-trade-figure').textContent, '$1,046.82 · 2 positions');
   assert.equal(withClass(rig.host, 'stmt-total-skel').length, 0, 'the skeleton stays after the read');
   // The coins are the NEAR Intents rows, largest first, and the trading account's USDC is not
   // folded into the NEAR USDC.
@@ -317,7 +321,7 @@ test('a refresh that misses keeps the last good coins on screen and says it is s
   rig.put(state({ wallet: { ...state().wallet, stale: ['intents'] } }));
   assert.equal(one(rig.host, 'stmt-total').hidden, false, 'the figure stays');
   assert.equal(one(rig.host, 'stmt-total').textContent, total);
-  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins, still checking');
+  assert.equal(one(rig.host, 'stmt-caption').textContent, 'in your coins and trading account, still checking');
   const rows = withClass(one(rig.host, 'l-rows'), 'l-row').filter((r) => !r.hidden);
   assert.deepEqual(rows.map((r) => r.dataset.key), ['USDC', 'ETH', 'NEAR', 'SOL']);
 

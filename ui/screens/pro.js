@@ -449,6 +449,16 @@
     return id ? String(id) : '';
   }
 
+  // The trading account's dollars, its last good figure while a read misses, 0 for none read.
+  function tradingUsd(wallet) {
+    var rows = wallet && Array.isArray(wallet.rows) ? wallet.rows : [];
+    var sum = 0;
+    rows.forEach(function (row) {
+      if (row && row.kind === 'hyperliquid' && isFinite(Number(row.valueUsd)) && Number(row.valueUsd) > 0) sum += Number(row.valueUsd);
+    });
+    return sum;
+  }
+
   function totalOf(coins) {
     var sum = 0;
     coins.forEach(function (c) { if (c.priced) sum += c.valueUsd; });
@@ -467,10 +477,17 @@
     }
     var unpriced = coins.filter(function (c) { return !c.priced; }).map(function (c) { return c.symbol; });
     var priced = coins.some(function (c) { return c.priced; });
-    dom.setNumber(refs.total, priced || !coins.length ? dom.usd(totalOf(coins)) : '');
-    dom.setHidden(refs.total, !(priced || !coins.length));
-    var words = unpriced.length ? 'in your coins, not counting ' + unpriced.join(', ') : 'in your coins';
-    var checking = Array.isArray(state.wallet.stale) && state.wallet.stale.indexOf('intents') >= 0;
+    /* The trading account counts in the figure, at the figure its own line and Trade's "Trading
+       money" show (Karim, 2026-10-09: "I want the trading account balance to be taken into
+       account on pro and basic mode"). Basic's total has always counted it. */
+    var trading = tradingUsd(state.wallet);
+    var shown = priced || !coins.length || trading > 0;
+    dom.setNumber(refs.total, shown ? dom.usd(totalOf(coins) + trading) : '');
+    dom.setHidden(refs.total, !shown);
+    var where = trading > 0 ? 'in your coins and trading account' : 'in your coins';
+    var words = unpriced.length ? where + ', not counting ' + unpriced.join(', ') : where;
+    var stale = Array.isArray(state.wallet.stale) ? state.wallet.stale : [];
+    var checking = stale.indexOf('intents') >= 0 || (trading > 0 && stale.indexOf('hyperliquid') >= 0);
     dom.setText(refs.caption, checking ? words + ', still checking' : words);
     // No "+$X today" beside the total: price moves times today's amounts reads as profit while it
     // ignores deposits and swaps. Each coin's own 24h change in the ledger is the true signal.

@@ -23,13 +23,14 @@
 //      and a swap lookup that answers the swap reads off the same fixture. They are built
 //      here and only here, and only under this mode.
 
-import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
+import type { AppConfig, ChainId, Proposal, Rail, WriteDraft } from '../types.ts';
 import type { OneClickToken, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
 import { chainHead, intentsActivity, scanNetworkOf } from '../chainscan/index.ts';
 import type { IntentsActivity } from '../chainscan/index.ts';
 import { demoRails } from './demo.ts';
 import { hypercoreDepositRail } from './hypercore-deposit.ts';
+import type { HlCreditReader } from './hypercore-deposit.ts';
 import { hypercoreWithdrawRail } from './hypercore-withdraw.ts';
 import { INTENTS_NATIVE_COUNTERPARTY, intentsNativeRail } from './intents-native.ts';
 import { INTENTS_RELAY_VENUE, intentsRelayRail } from './intents-relay.ts';
@@ -115,6 +116,12 @@ export type RailDeps = {
   /* The vault's side of the allowance (src/vault/allowance.ts): what a top-up runs on. Absent, a
      top-up is refused at its simulation, which is every wallet that has not moved to the chip. */
   allowance?: AllowanceService;
+  /* The Hyperliquid account's credits off the venue's ledger, which end a deposit's watch the
+     moment its money lands (src/rails/hypercore-deposit.ts creditProof). Absent, a deposit waits
+     for 1Click's word alone. */
+  hlCredits?: HlCreditReader;
+  // Every proposal, so a Hyperliquid deposit knows other money on its way to the same account.
+  proposals?: () => readonly Proposal[];
 };
 
 export function createRails(deps: RailDeps): RailRegistry {
@@ -179,6 +186,8 @@ export function createRails(deps: RailDeps): RailRegistry {
       client,
       preflight,
       routes,
+      credits: deps.hlCredits,
+      proposals: deps.proposals,
     }) as Rail,
     hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,

@@ -1263,22 +1263,30 @@
   container-name: deck;
 }
 
+/* The tab words and the account's figures share one baseline; the eyes,
+   which have none, sit on the row's middle. */
 .trade-tabs {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--s-3);
   min-height: 52px;
   padding: var(--s-2) var(--s-5);
 }
 
+.trade-tabs > .pane-hide,
+.trade-tabs > .pane-show { align-self: center; }
+
 /* The tabs: a small well with a raised thumb that springs to the tab that
-   is up, the mode switch's grammar at the deck's size. */
+   is up, the mode switch's grammar at the deck's size. Its auto margin packs
+   everything after it to the row's far end, so the eye ends the row whether
+   the account figures are drawn, hidden or squeezed out. */
 .trade-tablist {
   position: relative;
   display: inline-flex;
   align-items: center;
   flex: 0 0 auto;
+  margin-right: auto;
   gap: 2px;
   height: 34px;
   padding: 3px;
@@ -1353,22 +1361,25 @@
 .trade-panel-count[data-zero="true"] { display: none; }
 
 /* What the trading account holds, at the row's right end: the label in the
-   third tone beside the figure. The row gives way from the left: the figures
-   are laid from the right end (Free first) and a figure that does not fit
-   beside the tabs wraps to a second line that is never shown, so the total
-   steps off first and nothing ever runs under the eye at the row's end (it
-   covered Free's figure at the 960 window). */
+   third tone beside the figure, all on one baseline. The total is the
+   deck's largest figure, because what the account is worth is the first
+   thing a person reads here; Free sits beside it at the size of a row's
+   figures. The row gives way from the left: the figures are laid from the
+   right end (Free first) and a figure that does not fit beside the tabs
+   wraps to a second line that is never shown, so the total steps off first
+   and nothing ever runs under the eye at the row's end (it covered Free's
+   figure at the 960 window). */
 .trade-account {
   display: flex;
   flex-direction: row-reverse;
   flex-wrap: wrap;
   justify-content: flex-start;
   align-items: baseline;
-  column-gap: var(--s-4);
+  column-gap: var(--s-5);
   row-gap: 0;
-  height: 20px;
+  height: 24px;
   overflow: hidden;
-  margin: 0 0 0 auto;
+  margin: 0;
   min-width: 0;
 }
 
@@ -1377,8 +1388,8 @@
 .trade-account-stat {
   display: flex;
   align-items: baseline;
-  gap: 6px;
-  line-height: 20px;
+  gap: var(--s-2);
+  line-height: 24px;
   white-space: nowrap;
 }
 
@@ -1396,15 +1407,15 @@
   color: var(--text);
 }
 
+.trade-account-total .trade-account-value {
+  font-size: var(--fs-18);
+  letter-spacing: -0.015em;
+}
+
 /* Too narrow for Free beside the tabs and the eye: the row keeps the tabs. */
 @container deck (max-width: 459px) {
   .trade-account { display: none; }
 }
-
-/* With no account figures on the row, the eyes take the far end. */
-.trade-tabs > .trade-account[hidden] ~ .pane-show,
-.trade-tabs > .trade-account[hidden] ~ .pane-hide { margin-left: auto; }
-.trade-tabs > .trade-account[hidden] ~ .pane-show ~ .pane-hide { margin-left: 0; }
 
 .trade-panels {
   flex: 1 1 auto;
@@ -1521,12 +1532,15 @@
   flex: 0 0 auto;
 }
 
-/* THE POSITION. On Trade: the coin, its side and its multiple over its size
-   at the left, the profit with its return under it at the right, Close, and
-   the five labelled figures as one line under them, wrapping inside the card
-   where the deck is narrow. On a deck 1000 px and wider the figures move up
-   between the coin and the profit and the card is one line. Pro (below) sets
-   the figures as small columns and adds the track. */
+/* THE POSITION. On Trade: the coin, its side and its multiple beside its
+   size at the left, the profit with its return at the right, Close, and the
+   five labelled figures under them. Where the deck has the room (700 px and
+   wider) the figures stand in five fixed columns, each word over its figure
+   with where it sits beside the word, so every card in the list has one
+   height and Entry, Mark and the rest line up down the deck the way a
+   terminal's columns do. Narrower, they run as one wrapping line. On a deck
+   1240 px and wider the columns move up between the coin and the profit.
+   Pro (below) sets the figures as small columns and adds the track. */
 .pos-row,
 .plan-row {
   padding: 10px 14px;
@@ -1542,7 +1556,7 @@
     "asset result act"
     "stats stats stats";
   align-items: center;
-  gap: 6px var(--s-4);
+  gap: var(--s-2) var(--s-4);
   cursor: pointer;
 }
 
@@ -1557,11 +1571,13 @@
 .pos-row > .trade-confirm { grid-area: confirm; }
 .pos-row > .trade-callout { grid-column: 1 / -1; }
 
-/* The last slot is one width whether it holds Close or "Opened elsewhere",
-   so the profit's right edge is one line down the deck. */
+/* The last slot is one width and one height whether it holds Close or
+   "Opened elsewhere", so the profit's right edge is one line down the deck
+   and every card is the same height. */
 .pos-row > .trade-row-foot {
   grid-area: act;
   width: 116px;
+  min-height: 30px;
 }
 
 .pos-asset {
@@ -1613,6 +1629,12 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
   min-width: 0;
 }
 
+/* The side's word, not its glyph, sits on the coin's baseline: a glyph
+   first in the line set the box's baseline at its foot and lifted the word
+   off the line. */
+.pos-line > .pos-side { align-items: baseline; }
+.pos-line > .pos-side > .icon { align-self: center; }
+
 .pos-coin {
   min-width: 0;
   overflow: hidden;
@@ -1653,18 +1675,25 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 
 .pos-roe {
   font-size: var(--fs-12);
+  font-weight: 500;
   color: var(--text-3);
   white-space: nowrap;
 }
 
-/* A profit is a signed figure in the text tone; a loss is the one figure on
-   the deck that takes red, because it is money the person has lost. */
+/* Profit and loss take their sign's colour, the money and its return
+   alike: the gain token for a figure that went up, red for money the person
+   has lost. Flat stays in the text tone. */
+.trade-pnl.gain,
+.pos-roe.gain { color: var(--up); }
 .trade-pnl.loss,
+.pos-roe.loss,
 .trade-confirm .loss { color: var(--down); }
 
 /* The five figures, each a word and its value and where it sits, in a line
    that wraps inside the card. Under the coin's name, so the column of the
-   card reads down from the logo. */
+   card reads down from the logo. The exits always start the second line
+   (the zero-height break between them), so every card breaks in the same
+   place rather than where its own prices happen to run out of room. */
 .pos-stats {
   display: flex;
   flex-wrap: wrap;
@@ -1672,6 +1701,18 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
   margin: 0;
   padding-left: 36px;
   min-width: 0;
+}
+
+@container deck (max-width: 699px) {
+  .pos-stats::before {
+    content: "";
+    order: 1;
+    flex-basis: 100%;
+    height: 0;
+  }
+  .pos-stop,
+  .pos-target { order: 2; }
+  body[data-view="pro"] .pos-stats::before { display: none; }
 }
 
 .pos-stat {
@@ -1699,12 +1740,48 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 .pos-figure {
   font-size: var(--fs-13);
   font-weight: 500;
-  color: var(--text-2);
+  color: var(--text);
 }
 
 .pos-sub {
   font-size: var(--fs-12);
   color: var(--text-3);
+}
+
+/* The columns. Entry and Mark carry no distance, so they take two parts of
+   the width and the three that do take three. The value's box steps aside
+   (display: contents) so the distance can sit on the word's line and the
+   figure under both, which keeps every card two lines of figures tall. */
+@container deck (min-width: 700px) {
+  .pos-stats {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 2fr) minmax(0, 3fr) minmax(0, 3fr) minmax(0, 3fr);
+    gap: 0 var(--s-4);
+  }
+  .pos-stat {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "k sub"
+      "fig fig";
+    align-items: baseline;
+    column-gap: 6px;
+    row-gap: 1px;
+  }
+  .pos-v { display: contents; }
+  .pos-k { grid-area: k; line-height: 16px; }
+  .pos-sub {
+    grid-area: sub;
+    line-height: 16px;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .pos-figure {
+    grid-area: fig;
+    font-size: var(--fs-14);
+    line-height: 20px;
+  }
 }
 
 .pos-elsewhere {
@@ -1715,9 +1792,11 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
   cursor: help;
 }
 
-@container deck (min-width: 1000px) {
+/* The profit's track has a floor, so a wider or narrower figure in one card
+   does not move every column of figures in it off the cards around it. */
+@container deck (min-width: 1240px) {
   .pos-row {
-    grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) minmax(160px, auto) auto;
     grid-template-areas: "asset stats result act";
   }
   .pos-row[data-confirming="true"] {
@@ -1912,10 +1991,13 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 .tape-head > .pos-col:nth-child(4) { grid-column: 6; justify-self: end; }
 .tape-head > .pos-col:nth-child(5) { grid-column: 7; justify-self: end; }
 
+/* Every cell on one 20 px line, so the clock, the side and the figures,
+   centred in the row, share a baseline whatever their size. */
 .done-row {
   padding: 8px 10px;
   border-radius: 12px;
   font-size: var(--fs-13);
+  line-height: 20px;
   color: var(--text);
   text-align: left;
 }
@@ -1923,12 +2005,15 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
 .done-row > .tx-when {
   grid-column: 1;
   font-size: var(--fs-12);
-  line-height: 1.4;
+  line-height: 20px;
   color: var(--text-3);
   white-space: nowrap;
 }
 
-.done-row > .tx-side { grid-column: 2; justify-self: start; }
+.done-row > .tx-side { grid-column: 2; justify-self: start; line-height: 20px; }
+
+/* The tape reads as one list: its rows sit close, the way a fill log does. */
+.trade-done .trade-list { gap: 2px; }
 
 .done-row > .tx-asset {
   grid-column: 3;
@@ -1973,8 +2058,9 @@ body[data-view="pro"] .pos-logo > .logo { --logo: 28px !important; }
   white-space: nowrap;
 }
 
-/* A fill's value is plain whichever side it was; a result is signed, and red
-   only when it was a loss. */
+/* A fill's value is plain whichever side it was; a result is signed and
+   takes its sign's colour, the same reading as a position's profit. */
+.done-row > [data-dir="gain"] { color: var(--up); }
 .done-row > [data-dir="loss"] { color: var(--down); }
 
 .done-row > .tx-link {
