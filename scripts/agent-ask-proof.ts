@@ -173,6 +173,8 @@ async function outsider(client: string): Promise<Outside> {
   const agent = { session: `proof-${client}`, client, secret: fs.readFileSync(path.join(backend!.dataDir, 'agent.secret'), 'utf8').trim(), key: hex() };
   const hello = await mcp({ op: 'hello', ...agent });
   if (hello.ok !== true) throw new Error(`${client} could not take a seat: ${JSON.stringify(hello)}`);
+  // The card asks about an agent at work, so the proof's agent calls once, as a real one would.
+  await mcp({ op: 'read', tool: 'policy_show', ...agent, args: {} });
   return agent;
 }
 

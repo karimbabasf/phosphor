@@ -55,3 +55,25 @@ test('a heartbeat pushes state only when the roster the window draws changed', a
     await h.close();
   }
 });
+
+// Karim, 2026-10-09: the window asks about an outside agent, and draws its row, from its first
+// call and never for a bare connection (ui/screens/agentask.js). That first call is news to the
+// window, so it pushes state; the calls after it change nothing the window draws.
+test('an agent first call pushes state, and the calls after it do not', async () => {
+  const h = await bootChartServer();
+  const hello = () => h.post('/api/mcp', { op: 'hello', client: 'claude-code', intervalMs: 5000, session: 'working', secret: h.seat });
+  const read = () => h.post('/api/mcp', { op: 'read', tool: 'policy_show', args: {}, session: 'working', secret: h.seat });
+  try {
+    assert.equal((await hello()).status, 200);
+    const first = await stateFrames(h.url, h.token, async () => {
+      assert.equal((await read()).status, 200);
+    });
+    assert.ok(first >= 1, 'a first call did not reach the window');
+    const later = await stateFrames(h.url, h.token, async () => {
+      for (let n = 0; n < 3; n += 1) assert.equal((await read()).status, 200);
+    });
+    assert.equal(later, 0, `${later} state frames for three calls after the first`);
+  } finally {
+    await h.close();
+  }
+});

@@ -70,9 +70,13 @@
   }
 
   /* The agents waiting on the person: started outside, able to be allowed (its proxy holds a
-     key of its own), not allowed, and not answered here. One put off with Ask each time waits
-     no more, unless the person asked about it again from its roster row, and then it goes
-     first: the person asked for it. Otherwise oldest first. */
+     key of its own), not allowed, not answered here, and at work: it has called Phosphor at
+     least once. Every Claude Code session on the Mac starts the proxy, so one opened for some
+     other job is a connection that never calls, and asking about it is a question about nothing
+     (Karim, 2026-10-09: "I dont want to see it"). Its moves wait all the same until an Allow
+     (src/agents.ts markOutside), so not asking yet lets nothing through. One put off with Ask
+     each time waits no more, unless the person asked about it again from its roster row, and
+     then it goes first: the person asked for it. Otherwise oldest first. */
   function waiting(state) {
     var agents = state && state.agents ? state.agents : null;
     var members = agents && Array.isArray(agents.members) ? agents.members : [];
@@ -81,6 +85,7 @@
     for (var i = 0; i < members.length; i += 1) {
       var m = members[i];
       if (!m || m.origin !== 'outside' || m.askable !== true || m.allowed === true) continue;
+      if (!(typeof m.ops === 'number' && m.ops > 0)) continue;
       var id = String(m.session);
       if (own(answered, id)) continue;
       if (own(reopened, id)) first.push(m);

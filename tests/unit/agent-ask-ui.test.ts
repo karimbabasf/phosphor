@@ -80,7 +80,7 @@ function all(root: Any, pick: (n: Any) => boolean, out: Any[] = []): Any[] {
   return out;
 }
 
-const MEMBER = { session: 'seat-ask-1', client: 'claude-code', label: 'claude-code', role: 'operator', since: '2026-10-01T19:12:00.000Z', ops: 0, origin: 'outside', allowed: false, later: false, askable: true };
+const MEMBER = { session: 'seat-ask-1', client: 'claude-code', label: 'claude-code', role: 'operator', since: '2026-10-01T19:12:00.000Z', ops: 1, origin: 'outside', allowed: false, later: false, askable: true };
 
 /* The window as the card meets it: a body, and in it the conversation with the slot ui/screens/
    agent.js keeps under its roster. `slot: false` is a window whose conversation never mounted. */
@@ -159,6 +159,22 @@ test('no card for an agent the app started, one allowed or put off, or one that 
     h.push(h.stateWith([m]));
     assert.ok(h.card() === null || h.card().hidden === true, JSON.stringify(m));
   }
+});
+
+// Karim, 2026-10-09, on the card coming up for every Claude Code session he opened for other work:
+// "I dont want to see it". Every session starts the proxy, which only says hello until its agent
+// calls a tool, so a connection is asked about on its first call and never before. Its moves wait
+// all the same (src/agents.ts markOutside), so not asking yet lets nothing through.
+test('a connection that never called Phosphor is not asked about, and its first call asks', () => {
+  const h = harness();
+  h.push(h.stateWith([{ ...MEMBER, ops: 0 }, { ...MEMBER, session: 'seat-ask-2', ops: 0 }, { ...MEMBER, session: 'seat-ask-3' }]));
+  assert.ok(h.card() !== null && h.card().hidden === false);
+  assert.equal(h.more().hidden, true, 'idle connections were counted as waiting: ' + h.more().textContent);
+  h.push(h.stateWith([{ ...MEMBER, ops: 0 }, { ...MEMBER, session: 'seat-ask-2', ops: 0 }]));
+  assert.equal(h.card().hidden, true, 'the card stayed up for connections that never called');
+  h.push(h.stateWith([{ ...MEMBER, ops: 0 }, { ...MEMBER, session: 'seat-ask-2', ops: 1 }]));
+  assert.equal(h.card().hidden, false, 'a first call did not ask');
+  assert.equal(h.ask.asking(h.stateWith([{ ...MEMBER, ops: 0 }, { ...MEMBER, session: 'seat-ask-2', ops: 1 }])).session, 'seat-ask-2');
 });
 
 // Karim, 2026-10-05: "this looks like shit, idk what it is". The card said '"claude-code", started

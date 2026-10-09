@@ -607,12 +607,15 @@ test('idle connections draw no row and are not called a working agent', () => {
   world.emit({ kind: 'status', state: 'off' });
   const idle = (n: number) => Array.from({ length: n }, (_, i) => ({ session: 's' + i, client: 'claude-code', label: 'claude-code', role: 'operator', ops: 0 }));
 
+  /* Karim, 2026-10-09, on a card reading "Your own agents are connected" over four rows from
+     sessions he had opened for other work: "I dont want to see it". Idle connections change
+     nothing on the card either: it reads as it does with none. */
   world.agents(idle(5));
-  assert.equal(world.seat(), 'own', 'five connections are still a connection');
+  assert.equal(world.seat(), 'off', 'five idle connections changed the card');
   let rows = all(world.host, 'agent-client');
   assert.equal(rows.length, 0, 'five idle connections drew ' + rows.length + ' rows');
-  assert.ok(world.card().includes('Your own agents are connected.'), world.card());
-  assert.ok(world.card().includes('None has made a move yet.'), world.card());
+  assert.ok(world.card().includes('Your agent is off.'), world.card());
+  assert.ok(!world.card().includes('connected'), world.card());
   assert.ok(!world.card().includes('at the wheel'), world.card());
   assert.ok(!world.card().includes('is working'), world.card());
 
@@ -626,12 +629,11 @@ test('idle connections draw no row and are not called a working agent', () => {
   assert.equal(rows[0].getAttribute('data-idle'), null);
   assert.ok(world.card().includes('Your own agent is working.'), world.card());
 
-  /* One idle connection draws no row either. */
+  /* One idle connection draws no row either, and leaves the card as it was. */
   world.agents(idle(1));
   rows = all(world.host, 'agent-client');
   assert.equal(rows.length, 0, rows.map((r) => r.textContent).join(' | '));
-  assert.ok(world.card().includes('Your own agent is connected.'), world.card());
-  assert.ok(world.card().includes('It has not made a move yet.'), world.card());
+  assert.ok(world.card().includes('Your agent is off.'), world.card());
 
   /* A row is named by its label when it has one, which is how a spawned worker is told apart. */
   world.agents([{ session: 'w', client: 'claude-code', label: 'Analyst 2', role: 'analyst', ops: 4 }]);
@@ -640,9 +642,11 @@ test('idle connections draw no row and are not called a working agent', () => {
 });
 
 // UX review 2026-10-01, finding 9: after Not now (now Ask each time) nothing let the person allow
-// the agent after all. Its row stays, whatever it did and whoever else runs, with a Change that
-// brings the whole card back (ui/screens/agentask.js reopen): the row itself decides nothing, as
-// agent-panel-ui.test.ts holds every control on this panel to. The rows of the rest read as before.
+// the agent after all. Its row stays, whoever else runs, with a Change that brings the whole card
+// back (ui/screens/agentask.js reopen): the row itself decides nothing, as agent-panel-ui.test.ts
+// holds every control on this panel to. The rows of the rest read as before.
+// Karim, 2026-10-09, with four rows of "Claude Code, its moves wait for your OK" from sessions
+// opened for other work: a put-off connection that never called draws no row.
 test('an agent put off with Ask each time keeps a row with a Change that asks again', () => {
   const world = build();
   const reopened: string[] = [];
@@ -652,11 +656,14 @@ test('an agent put off with Ask each time keeps a row with a Change that asks ag
   world.agents([{ ...outside, ops: 0, later: false }, { session: 'w', client: 'codex', label: 'codex', role: 'operator', ops: 1 }]);
   let rows = all(world.host, 'agent-client');
   assert.deepEqual(rows.map((r) => r.textContent), ['codex, can ask1 call'], 'one asked about, never put off, is plumbing until it works');
-  world.agents([{ ...outside, ops: 0, later: true }]);
+  world.agents([{ ...outside, ops: 0, later: true }, { ...outside, session: 'seat-out-2', ops: 0, later: true }]);
+  rows = all(world.host, 'agent-client');
+  assert.equal(rows.length, 0, 'put-off connections that never called drew: ' + rows.map((r) => r.textContent).join(' | '));
+  world.agents([{ ...outside, ops: 1, later: true }, { ...outside, session: 'seat-out-2', ops: 0, later: true }]);
   rows = all(world.host, 'agent-client');
   assert.equal(rows.length, 1, rows.map((r) => r.textContent).join(' | '));
   assert.equal(all(rows[0], 'agent-client-name')[0].textContent, 'claude-code, its moves wait for your OK');
-  assert.equal(all(rows[0], 'agent-client-calls')[0].textContent, '', 'no call is not a count');
+  assert.equal(all(rows[0], 'agent-client-calls')[0].textContent, '1 call');
   const key = all(rows[0], 'agent-client-change')[0];
   assert.ok(key, 'a put-off agent has no way back');
   assert.equal(key.textContent, 'Change');
@@ -677,18 +684,18 @@ test('the roster names a client the ask card knows as the card does, and any oth
   const world = build({ ask: true });
   world.emit({ kind: 'status', state: 'off' });
   world.agents([
-    { session: 'seat-out', client: 'claude-code', label: 'claude-code', role: 'operator', origin: 'outside', askable: true, allowed: false, later: true, ops: 0 },
+    { session: 'seat-out', client: 'claude-code', label: 'claude-code', role: 'operator', origin: 'outside', askable: true, allowed: false, later: true, ops: 1 },
     { session: 'd', client: 'claude-ai', label: 'claude-ai', role: 'operator', ops: 2 },
     { session: 'c', client: 'Codex-MCP-Client', role: 'operator', ops: 1 },
     { session: 'x', client: 'my-trading-bot', label: 'my-trading-bot', role: 'operator', ops: 1 },
     { session: 'w', client: 'claude-code', label: 'Analyst 2', role: 'analyst', ops: 4 },
   ]);
   assert.deepEqual(all(world.host, 'agent-client-name').map((n) => n.textContent), [
+    'Claude Code, its moves wait for your OK',
     'Claude Desktop, can ask',
     'Codex, can ask',
     'my-trading-bot, can ask',
     'Analyst 2, read only',
-    'Claude Code, its moves wait for your OK',
   ]);
 });
 
