@@ -5,6 +5,17 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.5
+
+Built 2026-10-09. Tagged v0.11.5 on 2026-10-09.
+
+- A resting limit entry is no longer marked cancelled on a restart while it still sits on
+  Hyperliquid. The account could load before the open orders, and the app read the empty list as
+  an empty book: the plan ended and its order stayed on the venue with no stop behind it. The
+  app now waits for the open orders, and before it ends a plan whose order is missing it asks
+  Hyperliquid about that order by its id. Only Hyperliquid saying cancelled or rejected ends it;
+  no answer keeps the plan.
+
 ## 0.11.4
 
 Built 2026-10-09, the trading account release. Tagged v0.11.4 on 2026-10-09. There is no 0.11.3

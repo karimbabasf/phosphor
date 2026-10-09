@@ -149,6 +149,7 @@ type HarnessOptions = {
   markFor?: (coin: string) => number | null;
   metaFor?: (coin: string) => typeof META | null;
   info?: InfoClient;
+  confirmSchedule?: { firstMs: number; maxMs: number; timeoutMs: number };
   // Answers every forked child starts with, for a child the host forks on its own.
   answers?: FakeChild['answers'];
   killSwitch?: boolean;
@@ -189,6 +190,7 @@ function harness(over: HarnessOptions = {}): Harness {
     mark: (coin) => (over.markFor !== undefined ? over.markFor(coin) : over.mark === undefined ? 100 : over.mark),
     free: () => 1000,
     ...(over.info !== undefined ? { info: over.info } : {}),
+    ...(over.confirmSchedule !== undefined ? { confirmSchedule: over.confirmSchedule } : {}),
     bars: over.bars === undefined ? undefined : (coin, tf, count) => over.bars!(coin, tf, count),
     approval: (id) => approvals.get(id) ?? null,
     agentApproved: async () => {
@@ -457,6 +459,22 @@ function mids(answer: () => Record<string, string>): InfoClient & { asked: unkno
     health: () => HEALTHY,
   };
 }
+
+// orderStatus by cloid, the way the venue answers it; an id it does not list is unknownOid.
+function orderStatus(byCloid: Record<string, string>): InfoClient & { asked: unknown[] } {
+  const asked: unknown[] = [];
+  return {
+    asked,
+    async post<T>(body: unknown): Promise<T> {
+      asked.push(body);
+      const oid = (body as { oid?: unknown }).oid;
+      const said = typeof oid === 'string' ? byCloid[oid] : undefined;
+      return (said === undefined ? { status: 'unknownOid' } : { status: 'order', order: { status: said, order: { oid: 1 } } }) as T;
+    },
+    health: () => HEALTHY,
+  };
+}
+const QUICK = { firstMs: 1, maxMs: 1, timeoutMs: 30 };
 
 // An open plan as it sits on disk: its fill protected by a stop and a target.
 function openOn(id: string, symbol: string): PlanRow {
@@ -762,7 +780,7 @@ test('reconcile reads placed and open rows against the venue by cloid', async ()
   store.put(row({ id: 'pl_filled', status: 'placed', symbol: 'BTC', cloids: { entry: '0xfilled' }, gen: 1 }));
   store.put(row({ id: 'pl_open', status: 'open', symbol: 'SOL', cloids: { entry: 'a', stop: '0xstop' }, gen: 2, exitSz: 5 }));
   store.put(row({ id: 'pl_done', status: 'open', symbol: 'DOGE', cloids: { entry: 'a', stop: 's' }, gen: 2, exitSz: 5, target: 120 }));
-  const h = harness({ dir });
+  const h = harness({ dir, info: orderStatus({ '0xgone': 'canceled' }), confirmSchedule: QUICK });
   h.runner.onAccount(
     account({
       positions: [
@@ -784,6 +802,50 @@ test('reconcile reads placed and open rows against the venue by cloid', async ()
   assert.ok(h.forked[0].of('protect').some((m) => m.cmd === 'protect' && m.id === 'pl_filled'));
   assert.equal(h.runner.get('pl_open')?.status, 'open');
   assert.equal(h.runner.get('pl_done')?.endReason, 'targeted');
+});
+
+test('reconcile never ends a placed plan on an order list the venue has not sent yet', async () => {
+  /* 2026-10-09: the account channel answered first on boot, the open-orders channel had not,
+     and a resting SOL entry was ended as cancelled while it stayed on the book with no stop. */
+  const dir = tempDir('phosphor-runner-host-');
+  const store = createPlanStore(dir);
+  store.put(row({ id: 'pl_resting', status: 'placed', cloids: { entry: '0xrest' }, gen: 1 }));
+  const h = harness({ dir });
+  h.runner.onAccount(account({ orders: [], ordersKnown: false }));
+  const done = h.runner.reconcile(1_000);
+  await settle();
+  h.runner.onAccount(account({ orders: [{ coin: 'ETH', cloid: '0xrest' }], ordersKnown: true }));
+  await done;
+  await settle();
+  assert.equal(h.runner.get('pl_resting')?.status, 'placed', 'judged against the orders once they arrived');
+
+  // The orders never arrive inside the wait: the row stays as it is, unjudged.
+  const dir2 = tempDir('phosphor-runner-host-');
+  createPlanStore(dir2).put(row({ id: 'pl_unheard', status: 'placed', cloids: { entry: '0xrest' }, gen: 1 }));
+  const h2 = harness({ dir: dir2 });
+  h2.runner.onAccount(account({ orders: [], ordersKnown: false }));
+  await h2.runner.reconcile(20);
+  await settle();
+  assert.equal(h2.runner.get('pl_unheard')?.status, 'placed', 'silence is not a cancel');
+});
+
+test('a placed entry missing from the feed is asked of the venue by cloid before it ends', async () => {
+  const dir = tempDir('phosphor-runner-host-');
+  const store = createPlanStore(dir);
+  store.put(row({ id: 'pl_rest', status: 'placed', symbol: 'ETH', cloids: { entry: '0xr' }, gen: 1 }));
+  store.put(row({ id: 'pl_fill', status: 'placed', symbol: 'BTC', cloids: { entry: '0xf' }, gen: 1 }));
+  store.put(row({ id: 'pl_quiet', status: 'placed', symbol: 'SOL', cloids: { entry: '0xq' }, gen: 1 }));
+  store.put(row({ id: 'pl_canc', status: 'placed', symbol: 'DOGE', cloids: { entry: '0xc' }, gen: 1 }));
+  const venue = orderStatus({ '0xr': 'open', '0xf': 'filled', '0xc': 'marginCanceled' });
+  const h = harness({ dir, info: venue, confirmSchedule: QUICK });
+  h.runner.onAccount(account({ orders: [], positions: [] }));
+  await h.runner.reconcile(100);
+  await settle();
+  assert.equal(h.runner.get('pl_rest')?.status, 'placed', 'the venue says it rests');
+  assert.ok(h.forked.length > 0, 'and the runner took it back');
+  assert.ok(h.forked[0].of('protect').some((m) => m.cmd === 'protect' && m.id === 'pl_fill'), 'a fill the feed missed gets its exits');
+  assert.equal(h.runner.get('pl_quiet')?.status, 'placed', 'the venue never answered: kept');
+  assert.equal(h.runner.get('pl_canc')?.endReason, 'cancelled', 'only the venue saying so ends it');
 });
 
 // ---------- the key's route to the child ----------

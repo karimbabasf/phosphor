@@ -81,6 +81,9 @@ export type AccountView = {
   positions: { coin: string; szi: number; entryPx: number }[];
   orders: { coin: string; cloid: string | null }[];
   fills: { coin: string; px: number; sizeCoin: number; atMs: number; closedPnlUsd: number | null }[];
+  // False while the venue has not sent the resting orders yet, so `orders` is empty because
+  // nobody has said, not because the book is. Absent means known.
+  ordersKnown?: boolean;
 };
 
 export type HostDeps = {
@@ -619,6 +622,24 @@ export function createRunnerHost(deps: HostDeps) {
     if (state === 'canceled') finish(current, 'cancelled');
   }
 
+  // What the venue says about one order of a placed row at boot, by its cloid. Shorter than
+  // the read-back after a fire: the order is old, so the venue either knows it or never will.
+  async function venueSays(cloid: string): Promise<OrderConfirm['state']> {
+    try {
+      const out = await confirmOrder({
+        info,
+        user: user(),
+        oid: cloid,
+        schedule: deps.confirmSchedule ?? { firstMs: 500, maxMs: 1_000, timeoutMs: 5_000 },
+        ...(deps.sleep !== undefined ? { sleep: deps.sleep } : {}),
+        now,
+      });
+      return out.state;
+    } catch {
+      return 'unconfirmed';
+    }
+  }
+
   // ---------- the account ----------
 
   function positionOn(coin: string): { szi: number; entryPx: number } | null {
@@ -684,9 +705,11 @@ export function createRunnerHost(deps: HostDeps) {
   function onAccount(view: AccountView): void {
     account = view;
     accountAt = Math.max(accountAt, view.atMs);
-    const waiters = accountWaiters;
-    accountWaiters = [];
-    for (const w of waiters) w();
+    if (view.ordersKnown !== false) {
+      const waiters = accountWaiters;
+      accountWaiters = [];
+      for (const w of waiters) w();
+    }
     for (const row of liveRows()) {
       const pos = positionOn(row.symbol);
       if (row.status === 'placed') {
@@ -1170,7 +1193,7 @@ export function createRunnerHost(deps: HostDeps) {
        positions by cloid. Waits for the first account snapshot, bounded, so it is not deciding
        against an empty feed. */
     async reconcile(waitMs = 20_000): Promise<void> {
-      if (account === null) {
+      if (account === null || account.ordersKnown === false) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, waitMs);
           timer.unref?.();
@@ -1220,6 +1243,13 @@ export function createRunnerHost(deps: HostDeps) {
         const pos = positionOn(row.symbol);
         const resting = new Set(account.orders.map((o) => o.cloid).filter((c): c is string => c !== null));
         if (row.status === 'placed') {
+          /* An empty order list the venue has not sent is silence, not an empty book. Ending the
+             row on it left a resting SOL entry on the book with no plan behind it (2026-10-09).
+             The row stays placed and the next reconcile, on unlock or restart, judges it. */
+          if (account.ordersKnown === false && pos === null) {
+            record({ type: 'error', id: row.id, message: `${row.id} not checked against the venue: its open orders have not arrived yet` });
+            continue;
+          }
           if (row.cloids.entry !== undefined && resting.has(row.cloids.entry)) {
             const out = await armRow(row);
             if (!out.ok) record({ type: 'error', id: row.id, message: `could not re-take ${row.id}: ${out.reason}` });
@@ -1230,6 +1260,22 @@ export function createRunnerHost(deps: HostDeps) {
             const out = await armRow(row);
             if (out.ok) void protect(row);
             continue;
+          }
+          /* Missing from the feed's list is not the venue saying it is gone. Ask the venue for
+             the entry by its cloid before ending anything: only its own canceled or rejected
+             ends the row. Resting or filled re-takes it; silence leaves it placed. */
+          if (row.cloids.entry !== undefined) {
+            const said = await venueSays(row.cloids.entry);
+            if (said === 'resting' || said === 'filled') {
+              const out = await armRow(row);
+              if (!out.ok) record({ type: 'error', id: row.id, message: `could not re-take ${row.id}: ${out.reason}` });
+              else if (said === 'filled') void protect(row);
+              continue;
+            }
+            if (said === 'unconfirmed') {
+              record({ type: 'error', id: row.id, message: `${row.id} kept: its entry is not in the feed and the venue did not answer for it` });
+              continue;
+            }
           }
           finish(row, now() >= Date.parse(row.expiresAt ?? '') ? 'expired' : 'cancelled');
           continue;
