@@ -31,6 +31,6 @@ test('every sheet is fitted inside what shows it before it opens, and a list ope
 });
 
 test('the deck tab row gives way from the left, so nothing runs under the eye at its end', () => {
-  assert.match(CSS, /\.trade-account \{\s*display: flex;\s*flex-direction: row-reverse;\s*flex-wrap: wrap;[^}]*height: 20px;\s*overflow: hidden;/);
+  assert.match(CSS, /\.trade-account \{\s*display: flex;\s*flex-direction: row-reverse;\s*flex-wrap: wrap;[^}]*height: 24px;\s*overflow: hidden;/);
   assert.match(CSS, /\.trade-account-free \{ order: -1; \}/, 'Free is the figure that stays');
 });

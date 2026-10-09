@@ -571,13 +571,13 @@ test('a fill is one line under headings: the clock, the side, the coin, the size
   for (const i of [3, 4, 5, 6]) assert.ok(row.node.childNodes[i].className.includes('num'), `cell ${i} is not set as a figure`);
 });
 
-test('a closing fill shows what it made or lost, red only for a loss', async () => {
+test('a closing fill shows what it made or lost, in its sign\'s colour', async () => {
   const data = payload(0.001, 5);
   data.fills = [fill({ tid: 'w', side: 'sell', closedPnlUsd: 22.41 }), fill({ tid: 'l', side: 'sell', closedPnlUsd: -4.2, atMs: NOW - 40 * MINUTE })];
   const { host } = await renderPayload(data);
   const [win, loss] = fillRows(host);
   assert.equal(win.result, '+$22.41');
-  assert.equal(win.node.childNodes[6].dataset.dir, undefined, 'a profit is a signed figure, never green');
+  assert.equal(win.node.childNodes[6].dataset.dir, 'gain', 'a profit takes the gain colour, the same reading as a position');
   assert.equal(loss.result, '-$4.20');
   assert.equal(loss.node.childNodes[6].dataset.dir, 'loss');
 });
@@ -660,7 +660,7 @@ test('a done plan whose payload carries what it closed for shows the figure, sig
   const rows = withClass(host, 'done-row').filter((r) => r.className.includes('ended-row'));
   assert.equal(rows.length, 2);
   assert.equal(rows[0].childNodes[3].textContent, '+$412.50');
-  assert.equal(rows[0].childNodes[3].dataset.dir, undefined, 'a profit is a signed figure, never green');
+  assert.equal(rows[0].childNodes[3].dataset.dir, 'gain', 'what a plan made takes the gain colour');
   assert.ok(rows[0].childNodes[3].className.includes('num'), 'a figure is set as a figure');
   assert.equal(rows[1].childNodes[3].textContent, '-$63.20');
   assert.equal(rows[1].childNodes[3].dataset.dir, 'loss', 'a loss is the one figure that takes red');
@@ -1036,7 +1036,7 @@ test('an open position is a card of labelled figures: the coin and side, size, p
   assert.equal(side.dataset.tone, undefined, 'a side is a word, never a colour');
   const [pnl] = withClass(host, 'trade-pnl');
   assert.equal(pnl.textContent, '+$1,000.00', 'no profit');
-  assert.ok(!pnl.className.includes('up') && !pnl.className.includes('loss'), 'a profit is a signed figure in the text tone');
+  assert.ok(pnl.className.includes('gain') && !pnl.className.includes('loss'), 'a profit takes the gain colour');
   assert.ok(pnl.className.includes('num'), 'a number is set as a figure');
   assert.deepEqual(stat(row, 'pos-entry'), { label: 'Entry', figure: '$58,000.00', sub: '', none: false });
   assert.deepEqual(stat(row, 'pos-mark'), { label: 'Mark', figure: '$60,000.00', sub: '', none: false });
@@ -1084,6 +1084,26 @@ test('a loss is the one figure that takes red, and it carries its sign', async (
   const [pnl] = withClass(host, 'trade-pnl');
   assert.equal(pnl.textContent, '-$42.50');
   assert.ok(pnl.className.includes('loss'));
+});
+
+test('the return takes the colour of the sign it is written with, and flat takes none', async () => {
+  const data = funded();
+  data.positions[0] = { ...data.positions[0], unrealisedUsd: -42.5, roePct: -3.9 } as never;
+  // Reduced motion, so the changed profit is written at once rather than rolled.
+  const world = await renderPayload(data, { reduced: true });
+  const [roe] = withClass(world.host, 'pos-roe');
+  assert.equal(roe.textContent, '-3.9%');
+  assert.ok(roe.className.includes('loss') && roe.className.includes('num'));
+  // A return under a twentieth of a percent is written unsigned, so it is not coloured either,
+  // and a profit of exactly nothing is neither a gain nor a loss.
+  data.positions[0] = { ...data.positions[0], unrealisedUsd: 0, roePct: 0.02 } as never;
+  world.set(data);
+  await world.refresh();
+  const [flatRoe] = withClass(world.host, 'pos-roe');
+  const [flatPnl] = withClass(world.host, 'trade-pnl');
+  assert.equal(flatRoe.textContent, '0.0%');
+  assert.ok(!/gain|loss/.test(flatRoe.className), 'an unsigned return is not coloured');
+  assert.ok(!/gain|loss/.test(flatPnl.className), 'a flat position is neither a gain nor a loss');
 });
 
 test('a position with no open plan behind it takes its exits from the working triggers, and says No target in words', async () => {
