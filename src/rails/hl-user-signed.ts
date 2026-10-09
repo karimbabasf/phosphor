@@ -449,9 +449,13 @@ export type HlAccountSummary = {
   marginUsedUsd: number;
   openPositions: number;
   fetchedAt: string;
+  // The venue's own clock when it answered (clearinghouseState.time), so a window measured against
+  // the venue's ledger stamps is on one clock. Absent when the venue sent none.
+  venueTimeMs?: number;
 };
 
 type ClearinghouseState = {
+  time?: number;
   marginSummary?: { accountValue?: string; totalMarginUsed?: string };
   withdrawable?: string;
   assetPositions?: unknown[];
@@ -540,6 +544,7 @@ export async function accountSummary(deps: HlUserSignedDeps, address?: string): 
     marginUsedUsd: num(perp.marginSummary?.totalMarginUsed),
     openPositions: Array.isArray(perp.assetPositions) ? perp.assetPositions.length : 0,
     fetchedAt: new Date().toISOString(),
+    ...(typeof perp.time === 'number' && Number.isFinite(perp.time) && perp.time > 0 ? { venueTimeMs: perp.time } : {}),
   };
 }
 

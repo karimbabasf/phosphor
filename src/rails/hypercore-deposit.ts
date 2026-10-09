@@ -825,8 +825,10 @@ export function hypercoreDepositRail(deps: HypercoreDepositDeps): HypercoreDepos
     }
 
     // From here the deposit is in flight on its account: the ledger's credits count from this
-    // moment, and another deposit to the same account meanwhile crowds both (creditProof).
-    const sinceMs = now();
+    // moment, and another deposit to the same account meanwhile crowds both (creditProof). The
+    // moment is the venue's own, off the read just taken, because the ledger is stamped on the
+    // venue's clock and this Mac's may sit seconds either side of it.
+    const sinceMs = before.venueTimeMs ?? now();
     const { flight, leave } = enter(draft.hlAccount.toLowerCase());
     let result: RailResult | undefined;
     try {

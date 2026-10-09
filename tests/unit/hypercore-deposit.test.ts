@@ -1014,6 +1014,8 @@ type World = {
   status?: (sinceSubmitMs: number) => OneClickStatus['status'];
   // The account at a moment, counted from the submit.
   account?: (sinceSubmitMs: number) => AccountShape;
+  // How far this Mac's clock runs ahead of the venue's: the venue stamps its reads and its ledger on its own.
+  macAheadMs?: number;
 };
 
 function clockedRail(w: World = {}) {
@@ -1031,7 +1033,7 @@ function clockedRail(w: World = {}) {
       return json({ status: 'ok', response: { type: 'default' } });
     }
     const shape = shapeAt(since());
-    if (body.type === 'clearinghouseState') return json({ marginSummary: { accountValue: String(shape.perp), totalMarginUsed: '0' }, withdrawable: String(shape.perp), assetPositions: [] });
+    if (body.type === 'clearinghouseState') return json({ marginSummary: { accountValue: String(shape.perp), totalMarginUsed: '0' }, withdrawable: String(shape.perp), assetPositions: [], time: clock - (w.macAheadMs ?? 0) });
     if (body.type === 'userAbstraction') return json(shape.unifiedAvailable !== undefined ? 'unifiedAccount' : 'standard');
     return json({
       balances: [{ coin: 'USDC', token: 0, total: String(shape.spot), hold: '0' }],
@@ -1086,6 +1088,21 @@ test('a credit on the account\'s own ledger settles the deposit while 1Click sti
   assert.equal(w.calls.signed.length, 1, 'signed exactly once');
   assert.deepEqual(w.nonceAsks[0], [ACCOUNT, NONCE], 'NEAR was asked about this deposit\'s own signed transfer');
   assert.equal(w.exchange.length, 0, 'a unified account moves nothing between books');
+});
+
+// The ledger is stamped on the venue's clock, and the window it is read from opened on this Mac's,
+// so a Mac running 30 s fast put every credit before the window and the card waited for 1Click.
+// The window opens on the venue's own clock, off the account read taken before the signature.
+test('a Mac clock that runs ahead of the venue still settles on the credit, the window being on the venue clock', async () => {
+  const AHEAD = 30_000;
+  const w = clockedRail({
+    macAheadMs: AHEAD,
+    ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ atMs: NOW - AHEAD + CREDITED_AFTER_MS })] : []),
+  });
+  const out = await w.rail.execute(draft());
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on 1Click's word: the credit fell outside a window on this Mac's clock`);
+  assert.equal(out.evidence?.settledAmountOut, '9.6594');
 });
 
 test('a unified account whose free collateral did not rise still settles on the credit its ledger names', async () => {
