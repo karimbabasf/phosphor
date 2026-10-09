@@ -206,12 +206,12 @@ test('a coin only 1Click prices has its dollars the moment the list lands, not a
     const url = String(input);
     const host = new URL(url).hostname;
     const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
-    if (host.endsWith('coinbase.com')) return json([[0, 0, 0, 0, 100, 0]]);
+    if (host === 'coinbase.com' || host.endsWith('.coinbase.com')) return json([[0, 0, 0, 0, 100, 0]]);
     if (url.endsWith('/v0/tokens')) {
       await new Promise((resolve) => setTimeout(resolve, listDelayMs));
       return json([{ assetId: GRAM, decimals: 9, blockchain: 'ton', symbol: 'GRAM', price: 1.46, priceUpdatedAt: new Date().toISOString() }]);
     }
-    if (host.endsWith('hyperliquid.xyz')) {
+    if (host === 'hyperliquid.xyz' || host.endsWith('.hyperliquid.xyz')) {
       const type = String(body?.type);
       if (type === 'clearinghouseState') return json({ marginSummary: { accountValue: '0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] });
       if (type === 'spotClearinghouseState') return json({ balances: [] });
