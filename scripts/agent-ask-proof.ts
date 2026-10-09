@@ -388,7 +388,7 @@ async function main(): Promise<void> {
     await shoot(page, 'roster-after-ask-each-time');
 
     // 7. The first is allowed after all: its roster row's Change brings the card back, then Allow.
-    results.reopened = await page.evaluate(`(function(){var row=Array.from(document.querySelectorAll('.agent-client')).filter(function(r){var n=r.querySelector('.agent-client-name');return n&&n.textContent.indexOf('claude-code,')===0})[0];var b=row?row.querySelector('.agent-client-change'):null;if(!b||b.disabled)return false;b.click();return true})()`);
+    results.reopened = await page.evaluate(`(function(){var row=Array.from(document.querySelectorAll('.agent-client')).filter(function(r){var n=r.querySelector('.agent-client-name');return n&&n.textContent.indexOf('Claude Code,')===0})[0];var b=row?row.querySelector('.agent-client-change'):null;if(!b||b.disabled)return false;b.click();return true})()`);
     await waitFor(page, ASKS_ABOUT('Claude Code wants to use Phosphor'), 5_000);
     await sleep(1000);
     await shoot(page, 'allow-card-reopened');
@@ -435,10 +435,11 @@ async function main(): Promise<void> {
   check('F2 a small move from a chat that read outside text says why on its face', lineSays(r['card-web-read'], 'This chat read text from outside Phosphor, so this move waits for your OK.'), r['card-web-read']?.cards);
   check('F2 a small move from an agent started outside says why on its face', lineSays(r['allow-card'], 'This agent was started outside Phosphor and is not allowed yet'), r['allow-card']?.cards);
   check('F5 a cancelled card says when you said no, never that you approved it', cardsWith(r['card-cancelled-details'], 'You said no at') && !cardsWith(r['card-cancelled-details'], 'You approved it at'), r['card-cancelled-details']?.cards);
+  // The roster names a client the card knows as the card does ("Claude Code", not "claude-code").
   check('F9 the harmless answer is Ask each time', (r['allow-card']?.ask?.keys ?? []).includes('Ask each time'), r['allow-card']?.ask?.keys);
-  check('F9 a put-off agent keeps a way back on its roster row', (r['roster-after-ask-each-time']?.roster ?? []).some((row: Json) => row.text.includes('claude-code') && row.keys.includes('Change')), r['roster-after-ask-each-time']?.roster);
+  check('F9 a put-off agent keeps a way back on its roster row', (r['roster-after-ask-each-time']?.roster ?? []).some((row: Json) => row.text.includes('Claude Code') && row.keys.includes('Change')), r['roster-after-ask-each-time']?.roster);
   check('F9 the roster key asks again with the whole card', String(r['allow-card-reopened']?.ask?.text ?? '').includes('Claude Code wants to use Phosphor'), r['allow-card-reopened']?.ask?.text);
-  check('F9 once allowed, the row says it can ask', (r['roster-after-allow']?.roster ?? []).some((row: Json) => row.text.startsWith('claude-code, can ask') && !row.keys.includes('Change')), r['roster-after-allow']?.roster);
+  check('F9 once allowed, the row says it can ask', (r['roster-after-allow']?.roster ?? []).some((row: Json) => row.text.startsWith('Claude Code, can ask') && !row.keys.includes('Change')), r['roster-after-allow']?.roster);
   check('F10 one more agent waiting is said on the card', String(r['allow-card-two-waiting']?.ask?.text ?? '').includes('1 more agent is waiting'), r['allow-card-two-waiting']?.ask?.text);
   check('F10 the next agent takes the card', String(r['allow-card-next']?.ask?.text ?? '').includes('It calls itself codex'), r['allow-card-next']?.ask?.text);
   check('F19 the card says what Allow does and does not do', String(r['allow-card']?.ask?.text ?? '').includes("Phosphor's own chat works the same way.") && String(r['allow-card']?.ask?.text ?? '').includes('Moves it already asked for still wait for your OK.'), r['allow-card']?.ask?.text);
