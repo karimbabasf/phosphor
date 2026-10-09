@@ -328,6 +328,22 @@ test('a row that moved rolls to its new figure and lights once, then decays', ()
   assert.equal(usdc.dataset.lit, undefined, 'the light never left');
 });
 
+// Karim, 2026-10-09: "i want to see the price change live". Prices now move about once a second
+// (src/ledger/live-prices.ts), so a price that moves under an amount that did not rolls the figures
+// and lights nothing: a light every second is a pulse. A moved amount still lights, as above.
+test('a price that moves under the same amount rolls the figure and lights nothing', () => {
+  const panel = build();
+  panel.put(frame('$11,357.51', COINS));
+  panel.runTimers();
+  const eth = panel.row('ETH');
+  const head = panel.one('bal-head');
+  const moved = COINS.map((c) => (c.symbol === 'ETH' ? { ...c, valueLine: '$5,000.12' } : c));
+  panel.put(frame('$11,400.03', moved));
+  assert.equal(panel.row('ETH'), eth, 'the row kept its identity across a render');
+  assert.equal(eth.dataset.lit, undefined, 'a price tick lit the row');
+  assert.equal(head.dataset.lit, undefined, 'a price tick lit the total');
+});
+
 test('the light arrives and decays on the two glow tokens', () => {
   const css = read('../../ui/design/basic.css');
   assert.match(css, /\.bal-row\[data-lit="true"\]::before\s*\{[^}]*transition-duration:\s*var\(--dur-glow-in\);/, 'the light does not arrive in 120 ms');

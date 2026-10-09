@@ -10,7 +10,7 @@
 import path from 'node:path';
 import type { AppConfig, LedgerSnapshot } from '../types.ts';
 import { loadDemoLedger, loadDemoReads } from './demo.ts';
-import { fetchIntentsHoldings, mergeIntentsReads, REFRESH_PERIOD_MS, type AccountRead, type IntentsRead } from './intents.ts';
+import { fetchIntentsHoldings, mergeIntentsReads, REFRESH_PERIOD_MS, relabelHoldings, type AccountRead, type IntentsRead } from './intents.ts';
 import { fetchHyperliquidRead, type HlRead } from './hyperliquid.ts';
 import { oneClickClient, type OneClickToken } from '../intents.ts';
 import { evmAddress } from '../keystore/index.ts';
@@ -212,11 +212,21 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
      in 0.38 s and waited on the list for their names and decimals until 0.72 s on a good day, and
      until the 10 s read deadline while 1Click hung (2026-10-05, Karim: "it says zero for a while").
      A list past its minute is read again behind the balance, for the next pass. With none in hand
-     at all, a first run, the read still waits: decimals are what make the numbers right. */
+     at all, a first run, the read still waits: decimals are what make the numbers right.
+     The read behind the balance labels what is on screen again when it lands (relabel), so a cold
+     start's coins have their dollars half a second after the list does, not a pass later. */
   const tokenList = (): Promise<OneClickToken[]> => {
     const inHand = oneClick.cached?.() ?? null;
     if (inHand === null) return oneClick.tokens();
-    void oneClick.tokens().catch(() => undefined);
+    void oneClick
+      .tokens()
+      .then(() => {
+        if (current.pending === true || !relabel()) return;
+        // A new snapshot, so everything cached behind the old one (src/http/state.ts) is built again.
+        current = { ...current };
+        listeners.tell();
+      })
+      .catch(() => undefined);
     return Promise.resolve(inHand);
   };
   const listeners = refreshListeners();
@@ -225,6 +235,8 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   let byAccount = new Map<string, IntentsRead>();
   let named: { vault: string | null; spend: string | null } = { vault: null, spend: null };
   let liveHl: HlRead | undefined;
+  // The read stamp of the list the holdings on screen were labelled off, null for a list with none.
+  let labelledAt: number | null = null;
   // Reads started and the newest one written, so a slow read that answers after a newer one
   // has written is dropped at the write: the last answer to arrive is not the newest read, and
   // a read that failed on its 10 s deadline used to land on top of a good one that came after
@@ -272,6 +284,25 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
   }
   let liveIntents: IntentsRead | undefined;
 
+  /* The holdings labelled again off the newest list in hand, when it is newer than the one they
+     were labelled off: its names, decimals and prices (src/ledger/intents.ts relabelHoldings).
+     True when something was labelled. */
+  function relabel(): boolean {
+    const at = oneClick.listedAt?.() ?? null;
+    const list = oneClick.cached?.() ?? null;
+    if (at === null || list === null || at === labelledAt) return false;
+    let moved = false;
+    for (const [account, read] of byAccount) {
+      if (read.holdings.length === 0) continue;
+      byAccount.set(account, { ...read, holdings: relabelHoldings(read.holdings, list, at) });
+      moved = true;
+    }
+    if (!moved) return false;
+    labelledAt = at;
+    liveIntents = combined();
+    return true;
+  }
+
   // The trading account is the same address the verifier credits, checksummed by the venue's
   // reader. A failed read keeps the last good figures under ok:false, as the verifier read does.
   async function refreshHyperliquid(account: string | null): Promise<HlRead | undefined> {
@@ -317,6 +348,9 @@ function createLiveLedger(cfg: AppConfig, fetchImpl: typeof fetch, log: (line: s
     if (apart !== null && spendRead !== undefined) next.set(apart, spendRead);
     byAccount = next;
     named = { vault: account, spend };
+    // This pass labelled off whatever list was in hand when it read, which a list landing meanwhile beats.
+    labelledAt = null;
+    relabel();
     liveIntents = combined();
     liveHl = hlRead;
 

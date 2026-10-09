@@ -358,7 +358,10 @@ swap held for its price or for an earlier swap of the same coin says so on its c
 size, each reason on its own line. See
 [Policy](policy.md#the-click-threshold).
 
-Every coin the swap service lists has a price in your balance. A swap that spends a coin priced
+Every coin the swap service lists has a price in your balance. The balance on screen moves with
+each coin's market about once a second: a coin Hyperliquid trades is shown at its live mid price,
+as long as that is within 10% of the coin's own price. Rules, limits and swaps never use that
+live price; they use the coin's own price, read every 15 seconds to a minute. A swap that spends a coin priced
 only by that list is judged at the larger of the listed price and what the quote says arrives,
 so a wrong listed price cannot make a move look small. Three cases always wait for your click,
 whatever the size: a swap whose listed price nothing in the quote can check, a swap that spends a

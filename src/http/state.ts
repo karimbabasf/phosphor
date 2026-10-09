@@ -157,7 +157,8 @@ const CHAIN_TABLE = [...RECEIVE_NETWORKS, ...SPEND_NETWORKS]
 
 export function buildState(ctx: Ctx): unknown {
   const snapshot = ctx.ledger.snapshot();
-  const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
+  // Valued at each coin's live mid where there is one: what the person reads, never what governs.
+  const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid(), Date.now(), ctx.livePrices?.price);
   const composition = classify(wallet.rows, ctx.riskRows);
   const policy = ctx.getPolicy();
   const list = ctx.proposals.list();
@@ -325,6 +326,7 @@ type StateCache = {
   lockState: string;
   snapshot: unknown;
   invite: number;
+  live: number;
 };
 
 const caches = new WeakMap<Ctx, StateCache>();
@@ -338,6 +340,8 @@ function stateKey(ctx: Ctx): Omit<StateCache, 'built' | 'at'> {
     snapshot: ctx.ledger.snapshot(),
     // A claim's running frame writes no audit line, so its status moves the key on its own.
     invite: ctx.invites.revision(),
+    // A held coin's live mid moved (src/ledger/live-prices.ts), so the balance on screen did.
+    live: ctx.livePrices?.revision() ?? 0,
   };
 }
 
@@ -351,6 +355,7 @@ export function buildStateCached(ctx: Ctx): CachedJson {
     held.lockState === key.lockState &&
     held.snapshot === key.snapshot &&
     held.invite === key.invite &&
+    held.live === key.live &&
     Date.now() - held.at < STATE_CACHE_MAX_MS
   ) {
     return held.built;

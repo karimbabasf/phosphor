@@ -67,7 +67,8 @@ every start. A web page cannot read that file. A program already running as you 
 and once it has, it can do what your agent can do: read your balances and propose moves.
 
 What it means: such a program takes a seat as an agent started outside Phosphor, so the window
-asks you whether to allow it, and until you do, every move it proposes waits for your click.
+asks you whether to allow it once it calls a tool, and until you do, every move it proposes waits
+for your click. One that connects and calls nothing is not asked about and cannot move anything.
 Answer Ask each time to anything you did not start. What stays open: the agents Phosphor starts
 carry a second secret in their environment, and a program running as you can read a running agent's
 environment and pose as it; then a move under your click threshold runs without a click. Your

@@ -245,7 +245,8 @@ export const walletReads: ReadTable = {
   // the wrong world is the failure this whole app exists to make impossible.
   start: (ctx, body, _args, res) => {
     const snapshot = ctx.ledger.snapshot();
-    const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid());
+    // Valued as the window values it, at the live mid where there is one (src/http/state.ts).
+    const wallet = buildWallet(snapshot, ctx.ledger.intents(), ctx.ledger.hyperliquid(), Date.now(), ctx.livePrices?.price);
     const policy = ctx.getPolicy();
     const pending = ctx.proposals.list().filter((p) => p.status === 'pending');
     /* AND WHAT IS ALREADY MOVING, which is not the same question and was missing from this
@@ -323,12 +324,12 @@ export const walletReads: ReadTable = {
     });
   },
   composition: (ctx, _body, _args, res) => {
-    const wallet = agentWallet(buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid()));
+    const wallet = agentWallet(buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid(), Date.now(), ctx.livePrices?.price));
     sendJson(res, 200, classify(wallet.rows, ctx.riskRows));
   },
   wallet: (ctx, _body, _args, res) => {
     const vault = vaultStatus(ctx);
-    const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid());
+    const wallet = buildWallet(ctx.ledger.snapshot(), ctx.ledger.intents(), ctx.ledger.hyperliquid(), Date.now(), ctx.livePrices?.price);
     // Exact quantities first, by the real ids; then the ids no list vouches for are made opaque.
     const view = agentWallet({ ...wallet, rows: withExactQuantities(wallet.rows, ctx.ledger.intents()) });
     // Then, once the vault has moved, which of it the agent's moves can spend.

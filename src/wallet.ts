@@ -14,8 +14,38 @@ import { pricedAs } from './proposals/draft.ts';
 // threshold for a dust row and for a trading account that was never funded.
 import { DUST_USD } from './trade/funding.ts';
 
+/* WHY A STABLECOIN FLOOR EXISTS HERE, AND WHY IT IS NOT AN INVENTED PRICE.
+   The spot table carries the natives. A stablecoin held inside the intents verifier appears
+   in it nowhere, so without this it is priced off nothing. Karim, 2026-09-08, looking at his
+   own window: 3.694727 USDC in NEAR Intents, priced at 0, valued at 0, and a total that was
+   $25.90 when it was $29.60. Money he owns, on screen as nothing.
+   It is deliberately a NAMED LIST and not a guess at what looks like a stablecoin: a token
+   called USDCoin is not a dollar because its name starts the same way, and this figure is
+   added to a total somebody makes decisions against. */
+const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USDC.E', 'FRAX', 'PYUSD', 'USDE', 'LUSD', 'TUSD', 'USDP']);
+
+/* A live mid (src/ledger/live-prices.ts) is taken for the window only within this share of the
+   coin's own price. 1Click's list trails its market by a minute at most and Coinbase's by fifteen
+   seconds, so a real coin sits well inside it (GRAM: 1.46 listed, 1.456 live); a different token
+   under the same ticker, or a perp that broke from its spot, does not, and keeps its own price. */
+export const LIVE_BAND = 0.1;
+
+// A coin's live mid by the key this file prices through (pricedAs), or null for none.
+export type LivePrice = (coin: string) => number | null;
+
+// The coins a live price is worth keeping for: every non-dollar holding, keyed as the wallet keys it.
+export function liveCoins(intents: IntentsRead | undefined): string[] {
+  const coins = new Set<string>();
+  for (const h of intents?.holdings ?? []) {
+    const coin = pricedAs(String(h.symbol ?? ''));
+    if (h.amount > 0 && coin !== '' && !DOLLARS.has(coin)) coins.add(coin);
+  }
+  return [...coins];
+}
+
 // `now` is only for the age of the verifier read (see intentsUnreadWhy); a test pins it.
-export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now()): WalletView {
+// `live` is for the window and the agent's wallet read only, never a path that governs a move.
+export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyperliquid?: HlRead, now: number = Date.now(), live?: LivePrice): WalletView {
   // Symbol -> unit price, from the snapshot's spot table.
   //
   // KEYED UPPERCASE, AND A WRAPPER IS ITS COIN. src/ledger/index.ts prices through exactly
@@ -28,15 +58,6 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
     if (!priceBySymbol.has(key(symbol))) priceBySymbol.set(key(symbol), price);
   }
 
-  /* WHY A STABLECOIN FLOOR EXISTS HERE, AND WHY IT IS NOT AN INVENTED PRICE.
-     The spot table carries the natives. A stablecoin held inside the intents verifier appears
-     in it nowhere, so without this it is priced off nothing. Karim, 2026-09-08, looking at his
-     own window: 3.694727 USDC in NEAR Intents, priced at 0, valued at 0, and a total that was
-     $25.90 when it was $29.60. Money he owns, on screen as nothing.
-     It is deliberately a NAMED LIST and not a guess at what looks like a stablecoin: a token
-     called USDCoin is not a dollar because its name starts the same way, and this figure is
-     added to a total somebody makes decisions against. */
-  const DOLLARS = new Set(['USDC', 'USDT', 'DAI', 'USDC.E', 'FRAX', 'PYUSD', 'USDE', 'LUSD', 'TUSD', 'USDP']);
   const priceOf = (symbol: string): number => {
     const found = priceBySymbol.get(key(symbol));
     if (found !== undefined && found > 0) return found;
@@ -56,9 +77,18 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
   // somewhere it does not belong.
   // Where neither prices it, 1Click's own price for the asset, off the token list, marked as such:
   // WBTC, cbBTC, nBTC and the rest read "not priced" beside a real balance until 2026-09-23.
+  // The live mid, where one is given and sits within LIVE_BAND of the coin's own price.
+  const liveOf = (symbol: string, own: number): number | null => {
+    if (live === undefined || !(own > 0) || DOLLARS.has(key(symbol))) return null;
+    const mid = live(key(symbol));
+    if (mid === null || !Number.isFinite(mid) || mid <= 0) return null;
+    return Math.abs(mid - own) / own <= LIVE_BAND ? mid : null;
+  };
   const intentsRows: WalletRow[] = (intents?.holdings ?? []).map(h => {
     const listed = !pricedOf(h.symbol) && typeof h.priceUsd === 'number' && h.priceUsd > 0 ? h.priceUsd : null;
-    const priceUsd = listed ?? priceOf(h.symbol);
+    const own = listed ?? priceOf(h.symbol);
+    const mid = liveOf(h.symbol, own);
+    const priceUsd = mid ?? own;
     return {
       kind: 'intents',
       chain: 'intents',
@@ -70,7 +100,7 @@ export function buildWallet(snapshot: LedgerSnapshot, intents?: IntentsRead, hyp
       share: 0,
       native: false,
       priced: listed !== null || pricedOf(h.symbol),
-      ...(listed === null ? {} : { priceSource: '1click' as const }),
+      ...(mid !== null ? { priceSource: 'hyperliquid' as const } : listed === null ? {} : { priceSource: '1click' as const }),
       intents: { accountId: h.accountId, assetId: h.assetId },
     };
   });

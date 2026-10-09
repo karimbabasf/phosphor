@@ -36,6 +36,8 @@ import { usdcCreditedSince } from './rails/hl-user-signed.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
 import { createDayFeed, DAY_REFRESH_MS } from './ledger/day.ts';
 import { createCoinPictures, pictureDir } from './ledger/pictures.ts';
+import { createLivePrices } from './ledger/live-prices.ts';
+import { liveCoins } from './wallet.ts';
 import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
@@ -509,6 +511,11 @@ if (day !== undefined) {
 const HL_BASE_URL = 'https://api.hyperliquid.xyz';
 const HL_WS_URL = 'wss://api.hyperliquid.xyz/ws';
 
+/* The balance's live prices: Hyperliquid's mid for each coin held, about once a second, for the
+   window and the agent's wallet read only (src/ledger/live-prices.ts). Which coins follows the
+   ledger (below, beside refreshNow). Demo mode dials no venue. */
+const livePrices = cfg.mode === 'demo' ? undefined : createLivePrices({ wsUrl: HL_WS_URL });
+
 /* The venue facts a plan is priced against live on the trade service, which is built after the
    rails because it needs the runner. These closures read through to it once it exists; until
    then a plan cannot be priced, which is the honest answer before the venue has spoken. */
@@ -868,6 +875,7 @@ const server = createServer({
   ledger,
   refreshLedger: refreshNow,
   riskRows,
+  livePrices,
   market,
   proposals,
   getPolicy,
@@ -1073,6 +1081,16 @@ function refreshNow(): Promise<void> {
     });
   return refreshing;
 }
+
+/* Every ledger write: the live prices follow what is held, and a write between passes (1Click's
+   list landing, src/ledger/index.ts relabel) reaches the window now. A pass broadcasts when it
+   lands, above, so one inside a pass is not told twice. */
+ledger.onRefresh?.(() => {
+  livePrices?.track(liveCoins(ledger.intents()));
+  if (refreshing === null) server.broadcastState();
+});
+// A held coin's mid moved: at most once a second (src/ledger/live-prices.ts PUSH_MS).
+livePrices?.onChange(() => server.broadcastState());
 
 void refreshNow();
 setInterval(() => {

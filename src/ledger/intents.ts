@@ -196,6 +196,39 @@ function describe(assetId: string, list: OneClickToken[]): { symbol: string; dec
   return { symbol: meta.symbol, decimals: meta.decimals, originChain: meta.blockchain, priceUsd: price, pricedAt: Number.isFinite(pricedAt) ? pricedAt : null };
 }
 
+/* One holding as the list labels it: name, decimals, amount and 1Click's price with its age. The
+   price is AS OLD AS 1CLICK'S OWN STAMP, or the list's when that is older: a list read now can carry
+   a price 1Click stopped updating days ago (audit, finding 7). No stamp from 1Click is no age anyone
+   can vouch for, so the price is shown and never governed by. */
+function labelled(accountId: string, assetId: string, raw: bigint, list: OneClickToken[], listedAt: number | null): IntentsHolding {
+  const { symbol, decimals, originChain, priceUsd, pricedAt } = describe(assetId, list);
+  const priceAsOf = pricedAt === null ? null : listedAt === null ? pricedAt : Math.min(pricedAt, listedAt);
+  return {
+    accountId,
+    assetId,
+    symbol,
+    originChain,
+    amount: Number(raw) / 10 ** decimals,
+    amountBase: raw.toString(),
+    decimals,
+    priceUsd,
+    ...(priceAsOf === null ? {} : { priceAsOf }),
+  };
+}
+
+/* THE SAME HOLDINGS, LABELLED AGAIN OFF A NEWER LIST. A cold start labels its first read off the
+   names kept from the last run, which carry no price (src/intents.ts keptNames), and 1Click's list
+   lands half a second later. Without this the dollars waited for the next pass, 15 s and more
+   (Karim, 2026-10-09: "it takes the price for my balance like 30 sec to load"). A holding the list
+   does not name, or one with no verifier integer to scale, is kept exactly as it was read. */
+export function relabelHoldings(holdings: IntentsHolding[], list: OneClickToken[], listedAt: number | null): IntentsHolding[] {
+  return holdings.map((h) => {
+    if (h.amountBase === undefined || !/^\d+$/.test(h.amountBase)) return h;
+    if (!list.some((t) => t.assetId === h.assetId)) return h;
+    return labelled(h.accountId, h.assetId, BigInt(h.amountBase), list, listedAt);
+  });
+}
+
 export type IntentsBalanceDeps = {
   rpcUrl: string;
   accountId: string;
@@ -275,22 +308,7 @@ export async function fetchIntentsHoldings(deps: IntentsBalanceDeps): Promise<In
       if (typeof said !== 'string' || !/^\d+$/.test(said)) throw new Error(`the verifier returned a balance for asset ${i + 1} that is not a whole number`);
       const raw = BigInt(said);
       if (raw <= 0n) continue; // enumerated but emptied since: not a holding
-      const { symbol, decimals, originChain, priceUsd, pricedAt } = describe(assetId, list);
-      /* AS OLD AS 1CLICK'S OWN STAMP, or the list's when that is older: a list read now can carry a
-         price 1Click stopped updating days ago (audit, finding 7). No stamp from 1Click is no age
-         anyone can vouch for, so the price is shown and never governed by. */
-      const priceAsOf = pricedAt === null ? null : listedAt === null ? pricedAt : Math.min(pricedAt, listedAt);
-      holdings.push({
-        accountId,
-        assetId,
-        symbol,
-        originChain,
-        amount: Number(raw) / 10 ** decimals,
-        amountBase: raw.toString(),
-        decimals,
-        priceUsd,
-        ...(priceAsOf === null ? {} : { priceAsOf }),
-      });
+      holdings.push(labelled(accountId, assetId, raw, list, listedAt));
     }
     return { holdings, ok: true, fetchedAt };
   } catch (err) {

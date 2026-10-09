@@ -118,9 +118,10 @@ export type WalletRow = {
   quantity: number;
   priceUsd: number; // 1.0 for stables, spot for natives
   valueUsd: number;
-  // Where priceUsd came from when it is 1Click's listed price, the source of last resort; absent
-  // for the spot table and the stablecoin list.
-  priceSource?: '1click';
+  // Where priceUsd came from when it is 1Click's listed price, the source of last resort, or
+  // Hyperliquid's live mid on a display read (src/ledger/live-prices.ts); absent for the spot
+  // table and the stablecoin list.
+  priceSource?: '1click' | 'hyperliquid';
   /* False when this app could not price the asset at all, so valueUsd is a hole rather than a
      figure. Absent means priced, because every other rail derives its value from a number it
      already holds. It exists because "$0.00" and "we do not know" printed identically, and the
