@@ -622,6 +622,24 @@ export function createRunnerHost(deps: HostDeps) {
     if (state === 'canceled') finish(current, 'cancelled');
   }
 
+  // What the venue says about one order of a placed row at boot, by its cloid. Shorter than
+  // the read-back after a fire: the order is old, so the venue either knows it or never will.
+  async function venueSays(cloid: string): Promise<OrderConfirm['state']> {
+    try {
+      const out = await confirmOrder({
+        info,
+        user: user(),
+        oid: cloid,
+        schedule: deps.confirmSchedule ?? { firstMs: 500, maxMs: 1_000, timeoutMs: 5_000 },
+        ...(deps.sleep !== undefined ? { sleep: deps.sleep } : {}),
+        now,
+      });
+      return out.state;
+    } catch {
+      return 'unconfirmed';
+    }
+  }
+
   // ---------- the account ----------
 
   function positionOn(coin: string): { szi: number; entryPx: number } | null {
@@ -1242,6 +1260,22 @@ export function createRunnerHost(deps: HostDeps) {
             const out = await armRow(row);
             if (out.ok) void protect(row);
             continue;
+          }
+          /* Missing from the feed's list is not the venue saying it is gone. Ask the venue for
+             the entry by its cloid before ending anything: only its own canceled or rejected
+             ends the row. Resting or filled re-takes it; silence leaves it placed. */
+          if (row.cloids.entry !== undefined) {
+            const said = await venueSays(row.cloids.entry);
+            if (said === 'resting' || said === 'filled') {
+              const out = await armRow(row);
+              if (!out.ok) record({ type: 'error', id: row.id, message: `could not re-take ${row.id}: ${out.reason}` });
+              else if (said === 'filled') void protect(row);
+              continue;
+            }
+            if (said === 'unconfirmed') {
+              record({ type: 'error', id: row.id, message: `${row.id} kept: its entry is not in the feed and the venue did not answer for it` });
+              continue;
+            }
           }
           finish(row, now() >= Date.parse(row.expiresAt ?? '') ? 'expired' : 'cancelled');
           continue;
