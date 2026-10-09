@@ -619,6 +619,8 @@ const rails = createRails({
     pushed: (account) => tradeService?.credits?.(account) ?? null,
     rest: (account, sinceMs) => usdcCreditsSince({ keysPath: cfg.keysPath }, account, sinceMs),
   }),
+  // The store outlives the process, so a deposit sees other money to its account from before a restart.
+  proposals: () => store.list(),
 });
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client

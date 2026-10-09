@@ -23,7 +23,7 @@
 //      and a swap lookup that answers the swap reads off the same fixture. They are built
 //      here and only here, and only under this mode.
 
-import type { AppConfig, ChainId, Rail, WriteDraft } from '../types.ts';
+import type { AppConfig, ChainId, Proposal, Rail, WriteDraft } from '../types.ts';
 import type { OneClickToken, TokensFile } from '../intents.ts';
 import { ONECLICK_COUNTERPARTY, oneClickClient } from '../intents.ts';
 import { chainHead, intentsActivity, scanNetworkOf } from '../chainscan/index.ts';
@@ -120,6 +120,8 @@ export type RailDeps = {
      moment its money lands (src/rails/hypercore-deposit.ts creditProof). Absent, a deposit waits
      for 1Click's word alone. */
   hlCredits?: HlCreditReader;
+  // Every proposal, so a Hyperliquid deposit knows other money on its way to the same account.
+  proposals?: () => readonly Proposal[];
 };
 
 export function createRails(deps: RailDeps): RailRegistry {
@@ -185,6 +187,7 @@ export function createRails(deps: RailDeps): RailRegistry {
       preflight,
       routes,
       credits: deps.hlCredits,
+      proposals: deps.proposals,
     }) as Rail,
     hl_withdraw: hypercoreWithdrawRail({
       keysPath: deps.cfg.keysPath,

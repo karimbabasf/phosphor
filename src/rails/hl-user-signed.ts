@@ -583,7 +583,17 @@ type LedgerUpdate = { time?: number; hash?: string; delta?: Record<string, unkno
    between accounts land on perp; a spotTransfer on spot; a `send` on its destinationDex, where
    "" is the perp book and any other dex is not one this app trades). A 1Click delivery is a
    `send` out of the solver's spot book into our perp book (read off the ledger 2026-10-09). */
-export type HlUsdcCredit = { atMs: number; hash: string; usdc: number; book: 'perp' | 'spot' | null };
+export type HlUsdcCredit = {
+  atMs: number;
+  hash: string;
+  usdc: number;
+  book: 'perp' | 'spot' | null;
+  /* The shape of a 1Click delivery and nothing wider: a USDC `send` from another account, out of
+     its spot book into our perp book. A bridge deposit, a transfer from a friend and a move between
+     our own dexes are credits too, and count in a sum (usdcCreditedSince), never as a deposit's own
+     early proof (src/rails/hypercore-deposit.ts creditProof; review 2026-10-09). */
+  delivery?: boolean;
+};
 
 /* Whether a ledger row is a USDC credit to `account`: bridge deposits, and USDC transfers on
    either book whose destination is the account. Money leaving, money moving between the
@@ -611,7 +621,15 @@ export function usdcCreditOf(row: unknown, account: string): HlUsdcCredit | null
     return null;
   }
   if (!(usdc > 0)) return null;
-  return { atMs: typeof r.time === 'number' ? r.time : NaN, hash: typeof r.hash === 'string' ? r.hash : '', usdc, book };
+  const delivery =
+    delta.type === 'send' &&
+    delta.token === 'USDC' &&
+    toUs &&
+    typeof delta.user === 'string' &&
+    delta.user.toLowerCase() !== account.trim().toLowerCase() &&
+    delta.sourceDex === 'spot' &&
+    delta.destinationDex === '';
+  return { atMs: typeof r.time === 'number' ? r.time : NaN, hash: typeof r.hash === 'string' ? r.hash : '', usdc, book, delivery };
 }
 
 /* The USDC credits to an account since a moment, one row each. No key, a public /info POST.

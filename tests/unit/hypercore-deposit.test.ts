@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { parseUnits } from 'viem';
 import type { Address } from 'viem';
 
-import type { HlDepositDraft } from '../../src/types.ts';
+import type { HlDepositDraft, Proposal } from '../../src/types.ts';
 import { ReasonError } from '../../src/rails/reasons.ts';
 import type { OneClickQuote, OneClickStatus, OneClickToken } from '../../src/intents.ts';
 import { toBaseUnits } from '../../src/intents.ts';
@@ -1004,7 +1004,7 @@ const CREDITED = 9.6594;
 const NONCE = 'Vij2xgAlKBKzwEtQGN8wzBgg5wAN1h+JO1SSpSw/VVo=';
 
 function ledgerCredit(over: Partial<HlUsdcCredit> = {}): HlUsdcCredit {
-  return { atMs: NOW + CREDITED_AFTER_MS, hash: '0xc511', usdc: CREDITED, book: 'perp', ...over };
+  return { atMs: NOW + CREDITED_AFTER_MS, hash: '0xc511', usdc: CREDITED, book: 'perp', delivery: true, ...over };
 }
 
 type World = {
@@ -1016,6 +1016,8 @@ type World = {
   account?: (sinceSubmitMs: number) => AccountShape;
   // How far this Mac's clock runs ahead of the venue's: the venue stamps its reads and its ledger on its own.
   macAheadMs?: number;
+  // The proposal store as the rail reads it (otherMoneyToAccount).
+  proposals?: () => Proposal[];
 };
 
 function clockedRail(w: World = {}) {
@@ -1063,6 +1065,7 @@ function clockedRail(w: World = {}) {
     quoteKey: TEST_QUOTE_KEY,
     settleSchedule: { firstMs: 500, maxMs: 1_000, timeoutMs: 10_000 },
     credits: async () => ledger(clock),
+    ...(w.proposals === undefined ? {} : { proposals: w.proposals }),
     nonceUsed: async (account, nonce) => {
       nonceAsks.push([account, nonce]);
       return w.nearRuns === false ? false : since() >= RUNS_AFTER_MS;
@@ -1115,14 +1118,17 @@ test('a unified account whose free collateral did not rise still settles on the 
   assert.match(out.detail, /margin already: 9\.6594 USDC was credited/);
 });
 
-test('a standard account credited on its spot book has exactly the credited amount moved to perp, without waiting for 1Click', async () => {
+// A credit on the spot book is not the shape 1Click delivers (spot into our perp), so it is no early
+// proof (review 2026-10-09). On 1Click's SUCCESS the balance says where the money sits, and exactly
+// what the spot side gained moves to perp.
+test('a standard account credited on its spot book waits for 1Click, then has exactly the spot gain moved to perp', async () => {
   const w = clockedRail({
-    ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ book: 'spot' })] : []),
+    ledger: (at) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ book: 'spot', delivery: false })] : []),
     account: (t) => (t >= CREDITED_AFTER_MS ? { perp: 0, spot: CREDITED } : { perp: 0, spot: 0 }),
   });
   const out = await w.rail.execute(draft());
   assert.equal(out.ok, true, out.detail);
-  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit`);
+  assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, before 1Click said so`);
   assert.match(out.detail, /moved to perp/);
   assert.equal(w.exchange.length, 1);
   assert.equal(w.exchange[0].action.type, 'usdClassTransfer');
@@ -1135,6 +1141,10 @@ for (const [what, ledger] of [
   ['a credit stamped before the deposit was signed', () => [ledgerCredit({ atMs: NOW - 1 })]],
   ['a credit under the floor the card promised', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 9.5 })] : [])],
   ['a credit larger than everything the deposit spent', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 25 })] : [])],
+  // Review 2026-10-09: the cap was the draft's larger of dollars and coins, which a coin under a
+  // dollar makes ten times the deposit. It is the signed quote's output now: 9.6594, and 2% over.
+  ['a credit over the signed quote though under the draft', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ usdc: 9.95 })] : [])],
+  ['a credit that is not a 1Click delivery', (at: number) => (at >= NOW + CREDITED_AFTER_MS ? [ledgerCredit({ delivery: false })] : [])],
   ['a ledger that cannot be read', () => null],
 ] as const) {
   test(`${what} does not settle the deposit: it waits for 1Click's SUCCESS`, async () => {
@@ -1146,6 +1156,53 @@ for (const [what, ledger] of [
     assert.match(out.detail, /funded Hyperliquid with a quoted 9\.6594 USDC/);
   });
 }
+
+// Review 2026-10-09: the rail's own memory of deposits in flight ends with the process, so a deposit
+// stuck from before a restart, or one whose order outlived the hold, left its credit free for the
+// next deposit of the same size, which then said "funded" while 1Click refunded it. The proposal
+// store outlives the process; while other money to the account is open there, nothing settles on
+// the ledger.
+const OTHER = (over: Partial<Proposal>): Proposal =>
+  ({
+    id: 'p-other',
+    kind: 'hl_deposit',
+    createdAt: new Date(NOW - 60_000).toISOString(),
+    decidedAt: new Date(NOW - 60_000).toISOString(),
+    status: 'needs_reconciliation',
+    draft: draft(),
+    simulation: null,
+    verdict: { decision: 'allow', reasons: [] },
+    ...over,
+  }) as unknown as Proposal;
+
+for (const [what, row] of [
+  ['another deposit to the account still settling from before a restart', OTHER({})],
+  ['another deposit that failed after it signed and was never refunded', OTHER({ status: 'failed', result: { ok: false, detail: 'x', evidence: { handle: 'h', providerStage: 'PROCESSING' } } })],
+  ['a payout to the same Hyperliquid address still running', OTHER({ kind: 'intents_pay', status: 'executing', draft: { kind: 'intents_pay', network: 'hypercore', to: SELF } as any })],
+  ['another deposit settled two minutes ago, whose credit may land after it', OTHER({ status: 'executed', settledAt: new Date(NOW - 120_000).toISOString() })],
+] as const) {
+  test(`with ${what} in the store, a deposit waits for 1Click`, async () => {
+    const w = clockedRail({ proposals: () => [row] });
+    const out = await w.rail.execute(draft(), 'p-self');
+    assert.equal(out.ok, true, out.detail);
+    assert.ok(w.elapsed() >= SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit on a credit that could be the other one's`);
+    assert.doesNotMatch(out.detail, /own ledger shows/);
+  });
+}
+
+test('money to the account that is long settled, refunded, or to another account leaves the ledger path open', async () => {
+  const rows = [
+    OTHER({ id: 'old', status: 'executed', settledAt: new Date(NOW - 3_600_000).toISOString() }),
+    OTHER({ id: 'refunded', status: 'failed', result: { ok: false, detail: 'x', evidence: { handle: 'h', providerStage: 'REFUNDED' } } }),
+    OTHER({ id: 'elsewhere', draft: draft({ hlAccount: '0x3333333333333333333333333333333333333333' as Address }) }),
+    OTHER({ id: 'p-self', status: 'executing' }),
+  ];
+  const w = clockedRail({ proposals: () => rows });
+  const out = await w.rail.execute(draft(), 'p-self');
+  assert.equal(out.ok, true, out.detail);
+  assert.ok(w.elapsed() < SAYS_AFTER_MS, `settled ${w.elapsed()} ms after the submit, on 1Click's word`);
+  assert.match(out.detail, /own ledger shows/);
+});
 
 test('no credit counts until NEAR shows the deposit\'s own signed transfer spent', async () => {
   const w = clockedRail({ nearRuns: false });
