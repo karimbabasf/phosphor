@@ -33,14 +33,22 @@ export const LIVE_BAND = 0.1;
 // A coin's live mid by the key this file prices through (pricedAs), or null for none.
 export type LivePrice = (coin: string) => number | null;
 
-// The coins a live price is worth keeping for: every non-dollar holding, keyed as the wallet keys it.
+// At most this many coins get a live price: one subscribe each, on a socket the trade feed's shares limits with.
+export const LIVE_COINS_MAX = 20;
+
+/* The coins a live price is worth keeping for, keyed as the wallet keys them, largest first: a held,
+   priced, non-dollar coin with a ticker for a name. Anyone can send tokens to the account, and a
+   coin 1Click does not list is named by its raw id and has no price to hold a mid against, so it
+   could never take one (review 2026-10-09: 1500 junk deposits were 1500 subscriptions). */
 export function liveCoins(intents: IntentsRead | undefined): string[] {
-  const coins = new Set<string>();
+  const value = new Map<string, number>();
   for (const h of intents?.holdings ?? []) {
     const coin = pricedAs(String(h.symbol ?? ''));
-    if (h.amount > 0 && coin !== '' && !DOLLARS.has(coin)) coins.add(coin);
+    const price = typeof h.priceUsd === 'number' && Number.isFinite(h.priceUsd) ? h.priceUsd : 0;
+    if (!(h.amount > 0) || !(price > 0) || !/^[A-Z0-9]{2,10}$/.test(coin) || DOLLARS.has(coin)) continue;
+    value.set(coin, (value.get(coin) ?? 0) + h.amount * price);
   }
-  return [...coins];
+  return [...value.entries()].sort((a, b) => b[1] - a[1]).slice(0, LIVE_COINS_MAX).map(([coin]) => coin);
 }
 
 // `now` is only for the age of the verifier read (see intentsUnreadWhy); a test pins it.

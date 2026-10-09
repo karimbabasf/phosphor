@@ -13,7 +13,7 @@ import path from 'node:path';
 
 import { createLivePrices, FRESH_MS, PUSH_MS } from '../../src/ledger/live-prices.ts';
 import type { FeedSocket } from '../../src/trade/feed-ws.ts';
-import { buildWallet, liveCoins, LIVE_BAND } from '../../src/wallet.ts';
+import { buildWallet, liveCoins, LIVE_BAND, LIVE_COINS_MAX } from '../../src/wallet.ts';
 import type { IntentsRead } from '../../src/ledger/intents.ts';
 import type { LedgerSnapshot } from '../../src/types.ts';
 
@@ -180,15 +180,55 @@ test('the wallet values a coin at its live mid inside the band, and at its own p
   assert.equal(buildWallet(SNAP, held, undefined).rows.find((r) => r.symbol === 'GRAM')!.priceUsd, 1.46);
 });
 
-test('the coins worth a live price are the non-dollar holdings, keyed as the wallet keys them', () => {
+test('the coins worth a live price are the priced non-dollar holdings, keyed as the wallet keys them, largest first', () => {
   const held = read([
-    { symbol: 'GRAM', assetId: GRAM, amount: 640 },
-    { symbol: 'wNEAR', assetId: 'nep141:wrap.near', amount: 10 },
-    { symbol: 'USDT', assetId: 'nep141:usdt', amount: 8 },
-    { symbol: 'ETH', assetId: 'nep141:eth', amount: 0 },
+    { symbol: 'wNEAR', assetId: 'nep141:wrap.near', amount: 10, priceUsd: 4.75 },
+    { symbol: 'GRAM', assetId: GRAM, amount: 640, priceUsd: 1.46 },
+    { symbol: 'USDT', assetId: 'nep141:usdt', amount: 8, priceUsd: 1 },
+    { symbol: 'ETH', assetId: 'nep141:eth', amount: 0, priceUsd: 2487 },
   ]);
-  assert.deepEqual(liveCoins(held).sort(), ['GRAM', 'NEAR']);
+  assert.deepEqual(liveCoins(held), ['GRAM', 'NEAR']);
   assert.deepEqual(liveCoins(undefined), []);
+});
+
+// Review 2026-10-09: anyone can send tokens to the account. A coin 1Click does not list is named by
+// its raw id with no price, so it can never take a mid, and 1500 of them were 1500 subscriptions on
+// a socket that shares the venue's limits with the trade feed.
+test('tokens nobody prices, odd names and a long tail never reach the socket', () => {
+  const junk = Array.from({ length: 1500 }, (_, i) => ({ symbol: `nep245:spam.near:${i}`, assetId: `nep245:spam.near:${i}`, amount: 1, priceUsd: null }));
+  const named = Array.from({ length: 30 }, (_, i) => ({ symbol: `C${i}`, assetId: `nep141:c${i}`, amount: 1, priceUsd: i + 1 }));
+  const coins = liveCoins(read([...junk, { symbol: 'GRAM', assetId: GRAM, amount: 640, priceUsd: 1.46 }, ...named]));
+  assert.equal(coins.length, LIVE_COINS_MAX);
+  assert.equal(coins[0], 'GRAM', 'the largest holding first');
+  assert.ok(coins.every((c) => /^[A-Z0-9]{2,10}$/.test(c)), coins.join(','));
+  assert.ok(!coins.includes('C0'), 'the smallest are the ones left out');
+});
+
+test('a venue that takes the socket and drops it again is retried on the backoff, never once a second', async () => {
+  const { make, all } = sockets();
+  const live = createLivePrices({ wsUrl: 'wss://test.invalid/ws', wsImpl: make });
+  live.track(['GRAM']);
+  all[0]!.open();
+  all[0]!.drop();
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  assert.equal(all.length, 2);
+  all[1]!.open();
+  all[1]!.drop();
+  await new Promise((resolve) => setTimeout(resolve, 1_100));
+  assert.equal(all.length, 2, 'an open that sent nothing reset the backoff to one second');
+  live.stop();
+});
+
+test('with nothing left to price the socket goes, and the next coin held dials again', () => {
+  const { make, all } = sockets();
+  const live = createLivePrices({ wsUrl: 'wss://test.invalid/ws', wsImpl: make });
+  live.track(['GRAM']);
+  all[0]!.open();
+  live.track([]);
+  assert.equal(all[0]!.readyState, 3, 'the socket stayed open with nothing on it');
+  live.track(['GRAM']);
+  assert.equal(all.length, 2);
+  live.stop();
 });
 
 // Display only. A live mid is a perp's: it reaches the window and the agent's wallet read, and never

@@ -93,6 +93,9 @@ export function createLivePrices(deps: { wsUrl: string; wsImpl?: (url: string) =
     // The book's mid; the mark when the book is one-sided and the venue sends no mid.
     const px = Number(data.ctx?.midPx ?? data.ctx?.markPx);
     if (!Number.isFinite(px) || px <= 0) return;
+    // A socket that answers is a good one: only now does the next drop start the backoff over. A venue
+    // that takes the socket and closes it again is retried on the backoff, never once a second.
+    retry = 0;
     const last = mids.get(coin);
     mids.set(coin, { px, at: now() });
     if (last?.px === px) return;
@@ -112,7 +115,6 @@ export function createLivePrices(deps: { wsUrl: string; wsImpl?: (url: string) =
     socket = sock;
     sock.onopen = () => {
       if (socket !== sock) return;
-      retry = 0;
       for (const coin of tracked) send(sock, { method: 'subscribe', subscription: subscription(coin) });
       if (pingTimer === null) {
         pingTimer = setInterval(() => {
@@ -164,7 +166,26 @@ export function createLivePrices(deps: { wsUrl: string; wsImpl?: (url: string) =
       tracked.add(coin);
       if (live !== null) send(live, { method: 'subscribe', subscription: subscription(coin) });
     }
-    connect();
+    // Nothing left to price: the socket goes, and the next coin held dials again.
+    if (tracked.size === 0) hangUp();
+    else connect();
+  }
+
+  function hangUp(): void {
+    if (retryTimer !== null) clearTimeout(retryTimer);
+    if (pingTimer !== null) clearInterval(pingTimer);
+    retryTimer = null;
+    pingTimer = null;
+    retry = 0;
+    const sock = socket;
+    socket = null;
+    if (sock !== null) {
+      try {
+        sock.close();
+      } catch {
+        /* already closing */
+      }
+    }
   }
 
   function price(coin: string): number | null {
@@ -175,20 +196,9 @@ export function createLivePrices(deps: { wsUrl: string; wsImpl?: (url: string) =
 
   function stop(): void {
     closed = true;
-    for (const timer of [retryTimer, pushTimer]) if (timer !== null) clearTimeout(timer);
-    if (pingTimer !== null) clearInterval(pingTimer);
-    retryTimer = null;
+    if (pushTimer !== null) clearTimeout(pushTimer);
     pushTimer = null;
-    pingTimer = null;
-    const sock = socket;
-    socket = null;
-    if (sock !== null) {
-      try {
-        sock.close();
-      } catch {
-        /* shutting down anyway */
-      }
-    }
+    hangUp();
   }
 
   return {
