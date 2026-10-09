@@ -17,6 +17,7 @@ import { createTradeView, type TradeViewState } from './view.ts';
 import { buildTradePayload, buildTradeRead, type TradePayload } from './state.ts';
 import { createTradeFeed } from './feed-ws.ts';
 import type { FeedSocket } from './feed-ws.ts';
+import type { HlUsdcCredit } from '../rails/hl-user-signed.ts';
 import type { InfoClient } from '../hl/info.ts';
 import type { AccountView, PlanRunner } from '../runner/host.ts';
 import type { AssetMeta as RunnerMeta } from '../runner/protocol.ts';
@@ -52,6 +53,9 @@ export type TradeService = {
   meta(coin: string): RunnerMeta | null;
   mark(coin: string): number | null;
   free(): number | null;
+  // The USDC credits the feed's socket has carried for an account, or null while it is not
+  // carrying that account's ledger (TradeFeed.credits). Optional for the hand-built services in tests.
+  credits?(account: string): HlUsdcCredit[] | null;
   onUpdate(fn: () => void): void;
   stop(): void;
 };
@@ -313,6 +317,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
     meta: metaOf,
     mark: markOf,
     free: freeUsd,
+    credits: (account: string) => feed.credits?.(account) ?? null,
 
     onUpdate(fn) {
       listeners.push(fn);

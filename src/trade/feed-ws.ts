@@ -33,6 +33,8 @@
 import { isAddress } from 'viem';
 
 import type { InfoClient } from '../hl/info.ts';
+import { usdcCreditOf } from '../rails/hl-user-signed.ts';
+import type { HlUsdcCredit } from '../rails/hl-user-signed.ts';
 import { venueSaid } from '../venue-words.ts';
 
 export type FeedStatus = {
@@ -144,6 +146,11 @@ export type TradeFeed = {
   fills(): RawFill[];
   market(coin: string): MarketCtx | null;
   status(): FeedStatus;
+  /* The USDC credits the venue has pushed to `account`, newest first, or null while this feed is
+     not carrying that account's ledger: no socket, another wallet, or no snapshot yet on this
+     connection. Null is "ask some other way", never "nothing landed". A deposit in flight reads
+     it (src/rails/hypercore-deposit.ts). Optional for the hand-built feeds in tests. */
+  credits?(account: string): HlUsdcCredit[] | null;
   onUpdate(fn: () => void): void;
   stop(): void;
 };
@@ -167,6 +174,8 @@ const PING_MS = 30_000;
 const NOTIFY_MS = 100;
 const RETRY_CAP_MS = 15_000;
 const DEFAULT_MAX_FILLS = 200;
+// The credits held for a deposit in flight to look through: minutes of them, at most.
+const MAX_CREDITS = 100;
 // Spot backs perp margin on a unified account and no subscription carries it, so it is the one
 // number this client polls. Every 30s is 40 weight per minute against a budget of 1200.
 const SPOT_REFRESH_MS = 30_000;
@@ -306,6 +315,11 @@ export function createTradeFeed(deps: {
   let orders: RawOrder[] = [];
   let held: RawFill[] = [];
   let spot: SpotState | null = null;
+  // The account's USDC credits off the ledger channel, and the account they are about once its
+  // snapshot has arrived on the open socket. Null until then, and again whenever pushes may have
+  // been missed: a dropped socket or a wallet change.
+  let credits: HlUsdcCredit[] = [];
+  let creditsFor: string | null = null;
   // The last collateral figure ANY coin reported. Account-level, so it outlives the per-coin
   // subscription that happened to deliver it. See onActiveAsset for why.
   let lastAvailableUsd: number | null = null;
@@ -441,6 +455,9 @@ export function createTradeFeed(deps: {
       { type: 'openOrders', user, dex: '' },
       { type: 'userFills', user },
       { type: 'userEvents', user },
+      // Deposits, withdrawals and transfers, each pushed the moment it lands: the one channel
+      // that says a deposit is on the account before 1Click does.
+      { type: 'userNonFundingLedgerUpdates', user },
     ];
   }
 
@@ -469,6 +486,9 @@ export function createTradeFeed(deps: {
     if (!sock || sock.readyState !== OPEN) return;
     const user = wallet();
     if (user === subscribed) return;
+    // New channels replay the ledger from a snapshot; until it lands nothing here is current.
+    credits = [];
+    creditsFor = null;
     if (subscribed !== null) {
       for (const s of accountSubs(subscribed)) unsub(sock, s);
       for (const coin of watched) for (const s of accountCoinSubs(subscribed, coin)) unsub(sock, s);
@@ -547,6 +567,7 @@ export function createTradeFeed(deps: {
       if (socket !== sock) return;
       socket = null;
       since = null;
+      creditsFor = null;
       stopPing();
       scheduleRetry();
     };
@@ -628,6 +649,9 @@ export function createTradeFeed(deps: {
         break;
       case 'activeAssetCtx':
         onAssetCtx(data);
+        break;
+      case 'userNonFundingLedgerUpdates':
+        onLedger(data);
         break;
       default:
         return;
@@ -772,6 +796,30 @@ export function createTradeFeed(deps: {
     // these types; a funding payment shows up in the next clearinghouseState as cumFunding, and
     // a liquidation shows up as its own fills with `liquidation` set.
     if (isRecord(data) && Array.isArray(data.fills)) onFills(data);
+  }
+
+  // A snapshot replaces what is held and says the ledger is carried from here; a push appends.
+  // Only USDC credits to this account are kept (usdcCreditOf), deduplicated on the row itself.
+  function onLedger(data: unknown): void {
+    const user = subscribed;
+    if (user === null || !isRecord(data)) return;
+    // A message about another account is a leftover from before a wallet change.
+    if (typeof data.user === 'string' && data.user.toLowerCase() !== user.toLowerCase()) return;
+    const incoming = (listOf(data, ['nonFundingLedgerUpdates']) ?? []).flatMap((row) => {
+      const credit = usdcCreditOf(row, user);
+      return credit === null ? [] : [credit];
+    });
+    const seen = new Set<string>();
+    credits = [...incoming, ...(snapshotFlag(data) ? [] : credits)]
+      .filter((c) => {
+        const key = `${c.hash}|${c.atMs}|${c.usdc}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      })
+      .sort((a, b) => b.atMs - a.atMs)
+      .slice(0, MAX_CREDITS);
+    if (snapshotFlag(data)) creditsFor = user.toLowerCase();
   }
 
   function mergeFills(incoming: RawFill[], keep: RawFill[]): RawFill[] {
@@ -1143,6 +1191,8 @@ export function createTradeFeed(deps: {
       lastError,
       account: wallet(),
     }),
+    credits: (account: string) =>
+      socket !== null && socket.readyState === OPEN && creditsFor !== null && creditsFor === account.trim().toLowerCase() ? credits.slice() : null,
     onUpdate: (fn: () => void) => {
       listeners.push(fn);
     },

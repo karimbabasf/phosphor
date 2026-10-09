@@ -240,6 +240,7 @@ test('reconnect backoff grows, and a fresh connection resubscribes the account a
     'openOrders',
     'userFills',
     'userEvents',
+    'userNonFundingLedgerUpdates',
     'activeAssetData:ETH',
     'activeAssetCtx:ETH',
   ]);
@@ -409,7 +410,7 @@ test('watch() subscribes only what changed and never tears down the socket to do
 
   feed.watch(['BTC', 'ETH']);
   const afterFirst = sock.sent.length;
-  assert.deepEqual(subscribedTypes(sock, 'subscribe').slice(4), [
+  assert.deepEqual(subscribedTypes(sock, 'subscribe').slice(5), [
     'activeAssetData:BTC',
     'activeAssetCtx:BTC',
     'activeAssetData:ETH',
@@ -626,4 +627,94 @@ test('nothing is reported until the venue has said something', async (t) => {
   assert.match(String(feed.status().lastError), /Invalid subscription/);
   // In the venue's own words, quoted as data: trade_read hands this to an agent (src/venue-words.ts).
   assert.ok(String(feed.status().lastError).includes(VENUE_WORDS_LABEL));
+});
+
+// ---------- the account's ledger, for a deposit in flight ----------
+//
+// A Hyperliquid deposit's card waited about 30 s after the money was on the account, for 1Click
+// to say SUCCESS (2026-10-09). The venue pushes every credit to the account on this socket the
+// moment it lands, so the feed carries them and the deposit rail reads them here first. What it
+// must never do is answer "no credit" while it is not actually carrying the ledger: that is the
+// difference between null (ask the venue some other way) and an empty list (nothing landed).
+
+function ledgerRow(timeMs: number, delta: Record<string, unknown>): Record<string, unknown> {
+  return { time: timeMs, hash: `0x${timeMs.toString(16)}`, delta };
+}
+
+function solverSend(timeMs: number, amount: string): Record<string, unknown> {
+  return ledgerRow(timeMs, { type: 'send', user: '0x6b9e773128f453f5c2c60935ee2de2cbc5390a24', destination: USER, sourceDex: 'spot', destinationDex: '', token: 'USDC', amount, usdcValue: amount, fee: '0.0' });
+}
+
+test('the ledger channel is carried for the wallet, and its credits are null until the venue has sent the snapshot', async (t) => {
+  const socks = fakeSockets();
+  const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });
+  t.after(() => feed.stop());
+  await flush();
+  assert.equal(feed.credits?.(USER), null, 'no socket: not carrying it');
+  socks.last().open();
+  const ledgerSub = sentMessages(socks.last()).find((m) => (m.subscription as Record<string, unknown> | undefined)?.type === 'userNonFundingLedgerUpdates');
+  assert.deepEqual(ledgerSub?.subscription, { type: 'userNonFundingLedgerUpdates', user: USER });
+  assert.equal(feed.credits?.(USER), null, 'subscribed, but nothing has answered yet');
+
+  socks.last().deliver({ channel: 'userNonFundingLedgerUpdates', data: { isSnapshot: true, user: USER, nonFundingLedgerUpdates: [] } });
+  assert.deepEqual(feed.credits?.(USER), [], 'an empty snapshot is a fact: nothing has landed');
+  // Another account's question is not this feed's to answer.
+  assert.equal(feed.credits?.('0x9999999999999999999999999999999999999999'), null);
+});
+
+test('a pushed credit is held the moment it lands; money leaving, another coin and another account are not credits', async (t) => {
+  const socks = fakeSockets();
+  const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });
+  t.after(() => feed.stop());
+  await flush();
+  socks.last().open();
+  socks.last().deliver({ channel: 'userNonFundingLedgerUpdates', data: { isSnapshot: true, user: USER, nonFundingLedgerUpdates: [solverSend(1_000, '7.208361')] } });
+
+  let heard = 0;
+  feed.onUpdate(() => (heard += 1));
+  socks.last().deliver({
+    channel: 'userNonFundingLedgerUpdates',
+    data: {
+      user: USER,
+      nonFundingLedgerUpdates: [
+        solverSend(2_000, '14.670518'),
+        ledgerRow(2_100, { type: 'send', user: USER, destination: '0x9999999999999999999999999999999999999999', destinationDex: '', token: 'USDC', amount: '3' }),
+        ledgerRow(2_200, { type: 'spotTransfer', token: 'PURR', amount: '3', destination: USER }),
+        ledgerRow(2_300, { type: 'accountClassTransfer', usdc: '50', toPerp: true }),
+      ],
+    },
+  });
+  assert.deepEqual(
+    feed.credits?.(USER)?.map((c) => [c.atMs, c.usdc, c.book]),
+    [
+      [2_000, 14.670518, 'perp'],
+      [1_000, 7.208361, 'perp'],
+    ],
+  );
+  // A resend of the same row is the same credit, not a second one.
+  socks.last().deliver({ channel: 'userNonFundingLedgerUpdates', data: { user: USER, nonFundingLedgerUpdates: [solverSend(2_000, '14.670518')] } });
+  assert.equal(feed.credits?.(USER)?.length, 2);
+  await new Promise((resolve) => setTimeout(resolve, 150));
+  assert.ok(heard > 0, 'a credit wakes the listeners like any other update');
+});
+
+test('a dropped socket stops answering for the ledger until the next snapshot, because pushes were missed meanwhile', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval'] });
+  t.after(() => mock.timers.reset());
+  const socks = fakeSockets();
+  const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });
+  t.after(() => feed.stop());
+  await flush();
+  socks.last().open();
+  socks.last().deliver({ channel: 'userNonFundingLedgerUpdates', data: { isSnapshot: true, user: USER, nonFundingLedgerUpdates: [solverSend(1_000, '7.208361')] } });
+  assert.equal(feed.credits?.(USER)?.length, 1);
+
+  socks.last().drop();
+  assert.equal(feed.credits?.(USER), null);
+  mock.timers.tick(1_000);
+  socks.last().open();
+  assert.equal(feed.credits?.(USER), null, 'a new socket is not carrying it until it answers');
+  // The replay carries what was missed while the socket was down, and replaces what was held.
+  socks.last().deliver({ channel: 'userNonFundingLedgerUpdates', data: { isSnapshot: true, user: USER, nonFundingLedgerUpdates: [solverSend(1_000, '7.208361'), solverSend(5_000, '9.6594')] } });
+  assert.deepEqual(feed.credits?.(USER)?.map((c) => c.usdc), [9.6594, 7.208361]);
 });
