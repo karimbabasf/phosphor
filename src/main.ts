@@ -32,7 +32,8 @@ import { renderSentences } from './policy/render.ts';
 import { missingVenues, proposeVenueGap } from './policy/venues.ts';
 import { createRails, venueAllowlist } from './rails/index.ts';
 import { demoStallSweep } from './rails/demo.ts';
-import { usdcCreditedSince } from './rails/hl-user-signed.ts';
+import { usdcCreditedSince, usdcCreditsSince } from './rails/hl-user-signed.ts';
+import { hlCreditReader } from './rails/hypercore-deposit.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
 import { createDayFeed, DAY_REFRESH_MS } from './ledger/day.ts';
 import { createCoinPictures, pictureDir } from './ledger/pictures.ts';
@@ -611,6 +612,13 @@ const rails = createRails({
   prices: () => ledger.snapshot().prices,
   refresh: () => ledger.refresh(),
   allowance,
+  /* Where a Hyperliquid deposit in flight looks for its money: the trading feed's socket, which
+     the venue pushes each credit onto as it lands, and the venue's ledger over /info while that
+     socket is not carrying it (the feed is built further down, so it is asked for at each read). */
+  hlCredits: hlCreditReader({
+    pushed: (account) => tradeService?.credits?.(account) ?? null,
+    rest: (account, sinceMs) => usdcCreditsSince({ keysPath: cfg.keysPath }, account, sinceMs),
+  }),
 });
 
 /* How reconcile re-checks a 1Click order by the quote handle a rail recorded. The same client
