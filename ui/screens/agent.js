@@ -161,10 +161,6 @@
     stoppedTitle: 'Your agent stopped.',
     ownTitle: 'Your own agent is working.',
     ownLine: 'Talk to it from its own terminal. Its moves land here as cards.',
-    idleTitle: 'Your own agent is connected.',
-    idleLine: 'It has not made a move yet. Talk to it from its terminal; its moves land here as cards.',
-    idleManyTitle: 'Your own agents are connected.',
-    idleManyLine: 'None has made a move yet. Talk to one from its terminal; its moves land here as cards.',
     connectTitle: 'Connect your own agent',
     connectLine: 'Any MCP client can drive Phosphor.',
     connectHint: 'Paste this into your terminal, then send a message from there.',
@@ -367,12 +363,14 @@
 
   /* Only an agent that is doing something earns a row: an idle connection is plumbing, and a
      person reading "1 connected, no call yet" learns nothing they can act on. One the person
-     put off with Ask each time earns a row whatever it did, while the built-in one runs too:
-     the row is their way back to allowing it (paintAllow). */
+     put off with Ask each time keeps its row while the built-in one runs too, once it has
+     called: the row is their way back to allowing it (paintAllow). A put-off connection that
+     never called is a terminal opened for another job, and four of them read as four rows of
+     "its moves wait for your OK" (Karim, 2026-10-09). */
   function rosterRows() {
     var rows = workingAgents();
     for (var i = 0; i < roster.length; i += 1) {
-      if (roster[i].putOff && rows.indexOf(roster[i]) === -1) rows.push(roster[i]);
+      if (roster[i].putOff && roster[i].calls > 0 && rows.indexOf(roster[i]) === -1) rows.push(roster[i]);
     }
     return rows;
   }
@@ -1564,7 +1562,9 @@
     var refs = node.refs;
     var seat = canTalk() ? 'live'
       : (phase === 'starting' ? 'coming' : (phase === 'error' ? 'error' : 'off'));
-    var own = ownAgents().length > 0;
+    /* An agent at work, not a connection: every Claude Code session on the Mac connects, and one
+       opened for another job changes nothing here (Karim, 2026-10-09). */
+    var own = workingAgents().length > 0;
     var stopped = seat === 'error' && failure !== null;
     dom.setAttr(refs.emptySeat, 'data-seat', seat === 'off' && own ? 'own' : seat);
 
@@ -1578,13 +1578,9 @@
     } else if (seat === 'coming') {
       dom.setText(refs.emptyTitle, COPY.comingTitle);
       dom.setText(refs.emptyNote, COPY.comingLine);
-    } else if (own && workingAgents().length) {
+    } else if (own) {
       dom.setText(refs.emptyTitle, COPY.ownTitle);
       dom.setText(refs.emptyNote, COPY.ownLine);
-    } else if (own) {
-      var many = ownAgents().length > 1;
-      dom.setText(refs.emptyTitle, many ? COPY.idleManyTitle : COPY.idleTitle);
-      dom.setText(refs.emptyNote, many ? COPY.idleManyLine : COPY.idleLine);
     } else {
       dom.setText(refs.emptyTitle, COPY.offTitle);
       dom.setText(refs.emptyNote, COPY.offLine);

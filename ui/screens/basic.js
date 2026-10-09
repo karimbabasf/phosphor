@@ -7,8 +7,10 @@
    this file places them and moves the numbers.
 
    When the money moves, the ring's pieces spring to the new split, and a tile
-   whose figure moved rolls to the new one and lights once, the way phosphor
-   does: the light arrives fast and decays slow. */
+   whose amount moved rolls to its new figure and lights once, the way phosphor
+   does: the light arrives fast and decays slow. A price that moves under an
+   amount that did not only rolls the figures: prices move about once a second
+   (src/ledger/live-prices.ts), and a light every second is a pulse, not news. */
 (function () {
   'use strict';
 
@@ -441,9 +443,13 @@
 
     if (refs.totalSkel.parentNode) refs.totalSkel.parentNode.removeChild(refs.totalSkel);
     var hadTotal = refs.total.textContent;
+    var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
+    var amounts = holdings.map(function (h) { return h.symbol + ' ' + h.quantityLine; }).join('|');
+    var hadAmounts = refs.total.__amounts;
+    refs.total.__amounts = amounts;
     dom.setNumber(refs.total, basic.totalLine || '');
     dom.setHidden(refs.total, !basic.totalLine);
-    if (filled && hadTotal && basic.totalLine && hadTotal !== basic.totalLine) lightHead();
+    if (filled && hadTotal && basic.totalLine && hadTotal !== basic.totalLine && hadAmounts !== amounts) lightHead();
 
     /* The words under the figure sit in the disc while they are a few words;
        a longer caption, or a whole sentence standing in for the figure, sits
@@ -456,7 +462,6 @@
     dom.setAttr(refs.caption, 'data-alone', basic.totalLine ? null : 'true');
     dom.setHidden(refs.under, !outside);
 
-    var holdings = Array.isArray(basic.holdings) ? basic.holdings : [];
     dom.reconcile(refs.rows, holdings, keyOf, createRow, fillRow);
     filled = true;
     paintRing(holdings);
@@ -629,8 +634,9 @@
     light(row, holding);
   }
 
+  // Lit by its amount only: a price moving under it rolls the figure and stays dark.
   function light(row, holding) {
-    var shown = holding.quantityLine + '|' + (holding.valueLine || '');
+    var shown = String(holding.quantityLine);
     var had = row.__shown;
     row.__shown = shown;
     if (had === undefined || had === shown) return;

@@ -136,7 +136,9 @@ The full list is in [Tools](tools.md).
 ## The window asks once
 
 An agent you start in your terminal or in another app is one Phosphor did not start, and it
-attaches with a secret any program running as you could read. So when it first attaches, the
+attaches with a secret any program running as you could read. So the first time it uses
+Phosphor (its first tool call, not the moment it connects: every Claude Code session on your Mac
+connects, including the ones you opened for other work, and those never ask), the
 conversation shows a card under its list of agents that says which assistant wants to use
 Phosphor ("Claude Code wants to use Phosphor"), when it connected, and how many more agents wait
 behind it. A name the card knows (Claude Code, Claude Desktop, Codex) is said plainly with that

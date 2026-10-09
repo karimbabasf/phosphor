@@ -247,7 +247,7 @@ function snapshotFlag(data: unknown): boolean {
 
 // The default socket, wrapped rather than passed through, so the seam above stays free of the
 // browser's event objects and nothing in this file needs a cast to talk to the runtime.
-function nativeSocket(url: string): FeedSocket {
+export function nativeSocket(url: string): FeedSocket {
   const ws = new WebSocket(url);
   const sock: FeedSocket = {
     get readyState(): number {

@@ -46,6 +46,7 @@ import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
 import type { InviteNet, InviteService } from '../invite/claim.ts';
 import type { Received } from '../received.ts';
+import type { LivePrices } from '../ledger/live-prices.ts';
 import type { JsonBody } from './respond.ts';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -236,6 +237,11 @@ export type ServerDeps = {
      main.ts; absent, the watch refreshes the ledger itself and broadcasts. */
   refreshLedger?: () => Promise<void>;
   riskRows: RiskRow[];
+  /* Hyperliquid's live mid per held coin (src/ledger/live-prices.ts), for the window's balance and
+     the agent's wallet read only (src/wallet.ts live), never a price that governs a move. Optional
+     because no test server dials a venue and demo mode has none; absent, the balance moves with the
+     ledger's passes as it always did. */
+  livePrices?: LivePrices;
   market: MarketData;
   proposals: ProposalService;
   getPolicy: () => Policy | null;

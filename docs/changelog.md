@@ -5,6 +5,21 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.3
+
+Built 2026-10-09, the quiet agents and live balance release. Tagged v0.11.3 on 2026-10-09.
+
+- An agent you opened for other work no longer changes the window. Every Claude Code session on
+  your Mac connects to Phosphor, so each one used to ask "Claude Code wants to use Phosphor" and,
+  answered Ask each time, kept a row reading "its moves wait for your OK". Now the window asks
+  about an agent started outside Phosphor the first time it uses Phosphor, and only then gives it a
+  row. Until you allow it, every move it asks for still waits for your OK.
+- Your balance has its dollars about a second after the app opens. A coin only the swap service
+  prices (GRAM, for one) used to show no price until the next balance read, 15 to 30 seconds in.
+- Your balance moves with the market. A coin Hyperliquid trades is shown at its live price, updated
+  about once a second, when that is within 10% of the coin's own price. Rules, limits and swaps
+  still use the coin's own price. A tile lights only when its amount changes, not on every tick.
+
 ## 0.11.2
 
 Built 2026-10-07, the any-coin vault fix. Tagged v0.11.2 on 2026-10-07. There is no 0.11.0 or 0.11.1

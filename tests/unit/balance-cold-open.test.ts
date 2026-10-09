@@ -189,3 +189,59 @@ test('once a read has landed, a pocket that has not answered yet never puts the 
   assert.equal(wallet.rows.find((r) => r.kind === 'intents')?.quantity, 5);
   assert.deepEqual(buildWallet({ mode: 'live', fetchedAt: at, prices: {} }, mergeIntentsReads([spend, spend]), undefined).unread, ['intents'], 'nothing answered at all is unread');
 });
+
+// Karim, 2026-10-09, holding GRAM, a coin only 1Click prices: "it takes the price for my balance
+// like 30 sec to load in when starting the app". The names kept from the last run carry no price
+// (src/intents.ts keptNames), so the first pass read GRAM with no dollars, and nothing valued it
+// again when 1Click's list landed half a second later: the dollars waited for a later pass. Now the
+// list landing labels the holdings again and tells the ledger's listeners, which push the window.
+test('a coin only 1Click prices has its dollars the moment the list lands, not a pass later', async () => {
+  const GRAM = 'nep245:v2_1.omni.hot.tg:1117_';
+  const keysPath = path.join(tempDir('phosphor-cold-open-'), 'keys.json');
+  await walletAt(keysPath);
+  const json = (payload: unknown): Response => new Response(JSON.stringify(payload), { status: 200, headers: { 'content-type': 'application/json' } });
+  const nearView = (value: unknown): Response => json({ jsonrpc: '2.0', id: 1, result: { result: [...Buffer.from(JSON.stringify(value), 'utf8')] } });
+  let listDelayMs = 0;
+  const fetchImpl = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = String(input);
+    const host = new URL(url).hostname;
+    const body = typeof init?.body === 'string' ? (JSON.parse(init.body) as Record<string, unknown>) : null;
+    if (host === 'coinbase.com' || host.endsWith('.coinbase.com')) return json([[0, 0, 0, 0, 100, 0]]);
+    if (url.endsWith('/v0/tokens')) {
+      await new Promise((resolve) => setTimeout(resolve, listDelayMs));
+      return json([{ assetId: GRAM, decimals: 9, blockchain: 'ton', symbol: 'GRAM', price: 1.46, priceUpdatedAt: new Date().toISOString() }]);
+    }
+    if (host === 'hyperliquid.xyz' || host.endsWith('.hyperliquid.xyz')) {
+      const type = String(body?.type);
+      if (type === 'clearinghouseState') return json({ marginSummary: { accountValue: '0', totalMarginUsed: '0' }, withdrawable: '0', assetPositions: [] });
+      if (type === 'spotClearinghouseState') return json({ balances: [] });
+      return json('standard');
+    }
+    const method = (body?.params as { method_name?: string } | undefined)?.method_name;
+    if (method === 'mt_tokens_for_owner') return nearView([{ token_id: GRAM }]);
+    if (method === 'mt_batch_balance_of') return nearView(['640000000000']);
+    throw new Error(`unexpected request ${url}`);
+  }) as typeof fetch;
+
+  // A run with 1Click answering, which keeps the names (and only the names) it read.
+  await createLedger(liveConfig(keysPath), { fetchImpl, log: () => undefined }).refresh();
+
+  // The app opens again, and 1Click takes 300 ms to answer, slower than the verifier.
+  listDelayMs = 300;
+  const ledger = createLedger(liveConfig(keysPath), { fetchImpl, log: () => undefined });
+  let told = 0;
+  ledger.onRefresh?.(() => {
+    told += 1;
+  });
+  await ledger.refresh();
+  assert.equal(ledger.intents()?.holdings[0]?.symbol, 'GRAM', 'labelled off the kept names');
+  assert.equal(panel(ledger).basic.totalLine, '', 'the first pass has no price for GRAM yet');
+  const afterPass = told;
+  const before = ledger.snapshot();
+
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.ok(told > afterPass, 'the list landing told nobody, so the window waited for the next pass');
+  assert.notEqual(ledger.snapshot(), before, 'the same snapshot, so a cache keyed on it kept the old total');
+  assert.equal(ledger.intents()?.holdings[0]?.priceUsd, 1.46);
+  assert.equal(panel(ledger).basic.totalLine, '$934.40', 'without a second pass');
+});

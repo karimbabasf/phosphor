@@ -88,8 +88,8 @@ words and changes nothing; the card still shows the venue's exact words.
 ### An agent you started outside Phosphor
 
 An agent in your terminal or in another app attaches with a secret the app writes into its data
-folder, and any program running as you can read that folder. So the first time one attaches, the
-window asks whether to let it in ("Claude Code wants to use Phosphor"), and until you allow it,
+folder, and any program running as you can read that folder. So the first time one uses Phosphor,
+the window asks whether to let it in ("Claude Code wants to use Phosphor"), and until you allow it,
 every money move it proposes waits for your click, whatever its size. The card says under its head: "This agent was started outside
 Phosphor and is not allowed yet, so this move waits for your OK." Allow lets its next moves run
 under these rules like the chat's own agent, and a move it already asked for still waits; Ask

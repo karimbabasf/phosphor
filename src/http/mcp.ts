@@ -380,13 +380,12 @@ export async function handleMcp(ctx: Ctx, req: http.IncomingMessage, res: http.S
   body.session = seat.member.session;
   logged.session = seat.member.session;
   venueWordsFor(res, seat.member.session);
-  if (seat.edge) {
-    ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
-    // An agent that joined on its first op (no hello) is connected NOW. Push state so
-    // the window's `agent` field and presence light say so at once rather than at the next
-    // heartbeat up to a TTL later. The hello path already does this; this covers the rest.
-    ctx.sse.broadcastState();
-  }
+  if (seat.edge) ctx.audit.append('agent_connected', 'an agent attached to phosphor', logged);
+  /* An agent that joined on its first op (no hello) is connected NOW, and one that only said
+     hello until now is at work NOW: the window draws a roster row and asks about an outside agent
+     from its first call (ui/screens/agentask.js), never for a bare connection. Push state on that
+     first call so both land at once rather than at the next push. Every later call is ops > 1. */
+  if (seat.edge || seat.member.ops === 1) ctx.sse.broadcastState();
   // A granted tool call is the agent working. Tell the window so its presence light shines
   // now rather than at the next state push, which for a pure read would never come.
   ctx.sse.broadcastActivity();
