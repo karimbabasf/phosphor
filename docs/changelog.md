@@ -7,7 +7,9 @@ without a git tag say so.
 
 ## 0.11.4
 
-Built 2026-10-09, the trading account release. Tagged v0.11.4 on 2026-10-09.
+Built 2026-10-09, the trading account release. Tagged v0.11.4 on 2026-10-09. There is no 0.11.3
+release: v0.11.3 was tagged and built, and 0.11.4 replaced it before it was published, so 0.11.4
+carries everything listed under 0.11.3 below.
 
 - Funding the trading account says it landed the moment Hyperliquid's own ledger shows the credit,
   with the amount credited. It used to wait for the swap service to report success, which could
