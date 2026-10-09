@@ -786,6 +786,31 @@ test('reconcile reads placed and open rows against the venue by cloid', async ()
   assert.equal(h.runner.get('pl_done')?.endReason, 'targeted');
 });
 
+test('reconcile never ends a placed plan on an order list the venue has not sent yet', async () => {
+  /* 2026-10-09: the account channel answered first on boot, the open-orders channel had not,
+     and a resting SOL entry was ended as cancelled while it stayed on the book with no stop. */
+  const dir = tempDir('phosphor-runner-host-');
+  const store = createPlanStore(dir);
+  store.put(row({ id: 'pl_resting', status: 'placed', cloids: { entry: '0xrest' }, gen: 1 }));
+  const h = harness({ dir });
+  h.runner.onAccount(account({ orders: [], ordersKnown: false }));
+  const done = h.runner.reconcile(1_000);
+  await settle();
+  h.runner.onAccount(account({ orders: [{ coin: 'ETH', cloid: '0xrest' }], ordersKnown: true }));
+  await done;
+  await settle();
+  assert.equal(h.runner.get('pl_resting')?.status, 'placed', 'judged against the orders once they arrived');
+
+  // The orders never arrive inside the wait: the row stays as it is, unjudged.
+  const dir2 = tempDir('phosphor-runner-host-');
+  createPlanStore(dir2).put(row({ id: 'pl_unheard', status: 'placed', cloids: { entry: '0xrest' }, gen: 1 }));
+  const h2 = harness({ dir: dir2 });
+  h2.runner.onAccount(account({ orders: [], ordersKnown: false }));
+  await h2.runner.reconcile(20);
+  await settle();
+  assert.equal(h2.runner.get('pl_unheard')?.status, 'placed', 'silence is not a cancel');
+});
+
 // ---------- the key's route to the child ----------
 
 test('the key goes over stdin and is nowhere in the environment', () => {

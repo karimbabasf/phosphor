@@ -81,6 +81,9 @@ export type AccountView = {
   positions: { coin: string; szi: number; entryPx: number }[];
   orders: { coin: string; cloid: string | null }[];
   fills: { coin: string; px: number; sizeCoin: number; atMs: number; closedPnlUsd: number | null }[];
+  // False while the venue has not sent the resting orders yet, so `orders` is empty because
+  // nobody has said, not because the book is. Absent means known.
+  ordersKnown?: boolean;
 };
 
 export type HostDeps = {
@@ -684,9 +687,11 @@ export function createRunnerHost(deps: HostDeps) {
   function onAccount(view: AccountView): void {
     account = view;
     accountAt = Math.max(accountAt, view.atMs);
-    const waiters = accountWaiters;
-    accountWaiters = [];
-    for (const w of waiters) w();
+    if (view.ordersKnown !== false) {
+      const waiters = accountWaiters;
+      accountWaiters = [];
+      for (const w of waiters) w();
+    }
     for (const row of liveRows()) {
       const pos = positionOn(row.symbol);
       if (row.status === 'placed') {
@@ -1170,7 +1175,7 @@ export function createRunnerHost(deps: HostDeps) {
        positions by cloid. Waits for the first account snapshot, bounded, so it is not deciding
        against an empty feed. */
     async reconcile(waitMs = 20_000): Promise<void> {
-      if (account === null) {
+      if (account === null || account.ordersKnown === false) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, waitMs);
           timer.unref?.();
@@ -1220,6 +1225,13 @@ export function createRunnerHost(deps: HostDeps) {
         const pos = positionOn(row.symbol);
         const resting = new Set(account.orders.map((o) => o.cloid).filter((c): c is string => c !== null));
         if (row.status === 'placed') {
+          /* An empty order list the venue has not sent is silence, not an empty book. Ending the
+             row on it left a resting SOL entry on the book with no plan behind it (2026-10-09).
+             The row stays placed and the next reconcile, on unlock or restart, judges it. */
+          if (account.ordersKnown === false && pos === null) {
+            record({ type: 'error', id: row.id, message: `${row.id} not checked against the venue: its open orders have not arrived yet` });
+            continue;
+          }
           if (row.cloids.entry !== undefined && resting.has(row.cloids.entry)) {
             const out = await armRow(row);
             if (!out.ok) record({ type: 'error', id: row.id, message: `could not re-take ${row.id}: ${out.reason}` });

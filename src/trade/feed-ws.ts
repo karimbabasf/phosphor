@@ -143,6 +143,9 @@ export type TradeFeed = {
   watch(coins: string[]): void;
   account(): AccountSnapshot | null;
   orders(): RawOrder[];
+  /* Whether the open-orders channel has answered for this wallet. Until it has, orders() is
+     empty because nothing was said. Optional for the hand-built feeds in tests. */
+  ordersHeard?(): boolean;
   fills(): RawFill[];
   market(coin: string): MarketCtx | null;
   status(): FeedStatus;
@@ -313,6 +316,7 @@ export function createTradeFeed(deps: {
   let clearing: ClearingState | null = null;
   let positions: RawPosition[] = [];
   let orders: RawOrder[] = [];
+  let ordersHeard = false;
   let held: RawFill[] = [];
   let spot: SpotState | null = null;
   // The account's USDC credits off the ledger channel, and the account they are about once its
@@ -495,6 +499,7 @@ export function createTradeFeed(deps: {
       clearing = null;
       positions = [];
       orders = [];
+      ordersHeard = false;
       held = [];
       activeAssets.clear();
       spot = null;
@@ -739,6 +744,7 @@ export function createTradeFeed(deps: {
     }
     // The resting set is whole in every message, so it replaces rather than merges.
     orders = next;
+    ordersHeard = true;
   }
 
   function parseOrder(row: unknown): RawOrder | null {
@@ -1181,6 +1187,7 @@ export function createTradeFeed(deps: {
     watch,
     account,
     orders: () => orders.slice(),
+    ordersHeard: () => ordersHeard,
     fills: () => held.slice(),
     market: (coin: string) => markets.get(coinOf(coin)) ?? null,
     status: () => ({

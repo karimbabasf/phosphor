@@ -516,6 +516,17 @@ test('a fill keeps the venue hash and order id it came with, and drops the all-z
   assert.equal('hash' in (byTid.get('3') ?? {}), false, 'absent, not null: nothing to print');
 });
 
+test('the orders are unheard until the open-orders channel answers, even an empty answer', async (t) => {
+  const socks = fakeSockets();
+  const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });
+  t.after(() => feed.stop());
+  await flush();
+  socks.last().open();
+  assert.equal(feed.ordersHeard?.(), false, 'an empty list nobody sent');
+  socks.last().deliver({ channel: 'openOrders', data: { isSnapshot: true, orders: [] } });
+  assert.equal(feed.ordersHeard?.(), true, 'an empty book, said by the venue');
+});
+
 test('a trigger order keeps its trigger line separate from the slippage bound it fires with', async (t) => {
   const socks = fakeSockets();
   const feed = createTradeFeed({ wsUrl: WS, user: USER, info: fakeInfo(), wsImpl: socks.make });

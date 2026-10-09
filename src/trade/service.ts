@@ -154,6 +154,7 @@ export function createTradeService(deps: TradeServiceDeps): TradeService {
       freeUsd: snapshot.freeUsd,
       positions: snapshot.positions.map((p) => ({ coin: p.coin, szi: p.szi, entryPx: p.entryPx })),
       orders: feed.orders().map((o) => ({ coin: o.coin, cloid: o.cloid })),
+      ordersKnown: feed.ordersHeard?.() ?? true,
       fills: feed.fills().map((f) => ({ coin: f.coin, px: f.px, sizeCoin: f.sizeCoin, atMs: f.atMs, closedPnlUsd: f.closedPnlUsd })),
     };
     deps.runner.onAccount(account);
