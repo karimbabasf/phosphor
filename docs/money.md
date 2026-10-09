@@ -8,8 +8,9 @@ a move.
 ## Where money lives
 
 Money lives in two pockets. The Basic tab adds them up: a ring with your total inside it and one
-tile per coin. The Pro tab lists your NEAR Intents balance coin by coin, with the trading account
-on its own line that opens the Trade tab, where everything about Hyperliquid lives.
+tile per coin. The Pro tab's total adds them up too, and under it lists your NEAR Intents balance
+coin by coin, with the trading account on its own line that opens the Trade tab, where everything
+about Hyperliquid lives.
 
 - Your [NEAR Intents](https://near-intents.org) balance. NEAR Intents is a settlement layer where
   a signed message (an intent) tells a market maker (a solver) what you want, and the solver
@@ -463,7 +464,12 @@ The fee is almost flat, about $0.32 plus 0.25 percent, so it is about 3.4 percen
 about 0.3 percent on $1,000. The app refuses any deposit whose fee is above 5 percent, which is
 why a deposit under 7 USDC is refused, and it refuses a quote that would land less than 5 USDC.
 While fees on Arbitrum spike, a deposit waits instead of risking the money. The rail finishes by
-reading the account, not by trusting the bridge's word.
+reading the account, not by trusting the bridge's word: the card says the money landed the moment
+Hyperliquid's own ledger shows this deposit's credit, with the amount credited, without waiting for
+the swap service to report it, which can trail the credit by half a minute. The credit counts only
+once NEAR shows this deposit's own transfer spent, only when it falls between the card's floor and
+what the deposit spent, and never while a second deposit to the same account is on its way. The
+swap service's word still decides a refund, and still settles a deposit the ledger never shows.
 
 ## Withdraw from Hyperliquid
 
