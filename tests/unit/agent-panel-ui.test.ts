@@ -80,8 +80,10 @@ test('the panel builds no control that decides anything', () => {
   // decides nothing about money, only whether the assistant's process ends. Latest is the quiet
   // control on the thread's bottom edge: it scrolls, and that is all it does. Change is a put-off
   // agent's way back on its roster row (UX review 2026-10-01, finding 9): it brings back the Allow
-  // card (ui/screens/agentask.js), which decides; the row does not.
-  const allowed = ['Start your agent', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest', 'Change'];
+  // card (ui/screens/agentask.js), which decides; the row does not. Switch hands the chat to the
+  // other vendor the window runs (src/http/chats.ts handoff): like Turn off, it decides which
+  // process answers, never anything about money.
+  const allowed = ['Start your agent', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest', 'Change', 'Switch'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');

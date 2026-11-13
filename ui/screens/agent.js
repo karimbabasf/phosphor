@@ -451,7 +451,12 @@
     var controls = dom.el('div', 'agent-controls');
     var start = button('btn btn-ghost btn-sm', 'Start your agent', '', 'Starting');
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
+    /* The other vendor the chat can run, named on the key ("Switch to Grok"). It hands this
+       conversation over rather than starting a new one (src/http/chats.ts handoff). */
+    var switchAgent = button('btn btn-quiet btn-sm', 'Switch', 'Hand this chat to the other assistant', 'Switching');
+    switchAgent.hidden = true;
     controls.appendChild(start);
+    controls.appendChild(switchAgent);
     controls.appendChild(stopAgent);
     head.appendChild(controls);
     host.appendChild(head);
@@ -595,6 +600,7 @@
       start: start,
       startBig: startBig,
       stopAgent: stopAgent,
+      switchAgent: switchAgent,
       connect: connectBtn,
       note: note,
       noteMark: noteMark,
@@ -631,6 +637,7 @@
     dom.on(startBig, 'click', function () { doStart(node, startBig); });
     dom.on(retry, 'click', function () { doStart(node, retry); });
     dom.on(stopAgent, 'click', function () { doStop('stop', node); });
+    dom.on(switchAgent, 'click', function () { doSwitch(node); });
     dom.on(copy, 'click', function () { copyLine(node); });
     dom.on(connectBtn, 'click', function () { setView('connect'); });
     dom.on(back, 'click', function () { setView('card'); });
@@ -869,6 +876,41 @@
       });
       if (keep.focus) keep.focus();
     });
+  }
+
+  /* The two vendors this window can run, each naming the other. */
+  var OTHER_VENDOR = {
+    claude: { id: 'grok', name: 'Grok' },
+    grok: { id: 'claude', name: 'Claude Code' }
+  };
+
+  function otherVendor() {
+    var id = pick && typeof pick.id === 'string' ? pick.id : '';
+    return Object.prototype.hasOwnProperty.call(OTHER_VENDOR, id) ? OTHER_VENDOR[id] : null;
+  }
+
+  function doSwitch(node) {
+    var to = otherVendor();
+    if (!to) return;
+    var btn = node.refs.switchAgent;
+    window.PhosphorShell.setPending(btn, true);
+    api.driver({ action: 'switch', chat: chatId || '', agent: to.id })
+      .then(function (result) {
+        var data = (result && result.data) || result || {};
+        if (data.ok === false) {
+          window.PhosphorToast.show(String(data.sentence || 'The switch did not go through.'), 'down');
+          return;
+        }
+        if (data.agent && typeof data.agent === 'object') pick = data.agent;
+        if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('phosphor:agent'));
+        renderAll();
+      })
+      .catch(function (err) {
+        window.PhosphorToast.show(net.readable(err), 'down');
+      })
+      .finally(function () {
+        window.PhosphorShell.setPending(btn, false);
+      });
   }
 
   function quitAssistant(node) {
@@ -1271,6 +1313,13 @@
      the moment there is a transcript to keep company. */
     dom.setHidden(refs.start, empty || failed || !!away || !canStart());
     dom.setHidden(refs.stopAgent, !canTalk());
+    /* Between answers only: a switch mid-answer would cut the answer it is waiting for. */
+    var other = otherVendor();
+    dom.setHidden(refs.switchAgent, empty || !other || phase !== 'connected' || !!turn);
+    if (other) {
+      dom.setText(refs.switchAgent.querySelector('.btn-label') || refs.switchAgent, 'Switch to ' + other.name);
+      refs.switchAgent.title = 'Hand this chat to ' + other.name + '. It keeps the conversation.';
+    }
 
     var sheet = view === 'connect' && empty && canStart();
     dom.setHidden(refs.sheet, !sheet);
@@ -1693,6 +1742,7 @@
       });
       return steps;
     }
+    if (block.type === 'handoff') return dom.el('p', 'chat-handoff');
     var kind = block.type === 'said' ? 'chat-said'
       : (block.type === 'error' ? 'chat-error'
         : (block.type === 'note' ? 'chat-note' : 'chat-reply'));
@@ -1738,6 +1788,10 @@
       return;
     }
     if (block.type === 'sheet') return;
+    if (block.type === 'handoff') {
+      dom.setText(row, block.text);
+      return;
+    }
     if (block.type === 'working') {
       var words = row.children[row.children.length - 1];
       dom.setText(words, workingWords());
@@ -2008,6 +2062,12 @@
       if (turn) turn.state = 'writing';
       openSteps = null;
       commitText(event.text, at);
+      if (!replay) renderAll();
+      return;
+    }
+    /* The person switched this chat's vendor: one quiet line, and the thread goes on under it. */
+    if (event.kind === 'handoff') {
+      pushBlock({ type: 'handoff', text: String(event.to || 'The other assistant') + ' took over. It has the conversation so far.' });
       if (!replay) renderAll();
       return;
     }

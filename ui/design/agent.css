@@ -702,6 +702,16 @@ ol.chat-list li::marker {
   color: var(--text-2);
 }
 
+/* The vendor switch: one quiet line in the thread, not a message from anybody. */
+.chat-handoff {
+  align-self: center;
+  margin: 2px 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--text-3);
+  text-align: center;
+}
+
 /* A line from the child's own stderr: kept, in mono and the third tone. */
 .chat-note .chat-text {
   font-family: var(--font-mono);

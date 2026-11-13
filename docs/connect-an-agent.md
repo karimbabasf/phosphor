@@ -113,6 +113,14 @@ running the switch is refused with "Your assistant is running. Turn it off in th
 it here." Press Turn off at the top of the chat first (it asks, then deletes the chat's transcript
 on this window; your wallet, limits and open positions are untouched), then change it.
 
+To change it without losing the conversation, press Switch to Grok (or Switch to Claude Code) at
+the top of the chat, between answers. The other agent takes the same chat over, the chat shows one
+line saying so, and the new agent is told the conversation so far: a short summary of the task,
+the last few turns word for word, and any move still open, kept under about 4,000 tokens, with keys,
+recovery phrases and tokens taken out. It runs under the same lockdown and checks as any start, and
+a chat that had read the web keeps waiting for your click on every move. The switch also becomes
+your pick in the Vault.
+
 An agent you remove later reads "Codex is no longer on this Mac." Nothing else in the app depends
 on it, so the app boots as it always did.
 
