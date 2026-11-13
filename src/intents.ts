@@ -603,6 +603,11 @@ export type OneClickQuoteParams = {
   recipientType?: OneClickEndpointType;
   refundType?: OneClickEndpointType;
   depositType?: OneClickEndpointType;
+  /* EXACT_INPUT unless said. FLEX_INPUT is the one-time deposit address (src/rails/deposit-quote.ts):
+     it takes a deposit of any size at or above the quote. Sent only when given, with depositMode,
+     so every other rail's request is byte for byte what it was. */
+  swapType?: 'EXACT_INPUT' | 'FLEX_INPUT';
+  depositMode?: 'SIMPLE' | 'MEMO';
   // A deadline for this one call in place of the venue-write budget, for a dry quote with an
   // answer line to keep (the relay rail's price check). Left out, the venue-write budget applies.
   timeoutMs?: number;
@@ -870,7 +875,8 @@ export function oneClickClient(deps: OneClickDeps = {}): OneClickClient {
     const deadline = new Date(Date.now() + (params.deadlineMs ?? 10 * 60 * 1000)).toISOString();
     const body: Record<string, unknown> = {
       dry: params.dry,
-      swapType: 'EXACT_INPUT',
+      swapType: params.swapType ?? 'EXACT_INPUT',
+      ...(params.depositMode === undefined ? {} : { depositMode: params.depositMode }),
       slippageTolerance: params.slippageToleranceBps ?? 100,
       originAsset: params.originAsset,
       destinationAsset: params.destinationAsset,
