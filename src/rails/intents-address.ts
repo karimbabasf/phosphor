@@ -259,6 +259,9 @@ export function parsePoaTokens(rows: unknown): PoaToken[] {
   return out;
 }
 
+// 1Click's mark for a coin it no longer takes, at the end of the symbol (see tokensFromOneClick).
+const DEPRECATED_MARK = /\(deprecated\)\s*$/i;
+
 /* 1Click's token list as the rows the receive report reads: every coin 1Click lists on a network
    the registry knows, keyed by that network's bridge key so the rest of the report (and Activity)
    keeps naming networks one way. A coin on a chain the registry does not know is left out: a chain
@@ -266,12 +269,16 @@ export function parsePoaTokens(rows: unknown): PoaToken[] {
    deposit address with none of those is a guess. The floor is not on the list: it comes with the
    address, from the quote that mints it, so `minDeposit` is empty here and the window prints none.
    The contract is 1Click's own field; on NEAR every coin has one (wNEAR is wrap.near), and that is
-   the truth the card tells: on NEAR the address takes tokens, not plain NEAR. */
+   the truth the card tells: on NEAR the address takes tokens, not plain NEAR.
+   A coin 1Click marks deprecated is left out too. The list carries no field for it: the mark is in
+   the symbol ("BNB(DEPRECATED)", "XPL_(DEPRECATED)"), and 1Click refuses a deposit address for
+   such a coin, so offering it draws a card that can only fail. */
 export function tokensFromOneClick(list: readonly OneClickToken[]): PoaToken[] {
   const out: PoaToken[] = [];
   const seen = new Set<string>();
   for (const t of list) {
     if (t === null || typeof t !== 'object' || typeof t.assetId !== 'string' || typeof t.symbol !== 'string') continue;
+    if (DEPRECATED_MARK.test(t.symbol)) continue;
     if (typeof t.decimals !== 'number' || !Number.isInteger(t.decimals) || t.decimals < 0) continue;
     const net = typeof t.blockchain === 'string' ? networkByVenue(t.blockchain) : undefined;
     if (net === undefined || receiveNetworkOf(net.id) === undefined) continue;
