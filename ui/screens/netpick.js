@@ -88,6 +88,67 @@
       && deposit.chain === chain && String(deposit.symbol || '').toUpperCase() === String(symbol || '').toUpperCase();
   }
 
+  /* ---------- the one-time address ----------
+
+     Every deposit address is minted for one card by the backend
+     (POST /api/deposit/show, src/http/deposit-open.ts): one network, one
+     coin, one deposit, and a deadline. The window draws only the address the
+     watch holds, and takes it down at the deadline by its own clock, on a
+     frame that says the watch expired, or on one that carries no address. */
+
+  /* The deadline is checked at least this often by the wall clock, so a Mac
+     that slept through it takes the address down when it wakes. */
+  var DEADLINE_CHECK_MS = 30 * 1000;
+
+  function deadlineOf(deposit) {
+    var at = deposit && typeof deposit.deadline === 'string' ? Date.parse(deposit.deadline) : NaN;
+    return isFinite(at) ? at : null;
+  }
+
+  /* The deadline in the viewer's own clock, with its zone. */
+  function localDeadline(iso) {
+    var at = typeof iso === 'string' ? Date.parse(iso) : NaN;
+    if (!isFinite(at)) return 'its deadline';
+    var when = new Date(at);
+    try {
+      return when.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false, timeZoneName: 'short' });
+    } catch (err) {
+      return when.toString();
+    }
+  }
+
+  /* The backend's sentence (src/rails/deposit-quote.ts oneTimeWords), with
+     the deadline in local time. */
+  function oneTimeWords(iso) {
+    return 'This address is for one deposit and stops taking money at ' + localDeadline(iso) + '. Do not save it or send to it again; ask for a new one next time.';
+  }
+
+  function expiredWords(iso) {
+    return 'This address stopped taking money at ' + localDeadline(iso) + '. Do not send to it. Open Add money again for a new address.';
+  }
+
+  /* A one-time address is one quote for one coin: 1Click converts that coin
+     and nothing else sent to it. */
+  function coinOnlyWords(symbol) {
+    return String(symbol || '').toUpperCase() + ' only. Any other coin sent to this address is not credited and may be lost.';
+  }
+
+  /* Why a watch's address may not be drawn for this network and coin, or null
+     when it may: it holds an address, it is for this network and coin, it is
+     still waiting for its one deposit, and its deadline is known and ahead. */
+  function undrawable(deposit, chain, symbol) {
+    if (!deposit || typeof deposit.address !== 'string' || deposit.address === '') return 'No address was made for this deposit.';
+    if (deposit.chain !== chain || String(deposit.symbol || '').toUpperCase() !== String(symbol || '').toUpperCase()) {
+      return 'The address the app answered is for another network or coin, so nothing is shown.';
+    }
+    if (deposit.phase === 'expired') return expiredWords(deposit.deadline);
+    if (deposit.phase !== 'watching') return 'This address already has its one deposit. Open Add money again for a new address.';
+    var deadline = deadlineOf(deposit);
+    if (deadline === null) return 'The address came without the time it stops taking money, so it is not shown.';
+    if (Date.now() >= deadline) return expiredWords(deposit.deadline);
+    return null;
+  }
+
   /* The way to the venue's status page, in words, or null when the report named
      none the window may open. target=_blank is what the desktop shell routes to
      the system browser; the window itself never navigates. */
@@ -307,24 +368,6 @@
     var words = 'Min ' + min.amount + ' ' + min.symbol;
     if (min.usd !== null && min.usd >= 0.01) words += ', about ' + dom.usd(min.usd, min.usd < 1 ? 2 : 0);
     return words;
-  }
-
-  /* The floors of the first two tokens in the list, for the address step:
-     the list is something to read, not a choice, so the step names the two a
-     person most likely holds rather than one it guessed ("Minimums: ETH none,
-     USDC 0.001."). The rest are one click away. */
-  function minimumsWords(tokens) {
-    var list = Array.isArray(tokens) ? tokens : [];
-    var parts = [];
-    for (var i = 0; i < list.length && parts.length < 2; i += 1) {
-      var min = minimumOf(list[i]);
-      if (min) parts.push(min);
-    }
-    if (!parts.length) return '';
-    if (parts.length === 1) {
-      return parts[0].shown ? 'Minimum ' + parts[0].amount + ' ' + parts[0].symbol + '.' : 'No minimum for ' + parts[0].symbol + '.';
-    }
-    return 'Minimums: ' + parts.map(function (m) { return m.symbol + ' ' + (m.shown ? m.amount : 'none'); }).join(', ') + '.';
   }
 
   /* ---------- small helpers that survive the test harness ---------- */
@@ -580,6 +623,9 @@
     if (deposit.phase === 'credited') {
       return (amount || [symbol || 'Your deposit']).concat([' is in your balance']);
     }
+    if (deposit.phase === 'expired') {
+      return ['This address stopped taking money. Open Add money again for a new one.'];
+    }
     if (typeof deposit.unstarted === 'string') {
       return ['This app could not start checking for your deposit. Money you send still arrives in your balance.'];
     }
@@ -766,6 +812,10 @@
       failed: null,
       deposit: opts.deposit || null,
       watchStart: opts.deposit && opts.deposit.startedAt ? opts.deposit.startedAt : null,
+      /* What the backend said beside the watch the host opened (a slow
+         route), for the address drawn from that watch. */
+      heldRoute: { notice: typeof opts.notice === 'string' && opts.notice ? opts.notice : null, statusLink: opts.statusLink || null },
+      deadlineTimer: 0,
       query: '',
       alive: true,
       stageNode: null,
@@ -824,6 +874,7 @@
       var hadFocus = holdsFocus(prev);
       state.shown = null;
       state.asking = null;
+      stopDeadline();
       state.stage = stage;
       state.stageNode = node;
       root.dataset.stage = stage;
@@ -1392,6 +1443,7 @@
     function takeDown(shown, why, link, paused) {
       if (!shown || state.shown !== shown || !state.alive) return;
       state.shown = null;
+      stopDeadline();
       dom.clear(shown.body);
       shown.body.appendChild(paused ? pausedBanner(why, link) : refusal(why, 'warn'));
       shown.body.dataset.state = 'refused';
@@ -1412,10 +1464,14 @@
     }
 
     /* The checks, then the address. Nothing is drawn until every one passes,
-       and each failure names itself in the address's place. */
+       and each failure names itself in the address's place. The report says
+       what can be sent on the network and whether the wallet is open; the
+       address itself comes only from the watch the backend started for this
+       card (POST /api/deposit/show), never from the report. */
     function drawAddress(body, n) {
       state.asking = null;
       state.shown = null;
+      stopDeadline();
       var report = state.report;
       var network = reportNetwork(n.id);
       if (report && report.tampered) {
@@ -1432,74 +1488,109 @@
         body.dataset.state = 'refused';
         return;
       }
-      if (typeof network.address !== 'string' || !network.address.length) {
-        /* A row the report marks changed carries no address on purpose: the
-           bridge's answer and the one pinned on disk disagree, and neither
-           is drawn. The sentence takes the address's place. */
-        return typeof network.changed === 'string' && network.changed
-          ? refuse(body, network.changed, 'warn')
-          : refuse(body, 'No deposit address on ' + n.name + ' right now.');
-      }
       var token = tokenOf(network, state.symbol) || tokenOf(network, defaultSymbol(network.accepts, n.native));
       if (state.symbol && !tokenOf(network, state.symbol)) {
         return refuse(body, state.symbol + ' is not on the list for ' + n.name + '. Sending it there loses it.', 'warn');
       }
 
-      /* Check 1: the wallet is open, so this address was derived from the keys
-         and not read off an unauthenticated header. */
+      /* Check 1: the wallet is open, so the account the address pays into was
+         derived from the keys and not read off an unauthenticated header. */
       if (report.verified !== true) return askToOpen(body, n);
 
-      /* The watch that opened the card may carry an address of its own. If it
-         does, and it is a watch on this network, it has to be this one. */
-      if (state.deposit && state.deposit.chain === n.id
-        && typeof state.deposit.address === 'string' && state.deposit.address.length
-        && !sameBytes(state.deposit.address, network.address)) {
-        return refuse(body, 'The address the watcher holds is not the one this wallet reports. Nothing is shown.', 'warn');
-      }
-
-      /* Check 2: the route for this exact token. The report's row was asked
-         about the network's own coin, and TON USDT is its own question, so
-         nothing is drawn until the backend has answered for the token about
-         to be shown; a pause draws Paused in the address's place. */
+      /* Check 2: the watch. The card that opened this step may have started
+         one for this network and coin already: that one is drawn while it is
+         still good, because a second start would replace it. Otherwise the
+         backend is asked for one, which checks the route for this exact
+         token and mints the address; a pause draws Paused in its place. */
       var watchSymbol = token ? token.symbol : state.symbol;
+      var held = heldWatch(n.id, watchSymbol);
+      if (held) return drawShown(body, n, network, held, state.heldRoute);
       var asking = {};
       state.asking = asking;
       skeleton(body);
-      routeFor(n.id, watchSymbol).then(function (answer) {
+      if (state.watch) state.watch.render(null);
+      startWatch(n.id, watchSymbol).then(function (answer) {
         if (!state.alive || state.asking !== asking) return;
         state.asking = null;
-        if (answer.closed) {
+        state.deposit = answer.deposit;
+        state.watchStart = answer.deposit.startedAt || null;
+        drawShown(body, n, network, answer.deposit, answer);
+        followWatch();
+      }, function (err) {
+        if (!state.alive || state.asking !== asking) return;
+        state.asking = null;
+        var said = err && err.body;
+        if (said && said.route === 'closed') {
           dom.clear(body);
-          body.appendChild(pausedBanner(answer.closed, answer.statusLink));
+          body.appendChild(pausedBanner(net.readable(err), said.statusLink || null));
           body.dataset.state = 'refused';
           return;
         }
-        if (answer.failed) {
-          refuse(body, answer.failed);
-          body.appendChild(retryRow(function () { drawAddress(body, n); }));
-          return;
-        }
-        drawShown(body, n, network, token, watchSymbol, answer);
+        refuse(body, net.readable(err));
+        body.appendChild(retryRow(function () { drawAddress(body, n); }));
       });
     }
 
-    /* The address itself, once every check above has passed and the route
-       for its token has answered not closed. */
-    function drawShown(body, n, network, token, watchSymbol, route) {
-      var address = network.address;
-      var memoText = typeof network.memo === 'string' && network.memo ? network.memo : null;
+    /* The watch the host opened this step on, at its latest frame, when it is
+       for this network and coin and its address may still be drawn. */
+    function heldWatch(chain, symbol) {
+      var held = state.deposit;
+      if (!held) return null;
+      var live = store.get() ? store.get().deposit : null;
+      if (live && held.startedAt && live.startedAt === held.startedAt) held = live;
+      return undrawable(held, chain, symbol) === null ? held : null;
+    }
+
+    function stopDeadline() {
+      if (!state.deadlineTimer) return;
+      window.clearTimeout(state.deadlineTimer);
+      state.deadlineTimer = 0;
+    }
+
+    /* The address comes down when the local clock passes its deadline, by a
+       timer, and the timer reads the wall clock again at least every half a
+       minute, so a Mac that slept through the deadline is caught on waking. */
+    function armDeadline(shown) {
+      stopDeadline();
+      function check() {
+        state.deadlineTimer = 0;
+        if (!state.alive || state.shown !== shown) return;
+        var left = shown.deadline - Date.now();
+        if (left <= 0) {
+          takeDown(shown, expiredWords(shown.deadlineIso), null, false);
+          return;
+        }
+        state.deadlineTimer = window.setTimeout(check, Math.min(left, DEADLINE_CHECK_MS));
+      }
+      state.deadlineTimer = window.setTimeout(check, Math.min(Math.max(shown.deadline - Date.now(), 0), DEADLINE_CHECK_MS));
+    }
+
+    /* The address itself, once every check above has passed: the watch's own
+       address, memo, deadline and minimum, and nothing from the report but
+       what can be sent and the network's warning. */
+    function drawShown(body, n, network, deposit, route) {
+      var watchSymbol = deposit && deposit.symbol ? deposit.symbol : state.symbol;
+      var problem = undrawable(deposit, n.id, watchSymbol);
+      if (problem) {
+        refuse(body, problem, 'warn');
+        body.appendChild(retryRow(function () { state.deposit = null; drawAddress(body, n); }));
+        return;
+      }
+      var address = deposit.address;
+      var memoText = typeof deposit.memo === 'string' && deposit.memo ? deposit.memo : null;
+      var answer = route || {};
       dom.clear(body);
 
       /* NEAR Intents reports trouble here, and the address still works: the
          notice sits above it, in the quiet banner, because nothing is lost by
          reading it after the address. The token's own answer first, then the
          network's. */
-      var notice = route.notice || (network.route === 'degraded' && typeof network.notice === 'string' && network.notice ? network.notice : null);
+      var notice = answer.notice || (network.route === 'degraded' && typeof network.notice === 'string' && network.notice ? network.notice : null);
       if (notice) {
         var slow = dom.el('div', 'banner netpick-refusal deposit-route');
         slow.dataset.route = 'degraded';
         slow.appendChild(dom.el('span', '', notice));
-        var more = statusLink({ statusLink: route.notice ? route.statusLink : network.statusLink });
+        var more = statusLink({ statusLink: answer.notice ? answer.statusLink : network.statusLink });
         if (more) slow.appendChild(more);
         body.appendChild(slow);
       }
@@ -1552,66 +1643,51 @@
       body.appendChild(side);
 
       var notes = dom.el('div', 'deposit-notes');
-      /* The bridge answered a different address than the one pinned on disk for this network
-         (src/http/wallet.ts pinAddresses). The pinned one is what is drawn above; this line is
-         the reason to stop and look before sending anything. */
-      if (typeof network.changed === 'string' && network.changed) {
-        var changed = dom.el('p', 'deposit-changed');
-        changed.setAttribute('role', 'alert');
-        dom.setText(changed, network.changed);
-        notes.appendChild(changed);
+      /* One deposit, until the deadline: the backend's sentence, in the
+         viewer's own clock. A small test send first still works, and this is
+         what says the real one then needs a new address. */
+      var once = dom.el('p', 'deposit-once');
+      once.setAttribute('role', 'alert');
+      dom.setText(once, oneTimeWords(deposit.deadline));
+      notes.appendChild(once);
+
+      var minimum = typeof deposit.minimum === 'string' ? deposit.minimum.trim() : '';
+      if (minimum !== '') {
+        var minLine = dom.el('p', 'deposit-min');
+        minLine.appendChild(dom.el('span', '', 'Send at least '));
+        minLine.appendChild(dom.el('span', 'num', minimum));
+        minLine.appendChild(dom.el('span', '', ' ' + String(watchSymbol || '').toUpperCase() + '.'));
+        notes.appendChild(minLine);
       }
+
+      if (watchSymbol) notes.appendChild(dom.el('p', 'deposit-coin', coinOnlyWords(watchSymbol)));
+
       var plain = dom.el('p', 'deposit-plain');
-      dom.setText(plain, sharedWords(n, network));
+      dom.setText(plain, 'When you send, pick ' + n.words + ' as the network.');
       notes.appendChild(plain);
 
-      var accepts = sortTokens(network.accepts, n.native);
-      var floors = minimumsWords(accepts);
-      if (floors) {
-        var minLine = dom.el('p', 'deposit-min');
-        minLine.appendChild(dom.el('span', '', floors));
-        if (accepts.length > 2) {
-          var more = dom.el('button', 'netpick-link');
-          more.type = 'button';
-          more.appendChild(dom.el('span', '', 'All ' + accepts.length + ' tokens'));
-          dom.on(more, 'click', function () { stageTokens(); });
-          minLine.appendChild(dom.el('span', '', ' '));
-          minLine.appendChild(more);
-        }
-        notes.appendChild(minLine);
+      /* The network's warning, word for word as the backend wrote it (on NEAR:
+         send wNEAR, not plain NEAR). */
+      if (typeof network.warning === 'string' && network.warning) {
+        var warn = dom.el('p', 'deposit-warn');
+        dom.setText(warn, network.warning);
+        notes.appendChild(warn);
       }
       body.appendChild(notes);
 
-      /* The address is on screen, so the app starts listening for money on
-         it, unless it already is: the deposit card opens with a watch the
-         backend started, and a second start for the same network and token
-         would only replace it. A different network or token is a new watch. */
-      var shown = { body: body, chain: n.id, symbol: watchSymbol };
+      /* The address is on screen for as long as the watch says it may be:
+         until its deadline, an expired frame, or a frame without it. */
+      var shown = {
+        body: body,
+        chain: n.id,
+        symbol: watchSymbol,
+        address: address,
+        startedAt: deposit.startedAt || null,
+        deadline: deadlineOf(deposit),
+        deadlineIso: deposit.deadline
+      };
       state.shown = shown;
-      var held = state.deposit;
-      var same = held && held.chain === n.id && String(held.symbol || '').toUpperCase() === String(watchSymbol || '').toUpperCase();
-      if (!same) startWatch(n, watchSymbol, address, shown);
-      else followWatch();
-    }
-
-    /* What to pick on the sending side, and which networks this address also
-       serves, from the report's own byte comparison, never from a table: the
-       bridge hands the EVM chains one address, and the sentence names the ones
-       it actually did. The loss is said once, in the acknowledgement; here is
-       only what to do. */
-    function sharedWords(n, network) {
-      var ids = network && Array.isArray(network.sharedWith) ? network.sharedWith : null;
-      if (ids === null && EVM.indexOf(n.id) >= 0) ids = EVM.filter(function (id) { return id !== n.id; });
-      var names = [];
-      for (var i = 0; ids && i < ids.length; i += 1) names.push(networkName(ids[i]));
-      var pick = 'When you send, pick ' + n.words + ' as the network.';
-      if (!names.length) return pick;
-      /* Two named and the rest counted: sixteen EVM chains in one sentence
-         is a sentence nobody reads to the end. */
-      var list;
-      if (names.length <= 2) list = names.join(' and ');
-      else list = names.slice(0, 2).join(', ') + ' and ' + (names.length - 2) + ' more';
-      return pick + ' ' + list + ' use this same address.';
+      armDeadline(shown);
     }
 
     /* Copy, the width of its column, and the sentence under it. The sentence
@@ -1708,29 +1784,20 @@
 
     /* ---------- the watch ---------- */
 
-    function startWatch(n, symbol, address, shown) {
-      var starter = window.PhosphorDeposit && typeof window.PhosphorDeposit.startWatch === 'function'
-        ? window.PhosphorDeposit.startWatch
-        : function (chain, sym, addr) {
-          return api.depositShow(chain, sym, addr).then(function (answer) {
-            return answer && answer.ok !== false && answer.deposit ? answer.deposit : null;
-          });
-        };
-      starter(n.id, symbol, address)
-        .then(function (deposit) {
-          if (!state.alive || !deposit) return;
-          state.deposit = deposit;
-          state.watchStart = deposit.startedAt || null;
-          followWatch();
-        })
-        .catch(function (err) {
-          if (!state.alive) return;
-          /* The backend would not watch this address (/api/deposit/show asks
-             the route for the exact token too): it does not stay on screen. */
-          var said = err && err.body;
-          takeDown(shown, net.readable(err), said && said.statusLink, !!(said && said.route === 'closed'));
-          if (state.watch) state.watch.render({ phase: 'stopped', chain: n.id, symbol: symbol, unstarted: net.readable(err) });
-        });
+    /* The one way this step gets an address: the backend mints or reuses one
+       for this network and coin and starts the watch on it, and answers
+       { deposit, notice?, statusLink? }. A refusal rejects with the body on
+       the error (route 'closed' for a pause). Through the deposit card where
+       it is loaded, so the card keeps the watch it opened for the toast. */
+    function startWatch(chain, symbol) {
+      var card = window.PhosphorDeposit;
+      if (card && typeof card.showAnswer === 'function') return card.showAnswer(chain, symbol);
+      return api.depositShow(chain, symbol).then(function (answer) {
+        if (!answer || answer.ok === false || !answer.deposit) {
+          throw Object.assign(new Error((answer && answer.error) || 'No address was made for this deposit.'), { body: answer || null });
+        }
+        return answer;
+      });
     }
 
     function followWatch() {
@@ -1748,11 +1815,23 @@
       /* The watch's tick asks the route for this token too: a route that
          closes while the address is up takes the address down. */
       var shown = state.shown;
-      if (shown && pausedFor(deposit, shown.chain, shown.symbol)) takeDown(shown, deposit.paused, deposit.statusLink, true);
+      if (!shown) return;
+      if (pausedFor(deposit, shown.chain, shown.symbol)) {
+        takeDown(shown, deposit.paused, deposit.statusLink, true);
+        return;
+      }
+      /* The address on screen comes down when its own watch says it is over
+         (expired, or a frame with no address or another one) and when the
+         local clock has passed its deadline, whatever frame woke this up. */
+      var own = !!deposit && ((shown.startedAt && deposit.startedAt === shown.startedAt)
+        || (typeof deposit.address === 'string' && sameBytes(deposit.address, shown.address)));
+      var over = own && (deposit.phase === 'expired' || typeof deposit.address !== 'string' || !deposit.address || !sameBytes(deposit.address, shown.address));
+      if (over || Date.now() >= shown.deadline) takeDown(shown, expiredWords(shown.deadlineIso), null, false);
     }
 
     function destroy() {
       state.alive = false;
+      stopDeadline();
       if (state.watch) state.watch.destroy();
       state.watch = null;
       if (state.unsubscribe) state.unsubscribe();
@@ -1820,6 +1899,11 @@
     watcherLine: watcherLine,
     watcherParts: watcherParts,
     routeFor: routeFor,
-    pausedFor: pausedFor
+    pausedFor: pausedFor,
+    undrawable: undrawable,
+    deadlineOf: deadlineOf,
+    oneTimeWords: oneTimeWords,
+    expiredWords: expiredWords,
+    coinOnlyWords: coinOnlyWords
   };
 })();

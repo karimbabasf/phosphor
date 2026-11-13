@@ -2495,8 +2495,9 @@
       stage: 'tokens',
       network: network,
       report: report,
-      onAddress: function (chain, symbol, row) {
-        window.PhosphorDeposit.open({ chain: chain, symbol: symbol, address: row && row.address ? row.address : null });
+      /* The card mints the one-time address for this network and coin. */
+      onAddress: function (chain, symbol) {
+        window.PhosphorDeposit.open({ chain: chain, symbol: symbol });
       }
     });
   }

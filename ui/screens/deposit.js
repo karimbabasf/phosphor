@@ -14,9 +14,10 @@
    for the same watch: two surfaces for one answer, one of them covering the
    chat (hunt-b 18). A watch the agent starts is the chat's to show.
 
-   The address never comes from the watch. The watch says which network is
-   being watched; the address is fetched, and where the watch carries one too
-   the two have to agree.
+   The address comes only from the watch. Every address is a one-time one the
+   backend minted for this card (POST /api/deposit/show): the card opens by
+   starting the watch, and the picker draws the watch's address, memo,
+   deadline and minimum, and takes them down at the deadline.
 
    The watch outlives the card, so closing it stops nothing, and the watch
    ends on its own. Money that lands after the card was put away is still
@@ -35,6 +36,8 @@
   var refs = {};
   var view = null;
   var current = null;
+  /* What the backend said beside the watch the card opened on (a slow route). */
+  var currentRoute = { notice: null, statusLink: null };
   var promptedFor = null;
   /* "Have an invite code?" (ui/screens/invite.js), under the network tiles: on
      the step whose title is Add money, never under an address. */
@@ -82,17 +85,33 @@
 
   /* ---------- the watch ---------- */
 
-  /* One place the window starts a watch. The backend answers with the watch
-     and also broadcasts it; the card that asked keeps the answer. */
-  function startWatch(chain, symbol, address) {
-    return api.depositShow(chain, symbol, address || null)
+  /* One place the window starts a watch. The backend mints (or reuses) the
+     one-time address for this network and coin, starts the watch on it and
+     answers { deposit, notice?, statusLink? }; it also broadcasts the watch.
+     No address goes up: the backend never takes one from the window. A
+     refusal rejects with the body on the error, so a pause (route 'closed')
+     can be told from any other failure. */
+  function showAnswer(chain, symbol) {
+    return api.depositShow(chain, symbol)
       .then(function (answer) {
         if (!answer || answer.ok === false || !answer.deposit) {
-          throw new Error((answer && answer.error) || 'The deposit card could not open.');
+          throw Object.assign(new Error((answer && answer.error) || 'The deposit card could not open.'), { body: answer || null });
         }
-        if (isOpen()) current = answer.deposit;
-        return answer.deposit;
+        if (isOpen()) {
+          current = answer.deposit;
+          currentRoute = routeOf(answer);
+        }
+        return answer;
       });
+  }
+
+  /* The older call, kept for its callers: the third argument is ignored. */
+  function startWatch(chain, symbol) {
+    return showAnswer(chain, symbol).then(function (answer) { return answer.deposit; });
+  }
+
+  function routeOf(answer) {
+    return { notice: typeof answer.notice === 'string' && answer.notice ? answer.notice : null, statusLink: answer.statusLink || null };
   }
 
   /* ---------- opening ---------- */
@@ -102,10 +121,11 @@
   function open(options) {
     var opts = options || {};
     if (!opts.chain || !opts.symbol) return Promise.resolve(null);
-    return startWatch(opts.chain, opts.symbol, opts.address || null)
-      .then(function (deposit) {
-        show(deposit);
-        return deposit;
+    return showAnswer(opts.chain, opts.symbol)
+      .then(function (answer) {
+        currentRoute = routeOf(answer);
+        show(answer.deposit);
+        return answer.deposit;
       })
       .catch(function (err) {
         window.PhosphorToast.show(net.readable(err), 'down');
@@ -234,6 +254,8 @@
       network: deposit.chain,
       symbol: deposit.symbol,
       deposit: deposit,
+      notice: currentRoute.notice,
+      statusLink: currentRoute.statusLink,
       onDismiss: close,
       onStage: title
     });
@@ -386,6 +408,7 @@
     close: close,
     isOpen: isOpen,
     startWatch: startWatch,
+    showAnswer: showAnswer,
     networkWords: networkWords,
     defaultSymbol: defaultSymbol,
     chunks: function (address, kind) { return pick().chunks(address, kind); },

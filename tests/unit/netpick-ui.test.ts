@@ -167,7 +167,7 @@ function report(overrides: Any = {}): Any {
     tampered: false,
     networks: [
       {
-        id: 'eth', name: 'Ethereum', address: EVM, memo: null, unavailable: null, warning: 'w',
+        id: 'eth', name: 'Ethereum', address: null, memo: null, unavailable: null, warning: 'w',
         accepts: [
           token('WBTC', 8, '10000', '0.0001', '0x2260fac5e5542a773aa44fbcfedf7c193bc2c599'),
           token('USDT', 6, '1000', '0.001', '0xdac17f958d2ee523a2206206994597c13d831ec7'),
@@ -177,12 +177,25 @@ function report(overrides: Any = {}): Any {
           token('PYUSD', 6, '1000', '0.001', '0x6c3ea9036406852006290770bedfcaba0e23a0e8'),
         ],
       },
-      { id: 'base', name: 'Base', address: EVM, memo: null, unavailable: null, warning: 'w', accepts: [token('USDC', 6, '1000', '0.001', '0x8335'), token('ETH', 18, '100000000000', '0.0000001')] },
+      { id: 'base', name: 'Base', address: null, memo: null, unavailable: null, warning: 'w', accepts: [token('USDC', 6, '1000', '0.001', '0x8335'), token('ETH', 18, '100000000000', '0.0000001')] },
       { id: 'arb', name: 'Arbitrum', address: null, memo: null, unavailable: 'the bridge refused eth:42161: down for maintenance', warning: 'w', accepts: [] },
-      { id: 'sol', name: 'Solana', address: SOL, memo: null, unavailable: null, warning: 'w', accepts: [token('USDC', 6, '1000', '0.001', 'EPjF'), token('SOL', 9, '10000000', '0.01')] },
-      { id: 'near', name: 'NEAR', address: 'abc.near', memo: null, unavailable: null, warning: 'w', accepts: [token('NEAR', 24, '100000000000000000000000', '0.1')] },
+      { id: 'sol', name: 'Solana', address: null, memo: null, unavailable: null, warning: 'w', accepts: [token('USDC', 6, '1000', '0.001', 'EPjF'), token('SOL', 9, '10000000', '0.01')] },
+      { id: 'near', name: 'NEAR', address: null, memo: null, unavailable: null, warning: 'w', accepts: [token('NEAR', 24, '100000000000000000000000', '0.1')] },
     ],
   }, overrides);
+}
+
+/* The one-time address the backend mints for a card (POST /api/deposit/show), per network. The
+   report carries none: every address on screen has to come from here. */
+const MINTED: Record<string, string> = { eth: EVM, base: EVM, sol: SOL, near: 'abc.near' };
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function minted(chain: string, symbol: string, over: Any = {}): Any {
+  return Object.assign({
+    phase: 'watching', chain, symbol, address: MINTED[chain] ?? null, oneTime: true, memo: null,
+    deadline: new Date(Date.now() + DAY_MS).toISOString(), minimum: '0.001', note: null,
+    startedAt: '2026-09-15T09:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null, paused: null, statusLink: null,
+  }, over);
 }
 
 type World = {
@@ -196,7 +209,7 @@ type World = {
   render: (opts?: Any) => Any;
 };
 
-function build(options: { report?: Any; vault?: Any; withDeposit?: boolean; route?: (chain: string, symbol: string) => Any | null; show?: (chain: string, symbol: string) => Any | null } = {}): World {
+function build(options: { report?: Any; vault?: Any; withDeposit?: boolean; route?: (chain: string, symbol: string) => Any | null; show?: (chain: string, symbol: string) => Any | null; mint?: (chain: string, symbol: string) => Any } = {}): World {
   const body = makeNode('body');
   const host = makeNode('div');
   body.appendChild(host);
@@ -236,9 +249,9 @@ function build(options: { report?: Any; vault?: Any; withDeposit?: boolean; rout
   sandbox.PhosphorLock = { focus() { calls.push({ route: 'lockFocus' }); } };
   if (options.withDeposit) {
     sandbox.PhosphorDeposit = {
-      startWatch: (chain: string, symbol: string, address: string | null) => {
-        calls.push({ route: 'deposit.startWatch', chain, symbol, address });
-        return Promise.resolve({ phase: 'watching', chain, symbol, address, startedAt: '2026-09-15T09:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null });
+      showAnswer: (chain: string, symbol: string, extra?: unknown) => {
+        calls.push({ route: 'deposit.showAnswer', chain, symbol, extra });
+        return Promise.resolve({ ok: true, deposit: minted(chain, symbol, options.mint?.(chain, symbol) ?? {}) });
       },
     };
   }
@@ -252,11 +265,16 @@ function build(options: { report?: Any; vault?: Any; withDeposit?: boolean; rout
       if (said && said.status) return Promise.reject(Object.assign(new Error(said.error), { status: said.status, body: said }));
       return Promise.resolve({ data: Object.assign({ ok: true, chain, symbol, notice: null, statusLink: null }, said ?? {}), fresh: true });
     },
-    depositShow: (chain: string, symbol: string, address: string | null) => {
-      calls.push({ route: '/api/deposit/show', chain, symbol, address });
+    /* The mint (POST /api/deposit/show): the one-time address, its deadline and its minimum. A
+       refusal rejects the way ui/core/net.js does, with the body on the error. */
+    depositShow: (chain: string, symbol: string, extra?: unknown) => {
+      calls.push({ route: '/api/deposit/show', chain, symbol, extra });
       const refused = options.show?.(chain, symbol);
       if (refused) return Promise.reject(Object.assign(new Error(refused.error), { status: refused.status, body: refused }));
-      return Promise.resolve({ ok: true, deposit: { phase: 'watching', chain, symbol, address, startedAt: '2026-09-15T09:00:00.000Z', baseline: 0, amount: null, txHash: null, ms: null } });
+      const over = options.mint?.(chain, symbol) ?? {};
+      const notice = over.notice ?? null;
+      delete over.notice;
+      return Promise.resolve(Object.assign({ ok: true, deposit: minted(chain, symbol, over) }, notice ? { notice, statusLink: over.statusLink ?? null } : {}));
     },
     depositStop: () => { calls.push({ route: '/api/deposit/stop' }); return Promise.resolve({ ok: true }); },
     vaultUnlock: (purpose?: string) => { calls.push({ route: '/api/vault/unlock', purpose }); return Promise.resolve({ ok: true }); },
@@ -527,7 +545,7 @@ test('the acknowledgement gates the address every time: ticked, never remembered
 
 /* ---------- step three ---------- */
 
-test('the address step draws one address after its checks, starts the watch, and offers no token or network choice', async () => {
+test('the address step starts the watch first and draws its one-time address, deadline and minimum, and offers no token or network choice', async () => {
   const world = build();
   world.render({ stage: 'address', network: 'base' });
   await acknowledge(world);
@@ -542,18 +560,25 @@ test('the address step draws one address after its checks, starts the watch, and
   assert.equal('0x7d4e' + find(body, '.addr-mid').map((n: Any) => n.textContent).join('') + '0e1d', EVM);
   const text = textOf(root(world));
   assert.ok(text.includes('Send on Base only.'));
-  // What to pick when sending, and which networks share the address; the loss is said once, in
-  // the acknowledgement, not again here (hunt-b 103).
-  assert.ok(text.includes('When you send, pick Base as the network. Ethereum and Arbitrum use this same address.'), text.join(' | '));
-  assert.equal(text.some((t) => /is lost/.test(t)), false, 'the address step says the loss a second time');
-  // The list is something to read, not a choice, so the floors of the first two tokens are named
-  // rather than the one the step guessed (hunt-b 65).
-  assert.equal(find(body, '.deposit-min')[0].textContent, 'Minimums: ETH none, USDC 0.001.');
+  // What to pick when sending. A one-time address is for one network, so no other is named.
+  assert.ok(text.includes('When you send, pick Base as the network.'), text.join(' | '));
+  assert.equal(text.some((t) => /same address/.test(t)), false, 'another network is said to share a one-time address');
+  // One deposit, until the deadline, in the viewer's own clock; and the minimum the mint set.
+  const shownAnswer = world.calls.find((c) => c.route === '/api/deposit/show');
+  const once = find(body, '.deposit-once')[0];
+  assert.ok(once, 'no one-deposit sentence');
+  assert.match(once.textContent, /^This address is for one deposit and stops taking money at .+\. Do not save it or send to it again; ask for a new one next time\.$/);
+  assert.equal(/UTC/.test(once.textContent), false, 'the deadline is not in the viewer\'s own clock');
+  assert.equal(find(body, '.deposit-min')[0].textContent, 'Send at least 0.001 USDC.');
+  assert.equal(find(body, '.deposit-coin')[0]?.textContent, 'USDC only. Any other coin sent to this address is not credited and may be lost.', 'the card does not say the address takes one coin');
+  assert.equal(find(body, '.deposit-warn')[0].textContent, 'w', 'the network\'s warning is not drawn as the backend wrote it');
+  assert.ok(shownAnswer, 'no watch was started');
   assert.equal(find(world.host, 'button.chip').length, 0, 'chips on the address step');
   assert.equal(find(world.host, '.token-row').length, 0, 'the token list is on the address step');
   assert.ok(buttonNamed(world.host, 'Change network'), 'no way back');
-  // The watch starts once the address is on screen, for the default token.
-  assert.deepEqual(world.calls.find((c) => c.route === '/api/deposit/show'), { route: '/api/deposit/show', chain: 'base', symbol: 'USDC', address: EVM });
+  // The watch starts before the address is drawn, for the default token, and no address goes up.
+  assert.deepEqual(world.calls.find((c) => c.route === '/api/deposit/show'), { route: '/api/deposit/show', chain: 'base', symbol: 'USDC', extra: undefined });
+  assert.equal(world.calls.some((c) => c.route === '/api/deposit/route'), false, 'the route was asked as well as the mint');
   await flush();
   world.store.put(Object.assign({}, world.store.get(), { deposit: { phase: 'watching', chain: 'base', symbol: 'USDC', address: EVM, startedAt: '2026-09-15T09:00:00.000Z' } }));
   const watch = find(world.host, '.deposit-watch')[0];
@@ -565,28 +590,40 @@ test('the address step draws one address after its checks, starts the watch, and
   const viaCard = build({ withDeposit: true });
   viaCard.render({ stage: 'address', network: 'sol' });
   await acknowledge(viaCard);
-  assert.deepEqual(viaCard.calls.find((c) => c.route === 'deposit.startWatch'), { route: 'deposit.startWatch', chain: 'sol', symbol: 'USDC', address: SOL });
+  assert.deepEqual(viaCard.calls.find((c) => c.route === 'deposit.showAnswer'), { route: 'deposit.showAnswer', chain: 'sol', symbol: 'USDC', extra: undefined });
+  assert.equal(find(viaCard.host, '.sr-only')[0].textContent, SOL);
   assert.equal(viaCard.calls.some((c) => c.route === '/api/deposit/show'), false);
 });
 
-test('a row the report marks changed carries no address and draws the sentence in its place, and one it does not draws no such line', async () => {
-  const changed = 'The bridge now answers a different address for Base (ending ...999999) than the one shown before (ending ...5050). A bridge address does not change on its own, so no address is shown: do not send anything until you know why this one did.';
-  const rows = report().networks.map((n: Any) => (n.id === 'base' ? Object.assign({}, n, { address: null, changed }) : n));
+/* The receive report carries no address any more. Should one ever ride on a row, it is never drawn:
+   only the address the backend minted for this card (the watch's) is. */
+test('the address comes only from the watch: a report row carrying an address is never drawn', async () => {
+  const DECOY = '0x9999999999999999999999999999999999999999';
+  const rows = report().networks.map((n: Any) => (n.id === 'base' ? Object.assign({}, n, { address: DECOY, changed: 'old words', sharedWith: ['eth', 'arb'] }) : n));
   const world = build({ report: report({ networks: rows }) });
   world.render({ stage: 'address', network: 'base' });
   await acknowledge(world);
   const body = find(world.host, '.deposit-body')[0];
-  assert.equal(body.dataset.state, 'refused', 'no address is drawn for a changed row');
-  assert.equal(find(body, '.sr-only').length, 0);
-  assert.equal(find(body, 'canvas').length, 0, 'no QR either');
-  assert.ok(textOf(body).some((t) => t.includes('no address is shown')), 'the sentence takes the address\'s place');
-  assert.equal(find(body, '.deposit-changed').length, 0);
+  assert.equal(body.dataset.state, 'shown');
+  assert.equal(find(body, '.sr-only')[0].textContent, EVM, 'the report\'s address was drawn');
+  assert.equal(textOf(body).some((t) => t.includes('9999')), false, 'part of the report\'s address is on screen');
+  assert.equal(textOf(body).some((t) => t.includes('old words') || /same address/.test(t)), false, 'the report\'s changed or shared lines are drawn');
 
-  const plain = build();
-  plain.render({ stage: 'address', network: 'base' });
-  await acknowledge(plain);
-  assert.equal(find(plain.host, '.deposit-body')[0].dataset.state, 'shown');
-  assert.equal(find(plain.host, '.deposit-changed').length, 0);
+  // A mint that answers no address draws nothing, and says so with Try again.
+  const none = build({ mint: () => ({ address: null }) });
+  none.render({ stage: 'address', network: 'base' });
+  await acknowledge(none);
+  const empty = find(none.host, '.deposit-body')[0];
+  assert.equal(empty.dataset.state, 'refused');
+  assert.equal(find(empty, 'canvas').length + find(empty, '.deposit-well').length, 0);
+  assert.ok(buttonNamed(empty, 'Try again'), 'no Try again');
+
+  // A mint for another network or coin than the one asked for is not drawn either.
+  const other = build({ mint: () => ({ chain: 'eth' }) });
+  other.render({ stage: 'address', network: 'base' });
+  await acknowledge(other);
+  assert.equal(find(other.host, '.deposit-body')[0].dataset.state, 'refused');
+  assert.equal(find(other.host, '.deposit-well').length, 0);
 });
 
 test('a network that is not EVM says so in its own words, and NEAR and Solana get their own address', async () => {
@@ -752,7 +789,8 @@ test('in the Vault card the address is handed off, the way back is not offered, 
   buttonNamed(world.host, 'Show the address').click();
   assert.deepEqual(handed, [], 'the address was handed off before the tick');
   await acknowledge(world);
-  assert.deepEqual(handed, [{ network: 'eth', symbol: 'USDC', address: EVM }]);
+  // The report row handed over carries no address: the deposit card mints one.
+  assert.deepEqual(handed, [{ network: 'eth', symbol: 'USDC', address: null }]);
   assert.equal(stage(world), 'tokens', 'the Vault card drew the address itself');
 });
 
@@ -767,7 +805,7 @@ test('in the chat\'s deposit card the list hands the address back only after the
   buttonNamed(world.host, 'Show the address').click();
   assert.deepEqual(handed, [], 'the address was handed back before the tick');
   await acknowledge(world);
-  assert.deepEqual(handed, [{ network: 'base', symbol: 'USDC', address: EVM }]);
+  assert.deepEqual(handed, [{ network: 'base', symbol: 'USDC', address: null }]);
   assert.equal(find(world.host, '.deposit-body').length, 0, 'the picker drew the address itself inside the chat card');
   assert.deepEqual(Object.keys(world.stored), []);
 });
@@ -893,8 +931,8 @@ test('no token row copies anything or offers to: each is a plain row, the contra
 
 test('a memo network draws no QR of the bare address: the address and the memo each have a checked Copy, and the card says why', async () => {
   const wide = wideReport();
-  wide.networks.push({ id: 'stellar', name: 'Stellar', words: 'Stellar (XLM)', kind: 'other', native: 'XLM', mark: 'XLM', colour: '#7D00FF', popular: false, address: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', memo: '4471209', unavailable: null, warning: 'w', accepts: [token('XLM', 7, '1', '0.0000001')] });
-  const world = build({ report: wide, withDeposit: true });
+  wide.networks.push({ id: 'stellar', name: 'Stellar', words: 'Stellar (XLM)', kind: 'other', native: 'XLM', mark: 'XLM', colour: '#7D00FF', popular: false, address: null, memo: null, unavailable: null, warning: 'w', accepts: [token('XLM', 7, '1', '0.0000001')] });
+  const world = build({ report: wide, withDeposit: true, mint: () => ({ address: 'GA5ZSEJYB37JRC5AVCIA5MOP4RHTM335X2KGX3IHOJAPP5RE34K4KZVN', memo: '4471209' }) });
   world.render({ stage: 'address', network: 'stellar', symbol: 'XLM' });
   await acknowledge(world);
   await flush();
@@ -992,18 +1030,19 @@ function assertPaused(world: World, label: string): void {
   assert.equal(find(banner, 'a.netpick-status')[0]?.href, STATUS_PAGE, `${label}: no View status link`);
 }
 
-test('the network coin open and the picked token closed: the address and the QR are never drawn, Paused is, and no watch starts', async () => {
-  const world = build({ route: closedFor('USDC') });
+test('the network coin open and the picked token closed: the mint refuses it, the address and the QR are never drawn, Paused is', async () => {
+  const world = build({ show: closedFor('USDC') });
   world.render({ stage: 'address', network: 'eth', symbol: 'USDC' });
   await acknowledge(world);
   await flush();
-  assert.deepEqual(world.calls.filter((c) => c.route === '/api/deposit/route').map((c) => `${c.chain}:${c.symbol}`), ['eth:USDC'], 'the exact token was not asked about');
+  assert.deepEqual(world.calls.filter((c) => c.route === '/api/deposit/show').map((c) => `${c.chain}:${c.symbol}`), ['eth:USDC'], 'the exact token was not asked about');
   assertNoAddress(world, 'USDC closed on an open Ethereum');
   assertPaused(world, 'USDC closed on an open Ethereum');
-  assert.equal(world.calls.some((c) => c.route === '/api/deposit/show'), false, 'a watch started for an address that is not shown');
+  assert.equal(buttonNamed(find(world.host, '.deposit-body')[0], 'Try again'), undefined, 'a pause offers Try again');
+  assert.equal(find(world.host, '.deposit-watch')[0].hidden, true, 'a watcher line under a refused mint');
 
   // The coin the report row was asked about is open: its address draws as before.
-  const open = build({ route: closedFor('USDC') });
+  const open = build({ show: closedFor('USDC') });
   open.render({ stage: 'address', network: 'eth', symbol: 'ETH' });
   await acknowledge(open);
   await flush();
@@ -1039,4 +1078,121 @@ test('a watch the backend refuses takes the address down: a closed route draws P
   await flush();
   assertNoAddress(other, 'the watch refused');
   assert.ok(textOf(find(other.host, '.deposit-body')[0]).includes('USDC is not credited on Ethereum; accepted: ETH'));
+  // Any refusal but a pause offers Try again, which asks the mint again.
+  const retry = buttonNamed(find(other.host, '.deposit-body')[0], 'Try again');
+  assert.ok(retry, 'no Try again after a refusal');
+  retry.click();
+  await flush();
+  assert.equal(other.calls.filter((c) => c.route === '/api/deposit/show').length, 2, 'Try again did not ask the mint again');
 });
+
+/* ---------- the one-time address: its deadline ---------- */
+
+const NEAR_WARNING = 'NEAR only. Anything sent here from another network is lost. On NEAR send a token on the list (wNEAR, not plain NEAR): plain NEAR sent here is not credited.';
+const runTimers = (world: World): void => { for (const fn of world.timers.splice(0)) fn(); };
+
+function assertExpired(world: World, label: string): void {
+  assertNoAddress(world, label);
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'refused', label);
+  assert.ok(textOf(body).some((t) => /^This address stopped taking money at .+\. Do not send to it\./.test(t)), `${label}: ${textOf(body).join(' | ')}`);
+}
+
+test('an expired frame, a frame with no address, and the local clock passing the deadline each take the address and the QR down', async () => {
+  const expired = build();
+  expired.render({ stage: 'address', network: 'base' });
+  await acknowledge(expired);
+  assert.equal(find(expired.host, '.deposit-well').length, 1);
+  expired.store.put(Object.assign({}, expired.store.get(), { deposit: minted('base', 'USDC', { address: EVM }) }));
+  assert.equal(find(expired.host, '.deposit-well').length, 1, 'a live frame took the address down');
+  expired.store.put(Object.assign({}, expired.store.get(), { deposit: minted('base', 'USDC', { phase: 'expired', address: null, memo: null }) }));
+  assertExpired(expired, 'an expired frame');
+
+  const blank = build();
+  blank.render({ stage: 'address', network: 'base' });
+  await acknowledge(blank);
+  blank.store.put(Object.assign({}, blank.store.get(), { deposit: minted('base', 'USDC', { address: null }) }));
+  assertExpired(blank, 'a frame with no address');
+
+  // The deadline passes with no frame at all: the timer takes it down by the local clock. The
+  // card's clock is moved by hand here, so a slow run never reaches the deadline before the draw.
+  let clock = Date.now();
+  const timed = build({ mint: () => ({ deadline: new Date(clock + 60_000).toISOString() }) });
+  timed.sandbox.Date = class extends Date { static override now(): number { return clock; } };
+  timed.render({ stage: 'address', network: 'base' });
+  await acknowledge(timed);
+  assert.equal(find(timed.host, '.deposit-well').length, 1, 'the address was not drawn before its deadline');
+  runTimers(timed);
+  assert.equal(find(timed.host, '.deposit-well').length, 1, 'the address came down before its deadline');
+  clock += 60_000;
+  runTimers(timed);
+  assertExpired(timed, 'the deadline passed');
+});
+
+test('a minted address already past its deadline, without one, or with money already seen is never drawn', async () => {
+  const late = build({ mint: () => ({ deadline: new Date(Date.now() - 1000).toISOString() }) });
+  late.render({ stage: 'address', network: 'base' });
+  await acknowledge(late);
+  assertExpired(late, 'a mint past its deadline');
+
+  const undated = build({ mint: () => ({ deadline: null }) });
+  undated.render({ stage: 'address', network: 'base' });
+  await acknowledge(undated);
+  assertNoAddress(undated, 'a mint with no deadline');
+  assert.ok(textOf(find(undated.host, '.deposit-body')[0]).some((t) => t.includes('without the time it stops taking money')));
+
+  const seen = build({ mint: () => ({ phase: 'seen' }) });
+  seen.render({ stage: 'address', network: 'base' });
+  await acknowledge(seen);
+  assertNoAddress(seen, 'a mint whose one deposit is already seen');
+});
+
+test('the watch the card opened on is drawn without a second mint while it is good, and a new one is minted once it expired', async () => {
+  const held = minted('base', 'USDC', { startedAt: '2026-11-13T09:00:00.000Z' });
+  const world = build();
+  world.render({ stage: 'address', network: 'base', symbol: 'USDC', deposit: held, notice: SLOW, statusLink: STATUS });
+  await acknowledge(world);
+  assert.equal(world.calls.some((c) => c.route === '/api/deposit/show'), false, 'a second mint replaced the card\'s own watch');
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'shown');
+  assert.equal(find(body, '.sr-only')[0].textContent, EVM);
+  assert.ok(textOf(body.children[0]).includes(SLOW), 'the notice that came with the card\'s watch is missing');
+
+  // The card's watch expired while the tick waited: the step mints a new one.
+  const stale = build();
+  stale.render({ stage: 'address', network: 'base', symbol: 'USDC', deposit: held });
+  stale.store.put(Object.assign({}, stale.store.get(), { deposit: Object.assign({}, held, { phase: 'expired', address: null }) }));
+  await acknowledge(stale);
+  assert.equal(stale.calls.filter((c) => c.route === '/api/deposit/show').length, 1, 'an expired watch was drawn instead of a new mint');
+  assert.equal(find(stale.host, '.deposit-body')[0].dataset.state, 'shown');
+
+  // A watch for another coin is not this one's address either.
+  const other = build();
+  other.render({ stage: 'address', network: 'base', symbol: 'ETH', deposit: held });
+  await acknowledge(other);
+  assert.deepEqual(other.calls.filter((c) => c.route === '/api/deposit/show').map((c) => c.symbol), ['ETH']);
+});
+
+test('the minimum shows only when the mint set one, NEAR carries the backend\'s warning word for word, and no line says send a test amount without a new address', async () => {
+  const unknown = build({ mint: () => ({ minimum: '' }) });
+  unknown.render({ stage: 'address', network: 'base' });
+  await acknowledge(unknown);
+  assert.equal(find(unknown.host, '.deposit-body')[0].dataset.state, 'shown');
+  assert.equal(find(unknown.host, '.deposit-min').length, 0, 'an unknown minimum was drawn');
+
+  const rows = report().networks.map((n: Any) => (n.id === 'near' ? Object.assign({}, n, { warning: NEAR_WARNING }) : n));
+  const near = build({ report: report({ networks: rows }) });
+  near.render({ stage: 'address', network: 'near' });
+  await acknowledge(near);
+  assert.equal(find(near.host, '.deposit-warn')[0].textContent, NEAR_WARNING);
+
+  for (const world of [unknown, near]) {
+    const text = textOf(root(world)).join(' ');
+    if (/test amount|small test/i.test(text)) assert.match(text, /new address|a new one/, 'a test send is offered without saying the real one needs a new address');
+    assert.match(text, /ask for a new one next time/);
+  }
+  for (const file of ['../../ui/screens/netpick.js', '../../ui/screens/cards.js', '../../ui/screens/deposit.js']) {
+    assert.equal(/small test amount|test amount first/i.test(read(file)), false, `${file} offers a test send`);
+  }
+});
+

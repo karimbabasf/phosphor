@@ -774,7 +774,9 @@
   overflow-wrap: anywhere;
 }
 
-.deposit-memo-warn {
+.deposit-memo-warn,
+.deposit-coin,
+.deposit-warn {
   font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--warn);
@@ -803,7 +805,7 @@
   text-decoration-color: var(--line-strong);
 }
 
-.deposit-changed {
+.deposit-once {
   font-size: var(--fs-14);
   line-height: 1.5;
   color: var(--warn);
