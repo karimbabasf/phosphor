@@ -39,7 +39,7 @@
 
 import { formatUnits } from 'viem';
 
-import type { Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapQuoteFacts, SwapSimulation, SwapSpend } from '../types.ts';
+import type { MovedAssets, Proposal, Rail, RailHooks, RailResult, SimulationResult, SwapDraft, SwapQuoteFacts, SwapSimulation, SwapSpend } from '../types.ts';
 import { ERC191_STANDARD, duplicateJsonKey, liveIntentsSigner } from '../intents-sign.ts';
 import type { IntentsSignerPort } from '../intents-sign.ts';
 import {
@@ -151,6 +151,53 @@ export const SIGNED_DEADLINE_MS = 3 * 60 * 1000;
    "Sent. Waiting for a buyer to take it." because 1Click went on answering PROCESSING and only its
    word ended the watch. One view call a poll per swap until the transfer is spent, nothing signed. */
 export const RAN_RECHECK_MS = 2_000;
+
+/* HOW SOON NEAR'S WORD ENDS THE WATCH: the poll's waits are slept in pieces this long, with the
+   proof above asked between them. Until 2026-11-13 the proof was asked only at a 1Click read, and
+   those are 5 s apart once the watch is a few seconds old, so its answer waited up to two of them:
+   the live wNEAR to ETH swap (proposal 96c21a96) was credited at NEAR block 224417975, 21:10:02.8,
+   and read as done at 21:10:09.4, on 1Click's SUCCESS. Asking costs nothing until a read is due. */
+export const RAN_BETWEEN_MS = 500;
+
+/* WHOSE RISE IT IS. NEAR shows the coin's balance, not who credited it, so the proof counts only a
+   rise this swap alone can explain (swapRan): no other swap of this rail that could credit the
+   same coin (buying it, or refunded in it) open at any moment of this one's watch, or ended
+   without settling within SWAP_UNSETTLED_HOLD_MS; no such money open in the proposal store
+   (otherMoneyOnCoin), which outlives the process; and a rise no more than the signed quote's
+   amountOut and SWAP_CREDIT_OVER_QUOTE_BPS over it. Otherwise the watch waits for 1Click's word,
+   as before: a crowded swap costs seconds and never confirms on another credit. The deposit rail's
+   creditProof holds its credits to the same rules (src/rails/hypercore-deposit.ts). */
+export const SWAP_UNSETTLED_HOLD_MS = 10 * 60_000;
+export const SWAP_CREDIT_OVER_QUOTE_BPS = 200;
+// How far back the store is read, and the statuses that are money still on its way.
+const OTHER_MONEY_WINDOW_MS = 24 * 60 * 60_000;
+// The NEAR USDC a Hyperliquid withdrawal credits (INTENTS_USDC_ASSET_ID in ./hypercore-withdraw.ts,
+// which imports this file, so it is not imported back).
+const HL_WITHDRAW_CREDITS = 'nep141:17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1';
+const OPEN_STATUSES = new Set<Proposal['status']>(['approved', 'awaiting_touch', 'executing', 'needs_reconciliation']);
+
+/* Whether another row in the store may credit `assetId` to the verifier account inside a swap's
+   watch, which began at `sinceMs`: a move with that coin on either side (bought, or refunded in
+   it) still open, one that signed, failed and was not refunded, or one that settled after the
+   watch began, so its credit may be inside the rise. A Hyperliquid withdrawal credits NEAR USDC.
+   Rows decided more than a day ago are not read. */
+export function otherMoneyOnCoin(rows: readonly Proposal[], assetId: string, selfId: string | undefined, sinceMs: number, nowMs: number): boolean {
+  for (const p of rows) {
+    if (p.id === selfId) continue;
+    const decided = Date.parse(p.decidedAt ?? p.createdAt);
+    if (!Number.isFinite(decided) || nowMs - decided > OTHER_MONEY_WINDOW_MS) continue;
+    const assets = (p.draft as { assets?: MovedAssets }).assets;
+    const touches =
+      assets?.origin?.assetId === assetId || assets?.destination?.assetId === assetId || (p.kind === 'hl_withdraw' && assetId === HL_WITHDRAW_CREDITS);
+    if (!touches) continue;
+    if (OPEN_STATUSES.has(p.status)) return true;
+    const signed = p.result?.evidence?.handle !== undefined || p.result?.evidence?.nonce !== undefined || (p.result?.txids?.length ?? 0) > 0;
+    if (p.status === 'failed' && signed && p.result?.evidence?.providerStage !== 'REFUNDED') return true;
+    const settled = Date.parse(p.settledAt ?? '');
+    if (p.status === 'executed' && (Number.isFinite(settled) ? settled : decided) >= sinceMs) return true;
+  }
+  return false;
+}
 
 /* The payload with its deadline brought forward to `latestMs`, as the same bytes with that one
    value replaced. Unchanged when the deadline is already that soon, and unchanged when the value
@@ -750,6 +797,10 @@ export type IntentsNativeRailDeps = {
   settleSchedule?: RiseSchedule;
   // How often the watch asks NEAR whether the swap ran. Defaults to RAN_RECHECK_MS; the tests shorten it.
   ranRecheckMs?: number;
+  // The pieces the poll's waits are slept in, NEAR's proof asked between them. Defaults to RAN_BETWEEN_MS.
+  ranBetweenMs?: number;
+  // The proposal store, for other money on its way to the coin a swap buys (otherMoneyOnCoin).
+  proposals?: () => readonly Proposal[];
 };
 
 /* The default reader, over the same view calls the ledger uses. It never throws: a verifier that
@@ -845,6 +896,33 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
   const quoteKey = deps.quoteKey;
   const settleSchedule = deps.settleSchedule ?? INTENTS_SETTLE;
   const ranRecheckMs = deps.ranRecheckMs ?? RAN_RECHECK_MS;
+  const ranBetweenMs = deps.ranBetweenMs ?? RAN_BETWEEN_MS;
+
+  /* The swaps of this rail from the read before their signature until they end, or for
+     SWAP_UNSETTLED_HOLD_MS after an end that signed and did not settle, whose money may still land.
+     A swap whose bought coin another one could credit (buying it, or refunded in it) is crowded,
+     and so is that other one when the new one could credit its coin: neither settles on NEAR's word
+     (see SWAP_UNSETTLED_HOLD_MS). Lives as long as the rail, which is the process. */
+  type Flight = { account: string; origin: string; dest: string; crowded: boolean; untilMs: number };
+  let inFlight: Flight[] = [];
+  function enter(account: string, origin: string, dest: string): { flight: Flight; leave: (unsettled: boolean) => void } {
+    const at = now();
+    inFlight = inFlight.filter((o) => o.untilMs > at);
+    const flight: Flight = { account, origin, dest, crowded: false, untilMs: Infinity };
+    for (const o of inFlight) {
+      if (o.account !== account) continue;
+      if (o.dest === dest || o.origin === dest) flight.crowded = true;
+      if (dest === o.dest || origin === o.dest) o.crowded = true;
+    }
+    inFlight.push(flight);
+    return {
+      flight,
+      leave: (unsettled) => {
+        if (unsettled) flight.untilMs = now() + SWAP_UNSETTLED_HOLD_MS;
+        else inFlight = inFlight.filter((o) => o !== flight);
+      },
+    };
+  }
 
   // The key is optional: it selects a fee tier, it does not authorise the calls. See the
   // comment on INTENTS_NO_API_KEY_REASON for what was re-tested and when.
@@ -1164,7 +1242,24 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     }
   }
 
-  async function execute(draft: SwapDraft, _proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+  /* The swap, and its place among the swaps in flight (enter) given up however it ends: at once
+     when nothing more of it can land, after SWAP_UNSETTLED_HOLD_MS when it signed and did not
+     settle. A throw is always before the signature (the rule at the top of ./intents-spend.ts). */
+  async function execute(draft: SwapDraft, proposalId?: string, hooks?: RailHooks): Promise<RailResult> {
+    const seat: Seat = {};
+    let result: RailResult | undefined;
+    try {
+      result = await executeOnce(draft, proposalId, hooks, seat);
+      return result;
+    } finally {
+      const signed = result !== undefined && !result.ok && (result.evidence?.handle !== undefined || result.evidence?.nonce !== undefined || (result.txids?.length ?? 0) > 0);
+      seat.leave?.(signed);
+    }
+  }
+
+  type Seat = { leave?: (unsettled: boolean) => void };
+
+  async function executeOnce(draft: SwapDraft, proposalId: string | undefined, hooks: RailHooks | undefined, seat: Seat): Promise<RailResult> {
     requireVenue(draft);
     requireUsable();
     pinnedAssets(draft.assets);
@@ -1219,6 +1314,15 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       throw new Error(`the quote carries no deposit handle to attach an intent to (got ${oneLine(depositAddress, 60)})`);
     }
     const signedQuote = signedQuoteRecord(response);
+
+    /* In flight on its coin from the read before the signature (enter), and the store asked about
+       other money on its way to that coin now and at every proof read after (swapRan). */
+    const sinceMs = now();
+    const seated = enter(owner.toLowerCase(), p.originAsset, p.destinationAsset);
+    seat.leave = seated.leave;
+    const storeSays = (): boolean => deps.proposals !== undefined && otherMoneyOnCoin(deps.proposals(), p.destinationAsset, proposalId, sinceMs, now());
+    let elsewhere = storeSays();
+    const alone = (): boolean => !seated.flight.crowded && !(elsewhere ||= storeSays());
 
     /* Read before, so the after-read below has something to subtract. A read that fails costs
        the check and nothing else: this is deliberately taken before anything is signed, so a
@@ -1310,7 +1414,7 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
        transfer spent and the bought coin arrived. 1Click keeps one more poll to say SUCCESS, and a
        terminal word from it still takes its own branch below; only a 1Click still short of an
        answer ends on NEAR's word, as Done, read back from the verifier like a SUCCESS is. */
-    const ran = swapRan(owner, nonce, p.destinationAsset, beforeBase, p.minOutBase);
+    const ran = swapRan(owner, nonce, p.destinationAsset, beforeBase, p.minOutBase, creditCap(quote.amountOut), alone);
     const ranOnChain = (afterBase: bigint, last: OneClickStatus): RailResult => {
       const before = beforeBase ?? 0n;
       return {
@@ -1335,7 +1439,8 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
       };
     };
 
-    const watch = await watchStatus(depositAddress, hooks, async () => (await proof.ask()) || (await ran.ask()));
+    // NEAR's word that it ran is asked between 1Click's reads too (RAN_BETWEEN_MS); the deadline proof keeps its own pace.
+    const watch = await watchStatus(depositAddress, hooks, async () => (await proof.ask()) || (await ran.ask()), () => ran.ask());
     const provedEarly = proof.held();
     if (provedEarly !== null) return neverRan(provedEarly, watch);
     const landed = ran.held();
@@ -1496,11 +1601,12 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
     };
   }
 
-  // The one watch every rail shares (./watch.ts): until terminal, out of time or `over`, and never
-  // a throw once the intent is submitted.
-  function watchStatus(depositAddress: string, hooks?: RailHooks, over?: () => Promise<boolean>): Promise<OneClickStatus> {
-    const plan = { firstMs: firstPollMs, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now };
-    return watchOneClick(plan, (handle) => (api as IntentsApiPort).status(handle), depositAddress, hooks, over);
+  // The one watch every rail shares (./watch.ts): until terminal, out of time, `over` or
+  // `between` (asked every RAN_BETWEEN_MS between 1Click's reads), and never a throw once the
+  // intent is submitted.
+  function watchStatus(depositAddress: string, hooks?: RailHooks, over?: () => Promise<boolean>, between?: () => Promise<boolean>): Promise<OneClickStatus> {
+    const plan = { firstMs: firstPollMs, everyMs: pollIntervalMs, timeoutMs: pollTimeoutMs, sleep, now, betweenMs: ranBetweenMs };
+    return watchOneClick(plan, (handle) => (api as IntentsApiPort).status(handle), depositAddress, hooks, over, between);
   }
 
   /* Whether the transfer signed for `owner` under `nonce` has been proved never to run
@@ -1537,17 +1643,28 @@ export function intentsNativeRail(deps: IntentsNativeRailDeps): IntentsNativeRai
 
   /* Whether NEAR shows the swap done (./watch.ts ranProof): this swap's own signed transfer spent at
      the verifier, and the bought coin up by at least the approved floor since the read taken before
-     the signature. With no nonce or no before-read there is nothing to prove it with. */
-  function swapRan(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint): RanProof {
-    if (nonce === undefined || before === null) return { ask: async () => false, held: () => null };
+     the signature, by no more than `cap`, while `alone` holds (SWAP_UNSETTLED_HOLD_MS says why).
+     With no nonce, no before-read or no cap there is nothing to prove it with. A nonce once spent
+     stays spent, so it is asked until it is and then only the balance is read. */
+  function swapRan(owner: string, nonce: string | undefined, asset: string, before: bigint | null, floor: bigint, cap: bigint | null, alone: () => boolean): RanProof {
+    if (nonce === undefined || before === null || cap === null) return { ask: async () => false, held: () => null };
     const account = owner.toLowerCase();
+    let spent = false;
     return ranProof({
       now,
       everyMs: ranRecheckMs,
-      spent: () => nonceUsed(account, nonce),
+      spent: async () => alone() && (spent ||= (await nonceUsed(account, nonce)) === true),
       read: () => verifierBalance(account, asset),
-      landed: (held) => held - before >= floor,
+      landed: (held) => held - before >= floor && held - before <= cap && alone(),
     });
+  }
+
+  // The most a rise may be and still be this swap's: the signed quote's amountOut and
+  // SWAP_CREDIT_OVER_QUOTE_BPS over it. Null when the quote names no amount to hold it to.
+  function creditCap(amountOut: unknown): bigint | null {
+    if (typeof amountOut !== 'string' || !/^\d+$/.test(amountOut)) return null;
+    const out = BigInt(amountOut);
+    return out > 0n ? out + (out * BigInt(SWAP_CREDIT_OVER_QUOTE_BPS)) / 10_000n : null;
   }
 
   /* THE PRICE WITH NO FLOOR IN THE QUESTION: 1Click's dry quote for the draft's amountIn, read

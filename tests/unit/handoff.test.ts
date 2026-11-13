@@ -156,7 +156,9 @@ test('a switch from Grok to Claude Code hands the new session the conversation, 
     assert.equal(webReadBy(chat.session), true, 'the new session carries the old one\'s words, so it carries its mark');
     chat.driver.send('carry on');
     const turns = path.join(dir, 'turns.jsonl');
-    await until(() => fs.existsSync(turns) && fs.readFileSync(turns, 'utf8').trim() !== '');
+    // The fake appends the turn as one long line, and under load that write can land in pieces: a
+    // read is taken only once the line is whole, which its newline says.
+    await until(() => fs.existsSync(turns) && fs.readFileSync(turns, 'utf8').endsWith('\n'));
     const first = fs.readFileSync(turns, 'utf8');
     assert.match(first, /\[phosphor: handoff\./);
     assert.match(first, /PELICAN/, 'the new vendor is told what was said to the old one');

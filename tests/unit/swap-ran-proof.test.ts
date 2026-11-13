@@ -19,7 +19,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 
 import { buildNonce } from '../../src/relay/payload.ts';
-import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_VERIFIER, RAN_RECHECK_MS, intentsNativeRail } from '../../src/rails/intents-native.ts';
+import { INTENTS_NATIVE_COUNTERPARTY, INTENTS_VERIFIER, RAN_BETWEEN_MS, RAN_RECHECK_MS, intentsNativeRail } from '../../src/rails/intents-native.ts';
 import { parseStatus } from '../../src/intents.ts';
 import type { OneClickQuote } from '../../src/intents.ts';
 import { proposalView } from '../../src/proposals/view.ts';
@@ -252,7 +252,8 @@ test('eight swaps at once: each is Done within one chain check of NEAR running i
     assert.equal(o.result.ok, true, `${name}: ${o.result.detail}`);
     const after = o.doneAt - o.ranAt;
     assert.ok(after >= 0, `${name} was Done before NEAR ran it`);
-    assert.ok(after <= RAN_RECHECK_MS + 5_000, `${name} was Done ${Math.round(after / 1000)} s after NEAR ran it`);
+    // One chain check and one piece of the poll's wait, not the next 1Click read (5 s before 2026-11-13).
+    assert.ok(after <= RAN_RECHECK_MS + RAN_BETWEEN_MS, `${name} was Done ${after} ms after NEAR ran it`);
     // What arrived is the verifier's figure against the read taken before the signature.
     assert.deepEqual(o.result.pocket && { before: o.result.pocket.before, after: o.result.pocket.after, floor: o.result.pocket.floor }, { before: '0', after: o.coin.out.toString(), floor: floorOf(o.coin).toString() }, name);
   }
@@ -270,22 +271,28 @@ test('the five 1Click was late on say how they were proved: NEAR showed the swap
   }
 });
 
-test('the three 1Click answered promptly settle on its SUCCESS exactly as before', async () => {
+/* Whichever word comes first ends the watch. Until 2026-11-13 NEAR's answer waited for the next
+   1Click read, so a 1Click four seconds behind NEAR still won; now NEAR's word, seen two seconds
+   after, settles all eight, and the row keeps 1Click's last word beside it. */
+test('the three 1Click answered promptly are Done on NEAR\'s word too, ahead of its SUCCESS', async () => {
   const outcomes = await eightAtOnce();
   for (const o of outcomes.filter((x) => !x.coin.lags)) {
-    assert.match(o.result.detail, /^swapped 1\.0168 USDC for [\d.]+ \w+ inside intents\.near, read back from the verifier rather than taken from the quote; intent /, o.coin.symbol);
-    assert.doesNotMatch(o.result.detail, /signed transfer spent/, o.coin.symbol);
-    assert.equal(o.told.at(-1)?.stage, 'SUCCESS', o.coin.symbol);
+    assert.match(o.result.detail, /NEAR showed this swap's own signed transfer spent while 1click still reported PROCESSING/, o.coin.symbol);
+    assert.ok(o.doneAt < o.ranAt + SAYS_AFTER_MS, `${o.coin.symbol} waited for 1Click`);
+    assert.equal(o.told.at(-1)?.stage, 'PROCESSING', o.coin.symbol);
   }
 });
 
-test('a chain read that never answers holds up nothing: 1Click\'s answers land when they did, and the late five wait for its word as before', async () => {
-  const answered = new Map((await eightAtOnce()).map((o) => [o.coin.symbol, o.doneAt]));
+/* With a chain that never answers, 1Click's SUCCESS settles each one, read back from the verifier,
+   within one 1Click read of its saying so: the hung chain read holds up nothing. */
+test('a chain read that never answers holds up nothing: each swap settles on 1Click\'s SUCCESS within one read of it', async () => {
   for (const o of await eightAtOnce({ chain: 'hangs' })) {
     assert.equal(o.result.ok, true, `${o.coin.symbol}: ${o.result.detail}`);
-    assert.doesNotMatch(o.result.detail, /signed transfer spent/, o.coin.symbol);
-    if (o.coin.lags) assert.ok(o.doneAt >= o.ranAt + SAYS_AFTER_MS + LAGS_BY_MS, `${o.coin.symbol} ended before 1Click's word`);
-    else assert.equal(o.doneAt, answered.get(o.coin.symbol), `${o.coin.symbol} settled later than with a chain that answers`);
+    assert.match(o.result.detail, /read back from the verifier rather than taken from the quote; intent /, o.coin.symbol);
+    const says = o.ranAt + SAYS_AFTER_MS + (o.coin.lags ? LAGS_BY_MS : 0);
+    assert.ok(o.doneAt >= says, `${o.coin.symbol} ended before 1Click's word`);
+    assert.ok(o.doneAt <= says + 5_000, `${o.coin.symbol} settled ${o.doneAt - says} ms after 1Click's word`);
+    assert.equal(o.told.at(-1)?.stage, 'SUCCESS', o.coin.symbol);
   }
 });
 

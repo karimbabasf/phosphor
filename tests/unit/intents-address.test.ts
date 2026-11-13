@@ -65,6 +65,24 @@ test('1Click\'s pol, bsc and hood land on Polygon, BNB Smart Chain and Robinhood
   assert.deepEqual(rows.map((r) => r.network), ['eth:137', 'eth:56', 'eth:4663']);
 });
 
+/* 1Click marks a coin it no longer takes in the symbol itself: /v0/tokens carries no other field
+   for it (2026-11-13: 16 rows, every one a HOT asset 1Click moved to an OMNI id on 2026-11-10, and
+   XPL is spelled "XPL_(DEPRECATED)"). Such a coin is never offered, so no card is drawn for it and
+   no address is minted that 1Click then refuses ("No liquidity available"). The live coin of the
+   same name on the same chain stays. Rows as the live list wrote them. */
+test('a coin 1Click marks DEPRECATED in its symbol is left out, and the live coin of the same name stays', () => {
+  const rows = tokensFromOneClick([
+    { assetId: 'nep245:v2_1.omni.hot.tg:137_11111111111111111111', decimals: 18, blockchain: 'pol', symbol: 'POL(DEPRECATED)' },
+    { assetId: 'nep141:pol.omdep.near', decimals: 18, blockchain: 'pol', symbol: 'POL' },
+    { assetId: 'nep245:v2_1.omni.hot.tg:43114_11111111111111111111', decimals: 18, blockchain: 'avax', symbol: 'AVAX(DEPRECATED)' },
+    { assetId: 'nep245:v2_1.omni.hot.tg:9745_11111111111111111111', decimals: 18, blockchain: 'plasma', symbol: 'XPL_(DEPRECATED)' },
+    { assetId: 'nep245:v2_1.omni.hot.tg:56_11111111111111111111', decimals: 18, blockchain: 'bsc', symbol: 'BNB(DEPRECATED)' },
+    { assetId: 'nep245:v2_1.omni.hot.tg:56_2w93GqMcEmQFDru84j3HZZWt557r', decimals: 18, blockchain: 'bsc', symbol: 'usdc(deprecated) ', contractAddress: '0x8ac76a51cc950d9822d68b83fe1ad97b32cd580d' },
+    { assetId: 'nep141:bnb.omdep.near', decimals: 18, blockchain: 'bsc', symbol: 'BNB' },
+  ]);
+  assert.deepEqual(rows.map((r) => `${r.network} ${r.symbol} ${r.intentsAssetId}`), ['eth:137 POL nep141:pol.omdep.near', 'eth:56 BNB nep141:bnb.omdep.near']);
+});
+
 /* A coin on a chain the registry has no row for has no name, no address rule and no words for an
    exchange's withdraw screen, so it is left out rather than shown under a guess. Abstract is a
    spend-only chain: money can be swapped into it, never deposited from it. A row that cannot be

@@ -127,6 +127,18 @@
     return 'This address stopped taking money at ' + localDeadline(iso) + '. Do not send to it. Open Add money again for a new address.';
   }
 
+  /* An address takes one deposit: once money is seen at it, it is not
+     drawn again. */
+  function usedWords() {
+    return 'This address already has its one deposit. Open Add money again for a new address.';
+  }
+
+  /* Whether the watch has seen money at its address (src/vault/watch.ts):
+     the transfer on its way, being added, or in the balance. */
+  function seenAt(deposit) {
+    return !!deposit && (deposit.phase === 'seen' || deposit.phase === 'bridged' || deposit.phase === 'credited');
+  }
+
   /* A one-time address is one quote for one coin: 1Click converts that coin
      and nothing else sent to it. */
   function coinOnlyWords(symbol) {
@@ -137,12 +149,16 @@
      when it may: it holds an address, it is for this network and coin, it is
      still waiting for its one deposit, and its deadline is known and ahead. */
   function undrawable(deposit, chain, symbol) {
+    var same = !!deposit && deposit.chain === chain && String(deposit.symbol || '').toUpperCase() === String(symbol || '').toUpperCase();
+    /* Money seen takes the address off the frame (src/vault/watch.ts), so
+       this is said before the missing address is. */
+    if (same && seenAt(deposit)) return usedWords();
     if (!deposit || typeof deposit.address !== 'string' || deposit.address === '') return 'No address was made for this deposit.';
-    if (deposit.chain !== chain || String(deposit.symbol || '').toUpperCase() !== String(symbol || '').toUpperCase()) {
+    if (!same) {
       return 'The address the app answered is for another network or coin, so nothing is shown.';
     }
     if (deposit.phase === 'expired') return expiredWords(deposit.deadline);
-    if (deposit.phase !== 'watching') return 'This address already has its one deposit. Open Add money again for a new address.';
+    if (deposit.phase !== 'watching') return usedWords();
     var deadline = deadlineOf(deposit);
     if (deadline === null) return 'The address came without the time it stops taking money, so it is not shown.';
     if (Date.now() >= deadline) return expiredWords(deposit.deadline);
@@ -668,6 +684,12 @@
     var note = dom.el('span', 'meta deposit-watch-note');
     note.hidden = true;
     body.appendChild(note);
+    /* The watch's own sentence about the deposit (a refund, a short
+       deposit: src/vault/watch.ts), under what the line says. */
+    var told = dom.el('span', 'meta deposit-watch-note');
+    told.dataset.role = 'deposit-note';
+    told.hidden = true;
+    body.appendChild(told);
     var raw = dom.el('span', 'meta deposit-watch-raw');
     raw.setAttribute('data-dev-only', '');
     raw.hidden = true;
@@ -735,6 +757,9 @@
          has no url yet, so the View link cannot be left pointing at the phase
          before this one. */
       link.hidden = !setHref(link, deposit.explorerUrl);
+      var said = typeof deposit.note === 'string' ? deposit.note.trim() : '';
+      told.hidden = said === '';
+      dom.setText(told, said);
       var why = troubleWords(deposit.error);
       note.hidden = why === null;
       dom.setText(note, why === null ? '' : why);
@@ -1825,6 +1850,12 @@
          local clock has passed its deadline, whatever frame woke this up. */
       var own = !!deposit && ((shown.startedAt && deposit.startedAt === shown.startedAt)
         || (typeof deposit.address === 'string' && sameBytes(deposit.address, shown.address)));
+      /* One deposit per address: once its own watch sees money, it comes
+         down with the words that say so, not the deadline's. */
+      if (own && seenAt(deposit)) {
+        takeDown(shown, usedWords(), null, false);
+        return;
+      }
       var over = own && (deposit.phase === 'expired' || typeof deposit.address !== 'string' || !deposit.address || !sameBytes(deposit.address, shown.address));
       if (over || Date.now() >= shown.deadline) takeDown(shown, expiredWords(shown.deadlineIso), null, false);
     }
@@ -1904,6 +1935,8 @@
     deadlineOf: deadlineOf,
     oneTimeWords: oneTimeWords,
     expiredWords: expiredWords,
+    usedWords: usedWords,
+    seenAt: seenAt,
     coinOnlyWords: coinOnlyWords
   };
 })();

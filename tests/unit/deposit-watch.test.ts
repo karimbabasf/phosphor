@@ -267,7 +267,8 @@ test('every status word 1Click has maps to its phase, its note and its error', a
     else assert.match(s.note ?? '', note, `${name}: note`);
     if (error === null) assert.equal(s.error, null, `${name}: no error`);
     else assert.match(s.error ?? '', error, `${name}: error`);
-    assert.equal(s.address, ADDRESS, `${name}: the address stays up`);
+    // Up while nothing is seen; off once money is seen at it (one deposit per address).
+    assert.equal(s.address, want === 'watching' ? ADDRESS : null, `${name}: the address`);
     h.watch.stop();
   }
 });
@@ -384,8 +385,41 @@ test('a deposit already seen when the deadline passes is not expired: the money 
   h.clock.t = START + 2 * HOUR - 1;
   await ticks(4);
   assert.equal(h.watch.current()?.phase, 'seen');
-  assert.equal(h.watch.current()?.address, ADDRESS);
+  // Off since the deposit was seen, not since the deadline (the test below).
+  assert.equal(h.watch.current()?.address, null);
   h.watch.stop();
+});
+
+/* ONE DEPOSIT PER ADDRESS. A one-time address takes one deposit, so once money is seen at it, by
+   1Click's word or by the balance, it comes off the frame and is never drawn again: a second send
+   to it may be lost. Before, only the deadline took it down, and the card kept showing an address
+   that had already been used. The watch goes on asking 1Click about it, by its record. */
+test('once money is seen at the address, by 1Click or by the balance, address and memo come off the frame and stay off', async () => {
+  const seen = build();
+  seen.open(oneTime({ memo: '77' }));
+  await until(seen, () => seen.world.statusAsks.length > 0);
+  assert.equal(seen.watch.current()?.address, ADDRESS, 'drawn while nothing is seen');
+  seen.world.said = says('KNOWN_DEPOSIT_TX', { originTxHashes: [HASH] });
+  const arriving = await phase(seen, 'seen');
+  assert.equal(arriving.address, null, 'the address that has its deposit is not drawn');
+  assert.equal(arriving.memo, null);
+  assert.equal(arriving.txHash, HASH, 'the rest of the frame is as before');
+  const asked = seen.world.statusAsks.length;
+  seen.world.said = says('SUCCESS');
+  const bridged = await phase(seen, 'bridged');
+  assert.ok(seen.world.statusAsks.length > asked, '1Click is still asked, by the record');
+  assert.deepEqual(seen.world.statusAsks.at(-1), [ADDRESS, '77']);
+  assert.equal(bridged.address, null);
+  assert.ok(seen.frames.filter((f) => f.phase !== 'watching').every((f) => f.address === null && f.memo === null), 'no frame after watching carries it');
+  seen.watch.stop();
+
+  const credited = build();
+  credited.open();
+  await until(credited, () => credited.world.statusAsks.length > 0);
+  credited.world.balance = '3000000';
+  const landed = await phase(credited, 'credited', 'a rise with 1Click saying nothing');
+  assert.equal(landed.address, null);
+  credited.watch.stop();
 });
 
 test('credited is the verifier\'s word and wins over anything 1Click says, then 1Click is not asked again', async () => {
