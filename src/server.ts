@@ -37,6 +37,7 @@ import { createTerms } from './terms.ts';
 import { createDepositWatch } from './vault/watch.ts';
 import { createInviteService } from './invite/claim.ts';
 import { createReceived } from './received.ts';
+import { createDepositBook } from './rails/deposit-quote.ts';
 import { demoInviteNet } from './invite/demo.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK, routeGate } from './preflight/route-health.ts';
 import { createSseHub } from './http/sse.ts';
@@ -263,10 +264,14 @@ export function createServer(deps: ServerDeps): PhosphorServer {
   const vaultPrefs = createVaultPrefs(cfg.dataDir);
   const terms = createTerms(cfg.dataDir);
   const routeHealth = deps.routeHealth;
+  // Every one-time address a card shows is written here first (src/rails/deposit-quote.ts).
+  const depositBook = deps.depositBook ?? createDepositBook(cfg.dataDir);
+  const depositStatus = deps.depositQuotes === undefined ? undefined : (address: string, memo?: string) => deps.depositQuotes!.status(address, memo);
   const deposits = createDepositWatch({
     ledger: deps.ledger,
     sse,
     account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
+    ...(depositStatus === undefined ? {} : { status: depositStatus }),
     // The window reads the frame, so the sentence is the window's: the page's words plainly quoted.
     ...(routeHealth === undefined
       ? {}
@@ -304,13 +309,15 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     hold: (assetId) => deposits.holdForClaim(assetId),
     ...(deps.invite ?? demoInvite ?? {}),
   });
-  // Money in through the bridge, for Activity: the same account the deposit watch asks about.
+  // Money in to the one-time addresses, for Activity: the same account the deposit watch asks about.
   const received =
     deps.received ??
     createReceived({
       dataDir: cfg.dataDir,
       account: () => keystore.addressReport().addresses.evm?.toLowerCase() ?? null,
       enabled: cfg.mode === 'live',
+      book: depositBook,
+      ...(depositStatus === undefined ? {} : { status: depositStatus }),
     });
   const session =
     deps.session ??
@@ -361,6 +368,7 @@ export function createServer(deps: ServerDeps): PhosphorServer {
     vaultPrefs,
     terms,
     deposits,
+    depositBook,
     invites,
     received,
     releaseQueued: () => deps.proposals.releaseQueued(),

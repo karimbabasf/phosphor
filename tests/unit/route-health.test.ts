@@ -38,7 +38,7 @@ import {
   withReason,
 } from '../../src/preflight/route-health.ts';
 import type { RouteHealthDeps, RouteVerdict } from '../../src/preflight/route-health.ts';
-import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../src/rails/intents-address.ts';
+import { RECEIVE_NETWORKS, receiveNetworkOf, tokensFromOneClick } from '../../src/rails/intents-address.ts';
 import type { OneClickToken } from '../../src/intents.ts';
 
 const NOW = Date.parse('2026-09-26T18:00:00.000Z');
@@ -480,13 +480,27 @@ test('a slow cold probe is unknown on the normal deadline, and closed for an ask
   assert.equal(waited.state, 'closed');
 });
 
-test('the bridge closes a network it credits nothing on, but only when its list was read', () => {
+/* The coin list is a voice of its own: a network on which 1Click's token list (read through
+   tokensFromOneClick, the same rows the receive report counts) holds no coin is closed for
+   deposits, since a card there could name nothing to send. Only when the list was read: a list
+   that failed to load says nothing about any network, and must never close one. */
+test('1Click\'s coin list closes a network it lists no coin on, but only when the list was read', () => {
   const open: RouteVerdict = { network: 'ton', direction: 'in', state: 'open', reasons: [{ source: 'oneclick', state: 'open', text: '' }], checkedAt: NOW };
-  assert.equal(bridgeReason('ton', 2, true), null);
-  assert.equal(bridgeReason('ton', 0, false), null);
-  const closed = withReason(open, bridgeReason('ton', 0, true));
+  const onTon = (list: OneClickToken[]): number => tokensFromOneClick(list).filter((t) => t.network === receiveNetworkOf('ton')!.bridge).length;
+
+  assert.equal(onTon(TOKENS), 2, 'GRAM and USDT on TON');
+  assert.equal(bridgeReason('ton', onTon(TOKENS), true), null);
+  const withoutTon = TOKENS.filter((t) => t.blockchain !== 'ton');
+  assert.equal(onTon(withoutTon), 0);
+  assert.equal(bridgeReason('ton', onTon(withoutTon), false), null, 'an unread list closes nothing');
+
+  const reason = bridgeReason('ton', onTon(withoutTon), true);
+  assert.equal(reason?.text, 'NEAR Intents takes no coin on TON right now');
+  const closed = withReason(open, reason);
   assert.equal(closed.state, 'closed');
-  assert.equal(routeSentence(closed, 'deposit'), 'The NEAR Intents bridge credits nothing on TON right now, so no address is shown.');
+  assert.equal(routeSentence(closed, 'deposit'), 'NEAR Intents takes no coin on TON right now, so no address is shown.');
+  assert.equal(routeSentence(closed, 'deposit', 'agent'), 'NEAR Intents takes no coin on TON right now, so no address is shown.', 'the app\'s own words, nothing quoted');
+  assert.doesNotMatch(routeSentence(closed, 'deposit') ?? '', /bridge/i, 'the bridge is gone from what a person reads');
 });
 
 test('degraded reads as a warning with the page quoted, and open and unknown say nothing', () => {

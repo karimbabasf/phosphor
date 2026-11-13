@@ -1,173 +1,173 @@
-// The deposit address is the one string on the money-in screen this app cannot check against
-// anything it holds, and it used to be drawn as any non-empty string one RPC answer carried: a
-// bridge, a proxy or a path that answered another address put it under the QR code, and a
-// person sending from an exchange had nothing to notice. Three things hold it now
-// (src/http/wallet.ts): the answer has to have the shape of an address on that network, two
-// answers in a row have to agree, and the address last shown is pinned on disk per (account,
-// network), so a later answer that differs is drawn as no address plus a sentence, never as
-// a new QR code.
+// The pins file, <dataDir>/deposit-addresses.json, is what the app up to 0.11.5 wrote when it drew
+// the POA bridge's standing deposit address for an (account, network). No address is drawn from it
+// any more and nothing writes it: every deposit address is a one-time 1Click quote now
+// (src/rails/deposit-quote.ts). It is read for one thing only, so a payout to one of those old
+// addresses is refused by name (ownDepositsOn), because a person may have saved one on an exchange.
+// A file that cannot be read is no rows, and a payout is never made to wait on it.
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
+import path from 'node:path';
 
-import { depositAddressProblem, depositPinsPath, intentsReceiveReport } from '../../src/http/wallet.ts';
-import { RECEIVE_NETWORKS, receiveNetworkByBridge, receiveNetworkOf } from '../../src/rails/intents-address.ts';
-import { base58Encode } from '../../src/chain/near.ts';
+import { depositAddressProblem, intentsReceiveReport } from '../../src/http/wallet.ts';
+import { openDeposit } from '../../src/http/deposit-open.ts';
+import type { ResolvedDeposit } from '../../src/http/deposit-open.ts';
+import { DEPOSIT_PINS_FILE, createDepositBook, depositBookPath, depositPinsPath, ownDepositsOn, standingAddresses } from '../../src/rails/deposit-quote.ts';
+import type { OneTimeDeposit } from '../../src/rails/deposit-quote.ts';
+import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import type { Ctx } from '../../src/http/context.ts';
-import { POA_DEPOSIT } from '../fixtures/poa-deposit-addresses.ts';
 import { tempDir } from './helpers/tmp.ts';
 
 type Any = Record<string, any>;
 
+const ACCOUNT = '0x00000000000000000000000000000000000020aa';
 const EVM = '0xb583f41992cd21b2f2345e194a36d33684bb5db0';
 const OTHER_EVM = '0x9999999999999999999999999999999999999999';
+const XRP = 'rp6s4fyjoCzjZ7Pukt46UVek9LQq1X2xHe';
+const STELLAR = 'GDJ4JZXZELZD737NVFORH4PSSQDWFDZTKW3AIDKHYQG23ZXBPDGGQBJK';
 
-function shaped(chain: string): string {
-  const kind = receiveNetworkByBridge(chain)?.kind;
-  if (chain.startsWith('eth:') || kind === 'evm') return EVM;
-  if (kind === 'sol') return base58Encode(new Uint8Array(crypto.createHash('sha256').update(chain).digest()));
-  if (chain === 'near:mainnet') return 'deposit-for-you.near';
-  if (chain === 'btc:mainnet') return 'bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4';
-  return POA_DEPOSIT[chain] ?? `addr-for-${chain}`;
+function pinsIn(dir: string, body: unknown): string {
+  const file = depositPinsPath(dir);
+  fs.writeFileSync(file, typeof body === 'string' ? body : JSON.stringify(body));
+  return file;
 }
 
-/* A bridge whose deposit_address answer is a function of the network AND of how many times it
-   has been asked for that network, so a test can make the second answer differ from the first. */
-function bridge(answer: (chain: string, nth: number) => string): { calls: Map<string, number>; restore: () => void } {
-  const calls = new Map<string, number>();
-  const real = globalThis.fetch;
-  globalThis.fetch = (async (_url: unknown, init: Any = {}) => {
-    const body = JSON.parse(init.body ?? '{}') as { method: string; params: Any[] };
-    if (body.method === 'supported_tokens') {
-      return { ok: true, status: 200, json: async () => ({ result: { tokens: [{ defuse_asset_identifier: 'eth:1', asset_name: 'ETH', decimals: 18, min_deposit_amount: '1' }] } }) } as unknown as Response;
-    }
-    const chain = String(body.params[0]?.chain);
-    const nth = (calls.get(chain) ?? 0) + 1;
-    calls.set(chain, nth);
-    return { ok: true, status: 200, json: async () => ({ result: { address: answer(chain, nth), chain } }) } as unknown as Response;
-  }) as unknown as typeof fetch;
-  return { calls, restore: () => { globalThis.fetch = real; } };
-}
-
-let nextAccount = 0x2000;
-function ctxFor(dataDir: string): { ctx: Ctx; account: string } {
-  nextAccount += 1;
-  const account = `0x${nextAccount.toString(16).padStart(40, '0')}`;
-  const ctx = {
-    cfg: { mode: 'live', dataDir },
-    keystore: { addressReport: () => ({ addresses: { evm: account, solana: null, near: null }, verified: true, tampered: false }) },
-  } as unknown as Ctx;
-  return { ctx, account };
-}
-
-function row(report: Any, id: string): Any {
-  const found = report.networks.find((n: Any) => n.id === id);
-  assert.ok(found, `no ${id} row`);
-  return found;
-}
-
-test('an answer that is not an address on the network is not shown, and the row says why', async () => {
+test('the pins file lives at deposit-addresses.json in the data folder', () => {
   const dir = tempDir('phosphor-pin-');
-  const b = bridge((chain) => (chain === 'eth:1' ? '0x1234' : chain === 'sol:mainnet' ? 'not base58 at all!' : chain === 'btc:mainnet' ? 'send here: bc1q...' : shaped(chain)));
-  try {
-    const report = await intentsReceiveReport(ctxFor(dir).ctx);
-    for (const [id, why] of [
-      ['eth', /not an address on Ethereum \(not an address on Ethereum: expected 0x followed by 40 hex/],
-      ['sol', /not an address on Solana \(not a Solana address/],
-      ['btc', /not an address on Bitcoin \(not a Bitcoin address/],
-    ] as const) {
-      const r = row(report, id);
-      assert.equal(r.address, null, `${id} drew a malformed address`);
-      assert.match(String(r.unavailable), why);
-    }
-    assert.equal(row(report, 'base').address, EVM, 'a well-formed answer on another network still draws');
-  } finally {
-    b.restore();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  assert.equal(DEPOSIT_PINS_FILE, 'deposit-addresses.json');
+  assert.equal(depositPinsPath(dir), path.join(dir, 'deposit-addresses.json'));
 });
 
-test('every network is asked twice, and two answers that differ draw nothing', async () => {
+test('standingAddresses reads each `${account}|${bridgeKey}` row as its account, network, address and memo', () => {
   const dir = tempDir('phosphor-pin-');
-  const b = bridge((chain, nth) => (chain === 'eth:1' && nth === 2 ? OTHER_EVM : shaped(chain)));
-  try {
-    const report = await intentsReceiveReport(ctxFor(dir).ctx);
-    for (const net of RECEIVE_NETWORKS) assert.equal(b.calls.get(net.bridge), 2, `${net.id} was asked ${b.calls.get(net.bridge)} times`);
-    const eth = row(report, 'eth');
-    assert.equal(eth.address, null);
-    assert.match(String(eth.unavailable), /two different addresses for this network within a second, so neither is shown/);
-    assert.equal(row(report, 'base').address, EVM);
-  } finally {
-    b.restore();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  pinsIn(dir, {
+    [`${ACCOUNT}|eth:1`]: { address: EVM, memo: null, shownAt: '2026-09-17T00:00:00Z' },
+    [`${ACCOUNT}|stellar:mainnet`]: { address: STELLAR, memo: '177690326', shownAt: '2026-09-17T00:00:00Z' },
+    // An older row with no memo field and no shownAt is still an address.
+    [`${OTHER_EVM}|xrp:mainnet`]: { address: XRP },
+  });
+  assert.deepEqual(standingAddresses(dir), [
+    { account: ACCOUNT, network: 'eth:1', address: EVM, memo: null },
+    { account: ACCOUNT, network: 'stellar:mainnet', address: STELLAR, memo: '177690326' },
+    { account: OTHER_EVM, network: 'xrp:mainnet', address: XRP, memo: null },
+  ]);
 });
 
-test('the address shown is pinned on disk per account and network, and a later answer that differs is drawn as no address with a sentence', async () => {
+test('bad rows are skipped and the good ones kept, and a memo that is not a string is no memo', () => {
   const dir = tempDir('phosphor-pin-');
-  let swap = false;
-  const b = bridge((chain) => (swap && chain === 'eth:1' ? OTHER_EVM : shaped(chain)));
-  const { ctx, account } = ctxFor(dir);
-  try {
-    const first = await intentsReceiveReport(ctx);
-    assert.equal(row(first, 'eth').address, EVM);
-    assert.equal(row(first, 'eth').changed, null);
-    const pins = JSON.parse(fs.readFileSync(depositPinsPath(dir), 'utf8')) as Record<string, { address: string; memo: string | null; shownAt: string }>;
-    assert.equal(pins[`${account}|eth:1`].address, EVM, 'the first sight is pinned');
-    assert.equal(pins[`${account}|sol:mainnet`].address, shaped('sol:mainnet'));
-    assert.equal(fs.statSync(depositPinsPath(dir)).mode & 0o777, 0o600);
-
-    // The bridge changes its answer for Ethereum. The row shows NO address (the pin is a
-    // comparison key, never a destination: a file another local process can write must not
-    // put an address in front of a person), says so, and the pin is left as it was. Base still
-    // answers the same address and is untouched.
-    swap = true;
-    const second = await intentsReceiveReport(ctx, { force: true });
-    const eth = row(second, 'eth');
-    assert.equal(eth.address, null, 'neither the changed answer nor the pinned address is drawn');
-    assert.equal(eth.unavailable, null);
-    assert.match(String(eth.changed), /^The bridge now answers a different address for Ethereum \(ending \.\.\.999999\) than the one shown before \(ending \.\.\.[0-9a-fA-F]{6}\)\./);
-    assert.match(String(eth.changed), /no address is shown/);
-    assert.match(String(eth.changed), /do not send anything until you know why/);
-    assert.equal(row(second, 'base').changed, null);
-    assert.equal(row(second, 'base').address, EVM);
-    const again = JSON.parse(fs.readFileSync(depositPinsPath(dir), 'utf8')) as Record<string, { address: string }>;
-    assert.equal(again[`${account}|eth:1`].address, EVM, 'the pin did not move');
-
-    // The bridge comes back to the pinned address: the sentence goes away.
-    swap = false;
-    const third = await intentsReceiveReport(ctx, { force: true });
-    assert.equal(row(third, 'eth').changed, null);
-    assert.equal(row(third, 'eth').address, EVM);
-  } finally {
-    b.restore();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
+  pinsIn(dir, {
+    'no-separator': { address: EVM, memo: null },
+    '|eth:1': { address: EVM, memo: null },
+    [`${ACCOUNT}|eth:8453`]: null,
+    [`${ACCOUNT}|eth:42161`]: 'just a string',
+    [`${ACCOUNT}|sol:mainnet`]: { memo: null },
+    [`${ACCOUNT}|near:mainnet`]: { address: '' },
+    [`${ACCOUNT}|btc:mainnet`]: { address: 12345 },
+    // The bridge once sent an XRP memo as a number: the row is kept, the memo is not.
+    [`${ACCOUNT}|xrp:mainnet`]: { address: XRP, memo: 177690326 },
+    [`${ACCOUNT}|eth:1`]: { address: EVM, memo: null },
+  });
+  assert.deepEqual(standingAddresses(dir), [
+    { account: ACCOUNT, network: 'xrp:mainnet', address: XRP, memo: null },
+    { account: ACCOUNT, network: 'eth:1', address: EVM, memo: null },
+  ]);
 });
 
-test('the pin survives a restart and never crosses accounts, and an unreadable pin file pins afresh', async () => {
-  const dir = tempDir('phosphor-pin-');
-  const b = bridge((chain) => shaped(chain));
-  try {
-    const one = ctxFor(dir);
-    await intentsReceiveReport(one.ctx);
-    const two = ctxFor(dir);
-    await intentsReceiveReport(two.ctx);
-    const pins = JSON.parse(fs.readFileSync(depositPinsPath(dir), 'utf8')) as Record<string, unknown>;
-    assert.ok(pins[`${one.account}|eth:1`] !== undefined && pins[`${two.account}|eth:1`] !== undefined, 'each account has its own pin');
-
-    fs.writeFileSync(depositPinsPath(dir), 'not json');
-    const report = await intentsReceiveReport(one.ctx, { force: true });
-    assert.equal(row(report, 'eth').address, EVM);
-    assert.equal(row(report, 'eth').changed, null);
-    const fresh = JSON.parse(fs.readFileSync(depositPinsPath(dir), 'utf8')) as Record<string, { address: string }>;
-    assert.equal(fresh[`${one.account}|eth:1`].address, EVM, 'pinned afresh');
-  } finally {
-    b.restore();
-    fs.rmSync(dir, { recursive: true, force: true });
+test('a missing, unreadable or wrongly shaped pins file is no rows', () => {
+  const missing = tempDir('phosphor-pin-');
+  assert.deepEqual(standingAddresses(missing), []);
+  for (const body of ['not json', '', '[]', 'null', '"a string"', '42', JSON.stringify([{ address: EVM }])]) {
+    const dir = tempDir('phosphor-pin-');
+    pinsIn(dir, body);
+    assert.deepEqual(standingAddresses(dir), [], `file ${JSON.stringify(body)}`);
   }
+  // A folder where the file should be cannot be read either.
+  const folder = tempDir('phosphor-pin-');
+  fs.mkdirSync(depositPinsPath(folder));
+  assert.deepEqual(standingAddresses(folder), []);
+  // The payout check refuses on a pins file that is there and cannot be read, rather than reading it as empty.
+  assert.equal(ownDepositsOn(folder, 'eth'), null);
+  assert.deepEqual(ownDepositsOn(missing, 'eth'), [], 'no file at all is nothing pinned');
+});
+
+test('the payout check reads the pins as standing addresses of every account, on the chains of the payout chain\'s family', () => {
+  const dir = tempDir('phosphor-pin-');
+  pinsIn(dir, {
+    [`${ACCOUNT}|eth:8453`]: { address: EVM, memo: null },
+    [`${OTHER_EVM}|eth:1`]: { address: OTHER_EVM, memo: null },
+    [`${ACCOUNT}|xrp:mainnet`]: { address: XRP, memo: '7' },
+    // A bridge key no network of the app's carries is nobody's.
+    [`${ACCOUNT}|madeup:mainnet`]: { address: EVM, memo: null },
+  });
+  const onArb = ownDepositsOn(dir, 'arb');
+  assert.deepEqual(onArb, [
+    { address: EVM, memo: null, kind: 'standing', network: 'base', deadline: null },
+    { address: OTHER_EVM, memo: null, kind: 'standing', network: 'eth', deadline: null },
+  ]);
+  assert.deepEqual(ownDepositsOn(dir, 'xrp'), [{ address: XRP, memo: '7', kind: 'standing', network: 'xrp', deadline: null }]);
+  assert.deepEqual(ownDepositsOn(dir, 'sol'), []);
+});
+
+/* Nothing in the app writes the pins file any more: not the receive report, not a card that mints
+   and books a one-time address, not the payout check that reads it. Byte for byte and to the
+   millisecond, it is the file it was; and where there was none, none is made. */
+test('the pins file is never written: the receive report, a card open and the payout check leave it byte-identical', async () => {
+  const dir = tempDir('phosphor-pin-');
+  const file = pinsIn(dir, { [`${ACCOUNT}|eth:1`]: { address: EVM, memo: null, shownAt: '2026-09-17T00:00:00Z' } });
+  const past = new Date('2026-09-17T00:00:00Z');
+  fs.utimesSync(file, past, past);
+  const bytes = fs.readFileSync(file);
+  const mtime = fs.statSync(file).mtimeMs;
+
+  const shown: string[] = [];
+  const ctxOf = (dataDir: string): Ctx =>
+    ({
+      cfg: { mode: 'live', dataDir },
+      keystore: { addressReport: () => ({ addresses: { evm: ACCOUNT, solana: null, near: null }, verified: true, tampered: false }) },
+      depositBook: createDepositBook(dataDir),
+      depositQuotes: {
+        tokens: async () => [],
+        mint: async (): Promise<OneTimeDeposit> => ({
+          account: ACCOUNT, chain: 'base', network: 'eth:8453', symbol: 'USDC', assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near',
+          decimals: 6, address: OTHER_EVM, memo: null, minimumBase: '160000', minimum: '0.16', deadline: new Date(Date.now() + 86_400_000).toISOString(),
+          coldAt: null, mintedAt: new Date().toISOString(), correlationId: 'c-1', signature: null, timestamp: null,
+        }),
+        status: async () => ({ found: false }),
+      },
+      deposits: { held: () => null, current: () => null, show: (_chain: string, _symbol: string, address: string) => { shown.push(address); return {}; } },
+      audit: { append: () => undefined },
+    }) as unknown as Ctx;
+  const got = {
+    ok: true,
+    chain: 'base',
+    account: ACCOUNT,
+    network: { id: 'base' },
+    token: { symbol: 'USDC', assetId: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near', decimals: 6, contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' },
+    notice: null,
+    statusLink: null,
+  } as unknown as ResolvedDeposit;
+
+  const ctx = ctxOf(dir);
+  const report = (await intentsReceiveReport(ctx)) as Any;
+  assert.ok(report.networks.length > 0);
+  assert.ok(report.networks.every((n: Any) => n.address === null), 'a pinned address was drawn on the receive report');
+  const opened = await openDeposit(ctx, got, 'window');
+  assert.equal(opened.ok, true, JSON.stringify(opened));
+  assert.deepEqual(shown, [OTHER_EVM], 'the card showed something other than the minted address');
+  assert.ok(fs.existsSync(depositBookPath(dir)), 'the card did not book its address');
+  assert.equal(ownDepositsOn(dir, 'eth')!.length, 2);
+
+  assert.ok(fs.readFileSync(file).equals(bytes), 'the pins file changed');
+  assert.equal(fs.statSync(file).mtimeMs, mtime, 'the pins file was rewritten');
+
+  // A Mac that never had a pins file does not get one.
+  const fresh = tempDir('phosphor-pin-');
+  const ctx2 = ctxOf(fresh);
+  await intentsReceiveReport(ctx2);
+  assert.equal((await openDeposit(ctx2, got, 'agent')).ok, true);
+  ownDepositsOn(fresh, 'base');
+  assert.equal(fs.existsSync(depositPinsPath(fresh)), false, 'a pins file was made');
 });
 
 test('depositAddressProblem rules by the chain where it knows one and by plainness where it does not', () => {
@@ -179,7 +179,7 @@ test('depositAddressProblem rules by the chain where it knows one and by plainne
   assert.equal(depositAddressProblem(eth, EVM), null);
   assert.match(String(depositAddressProblem(eth, '0xB583f41992Cd21b2F2345e194a36D33684BB5DB0')), /checksum/);
   assert.match(String(depositAddressProblem(eth, 'deposit-for-you.near')), /expected 0x followed by 40 hex/);
-  assert.equal(depositAddressProblem(sol, shaped('sol:mainnet')), null);
+  assert.equal(depositAddressProblem(sol, 'So11111111111111111111111111111111111111112'), null);
   assert.match(String(depositAddressProblem(sol, EVM)), /not a Solana address/);
   assert.equal(depositAddressProblem(near, 'deposit-for-you.near'), null);
   assert.match(String(depositAddressProblem(near, 'Deposit.near')), /not a NEAR account id/);
@@ -188,25 +188,4 @@ test('depositAddressProblem rules by the chain where it knows one and by plainne
   assert.equal(depositAddressProblem(xrp, 'rN7n7otQDd6FczFgLdSqtcsAUxDkw6fzRH'), null);
   assert.match(String(depositAddressProblem(xrp, 'send it here please')), /no spaces/);
   assert.match(String(depositAddressProblem(xrp, 'short')), /10 to 128/);
-});
-
-test('a pin file rewritten by another process cannot put its address on the card: the mismatch draws no address', async () => {
-  const dir = tempDir('phosphor-pin-');
-  const b = bridge((chain) => shaped(chain));
-  const { ctx, account } = ctxFor(dir);
-  try {
-    const first = await intentsReceiveReport(ctx);
-    assert.equal(row(first, 'eth').address, EVM);
-    // Any process running as this user can write the data dir. It writes the attacker's
-    // address as the pin for Ethereum.
-    fs.writeFileSync(depositPinsPath(dir), JSON.stringify({ [`${account}|eth:1`]: { address: OTHER_EVM, memo: null, shownAt: '2026-09-17T00:00:00Z' } }));
-    const poisoned = await intentsReceiveReport(ctx, { force: true });
-    const eth = row(poisoned, 'eth');
-    assert.equal(eth.address, null, 'the poisoned pin is not drawn, and neither is the live answer');
-    assert.match(String(eth.changed), /no address is shown/);
-    assert.equal(row(poisoned, 'base').address, EVM, 'other networks are untouched');
-  } finally {
-    b.restore();
-    fs.rmSync(dir, { recursive: true, force: true });
-  }
 });

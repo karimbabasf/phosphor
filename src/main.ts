@@ -40,6 +40,7 @@ import { createCoinPictures, pictureDir } from './ledger/pictures.ts';
 import { createLivePrices } from './ledger/live-prices.ts';
 import { liveCoins } from './wallet.ts';
 import { oneClickClient, type OneClickStatus, type TokensFile } from './intents.ts';
+import { mintOneTimeDeposit, type DepositQuotes } from './rails/deposit-quote.ts';
 import { createMarketData } from './market/index.ts';
 import { lineAt } from './analysis/trendline.ts';
 import { createProposalService } from './proposals.ts';
@@ -647,6 +648,20 @@ const intentsPrices =
       }
     : undefined;
 
+/* The line a deposit card is opened over (src/rails/deposit-quote.ts): 1Click's coin list, the
+   one-time address a card mints, and that address's status, for the watch and Activity. One
+   client, so the coin list is read once a minute however many reports ask. Live only: a demo
+   mints nothing, and its card draws the fixture's address (src/http/deposit-open.ts). */
+const depositClient = cfg.mode === 'live' ? oneClickClient() : null;
+const depositQuotes: DepositQuotes | undefined =
+  depositClient === null
+    ? undefined
+    : {
+        tokens: () => depositClient.tokens(),
+        mint: (ask) => mintOneTimeDeposit({ quote: (params) => depositClient.quote(params) }, ask),
+        status: (address, memo) => depositClient.status(address, memo),
+      };
+
 /* And how it tells a Hyperliquid deposit 1Click calls SUCCESS from one the venue has credited:
    the account's own ledger of credits, read with no key over the same public endpoint the
    wallet panel reads. 1Click's word is the solver's delivery; only this is the money. */
@@ -905,6 +920,7 @@ const server = createServer({
   session,
   trade,
   intentsPrices,
+  depositQuotes,
   // The rails' route checker, so the receive report and the deposit tool refuse a closed route
   // with the same answer the payout rails give. Absent in demo mode.
   routeHealth: rails.routes,

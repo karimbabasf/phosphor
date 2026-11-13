@@ -1,35 +1,18 @@
-// A deposit address for the NEAR Intents balance: the plain "here is where to send it" that
-// every wallet has and this app did not.
+// The networks money comes in on and goes out to, and the coins NEAR Intents takes on each.
 //
-// WHY THIS AND NOT THE 1CLICK ADDRESS THE DEPOSIT RAIL ALREADY MINTS. src/rails/intents-deposit.ts
-// asks 1Click for a quote and sends to the address that quote mints. That address belongs to one
-// quote, one asset and one amount, and it stops working at the quote's deadline, which the API
-// documents as "the time when the deposit address becomes inactive and funds may be lost". It is
-// a swap deposit, and it is the right shape when the app is the one spending.
-//
-// This is the other question: a person, or an exchange withdrawal, sending money in from outside.
-// Nothing here quotes, nothing here has an amount, and nothing here expires. The POA bridge hands
-// back one address per (account, network) and hands back the SAME address every time, so it can
-// be drawn once, put behind a QR code, saved in an exchange's address book, and used again next
-// month. That is what a person means by a deposit address.
-//
-// WHAT IT IS, precisely: an address the bridge controls, which forwards what it receives to the
-// verifier and credits it to our account id. Phosphor never holds it, and sends to it only for the
-// old fee account's one return of its NEAR to the vault (src/vault/gas-account.ts), which is no
-// proposal and no rail. So it is deliberately NOT on the policy allowlist and does not belong
-// there: the allowlist governs what this app may send to, and this is an address other people
-// send to. Reading it is a read.
+// THE ADDRESS ITSELF IS NOT HERE ANY MORE. Until 2026-11 the POA bridge's JSON-RPC handed this app
+// one standing address per (account, network). NEAR Intents is closing that API (its mail of
+// 2026-11-12); a deposit address is now a one-time 1Click quote, minted when a card opens
+// (src/rails/deposit-quote.ts), and the coin list is 1Click's /v0/tokens. What stays here is the
+// registry both of those are read against: which networks exist, what an exchange calls each, the
+// key NEAR Intents names it by, and the name 1Click's token list gives it.
 //
 // THE ACCOUNT ID IS THE EVM ADDRESS, lowercased, which is the same id the verifier keys balances
-// by and the same one src/ledger/intents.ts reads with. Probed against the live bridge: it is
-// case insensitive on the account id, it returns one address for every EVM network and for
-// HyperCore, and it refuses an account id it cannot parse rather than inventing one.
+// by and the same one src/ledger/intents.ts reads with.
 
 import type { ChainId } from '../types.ts';
 import type { AddressFamily } from '../chainscan/networks.ts';
-import { readTimeout } from '../net.ts';
-
-export const POA_BRIDGE_RPC = 'https://bridge.chaindefuser.com/rpc';
+import type { OneClickToken } from '../intents.ts';
 
 // The address shape, which is what the window chunks the string by: 0x plus forty hex, a base58
 // string, a NEAR account, or something else it prints whole.
@@ -186,98 +169,6 @@ export const POA_NETWORK: Record<ChainId, string> = {
   near: bridgeOf('near'),
 };
 
-export type PoaDepositAddress = {
-  // The id or key the caller asked with, echoed so a batch of answers can be told apart.
-  chain: string;
-  network: string;
-  address: string;
-  // Set on the chains that route by memo. Stellar is one today: the bridge hands back one
-  // address for everybody and a memo that says whose the deposit is, so a memo dropped on the
-  // sending side is a lost deposit. The field exists to be rendered rather than assumed absent.
-  memo: string | null;
-};
-
-type RpcResult = { result?: { address?: unknown; chain?: unknown; memo?: unknown }; error?: unknown };
-
-function errText(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
-
-async function rpc(method: string, params: unknown[], fetchImpl: typeof fetch): Promise<RpcResult> {
-  const res = await fetchImpl(POA_BRIDGE_RPC, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id: 'phosphor', jsonrpc: '2.0', method, params }),
-    signal: readTimeout(),
-  });
-  if (!res.ok) throw new Error(`poa bridge ${method} http ${res.status}`);
-  return (await res.json()) as RpcResult;
-}
-
-function errorSaid(error: unknown): string {
-  return typeof error === 'string' ? error : JSON.stringify(error);
-}
-
-/* One address for one account on one network.
- *
- * Throws rather than returning null, because every failure here has a different answer for the
- * person reading the screen: an unsupported network is a permanent no, a rejected account id is
- * a bug in what we sent, and a timeout is "try again". A single null would flatten the three into
- * one blank box beside a QR code, and a blank box next to the words "deposit address" is the
- * worst thing this module could produce.
- *
- * `chain` is a registry id or a raw bridge key. A chain that routes by memo refuses the plain
- * ask with "Deposit mode MEMO is required for this chain" (Stellar, live on 2026-09-16), and is
- * asked again in memo mode rather than greyed out: the memo comes back beside the address and
- * is carried, because it is half of where the money goes.
- */
-export async function intentsDepositAddress(
-  accountId: string,
-  chain: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<PoaDepositAddress> {
-  const network = bridgeKeyOf(chain);
-  if (network === undefined) throw new Error(`no bridge network is mapped for ${chain}`);
-
-  const ask = (mode?: 'MEMO'): Promise<RpcResult> =>
-    rpc(
-      'deposit_address',
-      [{ account_id: accountId.toLowerCase(), chain: network, ...(mode === undefined ? {} : { deposit_mode: mode }) }],
-      fetchImpl,
-    );
-
-  let body: RpcResult;
-  try {
-    body = await ask();
-    if (body.error !== undefined && /deposit mode MEMO is required/i.test(errorSaid(body.error))) body = await ask('MEMO');
-  } catch (err) {
-    throw new Error(`the bridge did not answer for ${network}: ${errText(err)}`);
-  }
-
-  if (body.error !== undefined) {
-    throw new Error(`the bridge refused ${network}: ${errorSaid(body.error)}`);
-  }
-
-  const address = body.result?.address;
-  /* An address is the whole answer, so a response that does not carry one as a non-empty string
-     is a failure however cheerful its status code was. Rendering an empty string under a QR code
-     would be a receive screen that tells somebody to send money nowhere. */
-  if (typeof address !== 'string' || address.trim() === '') {
-    throw new Error(`the bridge answered for ${network} without an address`);
-  }
-
-  // A destination tag is a number, and a memo sent as one is still a memo (review L3, 2026-09-27):
-  // read as none, a shared address that routes by it would pass for our own.
-  const memo = body.result?.memo;
-  const said = typeof memo === 'number' && Number.isFinite(memo) ? String(memo) : typeof memo === 'string' ? memo.trim() : '';
-  return {
-    chain,
-    network,
-    address: address.trim(),
-    memo: said !== '' ? said : null,
-  };
-}
-
 export type PoaToken = {
   network: string;
   symbol: string;
@@ -368,116 +259,35 @@ export function parsePoaTokens(rows: unknown): PoaToken[] {
   return out;
 }
 
-/* What the bridge will actually accept, per network. This is the half of a receive screen that
-   stops a loss: an asset the bridge does not list for that network is not credited and is not
-   refunded, so the screen names what may be sent rather than leaving a person to guess from the
-   address alone. Never throws; an unreadable list costs the guidance, not the address. */
-export async function poaSupportedTokens(fetchImpl: typeof fetch = fetch): Promise<PoaToken[]> {
-  try {
-    const body = (await rpc('supported_tokens', [{}], fetchImpl)) as { result?: { tokens?: unknown } };
-    return parsePoaTokens(body.result?.tokens);
-  } catch {
-    return [];
+/* 1Click's token list as the rows the receive report reads: every coin 1Click lists on a network
+   the registry knows, keyed by that network's bridge key so the rest of the report (and Activity)
+   keeps naming networks one way. A coin on a chain the registry does not know is left out: a chain
+   with no row has no name, no address rule and no words for an exchange's withdraw screen, and a
+   deposit address with none of those is a guess. The floor is not on the list: it comes with the
+   address, from the quote that mints it, so `minDeposit` is empty here and the window prints none.
+   The contract is 1Click's own field; on NEAR every coin has one (wNEAR is wrap.near), and that is
+   the truth the card tells: on NEAR the address takes tokens, not plain NEAR. */
+export function tokensFromOneClick(list: readonly OneClickToken[]): PoaToken[] {
+  const out: PoaToken[] = [];
+  const seen = new Set<string>();
+  for (const t of list) {
+    if (t === null || typeof t !== 'object' || typeof t.assetId !== 'string' || typeof t.symbol !== 'string') continue;
+    if (typeof t.decimals !== 'number' || !Number.isInteger(t.decimals) || t.decimals < 0) continue;
+    const net = typeof t.blockchain === 'string' ? networkByVenue(t.blockchain) : undefined;
+    if (net === undefined || receiveNetworkOf(net.id) === undefined) continue;
+    if (seen.has(t.assetId)) continue;
+    seen.add(t.assetId);
+    const contract = typeof t.contractAddress === 'string' && t.contractAddress.trim() !== '' ? t.contractAddress.trim() : null;
+    out.push({
+      network: net.bridge,
+      symbol: currentSymbol(net.id, t.symbol),
+      decimals: t.decimals,
+      minDeposit: '',
+      minDepositHuman: '',
+      contract,
+      intentsAssetId: t.assetId,
+      nearTokenId: t.assetId.replace(/^nep141:/, ''),
+    });
   }
-}
-
-// `amount` is in base units; `decimals` is the row's own scale when the bridge sent one, and `at`
-// its created_at as ISO when that reads as a time.
-export type PoaDeposit = { txHash: string; amount: string; status: string; asset: string; decimals?: number; at?: string };
-
-/* What the bridge has SEEN, which is not the same question as what the verifier has CREDITED.
-   The settled truth is mt_batch_balance_of in src/ledger/intents.ts, and that is what the wallet
-   reports. This exists to answer the ten minutes in between, when a person has sent money and the
-   balance has not moved yet, so the screen can say "seen, not credited" instead of nothing. Never
-   throws: this is a nicety on top of a balance that is read elsewhere. `chain` is a registry id
-   or a raw bridge key; anything else is an empty list. */
-export async function poaRecentDeposits(
-  accountId: string,
-  chain: string,
-  fetchImpl: typeof fetch = fetch,
-  limit = 10,
-): Promise<PoaDeposit[]> {
-  try {
-    return await poaRecentDepositsOrThrow(accountId, chain, fetchImpl, limit);
-  } catch {
-    return [];
-  }
-}
-
-/* The same read for a caller that has to tell a failure from an empty list: the deposit watch
-   remembers which rows were already complete when it began, and a first poll that failed must
-   not read as "none were". Throws where poaRecentDeposits returns []; an unknown chain is still
-   an empty list, because that is an answer. */
-export async function poaRecentDepositsOrThrow(
-  accountId: string,
-  chain: string,
-  fetchImpl: typeof fetch = fetch,
-  limit = 10,
-): Promise<PoaDeposit[]> {
-  const network = bridgeKeyOf(chain);
-  if (network === undefined) return [];
-  const body = (await rpc(
-    'recent_deposits',
-    [{ account_id: accountId.toLowerCase(), chain: network, limit }],
-    fetchImpl,
-  )) as { result?: { deposits?: unknown }; error?: unknown };
-  if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
-  const rows = body.result?.deposits;
-  if (!Array.isArray(rows)) return [];
-  return rows.map(depositOf);
-}
-
-function depositOf(row: unknown): PoaDeposit {
-  const r = (row ?? {}) as Record<string, unknown>;
-  const at = bridgeTimeOf(r.created_at);
-  return {
-    txHash: typeof r.tx_hash === 'string' ? r.tx_hash : '',
-    amount: typeof r.amount === 'string' ? r.amount : String(r.amount ?? ''),
-    status: typeof r.status === 'string' ? r.status : 'unknown',
-    asset: typeof r.defuse_asset_identifier === 'string' ? r.defuse_asset_identifier : '',
-    ...(typeof r.decimals === 'number' && Number.isInteger(r.decimals) ? { decimals: r.decimals } : {}),
-    ...(at === null ? {} : { at }),
-  };
-}
-
-/* A deposit row's created_at as ISO, or null. The field is there on live rows (2026-10-05) but its
-   shape was not looked at, so an ISO string and an epoch in seconds or milliseconds are all read.
-   A date and time with no zone is UTC, the way a server keeps it: Date.parse alone would read it
-   as this Mac's local time. A time before 2020 or more than a day ahead is no time at all. */
-export function bridgeTimeOf(value: unknown, now: number = Date.now()): string | null {
-  let ms = Number.NaN;
-  const text = typeof value === 'string' ? value.trim() : '';
-  if (typeof value === 'number' || /^\d+(\.\d+)?$/.test(text)) {
-    const n = Number(value);
-    ms = n < 1e11 ? n * 1000 : n;
-  } else if (text !== '') {
-    ms = Date.parse(/^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(text) ? `${text.replace(' ', 'T')}Z` : text);
-  }
-  if (!Number.isFinite(ms) || ms < Date.UTC(2020, 0, 1) || ms > now + 86_400_000) return null;
-  return new Date(ms).toISOString();
-}
-
-/* The same read with no chain: the account's newest deposits on every network in one call, for
-   Activity (src/received.ts). Live on 2026-10-05: no chain answered rows from four networks for
-   one account, while a chain the bridge does not know is "Network not supported", so the chain is
-   a filter and its absence is every network. The answer is paged (limit 20 unless asked, 100 at
-   most, offset 0); this reads the first page only. Each row's network is its asset id's first two
-   segments, which matched the row's own chain on every live row. Throws on any failed read, a
-   reply with no list included, so a caller keeps what it had. */
-export async function poaAccountDepositsOrThrow(
-  accountId: string,
-  fetchImpl: typeof fetch = fetch,
-  limit = 100,
-): Promise<Array<PoaDeposit & { network: string }>> {
-  const body = (await rpc('recent_deposits', [{ account_id: accountId.toLowerCase(), limit }], fetchImpl)) as {
-    result?: { deposits?: unknown };
-    error?: unknown;
-  };
-  if (body.error !== undefined) throw new Error(`poa bridge recent_deposits: ${errorSaid(body.error)}`);
-  const rows = body.result?.deposits;
-  if (!Array.isArray(rows)) throw new Error('poa bridge recent_deposits answered without a list');
-  return rows.map((row) => {
-    const d = depositOf(row);
-    return { ...d, network: d.asset.split(':').slice(0, 2).join(':') };
-  });
+  return out;
 }

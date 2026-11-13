@@ -14,8 +14,9 @@ import { credentialCheck, redactEvent, redactedTail } from '../log-tail.ts';
 import type { ReadTable } from '../context.ts';
 import { sentencesOf } from '../state.ts';
 import { vaultStatus } from '../vault.ts';
-import { depositRoute } from '../wallet.ts';
-import { RECEIVE_NETWORKS, currentSymbol, receiveNetworkOf } from '../../rails/intents-address.ts';
+import { openDeposit, resolveDeposit } from '../deposit-open.ts';
+import { oneTimeWords } from '../../rails/deposit-quote.ts';
+import { RECEIVE_NETWORKS, receiveNetworkOf } from '../../rails/intents-address.ts';
 import { baseUnitsToDecimal, oneLine, plainDecimal, venueReason } from '../../intents.ts';
 import type { IntentsRead } from '../../ledger/intents.ts';
 import type { Proposal, ProposalView, WalletRow, WriteDraft } from '../../types.ts';
@@ -236,7 +237,7 @@ export function carriedWords(ctx: Ctx, rows: Proposal[]): { webRead?: true }[] {
 }
 
 const DISCLAIMER =
-  'Send a small test amount first and wait for the app to say it landed before sending the rest. Sending on any other network, or any asset not on the accepted list, loses the money: the bridge does not refund.';
+  'Each deposit address takes one deposit of one coin. To test first, send a small amount, wait for the app to say it landed, then open a new address for the rest. Any other coin sent to it, or the same coin sent on any other network, is not credited and may be lost: NEAR Intents does not refund it.';
 
 
 export const walletReads: ReadTable = {
@@ -342,14 +343,14 @@ export const walletReads: ReadTable = {
     });
   },
   /* Where somebody sends money so that NEAR Intents holds it. The agent asks for one asset on
-     one network; the app opens the deposit card in the window with the whole address and a
-     QR, starts watching for the money, and hands the agent a fingerprint, the minimum, and the
-     sentence to relay. The full address never goes to the agent: it is read from the window,
-     which shows it off a Touch ID open, and nothing an agent says can change it. A wrong
-     network or an asset the bridge does not credit is refused with the list of what is. */
+     one network; the app mints a one-time address for it, opens the deposit card in the window
+     with the whole address and a QR, starts watching for the money, and hands the agent a
+     fingerprint, the minimum, the deadline and the sentence to relay. The full address never goes
+     to the agent: it is read from the window, and nothing an agent says can change it. A wrong
+     network or an asset NEAR Intents does not credit is refused with the list of what is. The
+     window's door asks the same questions in the same order (src/http/deposit-open.ts). */
   deposit: async (ctx, _body, args, res) => {
     const chainRaw = typeof args?.chain === 'string' ? args.chain.trim() : '';
-    const symbol = typeof args?.asset === 'string' ? args.asset.trim().toUpperCase() : '';
     const report = await ctx.intentsReceive();
     // `network` is the label off an exchange's withdraw screen, which is where the money is lost.
     const accepted = report.networks.map((n) => ({ chain: n.id, network: n.words, accepts: n.accepts.map((a) => a.symbol) }));
@@ -364,54 +365,38 @@ export const walletReads: ReadTable = {
         accepted,
       });
     }
-    const network = report.networks.find((n) => n.id === chain);
-    if (network === undefined || network.address === null) {
-      // A network NEAR Intents has paused carries its sentence here, and the page that says more.
-      const statusLink = network?.statusLink ?? null;
-      return sendJson(res, 200, { ok: false, reason: network?.agentUnavailable ?? `no deposit address for ${chain} right now`, ...(statusLink === null ? {} : { statusLink }), accepted });
-    }
-    const want = currentSymbol(chain, symbol);
-    const token = network.accepts.find((a) => a.symbol.toUpperCase() === want);
-    if (token === undefined) {
-      return sendJson(res, 200, {
-        ok: false,
-        reason: `${symbol || 'that asset'} is not credited on ${network.words}. Sending it there loses it. Accepted on that network: ${network.accepts.map((a) => a.symbol).join(', ') || 'nothing'}.`,
-        accepted,
-      });
-    }
-    /* The route for this exact asset, before any card or watch: TON USDT is its own question, and
-       the row above was asked about the network's own coin. Closed opens nothing; degraded opens
-       the card and the notice rides in the answer and in the line the agent relays. */
-    const route = await depositRoute(ctx, chain, report.account, token.assetId, 'agent');
-    if (route.closed !== null) return sendJson(res, 200, { ok: false, reason: route.closed, statusLink: route.link, accepted });
-    // 1Click did not say it takes this coin in: no card, no fingerprint, ask again in a minute.
-    if (route.unconfirmed !== null) return sendJson(res, 200, { ok: false, reason: route.unconfirmed, accepted });
-    // The agent's forms: what the status page wrote rides only inside its labeled quote.
-    const notice = route.notice ?? network.agentNotice;
-    const statusLink = route.link ?? network.statusLink;
-    // The token as the bridge lists it, as Add money passes it (vault.ts), so the watch matches the
-    // bridge's rows by contract and not by a symbol the bridge may spell another way.
-    const deposit = ctx.deposits.show(chain, token.symbol, network.address, { assetId: token.assetId, decimals: token.decimals, contract: token.contract });
-    ctx.audit.append('app_start', `the deposit card was opened for ${token.symbol} on ${chain}`, { chain, symbol: token.symbol, by: 'agent' });
+    const got = await resolveDeposit(ctx, report, chain, args?.asset ?? '', 'agent');
+    if (!got.ok) return sendJson(res, 200, { ok: false, reason: got.error, ...(got.statusLink === null ? {} : { statusLink: got.statusLink }), accepted });
+    const opened = await openDeposit(ctx, got, 'agent');
+    if (!opened.ok) return sendJson(res, 200, { ok: false, reason: opened.error, ...(opened.statusLink === null ? {} : { statusLink: opened.statusLink }), accepted });
+    const { network, token, notice, statusLink } = got;
+    const minted = opened.oneTime;
     // A memo is half the destination on the chains that route by one: said in the relay line
     // so it cannot be left out of what the person is told.
-    const memoLine = network.memo === null ? '' : ` This network needs the memo ${network.memo} on the deposit as well; without it the money is not credited.`;
+    const memoLine = minted.memo === null ? '' : ` This network needs the memo ${minted.memo} on the deposit as well; without it the money is not credited.`;
+    const minimumLine = minted.minimum === '' ? '' : ` Send at least ${minted.minimum} ${token.symbol}: less is returned to the balance, not credited as sent.`;
     sendJson(res, 200, {
       ok: true,
       shownInWindow: true,
       chain,
       network: network.words,
       asset: token.symbol,
-      // In the token's own unit ("0.001"), never the bridge's base units ("1000"): the agent
-      // relays this number to a person about to type an amount.
-      minDeposit: token.minDepositHuman,
-      addressFingerprint: fingerprint(network.address),
+      // In the coin's own unit ("0.15"), never base units: the agent relays this number to a
+      // person about to type an amount. The quote that minted the address set it.
+      minDeposit: minted.minimum,
+      addressFingerprint: fingerprint(minted.address),
       addressVerified: report.verified,
-      memo: network.memo,
+      memo: minted.memo,
+      oneTime: true,
+      deadline: minted.deadline,
       disclaimer: DISCLAIMER,
-      relay: `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${network.address.slice(-4)}, choose the network "${network.words}" on the sending side, and send a small test amount first.${memoLine}${notice === null ? '' : ` ${notice}`}`,
+      relay:
+        `The address and a QR code are in the Phosphor window now. Tell the person to read it there, check that it ends in ${minted.address.slice(-4)}, ` +
+        `and choose the network "${network.words}" on the sending side. It takes ${token.symbol} only: any other coin sent to it is not credited and may be lost. ` +
+        `The address takes one deposit: to test first, send a small amount, wait until it lands, ` +
+        `then ask for a new address for the rest.${minimumLine}${memoLine} ${oneTimeWords(minted)}${notice === null ? '' : ` ${notice}`}`,
       ...(notice === null ? {} : { notice, statusLink }),
-      watching: deposit.phase,
+      watching: opened.deposit.phase,
       backedUp: vaultStatus(ctx).backedUp,
     });
   },

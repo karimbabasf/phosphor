@@ -207,6 +207,8 @@ export function createRails(deps: RailDeps): RailRegistry {
       client,
       preflight,
       routes,
+      // Where our own deposit addresses are read from, so a payout to one is refused offline.
+      dataDir: deps.cfg.dataDir,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,
     // Vault to allowance, behind a click and the vault's own Touch ID; never to anyone else.

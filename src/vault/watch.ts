@@ -3,15 +3,17 @@
 // to it while it is happening.
 //
 // FOUR PHASES, from two sources, and the settled one wins. `watching` is this process asking.
-// `seen` is the NEAR Intents bridge saying a transfer to the deposit address has arrived on the
-// origin chain (recent_deposits, status PENDING), and `bridged` is the same row at COMPLETED,
-// the bridge's side done. `credited` is the verifier's own balance for that one asset (one
+// `seen` is 1Click saying a transfer to the one-time address has arrived on the origin chain
+// (GET /v0/status: KNOWN_DEPOSIT_TX, PROCESSING, INCOMPLETE_DEPOSIT, REFUNDED), and `bridged` is
+// SUCCESS, 1Click's side done. `credited` is the verifier's own balance for that one asset (one
 // mt_batch_balance_of per tick) having gone UP since the watch began: the only phase that is
-// money the agent can move, and the only one that ends the watch. Karim, 2026-09-16: "if the
+// money the agent can move, and the only one that ends the watch. `expired` is the address's own
+// deadline passing with nothing seen: the address comes off the screen, because money sent to it
+// after that may be lost (src/rails/deposit-quote.ts). Karim, 2026-09-16: "if the
 // only user feedback is a timer, it is freaky", so each phase carries what it knows: the hash,
 // the explorer link, the confirmations on an EVM chain, the amount, and the last read failure.
 //
-// WHAT A TICK COSTS. One bridge call and one verifier call, every 3 s, plus two chain reads
+// WHAT A TICK COSTS. One 1Click status call and one verifier call, every 3 s, plus two chain reads
 // while a transfer is confirming. It used to be a full ledger refresh (three prices, the trading
 // account, two verifier calls) racing the 15 s loop for the same ledger, which is where the
 // flashing "Could not check NEAR Intents" came from. The ledger is touched once, through the one
@@ -27,18 +29,18 @@ import type { Ledger } from '../ledger/index.ts';
 import { fetchIntentsAssetBalance } from '../ledger/intents.ts';
 import { chainSpec } from '../chain/evm.ts';
 import { nearChainSpec } from '../chain/near.ts';
-import { bridgeKeyOf, poaRecentDepositsOrThrow } from '../rails/intents-address.ts';
-import type { PoaDeposit } from '../rails/intents-address.ts';
+import type { OneClickStatus } from '../intents.ts';
+import type { OneTimeDeposit } from '../rails/deposit-quote.ts';
 import { readTimeout } from '../net.ts';
 
-export type DepositPhase = 'watching' | 'seen' | 'bridged' | 'credited' | 'stopped';
+export type DepositPhase = 'watching' | 'seen' | 'bridged' | 'credited' | 'stopped' | 'expired';
 
-/** The asset being watched, as the show route resolved it from the bridge's own token list. */
+/** The asset being watched, as the card resolved it from 1Click's token list. */
 export type DepositToken = {
-  /** The verifier's id for it ('nep141:eth-0xa0b8....omft.near'), the bridge's intents_token_id. */
+  /** The verifier's id for it ('nep141:eth-0xa0b8....omft.near'), which is also 1Click's. */
   assetId: string;
   decimals: number;
-  /** The contract on the origin chain, null for the chain's own coin. Names the bridge's rows. */
+  /** The contract on the origin chain, null for the chain's own coin. */
   contract: string | null;
 };
 
@@ -47,9 +49,19 @@ export type DepositState = {
   /** A receive network id from the registry in src/rails/intents-address.ts: 'btc', 'eth', 'sol'. */
   chain: string;
   symbol: string;
-  /** The bridge address the card shows. Carried so a card opened from the agent's tool call can
-   *  draw without a second fetch, and so the window can compare it to /api/intents-receive. */
+  /** The one-time address the card shows, minted for this watch (src/http/deposit-open.ts). The
+   *  window draws it from here and nowhere else; null once the address has expired. */
   address: string | null;
+  /** True when the address is a one-time 1Click quote: good for one deposit until `deadline`. */
+  oneTime: boolean;
+  /** Half of the destination on a memo chain, null elsewhere and once expired. */
+  memo: string | null;
+  /** ISO: after this the address takes nothing and money sent to it may be lost. */
+  deadline: string | null;
+  /** The least to send, in the coin's own unit, as the quote that minted the address said. */
+  minimum: string | null;
+  /** One sentence about the deposit beside the phase (a refund, a short deposit), or null. */
+  note: string | null;
   startedAt: string;
   /** What the asset already held when the watch began, in its own units. Credited is the rise. */
   baseline: number;
@@ -72,8 +84,10 @@ export type DepositState = {
 
 export type DepositWatch = {
   /** The agent or the window asked for the card. Starts the watch and tells the window. */
-  show(chain: string, symbol: string, address: string | null, token?: DepositToken): DepositState;
+  show(chain: string, symbol: string, address: string | null, token?: DepositToken, oneTime?: OneTimeDeposit): DepositState;
   current(): DepositState | null;
+  /** The one-time address the current watch carries, whole, for the card's reuse check; null when none. */
+  held(): OneTimeDeposit | null;
   stop(): void;
   /** An invite claim is about to move money into this wallet on `assetId` (src/invite/claim.ts),
    *  and `walletBefore` is the wallet's balance of it read a moment before, when the claim could
@@ -84,7 +98,7 @@ export type DepositWatch = {
 
 const POLL_MS = 3_000;
 // Eager for the ten minutes a person stands at the card, then one poll in five (15 s at the
-// default tick) until the watch gives up: a card left open must not ask the bridge and the
+// default tick) until the watch gives up: a card left open must not ask 1Click and the
 // verifier 57,000 times a day. Showing the card again starts a fresh eager window.
 const EAGER_MS = 10 * 60 * 1000;
 const SLOW_EVERY = 5;
@@ -94,7 +108,7 @@ const AFTER_CREDITED_MS = 60_000;
 
 const NEAR_RPC_URL = nearChainSpec().rpcUrl;
 
-// Explorer link prefixes for the chains the bridge fills tx_hash for beyond the EVM three
+// Explorer link prefixes for the chains 1Click names an origin hash on beyond the EVM three
 // (src/chain/evm.ts carries those). Anything else gets no link rather than a wrong one.
 const EXPLORER_TX: Record<string, string> = {
   sol: 'https://solscan.io/tx/',
@@ -107,7 +121,7 @@ function evmChainOf(chain: string): EvmChain | null {
   return chain === 'eth' || chain === 'base' || chain === 'arb' ? chain : null;
 }
 
-// A hash the bridge reports is data from the wire: it becomes a link only when it has the shape
+// A hash 1Click reports is data from the wire: it becomes a link only when it has the shape
 // of a hash on that chain, so a malformed answer can never put an arbitrary string in a URL.
 const HASH_SHAPE: Record<string, RegExp> = {
   eth: /^0x[0-9a-f]{64}$/i,
@@ -154,55 +168,71 @@ async function evmConfirmations(chain: EvmChain, txHash: string, fetchImpl: type
   }
 }
 
-/* Is this bridge row the asset being watched. The bridge names the asset its own way, 'eth:1:0xa0b8...'
-   or 'eth:1:native', in whatever case it likes; a row that names only the network (or nothing) is
-   taken as ours, because it is on our address and our chain and a person at this card has sent one
-   thing. Without a token to compare against, the symbol in the identifier is all there is. */
-function sameAsset(row: PoaDeposit, bridgeKey: string | undefined, token: DepositToken | null, symbol: string): boolean {
-  const asset = row.asset.toLowerCase();
-  if (asset === '' || (bridgeKey !== undefined && asset === bridgeKey)) return true;
-  if (token === null) return asset.includes(symbol.toLowerCase());
-  const rest = asset.split(':').slice(2).join(':');
-  return rest === (token.contract === null ? 'native' : token.contract.toLowerCase());
+/* The hash 1Click names for the deposit, held to the chain's shape where this file knows one and
+   to plain letters and digits elsewhere: it is printed on the card, so a malformed answer prints
+   nothing rather than arbitrary text. */
+const PLAIN_HASH = /^[0-9A-Za-z]{16,128}$/;
+
+function hashOf(chain: string, status: OneClickStatus): string | null {
+  const first = status.originTxHashes[0];
+  if (first === undefined) return null;
+  const shape = HASH_SHAPE[chain];
+  return (shape ?? PLAIN_HASH).test(first) ? first : null;
 }
 
-// The row's amount in the asset's units, by the row's own scale when the bridge sent one.
-function rowAmount(row: PoaDeposit, token: DepositToken | null): number | null {
-  const decimals = row.decimals ?? token?.decimals;
-  if (decimals === undefined || !/^\d+$/.test(row.amount)) return null;
-  return Number(BigInt(row.amount)) / 10 ** decimals;
+// 1Click's formatted amount ("1.5"), as a number, or null.
+function amountOf(formatted: string | undefined): number | null {
+  if (formatted === undefined) return null;
+  const n = Number(formatted);
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
-// A row's identity across polls: the hash where the bridge fills one (EVM), the asset and the
-// amount where it does not.
-function keyOf(row: PoaDeposit): string {
-  return row.txHash !== '' ? row.txHash : `${row.asset}|${row.amount}`;
+// What 1Click's word means for the card: the phase it reaches, and a sentence where one is owed.
+function phaseOf(status: OneClickStatus): { phase: DepositPhase | null; note: string | null; error: string | null } {
+  switch (status.status) {
+    case 'KNOWN_DEPOSIT_TX':
+    case 'PROCESSING':
+      return { phase: 'seen', note: null, error: null };
+    case 'INCOMPLETE_DEPOSIT':
+      return { phase: 'seen', note: 'This deposit is under the minimum for this address, so NEAR Intents returns it to your balance instead.', error: null };
+    case 'REFUNDED':
+      return { phase: 'seen', note: 'NEAR Intents did not convert this deposit and put it back in your balance instead.', error: null };
+    case 'SUCCESS':
+      return { phase: 'bridged', note: null, error: null };
+    case 'FAILED':
+      return { phase: null, note: null, error: `NEAR Intents says this deposit failed (${status.reported}). It is checking your balance anyway.` };
+    default:
+      // PENDING_DEPOSIT, not found yet, or a word the spec does not have: nothing seen.
+      return { phase: null, note: null, error: null };
+  }
 }
 
 function units(base: bigint, decimals: number): number {
   return Number(base) / 10 ** decimals;
 }
 
-const RANK: Record<DepositPhase, number> = { watching: 0, seen: 1, bridged: 2, credited: 3, stopped: 4 };
+const RANK: Record<DepositPhase, number> = { watching: 0, seen: 1, bridged: 2, credited: 3, stopped: 4, expired: 4 };
 
 type Deps = {
   /** The last known holdings, for the baseline the rise is measured from. Never refreshed from here. */
   ledger: Ledger;
   sse: { broadcast: (payload: unknown) => void; broadcastState?: () => void };
-  /** The intents account the bridge credits: the wallet's EVM address, lowercased. */
+  /** The intents account a deposit credits: the wallet's EVM address, lowercased. */
   account: () => string | null;
   /** The one refresh seam (refreshNow in src/main.ts): called once when money is credited, and
    *  once at show() when the ledger has never read this wallet. Never ledger.refresh() from here:
    *  two loops refreshing the same ledger raced each other into a flashing warning. */
   refresh: () => Promise<void>;
-  /** Every read goes through this, so a test stands in for the bridge, the verifier and the
-   *  chain with one function. */
+  /** Every read goes through this, so a test stands in for the verifier and the chain with one
+   *  function. */
   fetchImpl?: typeof fetch;
-  recent?: (account: string, chain: string) => Promise<PoaDeposit[]>;
+  /** 1Click's word on a one-time address (src/intents.ts status). Absent (demo mode, a test
+   *  server), only the verifier's balance moves the card. */
+  status?: (address: string, memo?: string) => Promise<OneClickStatus>;
   balance?: (account: string, assetId: string) => Promise<bigint | null>;
   confirmations?: (chain: string, txHash: string) => Promise<number | null>;
   /** Whether NEAR Intents is taking this exact asset on this network right now (the route check
-   *  in src/preflight/route-health.ts), asked on the tick beside the bridge and the verifier, so an
+   *  in src/preflight/route-health.ts), asked on the tick beside 1Click and the verifier, so an
    *  address that stops being safe comes off the screen with no timer or loop of its own. The
    *  checker keeps its answers a minute (twenty seconds when shaky), so most ticks ask nothing
    *  of the network. Absent (a test, demo mode), no route is ever called closed. */
@@ -215,7 +245,6 @@ export function createDepositWatch(deps: Deps): DepositWatch {
   const now = deps.now ?? Date.now;
   const pollMs = deps.pollMs ?? POLL_MS;
   const fetchImpl = deps.fetchImpl ?? fetch;
-  const recent = deps.recent ?? ((account: string, chain: string) => poaRecentDepositsOrThrow(account, chain, fetchImpl));
   const balance =
     deps.balance ??
     ((account: string, assetId: string) => fetchIntentsAssetBalance({ rpcUrl: NEAR_RPC_URL, accountId: account, assetId, fetchImpl }));
@@ -236,9 +265,8 @@ export function createDepositWatch(deps: Deps): DepositWatch {
   // The refresh fired at show() when the ledger has never read this wallet, awaited by the
   // first tick so the baseline can come from the ledger rather than from the first live read.
   let priming: Promise<void> | null = null;
-  // Rows already COMPLETED when the watch began: yesterday's deposit, not the one being watched.
-  let history = new Set<string>();
-  let firstPoll = true;
+  // The one-time address this watch is for, whole: what 1Click is asked about, and its deadline.
+  let held: OneTimeDeposit | null = null;
   let creditedAt = 0;
   let inFlight = false;
   let ticks = 0;
@@ -299,24 +327,6 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     return BigInt(Math.round(row.amount * 10 ** row.decimals));
   }
 
-  /* Which of the bridge's rows is this deposit. The first poll that answers takes a snapshot of
-     the rows already complete, and those are never it. After that, the newest row for the asset
-     that is not history; once a hash is known, that row is followed for its status change. */
-  function pickRow(rows: PoaDeposit[], current: DepositState): PoaDeposit | undefined {
-    const bridgeKey = bridgeKeyOf(current.chain);
-    const mine = rows.filter((r) => r.status !== 'FAILED' && sameAsset(r, bridgeKey, token, current.symbol));
-    if (firstPoll) {
-      firstPoll = false;
-      for (const r of mine) if (r.status === 'COMPLETED') history.add(keyOf(r));
-    }
-    const live = mine.filter((r) => !history.has(keyOf(r)));
-    if (current.txHash !== null) {
-      const followed = live.find((r) => r.txHash === current.txHash);
-      if (followed !== undefined) return followed;
-    }
-    return live[0];
-  }
-
   async function poll(gen: number): Promise<void> {
     const current = state;
     if (current === null) return;
@@ -342,59 +352,75 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       if (!claimRunning(token?.assetId)) baseline = baselineFromLedger();
     }
 
-    const askBridge = current.phase !== 'credited';
-    const askRoute = askBridge && token !== null && deps.route !== undefined;
-    const [bridge, held, route] = await Promise.all([
-      askBridge
-        ? recent(account, current.chain).then(
-            (rows) => ({ rows, failed: false }),
-            () => ({ rows: [] as PoaDeposit[], failed: true }),
+    /* The deadline first: an address past it takes nothing and money sent to it may be lost, so
+       with nothing seen yet it comes off the screen and is never drawn again. The balance is still
+       read, so a deposit that was on its way and lands anyway still reads as credited. */
+    const deadline = held === null ? null : Date.parse(held.deadline);
+    const pastDeadline = deadline !== null && Number.isFinite(deadline) && now() >= deadline;
+    const expiring = pastDeadline && current.phase === 'watching';
+
+    const askVenue = current.phase !== 'credited' && current.phase !== 'expired' && !expiring && held !== null && deps.status !== undefined;
+    const askRoute = current.phase !== 'credited' && current.phase !== 'expired' && token !== null && deps.route !== undefined;
+    const spot = held;
+    const [venue, heldNow, route] = await Promise.all([
+      askVenue && spot !== null && deps.status !== undefined
+        ? deps.status(spot.address, spot.memo ?? undefined).then(
+            (said) => ({ said, failed: false }),
+            () => ({ said: null, failed: true }),
           )
-        : Promise.resolve({ rows: [] as PoaDeposit[], failed: false }),
+        : Promise.resolve({ said: null as OneClickStatus | null, failed: false }),
       token !== null ? balance(account, token.assetId) : Promise.resolve(null),
       askRoute && token !== null && deps.route !== undefined ? deps.route(account, current.chain, token.assetId).catch(() => null) : Promise.resolve(null),
     ]);
     if (gen !== generation || state === null) return;
 
     const next: DepositState = { ...current };
+    if (expiring) {
+      next.phase = 'expired';
+      next.address = null;
+      next.memo = null;
+      next.ms = now() - started;
+    }
     // A route read that failed keeps what the last one said.
     if (route !== null) {
       next.paused = route.closed;
       next.statusLink = route.closed === null ? null : route.link;
     }
-    // The verifier first: credited is the settled truth and wins over anything the bridge says.
+    // The verifier first: credited is the settled truth and wins over anything 1Click says.
+    const verdict = venue.said === null ? null : phaseOf(venue.said);
     if (token === null) {
-      next.error = `Cannot check the ${current.symbol} balance: the bridge gave this token no intents id`;
-    } else if (held === null) {
+      next.error = `Cannot check the ${current.symbol} balance: 1Click gave this token no intents id`;
+    } else if (heldNow === null) {
       next.error = 'The verifier is not answering, retrying';
     } else {
-      next.error = bridge.failed ? 'The bridge is not answering, retrying' : null;
+      next.error = venue.failed ? 'NEAR Intents is not answering about this address, retrying' : (verdict?.error ?? null);
       if (claimRunning(token.assetId)) {
         // An invite claim is landing on this asset: no baseline and no credit until it ends.
       } else if (baseline === null) {
-        baseline = held;
-        next.baseline = units(held, token.decimals);
-      } else if (held > baseline) {
+        baseline = heldNow;
+        next.baseline = units(heldNow, token.decimals);
+      } else if (heldNow > baseline) {
         if (next.phase !== 'credited') {
           next.phase = 'credited';
           next.ms = now() - started;
           creditedAt = now();
         }
-        next.amount = units(held - baseline, token.decimals);
+        next.amount = units(heldNow - baseline, token.decimals);
       }
     }
 
-    if (next.phase !== 'credited' && askBridge && !bridge.failed) {
-      const row = pickRow(bridge.rows, next);
-      if (row !== undefined) {
-        const phase: DepositPhase = row.status === 'COMPLETED' ? 'bridged' : 'seen';
-        if (RANK[phase] > RANK[next.phase]) {
-          next.phase = phase;
-          next.ms = now() - started;
-        }
-        if (row.txHash !== '') next.txHash = row.txHash;
+    if (next.phase !== 'credited' && next.phase !== 'expired' && venue.said !== null && verdict !== null) {
+      const said = venue.said;
+      if (verdict.phase !== null && RANK[verdict.phase] > RANK[next.phase]) {
+        next.phase = verdict.phase;
+        next.ms = now() - started;
+      }
+      if (verdict.note !== null) next.note = verdict.note;
+      if (verdict.phase !== null) {
+        const hash = hashOf(current.chain, said);
+        if (hash !== null) next.txHash = hash;
         next.explorerUrl = next.txHash === null ? null : explorerTxUrl(current.chain, next.txHash);
-        const amount = rowAmount(row, token);
+        const amount = amountOf(said.depositedAmount);
         if (amount !== null) next.amount = amount;
         if (next.phase === 'seen' && next.txHash !== null) {
           next.confirmations = await confirmations(current.chain, next.txHash);
@@ -417,7 +443,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
     }
   }
 
-  // One poll at a time: a slow bridge answer must not stack ticks behind it.
+  // One poll at a time: a slow 1Click answer must not stack ticks behind it.
   async function tick(): Promise<void> {
     if (inFlight) return;
     inFlight = true;
@@ -434,14 +460,13 @@ export function createDepositWatch(deps: Deps): DepositWatch {
   }
 
   return {
-    show(chain, symbol, address, tok) {
+    show(chain, symbol, address, tok, oneTime) {
       stopTimer();
       generation += 1;
       started = now();
       ticks = 0;
       token = tok !== undefined && tok.assetId !== '' ? tok : null;
-      history = new Set();
-      firstPoll = true;
+      held = oneTime ?? null;
       creditedAt = 0;
       inFlight = false;
       // A ledger read taken while a claim lands on this asset may or may not hold it, so it is
@@ -453,6 +478,11 @@ export function createDepositWatch(deps: Deps): DepositWatch {
         chain,
         symbol: symbol.toUpperCase(),
         address,
+        oneTime: held !== null,
+        memo: held?.memo ?? null,
+        deadline: held?.deadline ?? null,
+        minimum: held?.minimum ?? null,
+        note: null,
         startedAt: new Date(started).toISOString(),
         baseline: baseline === null || token === null ? 0 : units(baseline, token.decimals),
         amount: null,
@@ -472,6 +502,7 @@ export function createDepositWatch(deps: Deps): DepositWatch {
       return state;
     },
     current: () => state,
+    held: () => held,
     stop() {
       stopTimer();
       if (state !== null && state.phase !== 'credited') commit({ ...state, phase: 'stopped' });

@@ -27,6 +27,8 @@ import { seUnwrapWithSoftwareKey } from '../../src/keystore/sewrap.ts';
 import { createVaultRelay } from '../../src/vault/relay.ts';
 import { receiveNetworkOf } from '../../src/rails/intents-address.ts';
 import type { IntentsReceiveNetwork } from '../../src/http/wallet.ts';
+import { ONE_TIME_DEADLINE_MS, createDepositBook } from '../../src/rails/deposit-quote.ts';
+import type { DepositAsk, DepositBook, DepositQuotes } from '../../src/rails/deposit-quote.ts';
 import type { AppConfig, LedgerSnapshot } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
 import { ADDRESS_WAIT_MS, STATUS_LINK } from '../../src/preflight/route-health.ts';
@@ -67,14 +69,16 @@ function enclave(): Enclave {
 type Mode = 'answer' | 'cancel';
 
 /* One report row off the registry, the way the live report builds it, so the fake report is
-   the real shape and a field added to the contract fails here rather than in the window. */
-function network(id: string, address: string, accepts: Array<{ symbol: string; minDeposit: string; minDepositHuman: string; decimals: number; contract: string | null }>): IntentsReceiveNetwork {
+   the real shape and a field added to the contract fails here rather than in the window. The
+   report carries no address: one is minted when a card opens (src/http/deposit-open.ts). */
+function network(id: string, accepts: Array<{ symbol: string; minDeposit: string; minDepositHuman: string; decimals: number; contract: string | null }>): IntentsReceiveNetwork {
   const net = receiveNetworkOf(id);
   if (net === undefined) throw new Error(`no registry network ${id}`);
   return {
     ...net,
-    address,
+    address: null,
     memo: null,
+    oneTime: true,
     unavailable: null,
     sharedWith: [],
     warning: `${net.name} only.`,
@@ -88,7 +92,7 @@ function network(id: string, address: string, accepts: Array<{ symbol: string; m
   };
 }
 
-async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void; dataDir?: string; mac?: Enclave } = {}) {
+async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth; seed?: (keysPath: string) => void; dataDir?: string; mac?: Enclave; depositQuotes?: DepositQuotes; depositBook?: DepositBook } = {}) {
   // A data directory and a Mac given by the test are a restart: the same files, the same enclave.
   const dataDir = opts.dataDir ?? tempDir('phosphor-vault-');
   const token = crypto.randomBytes(32).toString('hex');
@@ -115,6 +119,8 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
     token,
     vault,
     ...(opts.routeHealth === undefined ? {} : { routeHealth: opts.routeHealth }),
+    ...(opts.depositQuotes === undefined ? {} : { depositQuotes: opts.depositQuotes }),
+    ...(opts.depositBook === undefined ? {} : { depositBook: opts.depositBook }),
     intentsReceive: async () => {
       const report = keystore.addressReport();
       return {
@@ -122,9 +128,9 @@ async function boot(opts: { mode?: AppConfig['mode']; routeHealth?: RouteHealth;
         verified: report.verified,
         tampered: report.tampered,
         networks: [
-          network('sol', 'Dep0s1tSoLaNaAddre55', [{ symbol: 'SOL', minDeposit: '10000000', minDepositHuman: '0.01', decimals: 9, contract: null }]),
-          network('base', '0xbridge', [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }]),
-          network('btc', 'bc1qbridge', [{ symbol: 'BTC', minDeposit: '5000', minDepositHuman: '0.00005', decimals: 8, contract: null }]),
+          network('sol', [{ symbol: 'SOL', minDeposit: '10000000', minDepositHuman: '0.01', decimals: 9, contract: null }]),
+          network('base', [{ symbol: 'USDC', minDeposit: '1000000', minDepositHuman: '1', decimals: 6, contract: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913' }]),
+          network('btc', [{ symbol: 'BTC', minDeposit: '5000', minDepositHuman: '0.00005', decimals: 8, contract: null }]),
         ],
       };
     },
@@ -507,8 +513,59 @@ test('a password wallet moves behind the enclave with the password once, and the
   }
 });
 
+/* A stand-in for the line to 1Click: one fresh one-time address per mint, and every address
+   unknown to it yet (PENDING_DEPOSIT's twin, so the watch reads it as waiting). */
+function oneClickLine(): DepositQuotes & { minted: DepositAsk[]; addresses: string[] } {
+  const minted: DepositAsk[] = [];
+  const addresses: string[] = [];
+  return {
+    minted,
+    addresses,
+    tokens: async () => [],
+    async mint(ask) {
+      minted.push(ask);
+      const n = minted.length;
+      const address = ask.net.id === 'btc' ? `bc1qonetime${n}${'q'.repeat(30)}` : `So1OneTime${n}${'k'.repeat(32)}`;
+      addresses.push(address);
+      const at = Date.now();
+      return {
+        account: ask.account.toLowerCase(),
+        chain: ask.net.id,
+        network: ask.net.bridge,
+        symbol: ask.token.symbol,
+        assetId: ask.token.assetId,
+        decimals: ask.token.decimals,
+        address,
+        memo: null,
+        minimumBase: '10000000',
+        minimum: '0.01',
+        deadline: new Date(at + ONE_TIME_DEADLINE_MS).toISOString(),
+        coldAt: null,
+        mintedAt: new Date(at).toISOString(),
+        correlationId: `corr-${n}`,
+        signature: null,
+        timestamp: null,
+      };
+    },
+    status: async () => ({ found: false, status: 'UNKNOWN', reported: 'not found', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] }),
+  };
+}
+
 test('the vault prefs set the idle time and the deposit card is opened and watched', async () => {
-  const b = await boot();
+  const line = oneClickLine();
+  const book = createDepositBook(tempDir('phosphor-vault-book-'));
+  // Every fetch this test makes is to its own server: the line is the only way to 1Click.
+  const realFetch = globalThis.fetch;
+  const outside: string[] = [];
+  globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (!url.startsWith('http://127.0.0.1:')) {
+      outside.push(url);
+      return Promise.reject(new Error(`no network in this test (asked ${url})`));
+    }
+    return realFetch(input, init);
+  }) as typeof fetch;
+  const b = await boot({ mode: 'live', depositQuotes: line, depositBook: book });
   try {
     const bad = await b.post('/api/vault/prefs', { idleMinutes: 7 });
     assert.equal(bad.status, 400);
@@ -517,28 +574,51 @@ test('the vault prefs set the idle time and the deposit card is opened and watch
     assert.equal((await b.get('/api/vault')).json.idleMinutes, 60);
 
     await b.post('/api/vault/create', {});
+    const account = b.keystore.addressReport().addresses.evm!;
     const shown = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'sol', address: 'Attacker' });
     assert.equal(shown.json.ok, true, JSON.stringify(shown.json));
     assert.equal(shown.json.deposit.phase, 'watching');
     assert.equal(shown.json.deposit.symbol, 'SOL');
-    assert.equal(shown.json.deposit.address, 'Dep0s1tSoLaNaAddre55', 'the address is the bridge\'s for this account, never the body\'s');
+    assert.equal(shown.json.deposit.address, line.addresses[0], 'the address is the one minted for this account, never the body\'s');
+    assert.doesNotMatch(JSON.stringify(shown.json), /Attacker/);
+    assert.equal(shown.json.deposit.oneTime, true);
+    assert.equal(shown.json.deposit.minimum, '0.01');
+    assert.equal(line.minted.length, 1);
+    assert.equal(line.minted[0]!.account, account);
+    assert.equal(line.minted[0]!.net.id, 'sol');
+    assert.equal(line.minted[0]!.token.assetId, 'nep141:sol-sol.omft.near');
+    // Kept in the book the test owns, under this account, before the card showed it.
+    assert.deepEqual(book.all().map((e) => [e.address, e.account, e.chain, e.settled]), [[line.addresses[0], account.toLowerCase(), 'sol', null]]);
+
     const notCredited = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'USDC' });
     assert.equal(notCredited.status, 409);
+    assert.equal(line.minted.length, 1, 'a coin the network does not take was minted for');
     assert.equal((await b.get('/api/deposit')).json.deposit.chain, 'sol');
+    assert.equal((await b.get('/api/deposit')).json.deposit.address, line.addresses[0]);
     assert.equal((await b.get('/api/state')).json.deposit.phase, 'watching');
+
+    // Opened again for the same coin while unused: the same address, no second mint.
+    const again = await b.post('/api/deposit/show', { chain: 'sol', symbol: 'SOL' });
+    assert.equal(again.json.deposit.address, line.addresses[0]);
+    assert.equal(line.minted.length, 1);
+
     // Any registry id opens the card, not only the five the app was born with.
     const bitcoin = await b.post('/api/deposit/show', { chain: 'btc', symbol: 'btc' });
     assert.equal(bitcoin.json.ok, true, JSON.stringify(bitcoin.json));
     assert.equal(bitcoin.json.deposit.chain, 'btc');
-    assert.equal(bitcoin.json.deposit.address, 'bc1qbridge');
+    assert.equal(bitcoin.json.deposit.address, line.addresses[1]);
+    assert.equal(line.minted[1]!.net.id, 'btc');
+    assert.deepEqual(book.all().map((e) => e.address), [line.addresses[1], line.addresses[0]], 'the book is newest first and keeps both');
     assert.equal((await b.get('/api/deposit')).json.deposit.chain, 'btc');
     const nope = await b.post('/api/deposit/show', { chain: 'bitcoin', symbol: 'BTC' });
     assert.equal(nope.status, 400, 'the route takes registry ids, not names');
     const stopped = await b.post('/api/deposit/stop', {});
     assert.equal(stopped.json.ok, true);
     assert.equal((await b.get('/api/deposit')).json.deposit.phase, 'stopped');
+    assert.deepEqual(outside, [], 'the test reached past its own server');
   } finally {
     await b.close();
+    globalThis.fetch = realFetch;
   }
 });
 

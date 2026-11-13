@@ -11,6 +11,7 @@
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import path from 'node:path';
 import http from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -26,6 +27,9 @@ import { RECEIPT_LIMIT_DEFAULT, RECEIPT_LIMIT_MAX } from '../../src/http/receipt
 import type { Receipt } from '../../src/http/receipts.ts';
 import { createReceived } from '../../src/received.ts';
 import type { Received } from '../../src/received.ts';
+import { createDepositBook } from '../../src/rails/deposit-quote.ts';
+import type { OneTimeDeposit } from '../../src/rails/deposit-quote.ts';
+import type { OneClickStatus } from '../../src/intents.ts';
 import type { AppConfig, LedgerSnapshot, Proposal, ProposalStatus } from '../../src/types.ts';
 import { stubView } from '../fixtures/view.ts';
 import { tempDir } from './helpers/tmp.ts';
@@ -713,97 +717,238 @@ test('q finds a receipt by the words a person would type, every word, any case',
   }
 });
 
-/* ---------- money in through the bridge (src/received.ts) ---------- */
+/* ---------- money in through a one-time 1Click address (src/received.ts) ---------- */
 
-const BASE_USDC = 'eth:8453:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const BASE_USDC_ID = 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near';
 const DEPOSIT_TX = '0x' + 'b'.repeat(64);
+const ACCOUNT = SELF.toLowerCase();
 
-// The POA bridge, answering recent_deposits with `rows` (or failing while `down`) and supported_tokens with Base USDC.
-function bridge(rows: unknown[]): { fetchImpl: typeof fetch; rows: unknown[]; down: boolean; asked: string[] } {
-  const world = { rows, down: false, asked: [] as string[], fetchImpl: (async () => new Response('', { status: 500 })) as unknown as typeof fetch };
-  world.fetchImpl = (async (_url: unknown, init?: RequestInit) => {
-    const call = JSON.parse(String(init?.body)) as { method: string; params: Array<Record<string, unknown>> };
-    world.asked.push(call.method + (call.params[0]?.chain === undefined ? '' : `:${String(call.params[0].chain)}`));
-    if (world.down) return new Response('bad gateway', { status: 502 });
-    const result =
-      call.method === 'recent_deposits'
-        ? { deposits: world.rows, total: world.rows.length, hasMore: false, limit: 100, offset: 0 }
-        : { tokens: [{ defuse_asset_identifier: BASE_USDC, asset_name: 'USDC', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near' }] };
-    return new Response(JSON.stringify({ id: 'phosphor', jsonrpc: '2.0', result }), { status: 200 });
-  }) as unknown as typeof fetch;
-  return world;
+// A one-time Base USDC address in the book, minted `hoursAgo` hours ago for `account`.
+function minted(address: string, hoursAgo = 1, over: Partial<OneTimeDeposit> = {}): OneTimeDeposit {
+  return {
+    account: ACCOUNT,
+    chain: 'base',
+    network: 'eth:8453',
+    symbol: 'USDC',
+    assetId: BASE_USDC_ID,
+    decimals: 6,
+    address,
+    memo: null,
+    minimumBase: '160000',
+    minimum: '0.16',
+    deadline: new Date(Date.parse(ago(hoursAgo)) + 24 * HOUR).toISOString(),
+    coldAt: null,
+    mintedAt: ago(hoursAgo),
+    correlationId: null,
+    signature: null,
+    timestamp: null,
+    ...over,
+  };
 }
 
-const baseDeposit = (status: string, createdAt?: string, tx = DEPOSIT_TX): unknown => ({
-  tx_hash: tx, chain: 'eth:8453', defuse_asset_identifier: BASE_USDC, decimals: 6, amount: '5000000', account_id: SELF.toLowerCase(), status,
-  ...(createdAt === undefined ? {} : { created_at: createdAt }),
-});
+const addr = (n: number): string => '0x' + n.toString(16).padStart(40, '0');
 
-test('money sent in through the bridge is a Received row with its amount, coin and network, in time among the moves', async () => {
-  const sent = ago(2);
-  const world = bridge([baseDeposit('COMPLETED', sent)]);
-  const received = createReceived({ dataDir: tempDir('phosphor-received-'), account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+function says(status: OneClickStatus['status'], over: Partial<OneClickStatus> = {}): OneClickStatus {
+  return { found: true, status, reported: status, originTxHashes: [DEPOSIT_TX], destinationTxHashes: [], nearTxHashes: [], ...over };
+}
+
+// 1Click's /v0/status, answering per address from `answers` (an Error fails that one read).
+function fakeStatus(answers: Map<string, OneClickStatus | Error>) {
+  const asked: string[] = [];
+  const status = async (address: string): Promise<OneClickStatus> => {
+    asked.push(address);
+    const said = answers.get(address);
+    if (said === undefined) return { found: false, status: 'UNKNOWN', reported: 'not found', originTxHashes: [], destinationTxHashes: [], nearTxHashes: [] };
+    if (said instanceof Error) throw said;
+    return said;
+  };
+  return { status, asked };
+}
+
+test('money sent to a one-time address is a Received row with its amount, coin and network, in time among the moves, and the address is settled', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const book = createDepositBook(dataDir);
+  book.add(minted(addr(1)));
+  const answers = new Map<string, OneClickStatus | Error>([[addr(1), says('SUCCESS', { depositedAmount: '5.000001', settledAmountOut: '5' })]]);
+  const one = fakeStatus(answers);
+  const seenAt = Date.parse(ago(2));
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status, now: () => seenAt });
   await received.read();
-  assert.deepEqual(world.asked, ['recent_deposits', 'supported_tokens'], 'one read for every network, no chain named');
+  assert.deepEqual(one.asked, [addr(1)], '1Click is asked about the book\'s address, and nothing else');
+  const [row] = received.list();
+  assert.deepEqual(row, { account: ACCOUNT, txHash: DEPOSIT_TX, network: 'eth:8453', asset: BASE_USDC_ID, amountBase: '5000000', decimals: 6, symbol: 'USDC', status: 'COMPLETED', at: new Date(seenAt).toISOString() }, 'SUCCESS counts what was delivered');
+  assert.equal(book.all()[0]!.settled, 'SUCCESS', 'a settled address is written down');
+  await received.read();
+  assert.deepEqual(one.asked, [addr(1)], 'and never asked about again');
+
   const h = await boot([settled('a', 'executed', { createdAt: ago(1), decidedAt: ago(1) }), settled('b', 'executed', { createdAt: ago(3), decidedAt: ago(3) })], { received });
   try {
     const list = await receipts(h.url, '?kind=swap,move');
-    assert.deepEqual(list.map((r) => r.id.split(':')[0]), ['a', 'received', 'b'], 'the deposit is not a row, or not at the bridge\'s time');
-    const row = list[1];
-    assert.equal(row.at, sent, 'the row is not at the bridge\'s created_at');
-    assert.equal(row.headline, 'Received 5 USDC on Base');
-    assert.equal(row.status, 'executed');
-    assert.deepEqual(row.received, { symbol: 'USDC', amount: 5 });
-    assert.equal(row.fromChain, 'base');
-    assert.deepEqual(row.txids, [{ chain: 'base', hash: DEPOSIT_TX, url: `https://basescan.org/tx/${DEPOSIT_TX}`, explorer: 'Basescan' }]);
+    assert.deepEqual(list.map((r) => r.id.split(':')[0]), ['a', 'received', 'b'], 'the deposit is a row, at the time it was first seen');
+    const r = list[1];
+    assert.equal(r.at, new Date(seenAt).toISOString());
+    assert.equal(r.headline, 'Received 5 USDC on Base');
+    assert.equal(r.status, 'executed');
+    assert.deepEqual(r.received, { symbol: 'USDC', amount: 5 });
+    assert.equal(r.fromChain, 'base');
+    assert.deepEqual(r.txids, [{ chain: 'base', hash: DEPOSIT_TX, url: `https://basescan.org/tx/${DEPOSIT_TX}`, explorer: 'Basescan' }]);
   } finally {
     await h.close();
   }
 });
 
-test('a failed bridge read never empties the list, and a row keeps the time it was first seen', async () => {
+test('every status word lands as its row: on the way is arriving, a refund is received, a failure is failed, and no hash is no row yet', async () => {
   const dataDir = tempDir('phosphor-received-');
-  // The first read finds nothing; the deposit comes after it, so it is dated when it is first seen.
-  const world = bridge([]);
-  const received = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  const book = createDepositBook(dataDir);
+  const tx = (c: string): string => '0x' + c.repeat(64);
+  for (let i = 1; i <= 6; i += 1) book.add(minted(addr(i)));
+  const answers = new Map<string, OneClickStatus | Error>([
+    [addr(1), says('KNOWN_DEPOSIT_TX', { originTxHashes: [tx('1')], depositedAmount: '2' })],
+    [addr(2), says('PROCESSING', { originTxHashes: [tx('2')], depositedAmount: '3' })],
+    [addr(3), says('REFUNDED', { originTxHashes: [tx('3')], depositedAmount: '0.1', refundedAmount: '0.09' })],
+    [addr(4), says('FAILED', { originTxHashes: [tx('4')], depositedAmount: '7' })],
+    [addr(5), says('INCOMPLETE_DEPOSIT', { originTxHashes: [], depositedAmount: '1' })],
+    [addr(6), says('PENDING_DEPOSIT', { originTxHashes: [] })],
+  ]);
+  const one = fakeStatus(answers);
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status });
   await received.read();
-  world.rows = [baseDeposit('PENDING')];
-  const before = Date.now();
+  const byTx = new Map(received.list().map((r) => [r.txHash, r]));
+  assert.equal(byTx.size, 4, 'an answer that names no origin hash is not a row yet');
+  assert.deepEqual([byTx.get(tx('1'))?.status, byTx.get(tx('1'))?.amountBase], ['PENDING', '2000000']);
+  assert.deepEqual([byTx.get(tx('2'))?.status, byTx.get(tx('2'))?.amountBase], ['PENDING', '3000000']);
+  assert.deepEqual([byTx.get(tx('3'))?.status, byTx.get(tx('3'))?.amountBase], ['COMPLETED', '90000'], 'a refund lands in the same balance: received, at the refunded amount');
+  assert.deepEqual([byTx.get(tx('4'))?.status, byTx.get(tx('4'))?.amountBase], ['FAILED', '7000000']);
+  const settled = new Map(book.all().map((e) => [e.address, e.settled]));
+  assert.deepEqual(
+    [1, 2, 3, 4, 5, 6].map((i) => settled.get(addr(i))),
+    [null, null, 'REFUNDED', 'FAILED', null, null],
+    'only SUCCESS, REFUNDED and FAILED settle an address',
+  );
+
+  const h = await boot([], { received });
+  try {
+    const list = await receipts(h.url);
+    const status = new Map(list.map((r) => [r.txids[0]?.hash, r.status]));
+    assert.equal(status.get(tx('1')), 'arriving');
+    assert.equal(status.get(tx('3')), 'executed');
+    assert.equal(status.get(tx('4')), 'failed');
+  } finally {
+    await h.close();
+  }
+});
+
+test('only this account\'s open addresses from the last week are asked about, the newest twenty a read', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const book = createDepositBook(dataDir);
+  book.add(minted(addr(900), 24 * 8));
+  book.add(minted(addr(901), 1, { account: '0x2222222222222222222222222222222222222222' }));
+  book.add({ ...minted(addr(902)) });
+  book.settle(addr(902), null, 'SUCCESS');
+  for (let i = 1; i <= 25; i += 1) book.add(minted(addr(i), 2));
+  const one = fakeStatus(new Map());
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status });
+  await received.read();
+  assert.equal(one.asked.length, 20);
+  assert.deepEqual(one.asked, Array.from({ length: 20 }, (_, i) => addr(25 - i)), 'the newest twenty');
+  for (const never of [addr(900), addr(901), addr(902)]) assert.ok(!one.asked.includes(never), `${never} is old, another wallet's, or settled`);
+  assert.deepEqual(received.list(), [], 'nothing found is nothing listed');
+
+  const none = fakeStatus(new Map());
+  await createReceived({ dataDir, account: () => null, enabled: true, book, status: none.status }).read();
+  await createReceived({ dataDir, account: () => ACCOUNT, enabled: true, status: none.status }).read();
+  await createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book }).read();
+  assert.deepEqual(none.asked, [], 'no wallet, no book or no line to 1Click asks nothing');
+});
+
+test('a failed status read never empties the list, a row keeps the time it was first seen, and the next boot reads the same rows', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const book = createDepositBook(dataDir);
+  book.add(minted(addr(1)));
+  const answers = new Map<string, OneClickStatus | Error>([[addr(1), says('KNOWN_DEPOSIT_TX', { depositedAmount: '5' })]]);
+  let clock = Date.parse(ago(1));
+  const one = fakeStatus(answers);
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status, now: () => clock });
   await received.read();
   const [first] = received.list();
   assert.equal(first.status, 'PENDING');
-  assert.ok(first.at !== null && Date.parse(first.at) >= before - 1000, 'a deposit seen after the first read is not dated when it was seen');
+  assert.equal(first.at, new Date(clock).toISOString());
 
-  world.down = true;
-  await assert.rejects(received.read());
-  received.refresh();
-  await new Promise((r) => setTimeout(r, 10));
+  answers.set(addr(1), new Error('1click status http 502'));
+  clock += 120_000;
+  await received.read();
   assert.deepEqual(received.list(), [first], 'a failed read changed the list');
+  assert.equal(book.all()[0]!.settled, null);
+
+  answers.set(addr(1), says('SUCCESS', { depositedAmount: '5', settledAmountOut: '5' }));
+  clock += 120_000;
+  await received.read();
+  const [done] = received.list();
+  assert.equal(done.status, 'COMPLETED');
+  assert.equal(done.at, first.at, 'the row keeps the time it was first seen');
 
   const h = await boot([], { received });
   try {
     const [row] = await receipts(h.url);
     assert.equal(row.headline, 'Received 5 USDC on Base');
-    assert.equal(row.status, 'arriving');
+    assert.equal(row.status, 'executed');
   } finally {
     await h.close();
   }
-  // The next boot reads the same row, at the same time, before the bridge has said anything.
-  const again = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: false });
-  assert.deepEqual(again.list(), [first]);
+  const again = createReceived({ dataDir, account: () => ACCOUNT, enabled: false, book, status: one.status });
+  assert.deepEqual(again.list(), [done]);
+  assert.deepEqual(createReceived({ dataDir, account: () => '0x2222222222222222222222222222222222222222', enabled: false }).list(), [], 'another wallet\'s rows never show');
 });
 
-test('deposits the first read finds with no time are Earlier, below every dated row, and a later one is dated', async () => {
+test('an address is settled only once its row is on disk: a row that cannot be written leaves it to be asked again', async () => {
+  const root = tempDir('phosphor-received-');
+  const blocker = path.join(root, 'not-a-folder');
+  fs.writeFileSync(blocker, '');
+  const settles: string[] = [];
+  const entry = { ...minted(addr(1)), settled: null };
+  const book = { add: () => {}, all: () => [entry], settle: (address: string) => void settles.push(address) };
+  const one = fakeStatus(new Map([[addr(1), says('SUCCESS', { settledAmountOut: '5' })]]));
+  const received = createReceived({ dataDir: path.join(blocker, 'data'), account: () => ACCOUNT, enabled: true, book, status: one.status });
+  await assert.rejects(received.read());
+  assert.deepEqual(settles, [], 'never settled with no row behind it');
+});
+
+test('refresh asks at most once a minute, behind the answer, and never in demo mode', async () => {
+  const dataDir = tempDir('phosphor-received-');
+  const book = createDepositBook(dataDir);
+  book.add(minted(addr(1)));
+  let clock = Date.parse(ago(1));
+  const one = fakeStatus(new Map());
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status, now: () => clock });
+  received.refresh();
+  received.refresh();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(one.asked.length, 1);
+  clock += 61_000;
+  received.refresh();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(one.asked.length, 2);
+
+  const demo = fakeStatus(new Map());
+  createReceived({ dataDir, account: () => ACCOUNT, enabled: false, book, status: demo.status }).refresh();
+  await new Promise((r) => setTimeout(r, 10));
+  assert.deepEqual(demo.asked, []);
+});
+
+test('rows the bridge reported before 0.11.6 stay, and the ones with no time are Earlier, below every dated row', async () => {
   const dataDir = tempDir('phosphor-received-');
   const older = (n: string): string => '0x' + n.repeat(64);
-  const world = bridge([baseDeposit('COMPLETED', undefined, older('c')), baseDeposit('COMPLETED', undefined, older('d'))]);
-  const received = createReceived({ dataDir, account: () => SELF.toLowerCase(), enabled: true, fetchImpl: world.fetchImpl });
+  const bridgeRow = (tx: string) => ({ account: ACCOUNT, txHash: tx, network: 'eth:8453', asset: BASE_USDC_ID, amountBase: '5000000', decimals: 6, symbol: 'USDC', status: 'COMPLETED', at: null });
+  fs.writeFileSync(path.join(dataDir, 'received.json'), JSON.stringify({ version: 1, read: [ACCOUNT], deposits: [bridgeRow(older('c')), bridgeRow(older('d'))] }));
+  const book = createDepositBook(dataDir);
+  book.add(minted(addr(1)));
+  const one = fakeStatus(new Map([[addr(1), says('SUCCESS', { originTxHashes: [older('e')], settledAmountOut: '5' })]]));
+  const received = createReceived({ dataDir, account: () => ACCOUNT, enabled: true, book, status: one.status });
   await received.read();
-  assert.deepEqual(received.list().map((d) => d.at), [null, null], 'a deposit from before the first read was dated now');
+  assert.deepEqual(received.list().map((d) => [d.txHash.slice(2, 3), d.at === null]), [['e', false], ['c', true], ['d', true]]);
+  const file = JSON.parse(fs.readFileSync(path.join(dataDir, 'received.json'), 'utf8')) as { read: string[] };
+  assert.deepEqual(file.read, [ACCOUNT], 'the old field is carried on unchanged');
 
-  // A month-old move still sits above them, and a deposit seen on a later read is dated today.
-  world.rows = [baseDeposit('COMPLETED', undefined, older('e')), ...world.rows];
-  await received.read();
   const h = await boot([settled('month', 'executed', { createdAt: ago(24 * 30), decidedAt: ago(24 * 30) })], { received });
   try {
     const list = await receipts(h.url);

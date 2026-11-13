@@ -68,10 +68,11 @@ import { addressSummary, createChainFetchState, explorerAddressUrl, explorerTxUr
 import type { AddressActivity, AddressSummary, ChainNetwork, PayTarget } from '../chainscan/index.ts';
 import { pickOrExplain } from './asset-words.ts';
 import { heldToPin, pinnedAssets } from './asset-pin.ts';
-import { intentsDepositAddress, networkByVenue, poaSupportedTokens, spendNetworkOf } from './intents-address.ts';
-import type { PayFamily, PoaToken } from './intents-address.ts';
-import { depositFloorOf, needsTarget, ownDepositChain, payAddress, payChecks, paysOwnDeposit, readsOwnDeposit } from './pay-rules.ts';
-import type { DepositFloor, OwnDeposit, PayNote } from './pay-rules.ts';
+import { networkByVenue, spendNetworkOf } from './intents-address.ts';
+import type { PayFamily } from './intents-address.ts';
+import { needsTarget, payAddress, payChecks, readsOwnDeposit } from './pay-rules.ts';
+import type { OwnDeposit, PayNote } from './pay-rules.ts';
+import { ownDepositsOn } from './deposit-quote.ts';
 
 // The funds are spent inside the verifier, so the counterparty is the verifier: the same
 // allowlist entry the swap, send and HyperCore rails use.
@@ -92,12 +93,8 @@ export const PAY_MAX_LOSS_BPS = 300;
 export const PAY_SAME_ASSET_SLIPPAGE_BPS = 10;
 
 // How long each of the chain-rule reads may take (src/rails/pay-rules.ts): the ledger's rules for
-// the receiver and the bridge's deposit address for our own account.
+// the receiver. Our own deposit addresses are read off this Mac's disk and wait on nobody.
 export const RULE_READ_MS = 6_000;
-
-// How long the bridge's list of minimum deposits is kept: it is the same for everybody and moves
-// rarely, and a payout should not wait on it twice in a minute.
-export const FLOOR_LIST_TTL_MS = 5 * 60_000;
 
 export function minReceivedForPay(amount: number): number {
   return amount * (1 - PAY_MAX_LOSS_BPS / 10_000);
@@ -209,14 +206,13 @@ export type IntentsPayRailDeps = {
   // The receiver's rules on the XRP Ledger and Stellar (src/chainscan/destination.ts), read
   // fresh before each quote. Null is a ledger that did not answer, and a payout is refused on it.
   payTarget?: (network: string, address: string) => Promise<PayTarget | null>;
-  // Our own bridge deposit address on the chain, which on a memo chain may be the one address
-  // the bridge shares with everybody. Null is a bridge that did not answer, and a payout is
-  // refused on it.
-  ownDeposit?: (account: string, network: string) => Promise<OwnDeposit | null>;
-  // The least the bridge credits of the paid token on the chain (src/rails/pay-rules.ts
-  // DepositFloor), which binds a payout to our own deposit address. Null is a bridge that did not
-  // answer, and on that payout it is a refusal.
-  depositFloor?: (network: string, asset: { assetId: string; native: boolean; contract: string | null }) => Promise<DepositFloor | null>;
+  /* Our own deposit addresses on the payout chain's address family (src/rails/deposit-quote.ts
+     ownDepositsOn): the one-time ones in the book and the bridge's old standing ones, all read off
+     `dataDir`. Null is a list that could not be read, and a payout is refused on it. Absent, the
+     list is read from `dataDir`; with neither (a test of the rail, the simulate script) there is
+     no disk to read and nothing is ours. */
+  ownDeposit?: (network: string) => Promise<readonly OwnDeposit[] | null>;
+  dataDir?: string;
   // Whether NEAR Intents is taking payouts to the chain right now (src/preflight/route-health.ts).
   // The registry wires the live one; absent, no route is called closed.
   routes?: RouteHealth;
@@ -264,30 +260,18 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       if (scan === null) return Promise.resolve(null);
       return payTarget(scan, address, { fetchImpl, state: createChainFetchState(), deadline: Date.now() + RULE_READ_MS }).catch(() => null);
     });
+  /* Local, never the network: until 0.11.5 this asked the POA bridge for our address on every
+     payout, and a bridge that did not answer refused every payout. The bridge is closing. */
+  const dataDir = deps.dataDir;
   const ownDepositRead =
     deps.ownDeposit ??
-    ((account: string, network: string) =>
-      Promise.race([
-        intentsDepositAddress(account, network, fetchImpl).then(
-          (d): OwnDeposit => ({ address: d.address, memo: d.memo }),
-          () => null,
-        ),
-        new Promise<null>((resolve) => setTimeout(() => resolve(null), RULE_READ_MS).unref()),
-      ]));
-  // The list never throws: an empty one is a bridge that did not answer, since it lists dozens.
-  let floorList: { at: number; rows: PoaToken[] } | null = null;
-  const floorRead =
-    deps.depositFloor ??
-    (async (network: string, asset: { assetId: string; native: boolean; contract: string | null }): Promise<DepositFloor | null> => {
-      if (floorList === null || now() - floorList.at > FLOOR_LIST_TTL_MS) {
-        const rows = await Promise.race([
-          poaSupportedTokens(fetchImpl),
-          new Promise<PoaToken[]>((resolve) => setTimeout(() => resolve([]), RULE_READ_MS).unref()),
-        ]);
-        if (rows.length === 0) return null;
-        floorList = { at: now(), rows };
+    (async (network: string): Promise<readonly OwnDeposit[] | null> => {
+      if (dataDir === undefined) return [];
+      try {
+        return ownDepositsOn(dataDir, network);
+      } catch {
+        return null;
       }
-      return depositFloorOf(floorList.rows, network, asset);
     });
 
   type Plan = {
@@ -410,15 +394,12 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
      before the dry quote and again before the live one: an account can set RequireDestTag, or
      be created, between the card and the click. `activity` is what the chain reader said about
      the receiver, at propose time for the dry quote and fresh for the live one. */
-  async function chainRules(draft: IntentsPayDraft, p: Plan, owner: string, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[]; own: boolean }> {
-    const [target, own, floor] = await Promise.all([
+  async function chainRules(draft: IntentsPayDraft, p: Plan, activity: AddressActivity | null): Promise<{ problems: string[]; notes: PayNote[] }> {
+    const [target, own] = await Promise.all([
       needsTarget(draft.network) ? targetRead(draft.network, p.to) : Promise.resolve(undefined),
-      readsOwnDeposit(draft.network) ? ownDepositRead(owner, ownDepositChain(draft.network)) : Promise.resolve(undefined),
-      readsOwnDeposit(draft.network)
-        ? floorRead(draft.network, { assetId: p.destinationAsset, native: p.native, contract: p.issuer }).catch(() => null)
-        : Promise.resolve(undefined),
+      readsOwnDeposit(draft.network) ? ownDepositRead(draft.network).catch(() => null) : Promise.resolve(undefined),
     ]);
-    const checked = payChecks({
+    return payChecks({
       network: draft.network,
       symbol: draft.symbol.toUpperCase(),
       native: p.native,
@@ -430,9 +411,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
       activity,
       target,
       own,
-      floor,
     });
-    return { ...checked, own: paysOwnDeposit({ network: draft.network, to: p.to, own }) };
   }
 
   function units(value: bigint, decimals: number): string {
@@ -569,13 +548,6 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     return routeGate(deps.routes, { network: draft.network, direction: 'out', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'payout', 'agent');
   }
 
-  /* A payout to our own deposit address lands as a deposit, so the deposit route into the chain
-     is the one that decides whether it comes back: TON deposits were paused on 2026-09-27 while
-     payouts to TON were not, and that payout would have sat at the bridge. */
-  function ownRouteCheck(draft: IntentsPayDraft, owner: string, maxAgeMs?: number): ReturnType<typeof routeGate> {
-    return routeGate(deps.routes, { network: draft.network, direction: 'in', account: owner, ...(maxAgeMs === undefined ? {} : { maxAgeMs }) }, 'own_deposit', 'agent');
-  }
-
   function valueUsd(draft: IntentsPayDraft): number {
     return Number.isFinite(draft.amountUsd) ? draft.amountUsd : Infinity;
   }
@@ -592,13 +564,11 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     }
     const route = await routeCheck(draft, owner);
     if (route.closed !== null) return { ok: false, summary: route.closed, error: route.closed, reason: 'route_closed' };
-    const rules = await chainRules(draft, p, owner, draft.recipient.activity);
+    const rules = await chainRules(draft, p, draft.recipient.activity);
     if (rules.problems.length > 0) {
       const joined = rules.problems.join('; ');
       return { ok: false, summary: `intents pay simulation failed: ${joined}`, error: joined };
     }
-    const inRoute = rules.own ? await ownRouteCheck(draft, owner) : { closed: null, notice: null };
-    if (inRoute.closed !== null) return { ok: false, summary: inRoute.closed, error: inRoute.closed, reason: 'route_closed' };
     try {
       const response = await api.quote({
         dry: true,
@@ -611,7 +581,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
         ...(p.slippageBps === undefined ? {} : { slippageToleranceBps: p.slippageBps }),
       });
       // A route NEAR Intents reports trouble on goes ahead, and says so first.
-      const lines = [...[route.notice, inRoute.notice].filter((n): n is string => n !== null), ...priceLines(draft, p, response.quote)];
+      const lines = [...(route.notice === null ? [] : [route.notice]), ...priceLines(draft, p, response.quote)];
       const send = sendFacts(draft, p, response.quote, rules.notes);
       lines.push(send.activity);
       for (const note of rules.notes) lines.push(note.text);
@@ -664,12 +634,8 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
     // The chain's rules again, on reads taken now, before the live quote: the card may have
     // waited minutes for its click. A rule that fails here throws, like every refusal before the
     // signature.
-    const rules = await chainRules(draft, p, owner, before);
+    const rules = await chainRules(draft, p, before);
     if (rules.problems.length > 0) throw new Error(rules.problems.join('; '));
-    if (rules.own) {
-      const inRoute = await ownRouteCheck(draft, owner, EXECUTE_MAX_AGE_MS);
-      if (inRoute.closed !== null) return { ok: false, detail: inRoute.closed, reason: 'route_closed' };
-    }
 
     // The four shared steps: live quote, echo check, generated intent checked and signed,
     // submitted and watched. Every refusal before the signature throws out of here; after it
@@ -689,8 +655,7 @@ export function intentsPayRail(deps: IntentsPayRailDeps): IntentsPayRail {
           maxDeadlineMs,
           quoteKey: deps.quoteKey,
           ...(preflight === undefined ? {} : { preflight: (quote, port) => preflight.run('intents_pay', draft, quote, port) }),
-          beforeSign: async () =>
-            (await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed ?? (rules.own ? (await ownRouteCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed : null),
+          beforeSign: async () => (await routeCheck(draft, owner, EXECUTE_MAX_AGE_MS)).closed,
         },
         {
           owner,
