@@ -218,7 +218,8 @@ function build(options: { command?: string; driverData?: Record<string, unknown>
     },
     PhosphorApi: {
       driver: (body: { action: string; text?: string }) => {
-        actions.push(body.action);
+        // The composer picker reads the agent list on its own; the tests count what a press sends.
+        if (body.action !== 'agent-scan') actions.push(body.action);
         if (body.action === 'prompt') {
           sends.push(String(body.text));
           return new Promise<void>((_, rej) => {

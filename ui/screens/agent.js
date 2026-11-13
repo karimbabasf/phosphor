@@ -574,7 +574,14 @@
     send.title = 'Send';
     send.appendChild(icon('send', 'composer-send-glyph'));
     send.appendChild(icon('stop', 'composer-stop-glyph'));
+    /* The assistant picker beside the send key: every agent on this Mac that runs in this
+       window and is signed in. A pick mid-chat hands the conversation over (doSwitch). */
+    var agentPick = dom.el('select', 'composer-agent');
+    agentPick.setAttribute('aria-label', 'Assistant');
+    agentPick.title = 'Choose the assistant. It keeps the conversation.';
+    agentPick.hidden = true;
     field.appendChild(input);
+    field.appendChild(agentPick);
     field.appendChild(send);
     composer.appendChild(field);
     /* WHEN A CODE WAS KEPT OUT. One quiet line over the box: why the invite code that was in
@@ -601,6 +608,7 @@
       startBig: startBig,
       stopAgent: stopAgent,
       switchAgent: switchAgent,
+      agentPick: agentPick,
       connect: connectBtn,
       note: note,
       noteMark: noteMark,
@@ -638,6 +646,9 @@
     dom.on(retry, 'click', function () { doStart(node, retry); });
     dom.on(stopAgent, 'click', function () { doStop('stop', node); });
     dom.on(switchAgent, 'click', function () { doSwitch(node); });
+    dom.on(agentPick, 'change', function () { pickFromComposer(node); });
+    dom.on(agentPick, 'mousedown', function () { loadReadyAgents(node); });
+    loadReadyAgents(node);
     dom.on(copy, 'click', function () { copyLine(node); });
     dom.on(connectBtn, 'click', function () { setView('connect'); });
     dom.on(back, 'click', function () { setView('card'); });
@@ -889,10 +900,10 @@
     return Object.prototype.hasOwnProperty.call(OTHER_VENDOR, id) ? OTHER_VENDOR[id] : null;
   }
 
-  function doSwitch(node) {
-    var to = otherVendor();
+  function doSwitch(node, target) {
+    var to = target || otherVendor();
     if (!to) return;
-    var btn = node.refs.switchAgent;
+    var btn = target ? node.refs.agentPick : node.refs.switchAgent;
     window.PhosphorShell.setPending(btn, true);
     api.driver({ action: 'switch', chat: chatId || '', agent: to.id })
       .then(function (result) {
@@ -911,6 +922,59 @@
       .finally(function () {
         window.PhosphorShell.setPending(btn, false);
       });
+  }
+
+  /* The agents the composer picker offers: in this window, installed and signed in. */
+  var readyAgents = [];
+
+  function loadReadyAgents(node) {
+    api.driver({ action: 'agent-scan' }).then(function (result) {
+      var data = (result && result.data) || result || {};
+      var list = Array.isArray(data.agents) ? data.agents : [];
+      readyAgents = list.filter(function (a) {
+        return a && a.inApp === true && a.state === 'installed_and_logged_in';
+      }).map(function (a) { return { id: String(a.agent), name: String(a.name || a.agent) }; });
+      paintAgentPick(node);
+    }).catch(function () {});
+  }
+
+  function paintAgentPick(node) {
+    var sel = node.refs.agentPick;
+    if (!sel) return;
+    var current = pick && typeof pick.id === 'string' ? pick.id : '';
+    var options = readyAgents.slice();
+    if (current && !options.some(function (a) { return a.id === current; })) {
+      options.unshift({ id: current, name: String(pick.name || current) });
+    }
+    while (sel.firstChild) sel.removeChild(sel.firstChild);
+    options.forEach(function (a) {
+      var opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = a.name;
+      sel.appendChild(opt);
+    });
+    sel.value = current;
+    sel.disabled = !!turn;
+    dom.setHidden(sel, options.length < 2);
+  }
+
+  function pickFromComposer(node) {
+    var sel = node.refs.agentPick;
+    var id = sel.value;
+    var current = pick && typeof pick.id === 'string' ? pick.id : '';
+    if (!id || id === current) return;
+    var name = (readyAgents.filter(function (a) { return a.id === id; })[0] || {}).name || id;
+    if (phase === 'connected') {
+      doSwitch(node, { id: id, name: name });
+      return;
+    }
+    api.driver({ action: 'agent-pick', agent: id }).then(function (result) {
+      var data = (result && result.data) || result || {};
+      if (data.ok === false) window.PhosphorToast.show(String(data.sentence || 'That assistant could not be picked.'), 'down');
+      if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('phosphor:agent'));
+    }).catch(function (err) {
+      window.PhosphorToast.show(net.readable(err), 'down');
+    });
   }
 
   function quitAssistant(node) {
@@ -1315,7 +1379,9 @@
     dom.setHidden(refs.stopAgent, !canTalk());
     /* Between answers only: a switch mid-answer would cut the answer it is waiting for. */
     var other = otherVendor();
-    dom.setHidden(refs.switchAgent, empty || !other || phase !== 'connected' || !!turn);
+    /* The head key gave way to the composer picker (Karim, 2026-11-13). */
+    dom.setHidden(refs.switchAgent, true);
+    paintAgentPick(node);
     if (other) {
       dom.setText(refs.switchAgent.querySelector('.btn-label') || refs.switchAgent, 'Switch to ' + other.name);
       refs.switchAgent.title = 'Hand this chat to ' + other.name + '. It keeps the conversation.';
