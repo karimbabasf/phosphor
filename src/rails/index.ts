@@ -169,6 +169,8 @@ export function createRails(deps: RailDeps): RailRegistry {
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
     client,
+    // Other money on its way to the coin a swap buys, so NEAR's word settles only a rise that is its own.
+    proposals: deps.proposals,
   }) as Rail;
   const defaultSwap = swapRailOf(deps.cfg) === 'relay' ? relaySwap : oneClickSwap;
   const swapFor = (draft: WriteDraft): Rail => {

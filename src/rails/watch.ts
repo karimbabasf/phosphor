@@ -24,20 +24,31 @@ export type PollPlan = {
   timeoutMs: number; // the whole window
   sleep: (ms: number) => Promise<void>;
   now: () => number;
+  /* With `between` (pollUntil), a wait is slept in pieces of at most this, and `between` is asked
+     after each piece. A proof the rail reads on its own clock (ranProof) then ends the watch within
+     a piece of its answer, not at the next venue read, which is up to `everyMs` away. */
+  betweenMs?: number;
 };
 
 /* Runs `step` until it says done or the window is spent. `step` reads once and answers whether
    that read ends the watch; it must not throw (a read that fails is its caller's to record).
-   Returns how long it waited in all. */
-export async function pollUntil(plan: PollPlan, step: () => Promise<boolean>): Promise<number> {
+   `between`, asked between the pieces of a wait (PollPlan.betweenMs), ends the watch the same way
+   and must not throw either. Returns how long it waited in all. */
+export async function pollUntil(plan: PollPlan, step: () => Promise<boolean>, between?: () => Promise<boolean>): Promise<number> {
   const deadline = plan.now() + plan.timeoutMs;
+  const piece = between === undefined || plan.betweenMs === undefined ? Infinity : Math.max(1, plan.betweenMs);
   let waited = 0;
   for (let attempt = 0; ; attempt += 1) {
     if (await step()) return waited;
     const wait = Math.min(plan.everyMs, plan.firstMs * 2 ** attempt);
     if (plan.now() + wait >= deadline || waited + wait >= plan.timeoutMs) return waited;
-    await plan.sleep(wait);
-    waited += wait;
+    for (let left = wait; left > 0; ) {
+      const ms = Math.min(piece, left);
+      await plan.sleep(ms);
+      waited += ms;
+      left -= ms;
+      if (left > 0 && between !== undefined && (await between())) return waited;
+    }
   }
 }
 
@@ -88,13 +99,16 @@ export function ranProof(o: {
    become a thrown "nothing happened". Every read tells the executor 1Click's own word for the
    stage, so the card moves as the order does. `over` is asked after a read that is not terminal
    and ends the watch when it says so: the rail's own proof that the move can no longer happen
-   (the intents-native swap's signed transfer past its deadline). One that throws says no. */
+   (the intents-native swap's signed transfer past its deadline). `between` is asked between the
+   pieces of a wait (PollPlan.betweenMs) and ends it the same way: NEAR's word that the move ran,
+   which must not wait for the next 1Click read. One that throws says no. */
 export async function watchOneClick(
   plan: PollPlan,
   status: (handle: string) => Promise<OneClickStatus>,
   handle: string,
   hooks?: RailHooks,
   over?: () => Promise<boolean>,
+  between?: () => Promise<boolean>,
 ): Promise<OneClickStatus> {
   let last: OneClickStatus = {
     found: false,
@@ -104,15 +118,20 @@ export async function watchOneClick(
     destinationTxHashes: [],
     nearTxHashes: [],
   };
-  await pollUntil(plan, async () => {
-    try {
-      last = await status(handle);
-      tell(hooks, { providerStage: last.status });
-      if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return true;
-    } catch (err) {
-      last = { ...last, reported: `status check failed: ${oneLine(err instanceof Error ? err.message : String(err), 80)}` };
-    }
-    return over === undefined ? false : over().catch(() => false);
-  });
+  const asked = over === undefined ? undefined : () => over().catch(() => false);
+  await pollUntil(
+    plan,
+    async () => {
+      try {
+        last = await status(handle);
+        tell(hooks, { providerStage: last.status });
+        if ((ONECLICK_TERMINAL as readonly string[]).includes(last.status)) return true;
+      } catch (err) {
+        last = { ...last, reported: `status check failed: ${oneLine(err instanceof Error ? err.message : String(err), 80)}` };
+      }
+      return asked === undefined ? false : asked();
+    },
+    between === undefined ? undefined : () => between().catch(() => false),
+  );
   return last;
 }
