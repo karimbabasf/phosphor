@@ -97,6 +97,9 @@ test('the panel builds no control that decides anything', () => {
     "dom.el('button', 'steps-fold');",
     // "Waiting for your OK": it scrolls to the card that asks, and decides nothing.
     "dom.el('button', 'agent-waiting');",
+    // The assistant picker's key in the composer (2026-11-13): it opens the list of agents, and a
+    // pick hands the chat over like Switch did. It decides which process answers, never money.
+    "dom.el('button', 'composer-agent');",
   ];
   for (const site of sites) assert.ok(known.includes(site.trim()), `an unknown button site: ${site.trim()}`);
   assert.equal(/\bapprove\b|\brefuse\b/i.test(SOURCE), false, 'the panel names an approval route');
