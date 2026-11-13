@@ -702,14 +702,42 @@ ol.chat-list li::marker {
   color: var(--text-2);
 }
 
-/* The vendor switch: one quiet line in the thread, not a message from anybody. */
+/* The vendor switch: one quiet line in the thread, not a message from anybody. It reads as
+   a seam between two stretches of one conversation: the sentence in the meta ink, centred,
+   with a hairline to either side that fades out toward the edges. On arrival the row comes
+   in like every row (row-in), and the two lines draw outward from the words over the open
+   spring, so the eye sees one thing happen once. */
 .chat-handoff {
-  align-self: center;
-  margin: 2px 0;
+  display: flex;
+  align-items: center;
+  gap: var(--s-3);
+  align-self: stretch;
+  margin: var(--s-2) 0;
   font-size: var(--fs-12);
   line-height: 1.5;
   color: var(--text-3);
   text-align: center;
+  text-wrap: balance;
+}
+
+.chat-handoff::before,
+.chat-handoff::after {
+  content: "";
+  flex: 1 1 0;
+  min-width: var(--s-5);
+  height: 1px;
+  background: linear-gradient(to left, var(--line-strong), transparent);
+  transform-origin: right center;
+  animation: handoff-draw var(--dur-spring) var(--ease-out) 80ms both;
+}
+
+.chat-handoff::after {
+  background: linear-gradient(to right, var(--line-strong), transparent);
+  transform-origin: left center;
+}
+
+@keyframes handoff-draw {
+  from { transform: scaleX(0); opacity: 0; }
 }
 
 /* A line from the child's own stderr: kept, in mono and the third tone. */
@@ -1215,6 +1243,8 @@ ol.chat-list li::marker {
 
 @media (prefers-reduced-motion: reduce) {
   .transcript-rows > *,
+  .chat-handoff::before,
+  .chat-handoff::after,
   .suggest,
   .agent-connect,
   .agent-waiting {
@@ -1230,30 +1260,115 @@ ol.chat-list li::marker {
   }
 
   .composer-send:active:not(:disabled) { transform: none; }
+
+  .composer-agent,
+  .composer-agent-chev,
+  .composer-agent-option {
+    transition: none;
+  }
+
+  .composer-agent:active:not(:disabled) { transform: none; }
 }
 
-/* The assistant picker beside the send key: a quiet word with a caret, no box around it. */
-.composer-agent {
+/* ---------- the assistant picker ----------
+
+   Where a composer keeps its model chooser: inside the box, between the words and the send
+   key, so the read goes field, assistant, send. A quiet key with no box around it until the
+   pointer is on it: the agent's own mark, its name in the secondary ink, and a caret. Its
+   list is the app's .pop (trade.css) grown up out of the key's right corner on the soft
+   spring, since the box sits on the window's foot and there is no room under it. */
+.composer-agent-wrap {
+  position: relative;
   flex: 0 0 auto;
   align-self: center;
-  max-width: 11em;
-  height: 32px;
-  padding: 0 22px 0 10px;
-  border: 0;
-  border-radius: var(--radius-sm, 8px);
-  background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%23a39b92' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 8px center;
-  color: var(--text-2);
-  font: inherit;
-  font-size: var(--fs-13, 13px);
-  appearance: none;
-  -webkit-appearance: none;
-  cursor: pointer;
-  transition: color var(--dur-press) var(--ease-out), background-color var(--dur-press) var(--ease-out);
+  min-width: 0;
 }
 
-.composer-agent:hover:not(:disabled) {
+.composer-agent-wrap[hidden] {
+  display: none;
+}
+
+.composer-agent {
+  display: inline-flex;
+  align-items: center;
+  max-width: 13em;
+  height: 32px;
+  padding: 0 8px 0 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: var(--fs-13);
+  font-weight: 500;
+  cursor: pointer;
+  transition: color var(--dur-press) var(--ease-out),
+              background-color var(--dur-press) var(--ease-out),
+              transform var(--dur-release) var(--ease-spring);
+}
+
+.composer-agent-face {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.composer-agent-mark {
+  display: grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+}
+
+.composer-agent-mark:empty {
+  display: none;
+}
+
+.composer-agent-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.composer-agent-chev {
+  flex: 0 0 auto;
+  width: 13px;
+  height: 13px;
+  margin-left: -1px;
+  color: var(--text-3);
+  transition: transform var(--dur-press) var(--ease-out), color var(--dur-press) var(--ease-out);
+}
+
+/* Open, the caret turns to point at the list it opened, and the key keeps its hover fill so
+   the eye can tell which control the list belongs to. */
+.composer-agent[aria-expanded="true"] {
   color: var(--text);
   background-color: var(--bg-3);
+}
+
+.composer-agent[aria-expanded="true"] .composer-agent-chev {
+  transform: rotate(180deg);
+  color: var(--text-2);
+}
+
+.composer-agent:active:not(:disabled) {
+  transform: scale(var(--scale-press));
+  transition-duration: 100ms;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .composer-agent:hover:not(:disabled) {
+    color: var(--text);
+    background-color: color-mix(in srgb, var(--bg-3), transparent 30%);
+  }
+
+  .composer-agent:hover:not(:disabled) .composer-agent-chev {
+    color: var(--text-2);
+  }
 }
 
 .composer-agent:focus-visible {
@@ -1261,7 +1376,98 @@ ol.chat-list li::marker {
   outline-offset: 1px;
 }
 
-.composer-agent:disabled {
+/* Mid-answer the key rests: its words go to the third ink and the mark stays, so it still
+   says who is answering. */
+.composer-agent:disabled:not([data-pending="true"]) {
   color: var(--text-3);
   cursor: default;
+}
+
+.composer-agent:disabled:not([data-pending="true"]) .composer-agent-chev {
+  opacity: 0.6;
+}
+
+/* A hand-over in flight: the spinner alone, in the key's own box, so nothing beside it moves. */
+.composer-agent .btn-pending-label {
+  display: none;
+}
+
+/* The list: the .pop sheet, anchored to the key's right edge and opening upward. */
+.composer-agent-menu.pop {
+  left: auto;
+  right: 0;
+  min-width: 216px;
+  max-height: min(48vh, 360px);
+  padding: 6px;
+  border-radius: var(--radius-card);
+  transform-origin: bottom right;
+}
+
+.composer-agent-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 10px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: var(--fs-14);
+  font-weight: 500;
+  color: var(--text-2);
+  transition: background-color var(--dur-press) var(--ease-out),
+              color var(--dur-press) var(--ease-out);
+}
+
+.composer-agent-option .logo {
+  --logo: 20px;
+  flex: 0 0 auto;
+}
+
+.composer-agent-option-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Where the keyboard is and where the pointer is: the same paint. The one in use is in the
+   text ink with a check at its end, never in a colour. */
+.composer-agent-option[data-active="true"] {
+  background: color-mix(in srgb, var(--bg-3), transparent 30%);
+  color: var(--text);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .composer-agent-option:hover {
+    background: color-mix(in srgb, var(--bg-3), transparent 30%);
+    color: var(--text);
+  }
+}
+
+.composer-agent-option[aria-selected="true"] {
+  color: var(--text);
+}
+
+.composer-agent-check {
+  flex: 0 0 auto;
+  width: 15px;
+  height: 15px;
+  color: var(--text-2);
+}
+
+/* A narrow conversation keeps the words room to breathe: the key draws the mark alone. Its
+   aria-label still names the agent (agent.js paintAgentPick). */
+@container conversation (max-width: 440px) {
+  .composer-agent {
+    padding: 0 6px;
+  }
+
+  .composer-agent-mark:not(:empty) + .composer-agent-name {
+    display: none;
+  }
+
+  .composer-agent-face {
+    gap: 5px;
+  }
 }

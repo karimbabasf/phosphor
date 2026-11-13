@@ -782,10 +782,33 @@
   color: var(--warn);
 }
 
+/* The terms of this one address, read as one group under Copy: a tile on the card with the
+   faintest amber in its ground, because every line in it is a way to lose the money. In it
+   one rhythm and one size (13px), so the eye reads down a list and not a page. The deadline
+   line leads at 500 in the caution ink; the coin and the network lines keep the caution ink
+   at 400; the minimum and the network to pick are facts, in the text ink, their figure lit
+   one step. Order stays the markup's (netpick.js), so a screen reader hears what is seen. */
 .deposit-notes {
   display: flex;
   flex-direction: column;
-  gap: var(--s-2);
+  gap: 6px;
+  padding: var(--s-3) 14px;
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--warn) 5%, var(--bg-2));
+  box-shadow: var(--hi);
+}
+
+/* On the wide card (Pro, Vault) the tile runs the card's width; its lines keep a reading
+   measure and no word is left alone on the last line. */
+.deposit-notes > p {
+  max-width: 68ch;
+  text-wrap: pretty;
+}
+
+/* The copied line above keeps its height for the sentence that comes after a copy; the
+   group takes back one step of that, so an empty line does not read as a hole. */
+.deposit-body[data-state="shown"] > .deposit-notes {
+  margin-top: calc(var(--s-2) * -1);
 }
 
 .deposit-plain,
@@ -793,6 +816,12 @@
   font-size: var(--fs-13);
   line-height: 1.5;
   color: var(--text-2);
+}
+
+.deposit-min .num {
+  color: var(--text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 /* In the sentence the link keeps the small variant's height for a finger, and gives the line
@@ -806,7 +835,8 @@
 }
 
 .deposit-once {
-  font-size: var(--fs-14);
+  font-size: var(--fs-13);
+  font-weight: 500;
   line-height: 1.5;
   color: var(--warn);
 }
