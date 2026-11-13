@@ -2210,6 +2210,12 @@
 
     var slot = dom.el('div', 'tcard-deposit');
     body.appendChild(slot);
+    /* The watch's own sentence about the deposit (a refund, a short deposit), outside the slot
+       so it stays once the address has come down. Filled by followWatch. */
+    var told = dom.el('p', 'tcard-note');
+    told.dataset.role = 'deposit-note';
+    told.hidden = true;
+    body.appendChild(told);
 
     depositAddress(chain, symbol, print).then(function (found) {
       if (found.address) {
@@ -2252,7 +2258,7 @@
         refuseDeposit(slot, found, chain, symbol);
       }
     });
-    followWatch(parts, data, extra.at, slot);
+    followWatch(parts, data, extra.at, slot, told);
     return parts.card;
   }
 
@@ -2341,13 +2347,16 @@
     window.setTimeout(check, Math.min(Math.max(shown.deadline - Date.now(), 0), DEADLINE_CHECK_MS));
   }
 
-  function takeDownDeposit(slot) {
+  /* `used`: its watch saw money at it, so it says it has its one deposit rather than the deadline. */
+  function takeDownDeposit(slot, used) {
     var shown = slot.__shown;
     if (!shown) return;
     slot.__shown = null;
     dom.clear(slot);
     var pick = window.PhosphorNetPick;
-    var words = pick && typeof pick.expiredWords === 'function' ? pick.expiredWords(shown.deadlineIso) : 'This address stopped taking money.';
+    var words = used
+      ? (pick && typeof pick.usedWords === 'function' ? pick.usedWords() : 'This address already has its one deposit.')
+      : (pick && typeof pick.expiredWords === 'function' ? pick.expiredWords(shown.deadlineIso) : 'This address stopped taking money.');
     refuseDeposit(slot, { refused: words, open: true }, shown.chain, shown.symbol);
   }
 
@@ -2485,7 +2494,7 @@
      begun around when the card was. A card drawn again from a stored conversation is older than
      any watch running now, and says nothing. Until the first frame of its watch arrives, a new
      card says what the tool answered. */
-  function followWatch(parts, data, at, slot) {
+  function followWatch(parts, data, at, slot, told) {
     var word = parts.state;
     if (!word) return;
     var when = typeof at === 'number' ? at : Date.now();
@@ -2505,8 +2514,11 @@
         /* Its own watch saying it is over (expired, or no address or another one on the frame),
            or the local clock past the deadline, takes the address down. */
         var own = isObject(watch) && ((shown.startedAt && watch.startedAt === shown.startedAt) || watch.address === shown.address);
+        // Money seen at it: one deposit per address, so it comes down saying so.
+        var used = own && pick && typeof pick.seenAt === 'function' && pick.seenAt(watch);
         var over = own && (watch.phase === 'expired' || typeof watch.address !== 'string' || watch.address !== shown.address);
-        if (over || Date.now() >= shown.deadline) takeDownDeposit(slot);
+        if (used) takeDownDeposit(slot, true);
+        else if (over || Date.now() >= shown.deadline) takeDownDeposit(slot);
       }
       var started = isObject(watch) ? Date.parse(watch.startedAt) : NaN;
       var mine = isObject(watch) && watch.chain === chain && String(watch.symbol || '').toUpperCase() === symbol
@@ -2522,6 +2534,11 @@
       dom.setText(word, label);
       word.setAttribute('data-state', phase === 'credited' ? 'landed' : 'watching');
       dom.setHidden(word, !label);
+      if (told && (mine || !followed)) {
+        var said = mine && typeof watch.note === 'string' ? watch.note.trim() : '';
+        dom.setText(told, said);
+        dom.setHidden(told, said === '');
+      }
     }
     paint(null);
     var store = window.PhosphorState;

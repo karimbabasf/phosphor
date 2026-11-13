@@ -701,7 +701,7 @@ const NETPICK_RULES = (() => {
   createContext(sb);
   runInContext(read('../../ui/screens/netpick.js'), sb, { filename: 'ui/screens/netpick.js' });
   const p = sb.PhosphorNetPick;
-  return { undrawable: p.undrawable, deadlineOf: p.deadlineOf, oneTimeWords: p.oneTimeWords, expiredWords: p.expiredWords, coinOnlyWords: p.coinOnlyWords };
+  return { undrawable: p.undrawable, deadlineOf: p.deadlineOf, oneTimeWords: p.oneTimeWords, expiredWords: p.expiredWords, usedWords: p.usedWords, seenAt: p.seenAt, coinOnlyWords: p.coinOnlyWords };
 })();
 const DAY = 24 * 60 * 60 * 1000;
 function depositWatch(over: Any = {}): Any {
@@ -973,6 +973,26 @@ test('the deposit card refuses a watch that is not this card\'s, has no address,
     assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length, 0, `${label}: Copy or a QR`);
     assert.match(card.textContent, words, `${label}: ${card.textContent}`);
   }
+});
+
+/* One deposit per address, in the chat too: the card's own watch seeing money takes the address
+   down with the sentence that says it has its deposit, and the watch's note (a refund, a short
+   deposit) is drawn on the card, where it stays once the address is gone. */
+test('the chat deposit card takes its address down once its watch sees money, and draws the watch\'s note', async () => {
+  const NOTE = 'NEAR Intents did not convert this deposit and put it back in your balance instead.';
+  const watch = depositWatch();
+  const { world, card } = await depositCardFor(watch);
+  acknowledge(card);
+  await settle();
+  assert.equal(all(card, 'deposit-address').length, 1);
+  assert.equal(all(card, 'tcard-note').filter((n: Any) => n.textContent === NOTE).length, 0);
+  world.deposit({ ...watch, phase: 'seen', address: null, memo: null, note: NOTE });
+  assert.equal(all(card, 'deposit-address').length, 0, 'an address that has its deposit stayed up');
+  assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0);
+  assert.match(card.textContent, /This address already has its one deposit\. Open Add money again for a new address\./);
+  assert.doesNotMatch(card.textContent, /stopped taking money/);
+  const told = all(card, 'tcard-note').filter((n: Any) => n.textContent === NOTE && !n.hidden);
+  assert.equal(told.length, 1, 'the watch\'s note is not on the card');
 });
 
 test('the deposit card draws the watch\'s address with the one-deposit sentence, and takes it down at the deadline, on an expired frame, and for another coin picked on the tick', async () => {

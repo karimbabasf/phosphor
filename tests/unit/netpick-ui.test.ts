@@ -1129,6 +1129,32 @@ test('an expired frame, a frame with no address, and the local clock passing the
   assertExpired(timed, 'the deadline passed');
 });
 
+/* One deposit per address: an address on screen comes down the moment its own watch sees money at
+   it, with the sentence that says it has its deposit (not the deadline's), and the watcher line
+   carries the watch's own note (a refund, a short deposit) under what it says. */
+test('the address on screen comes down once its watch sees money, and the line shows the watch\'s note', async () => {
+  const NOTE = 'This deposit is under the minimum for this address, so NEAR Intents returns it to your balance instead.';
+  const world = build();
+  world.render({ stage: 'address', network: 'base' });
+  await acknowledge(world);
+  assert.equal(find(world.host, '.deposit-well').length, 1);
+  world.store.put(Object.assign({}, world.store.get(), { deposit: minted('base', 'USDC', { phase: 'seen', address: null, memo: null, note: NOTE, amount: 0.05 }) }));
+  assertNoAddress(world, 'money seen');
+  const body = find(world.host, '.deposit-body')[0];
+  assert.equal(body.dataset.state, 'refused');
+  assert.ok(textOf(body).includes('This address already has its one deposit. Open Add money again for a new address.'), textOf(body).join(' | '));
+  assert.ok(!textOf(body).some((t) => /stopped taking money/.test(t)), 'it is not called expired');
+  const notes = find(world.host, '.deposit-watch-note').filter((n: Any) => !n.hidden);
+  assert.deepEqual(notes.map((n: Any) => n.textContent), [NOTE], 'the note is on the line, once');
+  assert.equal(world.pick.usedWords(), 'This address already has its one deposit. Open Add money again for a new address.');
+
+  // A watch still waiting carries no note, and the line shows none.
+  const quiet = build();
+  quiet.render({ stage: 'address', network: 'base' });
+  await acknowledge(quiet);
+  assert.equal(find(quiet.host, '.deposit-watch-note').filter((n: Any) => !n.hidden).length, 0);
+});
+
 test('a minted address already past its deadline, without one, or with money already seen is never drawn', async () => {
   const late = build({ mint: () => ({ deadline: new Date(Date.now() - 1000).toISOString() }) });
   late.render({ stage: 'address', network: 'base' });
