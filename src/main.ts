@@ -35,6 +35,7 @@ import { demoStallSweep } from './rails/demo.ts';
 import { usdcCreditedSince, usdcCreditsSince } from './rails/hl-user-signed.ts';
 import { hlCreditReader } from './rails/hypercore-deposit.ts';
 import { createLedger, intentsAccountId, REFRESH_PERIOD_MS } from './ledger/index.ts';
+import { refreshSeam } from './ledger/refresh-seam.ts';
 import { createDayFeed, DAY_REFRESH_MS } from './ledger/day.ts';
 import { createCoinPictures, pictureDir } from './ledger/pictures.ts';
 import { createLivePrices } from './ledger/live-prices.ts';
@@ -1075,37 +1076,11 @@ server.listen(cfg.port, '127.0.0.1', () => {
 // The period lives with the ledger, because the wallet report's idea of "too old" is two of it.
 const REFRESH_IDLE_MS = REFRESH_PERIOD_MS;
 
-// Two refreshes at once would be two sets of RPC calls racing to write the same snapshot,
-// and the loser's answer is the older one. A caller arriving mid-flight joins the read
-// already running instead of starting a second. This is THE seam: the deposit watch gets it
-// through createServer (refreshLedger) rather than refreshing the ledger on its own, which
-// is how a 3 s watch loop and this 15 s loop used to race each other into a flashing warning.
-let refreshing: Promise<void> | null = null;
-
-/* THE GUARD IS ARMED BEFORE THE READ, not after it. `refreshing = ledger.refresh()...` assigns
-   only once refresh() has returned, and a refresh is not always asynchronous: demo mode tells
-   its listeners inside the call. One of those listeners settles a proposal, settling writes an
-   audit line, and the subscriber below turns an `executed` line back into a refresh, which
-   arrived here while `refreshing` was still null and started another pass. 820 settles of one
-   deposit in 103 ms, and the app answered nothing for thirteen seconds at the moment the money
-   landed. */
+// THE seam (src/ledger/refresh-seam.ts): the deposit watch gets it through createServer
+// (refreshLedger) rather than refreshing the ledger on its own, and a caller mid-flight joins.
+const ledgerReads = refreshSeam(() => ledger.refresh(), () => server.broadcastState());
 function refreshNow(): Promise<void> {
-  if (refreshing !== null) return refreshing;
-  let finished: () => void = () => {};
-  refreshing = new Promise<void>(resolve => {
-    finished = resolve;
-  });
-  void ledger
-    .refresh()
-    .then(() => {
-      server.broadcastState();
-    })
-    .catch(() => undefined)
-    .finally(() => {
-      refreshing = null;
-      finished();
-    });
-  return refreshing;
+  return ledgerReads.now();
 }
 
 /* Every ledger write: the live prices follow what is held, and a write between passes (1Click's
@@ -1113,7 +1088,16 @@ function refreshNow(): Promise<void> {
    lands, above, so one inside a pass is not told twice. */
 ledger.onRefresh?.(() => {
   livePrices?.track(liveCoins(ledger.intents()));
-  if (refreshing === null) server.broadcastState();
+  if (!ledgerReads.busy()) server.broadcastState();
+});
+
+/* READ AGAIN AT THE UNLOCK. Once the vault has moved to the chip, the allowance is named only by an
+   open wallet (src/vault/accounts.ts), so every pass before Touch ID read the vault alone. The
+   allowance holds most of the money, and the window un-frosted on the vault's share while the rest
+   waited for the poll: 12.3 s after the unlock on the measured run (2026-11-13). again(), not now():
+   a pass in flight may have named its accounts before the unlock. */
+keystore.onChange((state) => {
+  if (state === 'unlocked') void ledgerReads.again();
 });
 // A held coin's mid moved: at most once a second (src/ledger/live-prices.ts PUSH_MS).
 livePrices?.onChange(() => server.broadcastState());
