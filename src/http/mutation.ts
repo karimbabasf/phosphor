@@ -34,6 +34,7 @@ import { AXIS_CEILING_USD } from '../policy/engine.ts';
 import { mergePatch, money } from '../proposals/lifecycle.ts';
 import { looksLikeInviteCode } from '../invite/code.ts';
 import { recordPersonText } from '../web-gate.ts';
+import { vendorFor } from '../providers/index.ts';
 
 /* ---------- the agent connection ---------- */
 
@@ -490,6 +491,28 @@ export async function handleMutation(
       instance.start();
       ctx.sse.broadcastState();
       return sendJson(res, 200, { ok: true, dropped: null, id: chat.id, ...instance.status() });
+    }
+
+    /* THE SWITCH IN THE CHAT'S HEAD: another vendor takes this conversation over and carries it
+       on (src/http/chats.ts handoff). Unlike the Vault's pick it may run while an agent is on,
+       because it never drops the conversation: the new agent is told it. The vendor is checked
+       first, the same probe the picker runs, so an agent that is not here or not signed in is
+       refused with its own sentence and the one running keeps going. Then the pick is written,
+       so the Vault and the next chat say the same vendor this one now runs. */
+    if (action === 'switch') {
+      const agent = agentById(body.agent)?.id ?? null;
+      if (agent === null) return fail(res, 400, `no agent named ${String(body.agent)}`);
+      const to = vendorFor(agent);
+      if (!to.inApp) return sendJson(res, 200, { ok: false, refused: 'elsewhere', sentence: to.reason });
+      const check = await checkFor(ctx, agent);
+      if (check.state === 'not_installed' || check.state === 'installed_not_logged_in') {
+        return sendJson(res, 200, { ok: false, refused: check.state, sentence: check.sentence });
+      }
+      const handed = ctx.chats.handoff(chat, to);
+      if (!handed.ok) return sendJson(res, 200, { ok: false, refused: 'busy', sentence: handed.error });
+      writePick(dataDirOf(ctx), agent);
+      ctx.sse.broadcastState();
+      return sendJson(res, 200, { ok: true, id: chat.id, agent: to, ...chat.driver.status() });
     }
 
     if (action === 'close') {

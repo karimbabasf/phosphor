@@ -25,6 +25,7 @@ import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
+import type { ChatVendor } from '../providers/index.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SnapshotBroker } from '../snapshot.ts';
@@ -366,6 +367,8 @@ export type ChatRegistry = {
   start(how: 'human' | 'app'): string | null;
   open(): { ok: true; chat: Chat } | { ok: false; error: string };
   close(chat: Chat): void;
+  // The person switched this chat's vendor; the new one carries the conversation on.
+  handoff(chat: Chat, to: ChatVendor): { ok: true } | { ok: false; error: string };
   payload(): Record<string, unknown>;
   stopAll(): void;
 };

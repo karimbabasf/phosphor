@@ -85,6 +85,9 @@ export type DriverEvent =
   | { kind: 'tool_data'; name: string; input: unknown; data: unknown }
   | { kind: 'turn_end'; error: boolean; turns: number }
   | { kind: 'error'; message: string }
+  /* Added by the window's chats, never by a driver: the person switched this chat's vendor and
+     `to` took the conversation over (src/handoff.ts). The window draws it as one quiet line. */
+  | { kind: 'handoff'; from: string; to: string }
   // A line for the developer's log, never the window (src/http/chats.ts routes it to the audit).
   | { kind: 'debug'; message: string };
 
@@ -139,7 +142,7 @@ function resultText(content: unknown): string | null {
   return null;
 }
 
-function scrub(value: unknown): unknown {
+export function scrub(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(scrub);
   if (value !== null && typeof value === 'object') {
     const out: Record<string, unknown> = {};
@@ -1003,7 +1006,10 @@ export function createDriver(opts: DriverOptions) {
     spawnChild(spec);
   }
 
-  function start(): void {
+  /* `carry` is a handoff (src/http/chats.ts): the new session is told the old one's conversation,
+     so whatever the old one read from outside comes with it. Its web-read mark, its page budget
+     and its seal are kept, never cleared, so the switch loosens nothing (src/web-read.ts). */
+  function start(how: { carry?: boolean } = {}): void {
     if (child) return;
     if (provider.transport === 'turn' && (state === 'ready' || state === 'thinking')) return;
     stopping = false;
@@ -1038,9 +1044,11 @@ export function createDriver(opts: DriverOptions) {
     seat = sessionId;
     session = seat;
     // A new agent session holds no page and no search result: its context starts empty
-    // (src/web-read.ts, src/web-gate.ts).
-    clearWebRead(seat);
-    clearWebGate(seat);
+    // (src/web-read.ts, src/web-gate.ts). A handed-over one does not, so it keeps the marks.
+    if (how.carry !== true) {
+      clearWebRead(seat);
+      clearWebGate(seat);
+    }
     resumable = false;
     answered = false;
     owed = 0;

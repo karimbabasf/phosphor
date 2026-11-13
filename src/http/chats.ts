@@ -13,6 +13,7 @@ import type { AgentPresence } from '../agents.ts';
 import { readPick } from '../agents-catalog.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import { createDriver } from '../driver.ts';
+import { buildCapsule } from '../handoff.ts';
 import { providerById, unavailable, vendorFor } from '../providers/index.ts';
 import type { ChatVendor } from '../providers/index.ts';
 import { buildRole, customPersona } from '../role.ts';
@@ -50,7 +51,7 @@ export function createChatRegistry(deps: {
   sse: SseHub;
   /* Injected only so a test can drive the start paths without a real Claude Code process
      appearing on the machine. See the note on ServerDeps.makeDriver. */
-  makeDriver?: () => Driver;
+  makeDriver?: (vendor: ChatVendor) => Driver;
   /* Told every time a chat's driver reports ready, which is the one moment an app-authored
      turn may go down without cutting into an answer. The ending notice (ended.ts) waits on it. */
   onIdle?: (chat: Chat) => void;
@@ -102,6 +103,9 @@ export function createChatRegistry(deps: {
   const chats = new Map<string, Chat>();
   // Which vendor each chat's driver runs, kept beside the chat because a driver is built for one.
   const vendors = new Map<string, ChatVendor>();
+  // Drivers a handoff replaced. What one still reports while it goes (its own stopped frame, a
+  // late exit) belongs to no chat any more, so it is dropped rather than drawn.
+  const retired = new WeakSet<Driver>();
   let chatSeq = 0;
 
   // The vendor the person picked, read at the moment a chat is built or started.
@@ -145,9 +149,10 @@ export function createChatRegistry(deps: {
      2026-09-23: Grok picked, eleven Claude sessions started). A pick the chat cannot run gets a
      driver whose every start fails with that pick's own sentence, never Claude in its place. */
   function buildDriver(chat: Chat, vendor: ChatVendor): Driver {
-    if (makeDriver) return makeDriver();
+    if (makeDriver) return makeDriver(vendor);
     const provider = providerById(vendor.id);
-    return createDriver({
+    let built: Driver | null = null;
+    built = createDriver({
       repo: PROJECT_DIR,
       port: cfg.port,
       provider: provider ?? unavailable(vendor),
@@ -179,8 +184,12 @@ export function createChatRegistry(deps: {
           ? buildRole({ root: PROJECT_DIR, view: getView(), profile: loadProfile(cfg.dataDir), agent: vendor.name, webSearch: vendor.id === 'claude' })
           : customPersona(cfg.driver.systemPrompt),
       prints,
-      onEvent: (event) => driverEvent(chat, event),
+      onEvent: (event) => {
+        if (built !== null && retired.has(built)) return;
+        driverEvent(chat, event);
+      },
     });
+    return built;
   }
 
   function makeChat(): Chat {
@@ -280,6 +289,39 @@ export function createChatRegistry(deps: {
     return { ok: true, chat };
   }
 
+  /* THE SWITCH INSIDE AN OPEN CHAT: the person picked another vendor for the conversation they
+     are standing in, and the new one carries on from where the old one was. The old driver is
+     stopped and a new one built for `to` on the same seat, so the cards this chat asked for stay
+     its own; the window's transcript stays as it is; and the new session hears the capsule
+     (src/handoff.ts) in front of the person's next message. Its start runs every check a start
+     always runs (resolveBin, the lockdown file, the login, the surface read back on init), and
+     it keeps the old session's web-read mark, because the capsule is the old session's words. */
+  function handoffChat(chat: Chat, to: ChatVendor): { ok: true } | { ok: false; error: string } {
+    const from = vendors.get(chat.id) ?? picked();
+    if (!to.inApp || providerById(to.id) === null) return { ok: false, error: to.reason ?? `${to.name} cannot run in this chat.` };
+    if (from.id === to.id) return { ok: false, error: `This chat already runs ${to.name}.` };
+    if (chat.driver.status().state === 'thinking') {
+      return { ok: false, error: `${from.name} is still answering. Stop the answer or let it finish, then switch.` };
+    }
+    const capsule = buildCapsule(chat.transcript, { from: from.name, to: to.name });
+    const old = chat.driver;
+    retired.add(old);
+    old.stop();
+    chat.driver = buildDriver(chat, to);
+    vendors.set(chat.id, to);
+    audit.append('app_start', `the human handed ${chat.label} from ${from.name} to ${to.name}`, {
+      chat: chat.id,
+      from: from.id,
+      to: to.id,
+      carried: capsule?.length ?? 0,
+    });
+    driverEvent(chat, { kind: 'handoff', from: from.name, to: to.name });
+    chat.driver.start({ carry: true });
+    if (capsule !== null) chat.driver.note(capsule);
+    sse.broadcastState();
+    return { ok: true };
+  }
+
   function closeChat(chat: Chat): void {
     chat.driver.stop();
     chats.delete(chat.id);
@@ -332,6 +374,7 @@ export function createChatRegistry(deps: {
     event: driverEvent,
     start: startDriver,
     open: openChat,
+    handoff: handoffChat,
     close: closeChat,
     payload: driverPayload,
     /* The children die with the server that started them. An orphaned driver would keep the
