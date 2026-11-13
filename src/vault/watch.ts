@@ -50,7 +50,8 @@ export type DepositState = {
   chain: string;
   symbol: string;
   /** The one-time address the card shows, minted for this watch (src/http/deposit-open.ts). The
-   *  window draws it from here and nowhere else; null once the address has expired. */
+   *  window draws it from here and nowhere else; null once the address has expired or money has
+   *  been seen at it (one deposit per address). */
   address: string | null;
   /** True when the address is a one-time 1Click quote: good for one deposit until `deadline`. */
   oneTime: boolean;
@@ -427,6 +428,14 @@ export function createDepositWatch(deps: Deps): DepositWatch {
           if (gen !== generation || state === null) return;
         }
       }
+    }
+
+    /* One deposit per address: once money is seen at it (1Click's word or the balance), the address
+       comes off the frame as it does at the deadline, so no card draws it for a second send. 1Click
+       is still asked about it, by the record (`held`). */
+    if (next.phase === 'seen' || next.phase === 'bridged' || next.phase === 'credited') {
+      next.address = null;
+      next.memo = null;
     }
 
     const credited = current.phase !== 'credited' && next.phase === 'credited';
