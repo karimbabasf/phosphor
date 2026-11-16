@@ -1,5 +1,5 @@
 // The rules a payout obeys on the chains past EVM, Solana and NEAR, and on every chain the rule
-// for our own deposit address, each one a refusal before a quote is asked for and again before
+// for our own deposit addresses, each one a refusal before a quote is asked for and again before
 // the key is touched (src/rails/intents-pay.ts runs them).
 //
 // WHY A PAYOUT CARRIES NO MEMO. 1Click's quote request has no memo, destination tag or comment
@@ -12,16 +12,15 @@
 // echo, or one that carries a memo inside it, is refused by name, and a TON address is respelt as
 // the same account non-bounceable. The account rules (payChecks) take what the chains said: the
 // chain reader's answer about the receiver, the ledger's own rules for it on XRPL and Stellar
-// (src/chainscan/destination.ts), and the bridge's deposit address for our own account. A fact
-// the chain would not give, on a path where money could be lost, is a refusal, never a pass.
+// (src/chainscan/destination.ts), and the deposit addresses this app was handed for our own
+// account, read off its own disk (src/rails/deposit-quote.ts ownDepositsOn). A fact the chain
+// would not give, on a path where money could be lost, is a refusal, never a pass.
 
 import { crc16 } from '../chainscan/codec.ts';
 import { validateAddressForFamily } from '../chainscan/networks.ts';
 import type { AddressActivity } from '../chainscan/common.ts';
 import type { PayTarget } from '../chainscan/destination.ts';
-import { toBaseUnits } from '../intents.ts';
-import { bridgeKeyOf, humanAmount, receiveNetworkOf, spendNetworkOf } from './intents-address.ts';
-import type { PoaToken } from './intents-address.ts';
+import { spendNetworkOf } from './intents-address.ts';
 
 // The chains where a deposit to an exchange is told apart by a memo, tag or comment.
 export const MEMO_CHAINS: ReadonlySet<string> = new Set(['xrp', 'stellar', 'ton']);
@@ -31,23 +30,13 @@ export function needsTarget(network: string): boolean {
   return network === 'xrp' || network === 'stellar';
 }
 
-/* The chains where our own bridge deposit address is asked for before a payout: every chain a
-   payout lands on, EVM, Solana and NEAR included, since a payout to it is a deposit there too and
-   obeys the bridge's minimum and its deposit route (review V5, 2026-09-27). On a memo chain it may
-   be the one address the bridge shares with everybody; on the rest it is a round trip, and the
-   card says so. */
+/* The chains where a payout is held against our own deposit addresses: every chain a payout lands
+   on, EVM, Solana and NEAR included (review V5, 2026-09-27). The list is local (the one-time
+   addresses in the book and the bridge's old standing ones, src/rails/deposit-quote.ts), so this
+   check never waits on NEAR Intents and a bridge that stops answering blocks no send. */
 export function readsOwnDeposit(network: string): boolean {
   const pay = spendNetworkOf(network)?.pay;
   return pay !== undefined && pay !== null;
-}
-
-/* The chain the bridge is asked for our deposit address on. A chain it takes no deposits on at
-   all (Abstract, a spend-only row) has no address of its own there, but our EVM deposit address is
-   one key the bridge hands back on every EVM chain, so the payout is compared with Ethereum's: paid
-   there, it finds no row on the bridge's list and is refused as a token it does not take. */
-export function ownDepositChain(network: string): string {
-  if (receiveNetworkOf(network) !== undefined) return network;
-  return spendNetworkOf(network)?.pay === 'evm' ? 'eth' : network;
 }
 
 function labelOf(network: string): string {
@@ -154,26 +143,10 @@ export function memoCaution(network: string): PayNote | null {
 
 // ---------- the account ----------
 
-export type OwnDeposit = { address: string; memo: string | null };
-
-/* The least the bridge credits of the paid token on this chain, from its supported_tokens list,
-   or that it does not list the token there at all. A payout to our own deposit address is a
-   deposit, and under that minimum, or of a token the bridge does not take, it is not credited. */
-export type DepositFloor = { listed: false } | { listed: true; min: string; decimals: number };
-
-/* The bridge's row for the paid token on the payout's chain. One intents token can be listed on
-   several chains (XRP on the XRP Ledger, on Aptos and on Starknet), so the chain is matched first,
-   then the token by its intents id, or by its contract when 1Click names it by another id. */
-export function depositFloorOf(rows: readonly PoaToken[], network: string, asset: { assetId: string; native: boolean; contract: string | null }): DepositFloor {
-  const key = bridgeKeyOf(network);
-  const onChain = rows.filter((r) => r.network === key);
-  const contract = asset.contract?.toLowerCase() ?? null;
-  const row =
-    onChain.find((r) => r.intentsAssetId === asset.assetId) ??
-    onChain.find((r) => (asset.native ? r.contract === null : contract !== null && r.contract !== null && r.contract.toLowerCase() === contract));
-  if (row === undefined || !/^\d+$/.test(row.minDeposit)) return { listed: false };
-  return { listed: true, min: row.minDeposit, decimals: row.decimals };
-}
+/* One deposit address of this app's: a one-time 1Click address from the book, with its deadline, or
+   a standing address the POA bridge handed out before NEAR Intents closed it. `network` is the
+   registry id it was handed out on. */
+export type OwnDeposit = { address: string; memo: string | null; kind: 'one_time' | 'standing'; network: string; deadline: string | null };
 
 export type PayFacts = {
   network: string;
@@ -186,8 +159,7 @@ export type PayFacts = {
   given: string | null; // the spelling the caller gave, when the payout sends another of the same account
   activity: AddressActivity | null; // the chain reader's answer about the receiver
   target: PayTarget | null | undefined; // the ledger's rules; null unanswered, undefined not asked
-  own: OwnDeposit | null | undefined; // our own bridge deposit address; null unanswered, undefined not asked
-  floor: DepositFloor | null | undefined; // the bridge's minimum deposit for the token; null unanswered, undefined not asked
+  own: readonly OwnDeposit[] | null | undefined; // our own deposit addresses on the chain's family; null unread, undefined not asked
 };
 
 function amountText(n: number): string {
@@ -297,59 +269,30 @@ function tronRules(f: PayFacts, problems: string[]): void {
   if (a.isContract) problems.push(`${f.to} is a contract on Tron, and Tron refuses TRX sent to a contract, so the payout could not land; pay a wallet, or a token the contract can hold`);
 }
 
-function ownDepositRules(f: PayFacts, problems: string[], notes: PayNote[]): void {
-  const label = labelOf(f.network);
+/* A payout to one of our own deposit addresses is refused, whichever kind it is. A one-time
+   address is not a wallet: it takes one deposit for one quote until its deadline, and money sent
+   to it after that may be lost. A standing address belongs to the POA bridge NEAR Intents is
+   closing, and the service that forwards it may stop with no date given. Until 0.11.5 such a
+   payout was a round trip held to the bridge's minimum; the bridge's list is gone, and a round
+   trip is never what a person sending money means, so it is one sentence and nothing is sent.
+   The list is read off this Mac's disk; one that could not be read (null) is a refusal, because a
+   payout that cannot be told from a deposit to ourselves is the one this rule exists for. */
+function ownDepositRules(f: PayFacts, problems: string[]): void {
   if (f.own === undefined) return;
-  /* Not knowing is a refusal on every chain (review V4, 2026-09-27): a payout to our own address
-     is a deposit, and passing it unread skipped the minimum and the deposit route below. */
   if (f.own === null) {
-    problems.push(
-      `the bridge did not say what your own NEAR Intents deposit address on ${label} is, so the app cannot rule out that this is it, ` +
-        (MEMO_CHAINS.has(f.network)
-          ? `and a payout to it would arrive with no memo; ${AGAIN}`
-          : `and a payout to it is a deposit, which is not credited under the bridge's minimum or while deposits there are paused; ${AGAIN}`),
-    );
+    problems.push(`the app could not read its own list of deposit addresses, so it cannot rule out that ${f.to} is one of them; ${AGAIN}`);
     return;
   }
-  if (!sameAccount(f.network, f.own.address, f.to)) return;
-  if (f.own.memo !== null) {
-    problems.push(
-      `${f.to} is your own NEAR Intents deposit address on ${label}, which the bridge shares and tells apart by a memo; ` +
-        'a payout carries no memo, so the money would not reach your balance',
-    );
-    return;
-  }
-  // The round trip is a deposit, so it obeys what a deposit obeys (review M1, 2026-09-27).
-  if (f.network === 'xrp' && f.target?.network === 'xrp' && !f.target.exists) {
-    problems.push(
-      `${f.to} is your own NEAR Intents deposit address on ${label}, and it does not exist on the ledger yet: a payout would create it, ` +
-        `${amountText(f.target.reserveXrp ?? 1)} XRP of it would stay locked as the ledger's reserve, and the bridge has not been seen to credit a payment that creates its account; ` +
-        'deposit XRP from an exchange or a wallet first, through Add money',
-    );
-    return;
-  }
-  const floor = f.floor;
-  if (floor === undefined || floor === null) {
-    problems.push(`the bridge did not say the least ${f.symbol} deposit it credits on ${label}, and ${f.to} is your own deposit address there, where less is not credited; ${AGAIN}`);
-    return;
-  }
-  if (!floor.listed) {
-    problems.push(`the bridge does not take ${f.symbol} deposits on ${label}, so ${f.symbol} paid to your own deposit address there would not come back into your balance`);
-    return;
-  }
-  if (toBaseUnits(f.minReceived, floor.decimals) < BigInt(floor.min)) {
-    problems.push(
-      `${f.to} is your own NEAR Intents deposit address on ${label}, and the bridge credits a ${f.symbol} deposit on ${label} only from ` +
-        `${humanAmount(floor.min, floor.decimals)} ${f.symbol}; this payout delivers as little as ${amountText(f.minReceived)} ${f.symbol}, so it would not come back into your balance; send more at once`,
-    );
-    return;
-  }
-  notes.push({ tone: 'info', text: `This is your own NEAR Intents deposit address on ${label}: the money comes back into your balance, less the fees both ways.` });
-}
-
-// Whether the payout goes to our own deposit address on its chain, which makes it a deposit.
-export function paysOwnDeposit(f: Pick<PayFacts, 'network' | 'to' | 'own'>): boolean {
-  return f.own !== undefined && f.own !== null && sameAccount(f.network, f.own.address, f.to);
+  const hit = f.own.find((d) => sameAccount(f.network, d.address, f.to));
+  if (hit === undefined) return;
+  const where = labelOf(hit.network);
+  problems.push(
+    hit.kind === 'one_time'
+      ? `${f.to} is a one-time deposit address Phosphor got from NEAR Intents for money coming in on ${where}, not a wallet: ` +
+          'a payout to it is not a payment to anyone, and money sent to it after its deadline may be lost; nothing is sent, pay a wallet address instead'
+      : `${f.to} is your old NEAR Intents deposit address on ${where}, which NEAR Intents is closing, so money sent to it may never reach your balance; ` +
+          'nothing is sent, pay a wallet address instead',
+  );
 }
 
 /* Every rule for the payout's chain, over what the chains said. The problems are refusals, each a
@@ -360,7 +303,7 @@ export function payChecks(f: PayFacts): { problems: string[]; notes: PayNote[] }
   if (f.network === 'xrp') xrpRules(f, problems, notes);
   if (f.network === 'stellar') stellarRules(f, problems);
   if (f.network === 'tron') tronRules(f, problems);
-  ownDepositRules(f, problems, notes);
+  ownDepositRules(f, problems);
   if (f.given !== null && f.network === 'ton') {
     /* A raw address is the account's bytes in hex with no checksum, so a changed digit is still an
        account, and the UQ... form made from it carries a checksum this app computed, which proves

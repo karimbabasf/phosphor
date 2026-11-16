@@ -146,6 +146,9 @@ export const KNOWN_PUBLIC_CONSTANTS = new Map<string, string>([
   ['4c0883a69102937d6231471b5dbb6204fe5129617082792ae468d01a3f362318', 'canonical Ethereum test private key, scripts/keygen.ts self check'],
   ['9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60', 'RFC 8032 ed25519 test vector 1 seed, scripts/keygen.ts'],
   ['d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a', 'RFC 8032 ed25519 test vector 1 public key, scripts/keygen.ts'],
+  // A NEAR implicit account (an ed25519 public key, public on chain): the 1Click one-time deposit
+  // address of the live wNEAR to ETH swap of 2026-11-13, replayed in tests/unit/swap-confirm-speed.test.ts.
+  ['82e2827f0edc7cf2cb6df1ebb9f2b3014c236c10e6b5f01a371393e6f2661947', '1Click deposit address (NEAR implicit account), tests/unit/swap-confirm-speed.test.ts'],
   // A NEAR token contract lives at an account id, and a bridged one is a 64 hex implicit
   // account. Same shape as a private key, opposite meaning: this is a published contract.
   ['17208628f84f5d6ad33f0da3bbbeb27ffcb398eac501a31bd6ad2011e36133a1', 'NEAR USDC token contract account id, data/tokens.json'],

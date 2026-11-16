@@ -3,18 +3,17 @@
 //
 // What runs is src/rails/intents-pay.ts simulate(), the path a proposal takes before any key is
 // touched, wired the way src/rails/index.ts wires it (one shared 1Click client, the live route
-// checker, the live chain reads and the bridge's deposit address), with the draft built the way
+// checker and the live chain reads), with the draft built the way
 // src/proposals/rails.ts proposeSend builds one (the address through pay-rules payAddress, the
 // receiver read from the chain first). The one thing swapped out is the signer: its address()
 // answers the account without opening any keystore, and signErc191 throws, and the run counts
 // both. simulate() never calls signErc191 (execute does, through spendFromIntents), and the count
 // printed at the end is the proof for this run.
 //
-// Rows: every token 1Click lists on each of the fourteen chains, paid to the account's own bridge
-// deposit address there (a personal account on Stellar, where the bridge's address is shared and
-// refused; on the XRP Ledger, where ours does not exist on the ledger yet; and on TON, whose
-// deposit route may be paused, which a payout to our own address there now obeys), then one case
-// per chain rule, each expected to refuse. A token whose flat bridge fee
+// Rows: every token 1Click lists on each chain that has a known personal address below (Stellar,
+// the XRP Ledger, TON). The other chains were paid to the account's own POA bridge deposit address,
+// which NEAR Intents is closing (2026-11-12), so they are skipped until a wallet address there is
+// named here. Then one case per chain rule, each expected to refuse. A token whose flat bridge fee
 // breaches the 3% floor at the default size is run again at the size that clears it, and both
 // rows are printed: the refusal is the rule working, the second row is the smallest payout that
 // goes through.
@@ -31,7 +30,7 @@ import type { OneClickToken, TokensFile } from '../src/intents.ts';
 import { intentsApi } from '../src/rails/intents-native.ts';
 import type { IntentsApiPort, IntentsSignerPort } from '../src/rails/intents-native.ts';
 import { INTENTS_PAY_COUNTERPARTY, intentsPayRail, minReceivedForPay } from '../src/rails/intents-pay.ts';
-import { intentsDepositAddress, spendNetworkOf } from '../src/rails/intents-address.ts';
+import { spendNetworkOf } from '../src/rails/intents-address.ts';
 import { payAddress } from '../src/rails/pay-rules.ts';
 import { addressActivity, chainHead, scanNetworkOf } from '../src/chainscan/index.ts';
 import type { AddressActivity } from '../src/chainscan/index.ts';
@@ -190,10 +189,6 @@ async function run(network: string, token: OneClickToken, held: OneClickToken | 
 }
 
 const list = await client.tokens();
-const own: Record<string, string> = {};
-for (const network of NETWORKS) {
-  own[network] = (await intentsDepositAddress(ACCOUNT, network)).address;
-}
 
 const coinOf = (network: string, symbol: string): OneClickToken => {
   const venue = spendNetworkOf(network)?.venue ?? network;
@@ -208,7 +203,11 @@ const amountOf = (t: OneClickToken, usd = USD): number => sig(usd / (t.price ?? 
 for (const network of NETWORKS) {
   const venue = spendNetworkOf(network)?.venue ?? network;
   for (const t of list.filter((o) => o.blockchain === venue)) {
-    const to = network === 'stellar' ? (t.symbol === 'XLM' ? XLM_PERSONAL : XLM_PERSONAL_USDC) : network === 'xrp' ? XRP_PLAIN : network === 'ton' ? TON_PERSONAL : own[network];
+    const to = network === 'stellar' ? (t.symbol === 'XLM' ? XLM_PERSONAL : XLM_PERSONAL_USDC) : network === 'xrp' ? XRP_PLAIN : network === 'ton' ? TON_PERSONAL : undefined;
+    if (to === undefined) {
+      console.log(`skip ${t.symbol} on ${network}: no known wallet address there`);
+      continue;
+    }
     const held = heldFor(t, list);
     const sim = await run(network, t, held, to, amountOf(t), 'ok');
     // The flat bridge fee breached the floor: the size where it is 2% of the payout goes through.
@@ -231,15 +230,12 @@ const rule = async (network: string, symbol: string, to: string, amount?: number
 await rule('xrp', 'XRP', XRP_X);
 await rule('xrp', 'XRP', XRP_TAGGED);
 await rule('xrp', 'XRP', XRP_ABSENT, 0.5);
-// Our own XRP deposit address does not exist on the ledger: refused whatever the size.
-await rule('xrp', 'XRP', own.xrp ?? XRP_ABSENT, 5);
 await rule('xrp', 'XRP', XRP_AMM);
 await rule('stellar', 'XLM', XLM_MUXED);
 await rule('stellar', 'XLM', XLM_MEMO_REQUIRED);
 await rule('stellar', 'USDC', XLM_ABSENT);
 await rule('stellar', 'XLM', XLM_ABSENT, 20);
 await rule('stellar', 'USDC', XLM_NO_TRUSTLINE);
-await rule('stellar', 'XLM', own.stellar ?? XLM_PERSONAL);
 await rule('stellar', 'XLM', XLM_EXCHANGE);
 if (NETWORKS.includes('ton')) {
   // A wallet's UQ address respelt bounceable: goes ahead, sent as the same account non-bounceable.
@@ -258,17 +254,13 @@ if (NETWORKS.includes('ton')) {
   testnet[34] = d >> 8;
   testnet[35] = d & 0xff;
   await run('ton', t, heldFor(t, list), testnet.toString('base64url'), amountOf(t), 'refused');
-  // Our own TON deposit address is a deposit into TON: refused while NEAR Intents has paused TON
-  // deposits, which it had on 2026-09-27.
-  await run('ton', t, heldFor(t, list), own.ton, amountOf(t), 'refused', ' (own deposit address)');
 }
 await rule('tron', 'TRX', TRON_CONTRACT);
 await rule('doge', 'DOGE', DOGE_P2SH_9);
 await rule('bch', 'BCH', BCH_LEGACY);
 await rule('bch', 'BCH', BCH_P2PKH_32);
-await rule('btc', 'BTC', own.btc ? own.btc.slice(0, -1) + (own.btc.endsWith('q') ? 'p' : 'q') : 'bc1q');
-await rule('btc', 'BTC', own.btc ?? '', 0.000005);
-await rule('starknet', 'STRK', own.starknet ? `0x${own.starknet.slice(2).replace(/^0+/, '')}` : '0x1');
+await rule('btc', 'BTC', 'bc1q');
+await rule('starknet', 'STRK', '0x1');
 
 // ---------- the table ----------
 

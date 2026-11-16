@@ -577,7 +577,7 @@ export type BuildParams = {
   selfAddresses: string[];
   // Invite claims that landed (src/invite/store.ts). Money in with no proposal behind it.
   invites?: ClaimRecord[];
-  // Deposits the bridge reported (src/received.ts). Money in from outside the app.
+  // Deposits NEAR Intents reported (src/received.ts). Money in from outside the app.
   received?: ReceivedDeposit[];
 };
 
@@ -618,9 +618,10 @@ function inviteEntry(r: ClaimRecord, selfAddresses: Set<string>): TxEntry | null
   };
 }
 
-/* A deposit the bridge credited, or is crediting, as a row: money in from an exchange or another
-   wallet, with no proposal and no signature of ours behind it. Its time is the bridge's, the
-   first time this app saw it, or none (src/received.ts). The bridge's word is the status:
+/* A deposit NEAR Intents credited, or is crediting, as a row: money in from an exchange or another
+   wallet, with no proposal and no signature of ours behind it, reported by 1Click for a one-time
+   address (or, on an old row, by the POA bridge). Its time is the first time this app saw it, the
+   bridge's on an old row, or none (src/received.ts). NEAR Intents' word is the status:
    COMPLETED is in the wallet, FAILED never arrived, anything else is on its way. The place it
    came from is the receive registry's id ('base', 'tron'), which names networks the five-chain
    place type does not; the window prints a place by its id. */
@@ -651,7 +652,7 @@ function receivedEntry(d: ReceivedDeposit, selfAddresses: Set<string>): TxEntry 
     decidedBy: null,
     hashes: [{ hash: d.txHash, place, kind: 'chain', url: scan === null ? null : scanTxUrl(scan, d.txHash) }],
     venueFeeUsd: null,
-    detail: `The bridge reported ${human === '' ? d.amountBase + ' base units' : human} ${d.symbol ?? d.asset} sent to ${d.account} on ${net?.name ?? d.network}, ${d.status}; tx ${d.txHash}.`,
+    detail: `NEAR Intents reported ${human === '' ? d.amountBase + ' base units' : human} ${d.symbol ?? d.asset} sent to ${d.account} on ${net?.name ?? d.network}, ${d.status}; tx ${d.txHash}.`,
     reasons: [],
   };
 }

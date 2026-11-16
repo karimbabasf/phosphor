@@ -237,6 +237,8 @@ function build(opts: { marks?: boolean } = {}) {
     /* The deposit watch's frame (src/vault/watch.ts), the same way. */
     deposit: (frame: unknown) => { state = { ...state, deposit: frame }; for (const handler of sliceHandlers.deposit ?? []) handler(frame, state); },
     win,
+    // The cards' global scope: a `Date` set here is the clock cards.js reads.
+    sandbox,
     blocks: () => all(host, 'transcript-rows')[0].children as Any[],
     cardNodes: (kind?: string) => byAttr(host, 'data-card', kind),
     send: () => all(composerHost, 'composer-send')[0],
@@ -687,20 +689,37 @@ test('a move asked for and never filed says so rather than working forever', () 
 });
 
 /* The deposit card, answered with the address itself (hunt B, 2026-09-23). The agent is told the
-   address's ends only; the card reads the whole one through the window's own route, the way Add
-   money does, and draws it only when the wallet is open and the ends are the ones the agent was
-   given. */
+   address's ends only; the card reads the whole one off the deposit watch the agent's call
+   started (GET /api/deposit), the one-time address the backend minted, and draws it only when the
+   wallet is open, the watch is this card's network and coin, its deadline is ahead, and the ends
+   are the ones the agent was given. The receive report carries no address. */
 const DEPOSIT_ADDRESS = '0x12ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2';
+/* The pure one-time rules, from the real netpick.js run on its own. */
+const NETPICK_RULES = (() => {
+  const sb: Any = {};
+  sb.window = sb;
+  createContext(sb);
+  runInContext(read('../../ui/screens/netpick.js'), sb, { filename: 'ui/screens/netpick.js' });
+  const p = sb.PhosphorNetPick;
+  return { undrawable: p.undrawable, deadlineOf: p.deadlineOf, oneTimeWords: p.oneTimeWords, expiredWords: p.expiredWords, usedWords: p.usedWords, seenAt: p.seenAt, coinOnlyWords: p.coinOnlyWords };
+})();
+const DAY = 24 * 60 * 60 * 1000;
+function depositWatch(over: Any = {}): Any {
+  return { phase: 'watching', chain: 'base', symbol: 'USDC', address: DEPOSIT_ADDRESS, oneTime: true, memo: null, deadline: new Date(Date.now() + DAY).toISOString(), minimum: '1', startedAt: new Date().toISOString(), paused: null, statusLink: null, ...over };
+}
 const DEPOSIT_DATA = { ok: true, shownInWindow: true, chain: 'base', network: 'Base', asset: 'USDC', minDeposit: 1, addressFingerprint: '0x12ab...9fe2', addressVerified: true, memo: null, watching: 'watching' };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-function depositWorld(report: Any, route: (chain: string, symbol: string) => Any = () => ({ notice: null, statusLink: null })) {
+function depositWorld(report: Any, route: (chain: string, symbol: string) => Any = () => ({ notice: null, statusLink: null }), watch: Any | null = depositWatch()) {
   const world = build();
+  const watched: string[] = [];
+  (world.win.PhosphorApi as Any).deposit = () => { watched.push('/api/deposit'); return Promise.resolve({ data: { deposit: watch } }); };
   const copied: string[] = [];
   const drawn: unknown[] = [];
   const picked: Any[] = [];
   const routed: string[] = [];
   let destroyed = 0;
+  let pickedSymbol: string | null = null;
   world.win.PhosphorMoneyIn = { load: () => Promise.resolve(report) };
   world.win.PhosphorLazy = { load: () => Promise.resolve(true) };
   world.win.PhosphorNetPick = {
@@ -710,6 +729,7 @@ function depositWorld(report: Any, route: (chain: string, symbol: string) => Any
     drawChecked: (_canvas: unknown, address: string, px: number) => { drawn.push([address, px]); return { ok: true }; },
     // The per-asset route read and the frame test, as netpick.js exports them.
     routeFor: (chain: string, symbol: string) => { routed.push(`${chain}:${symbol}`); return Promise.resolve(route(chain, symbol)); },
+    ...NETPICK_RULES,
     pausedFor: (deposit: Any, chain: string, symbol: string) =>
       !!deposit && typeof deposit.paused === 'string' && deposit.paused !== '' && deposit.chain === chain && String(deposit.symbol || '').toUpperCase() === String(symbol || '').toUpperCase(),
     /* The token list and its acknowledgement, as netpick.js keeps them (netpick-ui.test.ts drives
@@ -728,7 +748,7 @@ function depositWorld(report: Any, route: (chain: string, symbol: string) => Any
       go.disabled = true;
       go.textContent = 'Show the address';
       box.addEventListener('change', () => { go.disabled = !box.checked; });
-      go.addEventListener('click', () => { if (box.checked) opts.onAddress(opts.network, opts.symbol, {}); });
+      go.addEventListener('click', () => { if (box.checked) opts.onAddress(opts.network, pickedSymbol ?? opts.symbol, {}); });
       root.appendChild(box);
       root.appendChild(go);
       host.appendChild(root);
@@ -737,7 +757,7 @@ function depositWorld(report: Any, route: (chain: string, symbol: string) => Any
       return view;
     },
   };
-  return { world, copied, drawn, picked, routed, destroyed: () => destroyed };
+  return { world, copied, drawn, picked, routed, watched, destroyed: () => destroyed, pickSymbol: (sym: string) => { pickedSymbol = sym; } };
 }
 
 /* Tick the box under the token list, then press Show the address. */
@@ -752,7 +772,7 @@ function acknowledge(card: Any): void {
 }
 
 test('the deposit card answers with the whole address, Copy and a QR code, read by the window itself', async () => {
-  const { world, copied, drawn } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
+  const { world, copied, drawn } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: null, memo: null, accepts: [] }] });
   world.ask('deposit usdc on base');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
   const card = world.cardNodes('deposit')[0];
@@ -797,7 +817,7 @@ test('the deposit card answers with the whole address, Copy and a QR code, read 
 /* The agent's card waits for the same tick Add money asks for, every time (Karim, 2026-09-25):
    the token list and the acknowledgement first, the address only after Show the address. */
 test('the deposit card shows no address until the tick and Show the address, then the address well', async () => {
-  const { world, picked, destroyed } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
+  const { world, picked, destroyed } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: null, memo: null, accepts: [] }] });
   world.ask('deposit usdc on base');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
   const card = world.cardNodes('deposit')[0];
@@ -832,7 +852,7 @@ test('the deposit card shows no address until the tick and Show the address, the
 });
 
 test('the deposit card\'s word follows its own watch and goes quiet when another one runs', async () => {
-  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', address: null }] });
   world.ask('deposit usdc on base');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
   const card = world.cardNodes('deposit')[0];
@@ -856,7 +876,7 @@ test('the deposit card\'s word follows its own watch and goes quiet when another
 
 test('the deposit card draws no address it cannot vouch for, and says why', async () => {
   // The wallet is not open: the address shows in Add money, one press away.
-  const locked = depositWorld({ verified: false, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  const locked = depositWorld({ verified: false, networks: [{ id: 'base', address: null }] });
   locked.world.ask('deposit usdc on base');
   locked.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
   await settle();
@@ -868,8 +888,8 @@ test('the deposit card draws no address it cannot vouch for, and says why', asyn
   fire(open, 'click');
   assert.equal(JSON.stringify(locked.world.opened), JSON.stringify([{ chain: 'base', symbol: 'USDC' }]));
 
-  // The wallet reports another address than the one the agent was told: nothing, and no way on.
-  const other = depositWorld({ verified: true, networks: [{ id: 'base', address: '0x99ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2' }] });
+  // The watch holds another address than the one the agent was told: nothing, and no way on.
+  const other = depositWorld({ verified: true, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] }, undefined, depositWatch({ address: '0x99ab5c7d9e0f1a2b3c4d5e6f708192a3b4c59fe2' }));
   other.world.ask('deposit usdc on base');
   other.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
   await settle();
@@ -879,7 +899,7 @@ test('the deposit card draws no address it cannot vouch for, and says why', asyn
   assert.equal(all(card, 'tcard-open').length + all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length, 0);
 
   // The wallet file was edited.
-  const edited = depositWorld({ verified: true, tampered: true, networks: [{ id: 'base', address: DEPOSIT_ADDRESS }] });
+  const edited = depositWorld({ verified: true, tampered: true, networks: [{ id: 'base', address: null }] });
   edited.world.ask('deposit usdc on base');
   edited.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: {}, data: DEPOSIT_DATA });
   await settle();
@@ -893,7 +913,7 @@ const CARD_STATUS = 'https://status.near-intents.org/posts/dashboard';
 
 test('the deposit card asks about the token picked on the tick before drawing: a closed token draws the pause and the status page, never the address', async () => {
   const { world, routed } = depositWorld(
-    { verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] },
+    { verified: true, networks: [{ id: 'base', words: 'Base', address: null, memo: null, accepts: [] }] },
     (_chain, symbol) => (symbol === 'USDC' ? { closed: CARD_PAUSED, statusLink: CARD_STATUS } : { notice: null, statusLink: null }),
   );
   world.ask('deposit usdc on base');
@@ -909,7 +929,7 @@ test('the deposit card asks about the token picked on the tick before drawing: a
 });
 
 test('a route that closes while the card shows its address takes it down on the watch frame', async () => {
-  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: DEPOSIT_ADDRESS, memo: null, accepts: [] }] });
+  const { world } = depositWorld({ verified: true, networks: [{ id: 'base', words: 'Base', address: null, memo: null, accepts: [] }] });
   world.ask('deposit usdc on base');
   world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
   const card = world.cardNodes('deposit')[0];
@@ -924,6 +944,95 @@ test('a route that closes while the card shows its address takes it down on the 
   assert.equal(all(card, 'deposit-address').length, 0, 'the address stayed up after the route closed');
   assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0);
   assert.ok(card.textContent.includes(CARD_PAUSED), card.textContent);
+});
+
+async function depositCardFor(watch: Any | null, report: Any = { verified: true, networks: [{ id: 'base', words: 'Base', address: null, memo: null, accepts: [] }] }) {
+  const made = depositWorld(report, undefined, watch);
+  made.world.ask('deposit usdc on base');
+  made.world.emit({ kind: 'tool_data', name: 'mcp__phosphor__deposit', input: { chain: 'base', asset: 'USDC' }, data: DEPOSIT_DATA });
+  const card = made.world.cardNodes('deposit')[0];
+  await settle();
+  return { ...made, card };
+}
+
+test('the deposit card refuses a watch that is not this card\'s, has no address, expired, or is past its deadline', async () => {
+  const cases: Array<[string, Any | null, RegExp]> = [
+    ['no watch at all', null, /no longer being watched/],
+    ['a watch with no address', depositWatch({ address: null }), /no longer being watched/],
+    ['a watch on another network', depositWatch({ chain: 'arb' }), /not the one your agent was given/],
+    ['a watch for another coin', depositWatch({ symbol: 'ETH' }), /not the one your agent was given/],
+    ['an expired watch', depositWatch({ phase: 'expired' }), /stopped taking money/],
+    ['a watch past its deadline', depositWatch({ deadline: new Date(Date.now() - 1000).toISOString() }), /stopped taking money/],
+    ['a watch with no deadline', depositWatch({ deadline: null }), /without the time it stops taking money/],
+  ];
+  for (const [label, watch, words] of cases) {
+    const { card, watched } = await depositCardFor(watch);
+    assert.deepEqual(watched, ['/api/deposit'], `${label}: the watch was not read`);
+    assert.equal(all(card, 'deposit-address').length, 0, `${label}: an address was drawn`);
+    assert.equal(all(card, 'netpick').length, 0, `${label}: the token list was offered`);
+    assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length, 0, `${label}: Copy or a QR`);
+    assert.match(card.textContent, words, `${label}: ${card.textContent}`);
+  }
+});
+
+/* One deposit per address, in the chat too: the card's own watch seeing money takes the address
+   down with the sentence that says it has its deposit, and the watch's note (a refund, a short
+   deposit) is drawn on the card, where it stays once the address is gone. */
+test('the chat deposit card takes its address down once its watch sees money, and draws the watch\'s note', async () => {
+  const NOTE = 'NEAR Intents did not convert this deposit and put it back in your balance instead.';
+  const watch = depositWatch();
+  const { world, card } = await depositCardFor(watch);
+  acknowledge(card);
+  await settle();
+  assert.equal(all(card, 'deposit-address').length, 1);
+  assert.equal(all(card, 'tcard-note').filter((n: Any) => n.textContent === NOTE).length, 0);
+  world.deposit({ ...watch, phase: 'seen', address: null, memo: null, note: NOTE });
+  assert.equal(all(card, 'deposit-address').length, 0, 'an address that has its deposit stayed up');
+  assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0);
+  assert.match(card.textContent, /This address already has its one deposit\. Open Add money again for a new address\./);
+  assert.doesNotMatch(card.textContent, /stopped taking money/);
+  const told = all(card, 'tcard-note').filter((n: Any) => n.textContent === NOTE && !n.hidden);
+  assert.equal(told.length, 1, 'the watch\'s note is not on the card');
+});
+
+test('the deposit card draws the watch\'s address with the one-deposit sentence, and takes it down at the deadline, on an expired frame, and for another coin picked on the tick', async () => {
+  const watch = depositWatch();
+  const { world, card } = await depositCardFor(watch);
+  acknowledge(card);
+  await settle();
+  assert.equal(all(card, 'deposit-address')[0].textContent, DEPOSIT_ADDRESS);
+  const once = all(card, 'tcard-deposit-once')[0];
+  assert.ok(once, 'no one-deposit sentence');
+  assert.match(once.textContent, /^This address is for one deposit and stops taking money at .+\. Do not save it or send to it again; ask for a new one next time\.$/);
+  assert.equal(all(card, 'tcard-deposit-coin')[0]?.textContent, 'USDC only. Any other coin sent to this address is not credited and may be lost.', 'the chat card does not say the address takes one coin');
+  // An expired frame of its own watch takes it down.
+  world.deposit({ ...watch, phase: 'expired', address: null });
+  assert.equal(all(card, 'deposit-address').length, 0, 'an expired address stayed up');
+  assert.equal(all(card, 'tcard-copy').length + all(card, 'tcard-show-qr').length + all(card, 'tcard-qr').length, 0);
+  assert.match(card.textContent, /stopped taking money/);
+  assert.equal(all(card, 'tcard-open')[0]?.textContent, 'Open in Add money');
+
+  // No frame at all: the local clock passing the deadline takes it down. The card's clock is
+  // moved by hand, so a slow run never reaches the deadline before the draw.
+  const timed = await depositCardFor(depositWatch({ deadline: new Date(Date.now() + 60_000).toISOString() }));
+  acknowledge(timed.card);
+  await settle();
+  assert.equal(all(timed.card, 'deposit-address').length, 1);
+  const later = Date.now() + 60_000;
+  timed.world.sandbox.Date = class extends Date { static override now(): number { return later; } };
+  for (const fn of timed.world.timers.splice(0)) fn();
+  assert.equal(all(timed.card, 'deposit-address').length, 0, 'the address stayed up past its deadline');
+  assert.match(timed.card.textContent, /stopped taking money/);
+
+  // Another coin picked on the tick gets its own address in Add money, never this one.
+  const other = await depositCardFor(depositWatch());
+  other.pickSymbol('ETH');
+  acknowledge(other.card);
+  await settle();
+  assert.equal(all(other.card, 'deposit-address').length, 0, 'the USDC address was drawn for ETH');
+  assert.ok(other.card.textContent.includes('This address takes USDC only. Add money makes one for ETH.'), other.card.textContent);
+  fire(all(other.card, 'tcard-open')[0], 'click');
+  assert.equal(JSON.stringify(other.world.opened), JSON.stringify([{ chain: 'base', symbol: 'ETH' }]));
 });
 
 test('a refused deposit says the reason and nothing else', () => {

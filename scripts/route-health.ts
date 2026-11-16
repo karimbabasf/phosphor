@@ -11,7 +11,7 @@
 
 import { oneClickClient } from '../src/intents.ts';
 import { chainHead, scanNetworkOf } from '../src/chainscan/index.ts';
-import { RECEIVE_NETWORKS, poaSupportedTokens } from '../src/rails/intents-address.ts';
+import { RECEIVE_NETWORKS, tokensFromOneClick } from '../src/rails/intents-address.ts';
 import { bridgeReason, createRouteHealth, routeSentence, withReason } from '../src/preflight/route-health.ts';
 
 const PLACEHOLDER = '0x1111111111111111111111111111111111111111';
@@ -35,8 +35,9 @@ const routes = createRouteHealth({
 const networks = RECEIVE_NETWORKS.filter((n) => only === '' || n.id === only);
 
 const started = Date.now();
+// What NEAR Intents takes on each network, from 1Click's token list (the POA bridge's list is closing).
 const [tokens, verdicts] = await Promise.all([
-  poaSupportedTokens(),
+  client.tokens().then(tokensFromOneClick, () => []),
   Promise.all(networks.map((n) => routes.check({ network: n.id, direction: 'in', account }))),
 ]);
 const ms = Date.now() - started;

@@ -451,7 +451,12 @@
     var controls = dom.el('div', 'agent-controls');
     var start = button('btn btn-ghost btn-sm', 'Start your agent', '', 'Starting');
     var stopAgent = button('btn btn-quiet btn-sm', 'Turn off', 'Turn your assistant off', 'Turning off');
+    /* The other vendor the chat can run, named on the key ("Switch to Grok"). It hands this
+       conversation over rather than starting a new one (src/http/chats.ts handoff). */
+    var switchAgent = button('btn btn-quiet btn-sm', 'Switch', 'Hand this chat to the other assistant', 'Switching');
+    switchAgent.hidden = true;
     controls.appendChild(start);
+    controls.appendChild(switchAgent);
     controls.appendChild(stopAgent);
     head.appendChild(controls);
     host.appendChild(head);
@@ -569,7 +574,35 @@
     send.title = 'Send';
     send.appendChild(icon('send', 'composer-send-glyph'));
     send.appendChild(icon('stop', 'composer-stop-glyph'));
+    /* The assistant picker beside the send key: every agent on this Mac that runs in this
+       window and is signed in. A pick mid-chat hands the conversation over (doSwitch). The
+       key is the agent's mark and name with a caret; its list is the app's own .pop listbox
+       (the market menu's shape), grown up out of the key, never a native select's OS menu. */
+    var agentWrap = dom.el('div', 'composer-agent-wrap');
+    var agentPick = dom.el('button', 'composer-agent');
+    agentPick.type = 'button';
+    agentPick.setAttribute('aria-haspopup', 'listbox');
+    agentPick.setAttribute('aria-expanded', 'false');
+    agentPick.setAttribute('aria-controls', 'composer-agents');
+    agentPick.title = 'Choose the assistant. It keeps the conversation.';
+    var agentFace = dom.el('span', 'btn-face composer-agent-face');
+    var agentMark = dom.el('span', 'composer-agent-mark');
+    var agentName = dom.el('span', 'composer-agent-name');
+    agentFace.appendChild(agentMark);
+    agentFace.appendChild(agentName);
+    agentFace.appendChild(icon('chevron-down', 'composer-agent-chev'));
+    agentPick.appendChild(agentFace);
+    var agentMenu = dom.el('div', 'composer-agent-menu pop');
+    agentMenu.id = 'composer-agents';
+    agentMenu.setAttribute('role', 'listbox');
+    agentMenu.setAttribute('aria-label', 'Assistant');
+    agentMenu.dataset.side = 'up';
+    agentMenu.tabIndex = -1;
+    agentWrap.appendChild(agentPick);
+    agentWrap.appendChild(agentMenu);
+    agentWrap.hidden = true;
     field.appendChild(input);
+    field.appendChild(agentWrap);
     field.appendChild(send);
     composer.appendChild(field);
     /* WHEN A CODE WAS KEPT OUT. One quiet line over the box: why the invite code that was in
@@ -595,6 +628,12 @@
       start: start,
       startBig: startBig,
       stopAgent: stopAgent,
+      switchAgent: switchAgent,
+      agentPick: agentPick,
+      agentWrap: agentWrap,
+      agentMark: agentMark,
+      agentName: agentName,
+      agentMenu: agentMenu,
       connect: connectBtn,
       note: note,
       noteMark: noteMark,
@@ -631,6 +670,9 @@
     dom.on(startBig, 'click', function () { doStart(node, startBig); });
     dom.on(retry, 'click', function () { doStart(node, retry); });
     dom.on(stopAgent, 'click', function () { doStop('stop', node); });
+    dom.on(switchAgent, 'click', function () { doSwitch(node); });
+    wireAgentPick(node);
+    loadReadyAgents(node);
     dom.on(copy, 'click', function () { copyLine(node); });
     dom.on(connectBtn, 'click', function () { setView('connect'); });
     dom.on(back, 'click', function () { setView('card'); });
@@ -868,6 +910,206 @@
         quitAssistant(node);
       });
       if (keep.focus) keep.focus();
+    });
+  }
+
+  /* The two vendors this window can run, each naming the other. */
+  var OTHER_VENDOR = {
+    claude: { id: 'grok', name: 'Grok' },
+    grok: { id: 'claude', name: 'Claude Code' }
+  };
+
+  function otherVendor() {
+    var id = pick && typeof pick.id === 'string' ? pick.id : '';
+    return Object.prototype.hasOwnProperty.call(OTHER_VENDOR, id) ? OTHER_VENDOR[id] : null;
+  }
+
+  function doSwitch(node, target) {
+    var to = target || otherVendor();
+    if (!to) return;
+    var btn = target ? node.refs.agentPick : node.refs.switchAgent;
+    window.PhosphorShell.setPending(btn, true);
+    api.driver({ action: 'switch', chat: chatId || '', agent: to.id })
+      .then(function (result) {
+        var data = (result && result.data) || result || {};
+        if (data.ok === false) {
+          window.PhosphorToast.show(String(data.sentence || 'The switch did not go through.'), 'down');
+          return;
+        }
+        if (data.agent && typeof data.agent === 'object') pick = data.agent;
+        if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('phosphor:agent'));
+        renderAll();
+      })
+      .catch(function (err) {
+        window.PhosphorToast.show(net.readable(err), 'down');
+      })
+      .finally(function () {
+        window.PhosphorShell.setPending(btn, false);
+      });
+  }
+
+  /* The agents the composer picker offers: in this window, installed and signed in. */
+  var readyAgents = [];
+
+  function loadReadyAgents(node) {
+    api.driver({ action: 'agent-scan' }).then(function (result) {
+      var data = (result && result.data) || result || {};
+      var list = Array.isArray(data.agents) ? data.agents : [];
+      readyAgents = list.filter(function (a) {
+        return a && a.inApp === true && a.state === 'installed_and_logged_in';
+      }).map(function (a) { return { id: String(a.agent), name: String(a.name || a.agent) }; });
+      paintAgentPick(node);
+    }).catch(function () {});
+  }
+
+  /* Where the keyboard is in the open list: an agent id. */
+  var agentActive = '';
+
+  function agentOptions() {
+    var current = pick && typeof pick.id === 'string' ? pick.id : '';
+    var options = readyAgents.slice();
+    if (current && !options.some(function (a) { return a.id === current; })) {
+      options.unshift({ id: current, name: String(pick.name || current) });
+    }
+    return options;
+  }
+
+  function paintAgentPick(node) {
+    var refs = node.refs;
+    var key = refs.agentPick;
+    if (!key) return;
+    var current = pick && typeof pick.id === 'string' ? pick.id : '';
+    var options = agentOptions();
+    var shown = options.filter(function (a) { return a.id === current; })[0] || options[0] || null;
+    var marks = window.PhosphorMarks;
+    /* The face is drawn again only when the agent on it changes, so a logo is not refetched
+       on every paint of the thread. */
+    var faceKey = shown ? shown.id + '|' + shown.name : '';
+    if (refs.agentFaceKey !== faceKey) {
+      refs.agentFaceKey = faceKey;
+      dom.clear(refs.agentMark);
+      if (shown && marks && typeof marks.agent === 'function') refs.agentMark.appendChild(marks.agent(shown.id, 18, shown.name));
+      dom.setText(refs.agentName, shown ? shown.name : '');
+      key.setAttribute('aria-label', shown ? 'Assistant: ' + shown.name : 'Assistant');
+    }
+    var listKey = options.map(function (a) { return a.id + '|' + a.name; }).join(',') + '#' + current + '#' + agentActive;
+    if (refs.agentListKey !== listKey) {
+      refs.agentListKey = listKey;
+      dom.clear(refs.agentMenu);
+      options.forEach(function (a) {
+        var row = dom.el('div', 'composer-agent-option');
+        row.setAttribute('role', 'option');
+        row.dataset.agent = a.id;
+        row.setAttribute('aria-selected', a.id === current ? 'true' : 'false');
+        if (a.id === agentActive) row.dataset.active = 'true';
+        if (marks && typeof marks.agent === 'function') row.appendChild(marks.agent(a.id, 20, a.name));
+        row.appendChild(dom.el('span', 'composer-agent-option-name', a.name));
+        if (a.id === current) row.appendChild(icon('done', 'composer-agent-check'));
+        refs.agentMenu.appendChild(row);
+      });
+    }
+    /* Between answers only, as before: a pick mid-answer would cut the answer it waits for. */
+    if (key.dataset.pending !== 'true') key.disabled = !!turn;
+    if (turn) closeAgentMenu(node, false);
+    dom.setHidden(refs.agentWrap, options.length < 2);
+  }
+
+  function wireAgentPick(node) {
+    var refs = node.refs;
+    var key = refs.agentPick;
+    var menu = refs.agentMenu;
+    /* The list is read again as the person reaches for it, so an agent signed in a moment ago
+       is in it. */
+    dom.on(key, 'pointerdown', function () { loadReadyAgents(node); });
+    dom.on(key, 'click', function () {
+      if (menu.dataset.open === 'true') closeAgentMenu(node);
+      else openAgentMenu(node);
+    });
+    dom.on(key, 'keydown', function (event) {
+      if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+      event.preventDefault();
+      openAgentMenu(node);
+    });
+    dom.on(menu, 'keydown', function (event) { onAgentMenuKey(node, event); });
+    dom.on(menu, 'click', function (event) {
+      for (var at = event.target; at && at !== menu; at = at.parentNode) {
+        if (at.dataset && at.dataset.agent) {
+          chooseAgent(node, at.dataset.agent);
+          return;
+        }
+      }
+    });
+    dom.on(document, 'click', function (event) {
+      if (menu.dataset.open !== 'true') return;
+      for (var at = event.target; at; at = at.parentNode) {
+        if (at === refs.agentWrap) return;
+      }
+      var active = document.activeElement;
+      closeAgentMenu(node, !active || active === document.body);
+    });
+  }
+
+  function openAgentMenu(node) {
+    var refs = node.refs;
+    if (refs.agentPick.disabled) return;
+    agentActive = pick && typeof pick.id === 'string' ? pick.id : '';
+    paintAgentPick(node);
+    refs.agentMenu.dataset.open = 'true';
+    refs.agentPick.setAttribute('aria-expanded', 'true');
+    if (refs.agentMenu.focus) refs.agentMenu.focus();
+  }
+
+  function closeAgentMenu(node, returnFocus) {
+    var refs = node.refs;
+    if (!refs.agentMenu || refs.agentMenu.dataset.open !== 'true') return;
+    delete refs.agentMenu.dataset.open;
+    refs.agentPick.setAttribute('aria-expanded', 'false');
+    if (returnFocus !== false && refs.agentPick.focus) refs.agentPick.focus();
+  }
+
+  function onAgentMenuKey(node, event) {
+    var ids = agentOptions().map(function (a) { return a.id; });
+    if (event.key === 'Escape' || event.key === 'Tab') {
+      if (event.key === 'Escape') event.preventDefault();
+      closeAgentMenu(node);
+      return;
+    }
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      chooseAgent(node, agentActive);
+      return;
+    }
+    var at = ids.indexOf(agentActive);
+    var next = at;
+    if (event.key === 'ArrowDown') next = Math.min(ids.length - 1, at + 1);
+    else if (event.key === 'ArrowUp') next = Math.max(0, at - 1);
+    else if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = ids.length - 1;
+    else return;
+    event.preventDefault();
+    agentActive = ids[next] || agentActive;
+    paintAgentPick(node);
+  }
+
+  function chooseAgent(node, id) {
+    closeAgentMenu(node);
+    if (id) pickFromComposer(node, id);
+  }
+
+  function pickFromComposer(node, id) {
+    var current = pick && typeof pick.id === 'string' ? pick.id : '';
+    if (!id || id === current) return;
+    var name = (readyAgents.filter(function (a) { return a.id === id; })[0] || {}).name || id;
+    if (phase === 'connected') {
+      doSwitch(node, { id: id, name: name });
+      return;
+    }
+    api.driver({ action: 'agent-pick', agent: id }).then(function (result) {
+      var data = (result && result.data) || result || {};
+      if (data.ok === false) window.PhosphorToast.show(String(data.sentence || 'That assistant could not be picked.'), 'down');
+      if (typeof CustomEvent === 'function') window.dispatchEvent(new CustomEvent('phosphor:agent'));
+    }).catch(function (err) {
+      window.PhosphorToast.show(net.readable(err), 'down');
     });
   }
 
@@ -1271,6 +1513,15 @@
      the moment there is a transcript to keep company. */
     dom.setHidden(refs.start, empty || failed || !!away || !canStart());
     dom.setHidden(refs.stopAgent, !canTalk());
+    /* Between answers only: a switch mid-answer would cut the answer it is waiting for. */
+    var other = otherVendor();
+    /* The head key gave way to the composer picker (Karim, 2026-11-13). */
+    dom.setHidden(refs.switchAgent, true);
+    paintAgentPick(node);
+    if (other) {
+      dom.setText(refs.switchAgent.querySelector('.btn-label') || refs.switchAgent, 'Switch to ' + other.name);
+      refs.switchAgent.title = 'Hand this chat to ' + other.name + '. It keeps the conversation.';
+    }
 
     var sheet = view === 'connect' && empty && canStart();
     dom.setHidden(refs.sheet, !sheet);
@@ -1693,6 +1944,7 @@
       });
       return steps;
     }
+    if (block.type === 'handoff') return dom.el('p', 'chat-handoff');
     var kind = block.type === 'said' ? 'chat-said'
       : (block.type === 'error' ? 'chat-error'
         : (block.type === 'note' ? 'chat-note' : 'chat-reply'));
@@ -1738,6 +1990,10 @@
       return;
     }
     if (block.type === 'sheet') return;
+    if (block.type === 'handoff') {
+      dom.setText(row, block.text);
+      return;
+    }
     if (block.type === 'working') {
       var words = row.children[row.children.length - 1];
       dom.setText(words, workingWords());
@@ -2008,6 +2264,12 @@
       if (turn) turn.state = 'writing';
       openSteps = null;
       commitText(event.text, at);
+      if (!replay) renderAll();
+      return;
+    }
+    /* The person switched this chat's vendor: one quiet line, and the thread goes on under it. */
+    if (event.kind === 'handoff') {
+      pushBlock({ type: 'handoff', text: String(event.to || 'The other assistant') + ' took over. It has the conversation so far.' });
       if (!replay) renderAll();
       return;
     }

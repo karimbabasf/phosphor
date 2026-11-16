@@ -1568,9 +1568,10 @@ test('the Addresses row is a network menu with the token list folded behind it, 
   const renders = world.calls.filter((c) => c.route === 'netpick.render');
   assert.equal(renders[renders.length - 1].network, 'sol');
 
-  // Show the address is the component's; it hands the network, the token and the bridge row here.
+  // Show the address is the component's; it hands the network and the token here, and the deposit
+  // card mints the one-time address. An address on the row handed over never travels.
   renders[renders.length - 1].onAddress('sol', 'SOL', { address: 'SOLADDR' });
-  assert.deepEqual(world.calls.find((c) => c.route === 'deposit.open'), { route: 'deposit.open', chain: 'sol', symbol: 'SOL', address: 'SOLADDR' });
+  assert.deepEqual(world.calls.find((c) => c.route === 'deposit.open'), { route: 'deposit.open', chain: 'sol', symbol: 'SOL' });
 
   // Keyboard: ArrowDown opens, the arrows walk, Enter picks.
   button.dispatch('keydown', { key: 'ArrowDown' });

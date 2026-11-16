@@ -4,10 +4,12 @@
 // responses, and a stubbed chain read for the receiver. What is different is what the tests
 // hold: the receiver is an address on a chain, decoded rather than matched, the echo has to say
 // DESTINATION_CHAIN and name that exact address, a contract cannot be paid the chain's coin, the
-// bridge's flat fee is named when it breaches the floor, and the proof is the payout hash.
+// bridge's flat fee is named when it breaches the floor, the proof is the payout hash, and a
+// payout to one of our own deposit addresses (read off this Mac's disk, never the bridge) is refused.
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { getAddress } from 'viem';
 import type { Address } from 'viem';
 
@@ -25,9 +27,11 @@ import {
   payRefusal,
   recipientSentence,
 } from '../../src/rails/intents-pay.ts';
-import { depositFloorOf, ownDepositChain, readsOwnDeposit } from '../../src/rails/pay-rules.ts';
-import type { DepositFloor } from '../../src/rails/pay-rules.ts';
-import { parsePoaTokens } from '../../src/rails/intents-address.ts';
+import { readsOwnDeposit } from '../../src/rails/pay-rules.ts';
+import type { OwnDeposit } from '../../src/rails/pay-rules.ts';
+import { createDepositBook, depositPinsPath, ownDepositsOn } from '../../src/rails/deposit-quote.ts';
+import type { OneTimeDeposit } from '../../src/rails/deposit-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import { liveIntentsSigner } from '../../src/intents-sign.ts';
 import { KINDS, signerOf, useKind } from './helpers/rail-kinds.ts';
@@ -203,15 +207,19 @@ type Overrides = {
   receiver?: Array<AddressSummary | null>;
   // The route checker, when the test is about NEAR Intents taking payouts to the chain.
   routes?: RouteHealth;
-  // The bridge's deposit address for the account on the chain (left out: one that is not the
-  // receiver; null: a bridge that did not answer), and its minimum deposit for the paid token.
-  own?: { address: string; memo: string | null } | null;
-  floor?: DepositFloor | null;
+  // Our own deposit addresses on the payout chain's family (left out: one that is not the
+  // receiver; null: a list that could not be read).
+  own?: readonly OwnDeposit[] | null;
+  // The list read off this folder by the rail itself, in place of `own`.
+  dataDir?: string;
+  // Every fetch the rail makes goes here; with it, the receiver is read by the rail's own reader too.
+  fetchImpl?: typeof fetch;
   // The token list as 1Click answers it at each read: a list that changes between the card and the click.
   tokens?: (list: OneClickToken[]) => OneClickToken[];
 };
 
 const OUR_DEPOSIT = '0x248f' + '0'.repeat(32) + 'ace7';
+const NOT_OURS: readonly OwnDeposit[] = [{ address: OUR_DEPOSIT, memo: null, kind: 'one_time', network: 'base', deadline: '2026-09-18T03:00:00.000Z' }];
 
 function summaryOf(balance: string): AddressSummary {
   return { ...activityOf({ balance: { amount: balance, symbol: 'ETH' } }), tokens: [], tokensSource: 'blockscout', explorer: null, note: '' };
@@ -277,15 +285,22 @@ function railOf(over: Overrides = {}) {
     quoteKey: TEST_QUOTE_KEY,
     routes: over.routes,
     ...(over.preflightThrows === undefined ? {} : { preflight: { run: async () => Promise.reject(new Error(over.preflightThrows)), stop: () => undefined } }),
-    receiverRead: async (network, address) => {
-      reads.push({ network, address });
-      return answers.length > 0 ? (answers.shift() as AddressSummary | null) : null;
-    },
-    ownDeposit: async (_account, network) => {
-      owns.push(network);
-      return over.own === undefined ? { address: OUR_DEPOSIT, memo: null } : over.own;
-    },
-    depositFloor: async () => (over.floor === undefined ? null : over.floor),
+    ...(over.fetchImpl !== undefined
+      ? { fetchImpl: over.fetchImpl }
+      : {
+          receiverRead: async (network: string, address: string) => {
+            reads.push({ network, address });
+            return answers.length > 0 ? (answers.shift() as AddressSummary | null) : null;
+          },
+        }),
+    ...(over.dataDir !== undefined
+      ? { dataDir: over.dataDir }
+      : {
+          ownDeposit: async (network: string) => {
+            owns.push(network);
+            return over.own === undefined ? NOT_OURS : over.own;
+          },
+        }),
   });
   return { rail, calls, reads, owns };
 }
@@ -715,18 +730,54 @@ test('only 1Click refusing the quote reads as a closed route: a wallet, generate
 
 // ---------- a payout to our own deposit address ----------
 
-/* Review V5 (2026-09-27): a payout to our own deposit address is a deposit on every chain, an EVM
-   chain, Solana and NEAR included, and the minimum and the deposit route bound it there too. Our
-   EVM deposit address is one key on every EVM chain, so the person who copies it from Add money as
-   "my wallet" and pays it on Base while Base deposits are paused leaves the money at the bridge. */
-test('a payout to our own deposit address on an EVM chain is a deposit: refused under the bridge minimum and while deposits there are paused', async () => {
-  const mine = { address: FRIEND.toLowerCase(), memo: null };
-  const under = railOf({ own: mine, floor: { listed: true, min: '1000000000000000000', decimals: 18 } });
-  const small = await refusal(under.rail, draftOf());
-  assert.match(small, /your own NEAR Intents deposit address on Ethereum, and the bridge credits a ETH deposit on Ethereum only from 1 ETH/);
-  assert.deepEqual(under.owns, ['eth']);
-  assert.equal(under.calls.quotes.length, 0);
+const ONE_TIME_WORDS = 'is a one-time deposit address Phosphor got from NEAR Intents for money coming in on ';
+const STANDING_WORDS = 'is your old NEAR Intents deposit address on ';
+const UNREAD_WORDS = 'the app could not read its own list of deposit addresses, so it cannot rule out that ';
 
+function oneTimeOn(network: string, address: string): OwnDeposit {
+  return { address, memo: null, kind: 'one_time', network, deadline: '2026-09-18T03:00:00.000Z' };
+}
+
+// A one-time address as the book keeps it.
+function bookEntry(chain: string, network: string, address: string, account = ACCOUNT): OneTimeDeposit {
+  return {
+    account, chain, network, symbol: 'USDC', assetId: USDC_BASE_ASSET, decimals: 6, address, memo: null,
+    minimumBase: '160000', minimum: '0.16', deadline: '2026-09-18T03:00:00.000Z', coldAt: null,
+    mintedAt: '2026-09-17T02:00:00.000Z', correlationId: 'c-1', signature: null, timestamp: null,
+  };
+}
+
+/* Review V5 (2026-09-27): a payout to our own deposit address is held on every chain, EVM, Solana
+   and NEAR included. Our EVM addresses share one shape on every EVM chain, so a Base one-time
+   address copied from Add money as "my wallet" and paid on Ethereum or Optimism is still ours, and
+   is refused with the sentence that names where it came in. */
+const ON_OP: Partial<IntentsPayDraft> = { network: 'op', originAsset: ETH_OP_ASSET, recipient: recipientOf({ activity: null }) };
+
+test('a payout to a one-time address of ours from another EVM chain is refused on Ethereum and on Optimism, with its sentence', async () => {
+  const mine = [oneTimeOn('base', FRIEND.toLowerCase())];
+  for (const [network, over] of [['eth', {}], ['op', ON_OP]] as const) {
+    const { rail, calls, owns } = railOf({ own: mine });
+    const summary = await refusal(rail, draftOf(over));
+    assert.ok(
+      summary.includes(
+        `${FRIEND} ${ONE_TIME_WORDS}Base, not a wallet: a payout to it is not a payment to anyone, and money sent to it after its deadline may be lost; nothing is sent, pay a wallet address instead`,
+      ),
+      summary,
+    );
+    assert.deepEqual(owns, [network]);
+    assert.equal(calls.quotes.length, 0);
+  }
+  // A standing address of ours is refused by its own sentence; an empty list is nothing of ours.
+  const old = await refusal(railOf({ own: [{ address: FRIEND, memo: null, kind: 'standing', network: 'arb', deadline: null }] }).rail, draftOf());
+  assert.ok(old.includes(`${FRIEND} ${STANDING_WORDS}Arbitrum, which NEAR Intents is closing, so money sent to it may never reach your balance; nothing is sent, pay a wallet address instead`), old);
+  assert.equal((await railOf({ own: [] }).rail.simulate(draftOf())).ok, true);
+  assert.equal((await railOf().rail.simulate(draftOf())).ok, true, 'an address of ours that is not the receiver refused the payout');
+});
+
+/* Until 0.11.5 a payout to our own deposit address also asked the deposit route into the chain, at
+   simulate and right before the signature. That rule is gone with the round trip: a payout asks the
+   payout route alone, so deposits paused into the chain block no send, to anybody. */
+test('a payout never asks the deposit route, and deposits paused into the chain block no send', async () => {
   const asked: RouteAsk[] = [];
   const routes: RouteHealth = {
     check: async (ask) => {
@@ -735,61 +786,98 @@ test('a payout to our own deposit address on an EVM chain is a deposit: refused 
       return { network: ask.network, direction: ask.direction, state, reasons: state === 'closed' ? [{ source: 'status', state, text: 'Ethereum deposits paused', said: 'Ethereum deposits paused' }] : [], checkedAt: NOW };
     },
   };
-  const paused = railOf({ own: mine, floor: { listed: true, min: '1000000000000', decimals: 18 }, routes });
-  const sim = await paused.rail.simulate(draftOf());
-  assert.equal(sim.ok, false, sim.summary);
-  assert.equal(sim.reason, 'route_closed');
-  assert.match(sim.summary, /your own NEAR Intents deposit address on Ethereum/);
-  assert.ok(asked.some((a) => a.network === 'eth' && a.direction === 'in'));
-
-  const open = railOf({ own: mine, floor: { listed: true, min: '1000000000000', decimals: 18 } });
-  const back = await open.rail.simulate(draftOf());
-  assert.equal(back.ok, true, back.summary);
-  assert.match(back.summary, /This is your own NEAR Intents deposit address on Ethereum: the money comes back into your balance/);
-
-  // Not knowing is a refusal here too; somebody else's address is a plain payout.
-  assert.match(await refusal(railOf({ own: null }).rail, draftOf()), /bridge did not say what your own NEAR Intents deposit address on Ethereum is/);
-  assert.equal((await railOf().rail.simulate(draftOf())).ok, true);
+  const { rail, calls } = railOf({ own: [], routes });
+  const result = await rail.execute(draftOf());
+  assert.equal(result.ok, true, result.detail);
+  assert.equal(calls.submitted.length, 1);
+  assert.ok(asked.length > 0);
+  assert.deepEqual([...new Set(asked.map((a) => a.direction))], ['out']);
 });
 
-test('our own deposit address is asked on every chain a payout lands on, and on a chain the bridge takes no deposits on it is Ethereum\'s', () => {
+test('a payout is refused when our own list of deposit addresses could not be read', async () => {
+  const { rail, calls } = railOf({ own: null });
+  const summary = await refusal(rail, draftOf());
+  assert.ok(summary.includes(`${UNREAD_WORDS}${FRIEND} is one of them; nothing is sent. Try again in a minute`), summary);
+  assert.equal(calls.quotes.length, 0);
+});
+
+test('our own deposit addresses are held on every chain a payout lands on', () => {
   for (const network of ['eth', 'base', 'arb', 'hypercore', 'sol', 'fogo', 'near', 'btc', 'xrp', 'ton', 'abs']) {
     assert.equal(readsOwnDeposit(network), true, network);
   }
   assert.equal(readsOwnDeposit('zec'), false);
   assert.equal(readsOwnDeposit('madeupchain'), false);
-  assert.equal(ownDepositChain('base'), 'base');
-  assert.equal(ownDepositChain('sol'), 'sol');
-  assert.equal(ownDepositChain('abs'), 'eth');
-  // Abstract has no row on the bridge's list, so a payout to our own address there is refused.
-  const rows = parsePoaTokens([
-    { defuse_asset_identifier: 'eth:1:native', asset_name: 'ETH', decimals: 18, min_deposit_amount: '1', intents_token_id: 'nep141:eth.omft.near' },
-  ]);
-  assert.deepEqual(depositFloorOf(rows, 'abs', { assetId: 'nep141:eth.omft.near', native: true, contract: null }), { listed: false });
 });
 
-/* The deposit route is asked a last time right before the key signs, as the payout route is: it
-   can pause in the seconds the live quote and the generated intent take (fix-verify, 2026-09-27:
-   no test had it be the check that refuses). Here it is open at the click and paused by the time
-   the intent is back, and the signer is never reached. */
-test('a payout to our own deposit address is refused right before the signature when deposits into the chain pause after the click', async () => {
-  const asked: RouteAsk[] = [];
-  const routes: RouteHealth = {
-    check: async (ask) => {
-      asked.push(ask);
-      const ins = asked.filter((a) => a.direction === 'in').length;
-      const state: RouteState = ask.direction === 'in' && ins >= 2 ? 'closed' : 'open';
-      return { network: ask.network, direction: ask.direction, state, reasons: state === 'closed' ? [{ source: 'status', state, text: 'Ethereum deposits paused', said: 'Ethereum deposits paused' }] : [], checkedAt: NOW };
-    },
-  };
-  const { rail, calls } = railOf({ own: { address: FRIEND.toLowerCase(), memo: null }, floor: { listed: true, min: '1000000000000', decimals: 18 }, routes, signerThrows: 'the key was asked to sign' });
-  const result = await rail.execute(draftOf());
-  assert.equal(result.ok, false);
-  assert.equal(result.reason, 'route_closed', result.detail);
-  assert.match(result.detail, /your own NEAR Intents deposit address on Ethereum/);
-  assert.equal(calls.generated.length, 1, 'the refusal came before the intent was generated, not right before the signature');
-  assert.equal(calls.submitted.length, 0);
-  assert.deepEqual(asked.map((a) => `${a.direction}:${a.maxAgeMs}`), ['out:10000', 'in:10000', 'out:10000', 'in:10000']);
+/* With no `ownDeposit` handed in, the rail reads the list itself off `dataDir`: the book's one-time
+   addresses and the old pins file, for every account on this Mac, held to the payout chain's
+   family. Every fetch the rail makes is recorded, and none is the bridge. */
+test('with a data folder and no list handed in, the rail reads the book and the old pins off disk, and fetches nothing from the bridge', { timeout: 10_000 }, async () => {
+  const dir = tempDir('phosphor-pay-own-');
+  const book = createDepositBook(dir);
+  const baseOne = '0x' + '1a'.repeat(20);
+  const solOne = 'So11111111111111111111111111111111111111112';
+  book.add(bookEntry('base', 'eth:8453', baseOne));
+  book.add({ ...bookEntry('sol', 'sol:mainnet', solOne), assetId: SOL_ASSET, symbol: 'SOL', decimals: 9 });
+  const oldArb = '0x' + '2b'.repeat(20);
+  const elsewhere = '0x' + '3c'.repeat(20);
+  fs.writeFileSync(
+    depositPinsPath(dir),
+    JSON.stringify({
+      [`${ACCOUNT}|eth:42161`]: { address: oldArb, memo: null, shownAt: '2026-09-01T00:00:00Z' },
+      // Another account on this Mac: still ours.
+      ['0x' + '9'.repeat(40) + '|eth:1']: { address: elsewhere, memo: null, shownAt: '2026-09-01T00:00:00Z' },
+    }),
+  );
+
+  const urls: string[] = [];
+  const fetchImpl = (async (input: unknown) => {
+    const url = input instanceof Request ? input.url : String(input);
+    urls.push(url);
+    if (url.includes('chaindefuser')) return new Promise<Response>(() => {});
+    return new Response('down', { status: 500 });
+  }) as typeof fetch;
+
+  const onEth = ownDepositsOn(dir, 'eth')!;
+  assert.deepEqual(onEth.map((d) => `${d.kind}:${d.network}:${d.address}`).sort(), [`one_time:base:${baseOne}`, `standing:arb:${oldArb}`, `standing:eth:${elsewhere}`].sort());
+  assert.deepEqual(ownDepositsOn(dir, 'sol')!.map((d) => d.address), [solOne], 'an EVM address is not ours on Solana');
+
+  const onBase: Partial<IntentsPayDraft> = { network: 'base', symbol: 'USDC', originAsset: USDC_BASE_ASSET, amount: 10, minReceived: minReceivedForPay(10) };
+  for (const [over, to, words] of [
+    [{}, baseOne, `${ONE_TIME_WORDS}Base`],
+    [ON_OP, baseOne, `${ONE_TIME_WORDS}Base`],
+    [{}, oldArb, `${STANDING_WORDS}Arbitrum`],
+    [onBase, elsewhere, `${STANDING_WORDS}Ethereum`],
+  ] as const) {
+    const { rail, calls } = railOf({ dataDir: dir, fetchImpl });
+    const summary = await refusal(rail, draftOf({ ...over, to: getAddress(to) }));
+    assert.ok(summary.includes(words), `${over.network ?? 'eth'} ${to}: ${summary}`);
+    assert.equal(calls.quotes.length, 0);
+  }
+  // Somebody else's address is paid on the same folder, start to finish, with the bridge hanging:
+  // the receiver reads before and after go through the recorded fetch, and none is the bridge.
+  const { rail, calls } = railOf({ dataDir: dir, fetchImpl });
+  const sim = await rail.simulate(draftOf());
+  assert.equal(sim.ok, true, sim.summary);
+  const done = await rail.execute(draftOf());
+  assert.equal(done.ok, true, done.detail);
+  assert.equal(calls.submitted.length, 1);
+  assert.ok(urls.length > 0, 'the receiver read never went through the recorded fetch');
+  assert.deepEqual(urls.filter((u) => u.includes('chaindefuser')), [], urls.join(' '));
+});
+
+test('with no data folder and no list handed in, nothing is ours and the payout goes ahead', async () => {
+  const rail = intentsPayRail({
+    keysPath: '/nonexistent/keys.json',
+    tokens: registry,
+    api: apiOf().api,
+    signer,
+    now: () => NOW,
+    quoteKey: TEST_QUOTE_KEY,
+    receiverRead: async () => summaryOf('0.51'),
+  });
+  const sim = await rail.simulate(draftOf());
+  assert.equal(sim.ok, true, sim.summary);
 });
 
 // ---------- the coin the card priced is the coin that pays ----------

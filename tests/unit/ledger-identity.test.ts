@@ -144,7 +144,6 @@ test('the deposit watch credits a deposit for a wallet created after the ledger 
       refreshes += 1;
       return ledger.refresh().then(() => undefined);
     },
-    recent: async () => [],
     fetchImpl: world.fetchImpl,
     pollMs: 5,
   });

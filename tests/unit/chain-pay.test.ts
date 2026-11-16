@@ -6,12 +6,15 @@
 // every one checked before a quote is asked for and again before the key is touched: no memo can
 // travel with a payout, so an account that needs one is refused; an account that does not exist
 // yet is paid only what the ledger will take to create it; a TON address is sent non-bounceable;
-// and an address form 1Click would not echo is refused by name. Addresses here are live ones read
-// on 2026-09-26 (the account's own bridge deposit addresses, a Binance XRP account, a Stellar
-// account carrying config.memo_required, Tether's Tron contract).
+// and an address form 1Click would not echo is refused by name. A payout to one of our own deposit
+// addresses (a one-time 1Click address in the book, or a standing one the bridge handed out before)
+// is refused with one sentence, read off this Mac's disk: the bridge is never asked on a payout.
+// Addresses here are live ones read on 2026-09-26 (the account's old bridge deposit addresses, a
+// Binance XRP account, a Stellar account carrying config.memo_required, Tether's Tron contract).
 
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { getAddress } from 'viem';
 import type { Address } from 'viem';
 
@@ -23,8 +26,11 @@ import type { IntentsApiPort, IntentsQuoteParams, IntentsSignerPort } from '../.
 import { INTENTS_PAY_COUNTERPARTY, intentsPayRail, minReceivedForPay, payFamilyOf, payRefusal, recipientSentence } from '../../src/rails/intents-pay.ts';
 import { addressActivity, createChainFetchState, payTarget } from '../../src/chainscan/index.ts';
 import { makeCtx, railThat } from './helpers/proposals.ts';
-import { parsePoaTokens, spendNetworkOf } from '../../src/rails/intents-address.ts';
-import { depositFloorOf } from '../../src/rails/pay-rules.ts';
+import { spendNetworkOf } from '../../src/rails/intents-address.ts';
+import type { OwnDeposit } from '../../src/rails/pay-rules.ts';
+import { createDepositBook, depositBookPath, depositPinsPath } from '../../src/rails/deposit-quote.ts';
+import type { OneTimeDeposit } from '../../src/rails/deposit-quote.ts';
+import { tempDir } from './helpers/tmp.ts';
 import { reasonFor } from '../../src/vault/reason.ts';
 import { TEST_QUOTE_KEY, signQuote } from './helpers/signed-quote.ts';
 import { bech32Lookalike, cashAddrEncode, cashAddrLookalike, range } from './helpers/lookalike.ts';
@@ -33,7 +39,7 @@ const OWNER = getAddress('0xd7b2de5862008d949dd6e5d70d4c68ad1d4d5050');
 const ACCOUNT = OWNER.toLowerCase();
 const HANDLE = 'a7d101a893efccc5e560badd89b55325c99a4da76f2ec584d6a355415e388058';
 
-// The account's own bridge deposit addresses, read from bridge.chaindefuser.com on 2026-09-26.
+// The account's old standing bridge deposit addresses, read from the bridge on 2026-09-26.
 const OWN = {
   xrp: 'rp6s4fyjoCzjZ7Pukt46UVek9LQq1X2xHe',
   stellar: 'GDJ4JZXZELZD737NVFORH4PSSQDWFDZTKW3AIDKHYQG23ZXBPDGGQBJK',
@@ -126,26 +132,42 @@ function draftOf(coin: Coin, to: string, amount: number, over: Partial<IntentsPa
   };
 }
 
-type OwnAnswer = { address: string; memo: string | null } | null;
+// Our own deposit addresses on the payout chain's family as the rail's dependency answers them; null is unread.
+type OwnList = readonly OwnDeposit[] | null;
 
 type Options = {
   targets?: Array<Target | null>; // what the chain says, simulate first, execute second
-  // The bridge's deposit address for the account, or one answer per ask in turn (the last repeats).
-  own?: OwnAnswer | Array<OwnAnswer>;
+  own?: OwnList; // our own deposit addresses, the same answer at every ask
+  owns?: OwnList[]; // one answer per ask in turn (the last repeats), in place of `own`
+  dataDir?: string; // the list read off this folder by the rail itself, in place of `own`
   receiver?: Array<AddressSummary | null>;
   quoteThrows?: string;
   echoRecipient?: string;
-  floor?: { listed: false } | { listed: true; min: string; decimals: number } | null; // the bridge's minimum deposit for the token
   closedIn?: string[]; // networks whose deposits NEAR Intents has paused, one answer per ask in turn ('' for open)
-  bridge?: typeof fetch; // answers the bridge's deposit_address itself, in place of `own`
-  liveFloor?: boolean; // the minimum read from the bridge's own list through `bridge`, in place of `floor`
-  clock?: () => number;
+  bridge?: 'fails' | 'hangs'; // how bridge.chaindefuser.com answers, were it ever asked
 };
+
+const BRIDGE_HOST = 'bridge.chaindefuser.com';
+
+/* Every URL the rail fetches, recorded. The old bridge answers 500 or never answers at all, and
+   every other host answers 500, so a payout that went ahead touched no network for its rules. */
+function recordingFetch(bridge: 'fails' | 'hangs'): { fetchImpl: typeof fetch; urls: string[] } {
+  const urls: string[] = [];
+  const fetchImpl = (async (input: unknown) => {
+    const url = input instanceof Request ? input.url : String(input);
+    urls.push(url);
+    if (new URL(url).host === BRIDGE_HOST && bridge === 'hangs') return new Promise<Response>(() => {});
+    return new Response('down', { status: 500 });
+  }) as typeof fetch;
+  return { fetchImpl, urls };
+}
 
 function railOf(coin: Coin, amount: number, opt: Options = {}) {
   const quotes: IntentsQuoteParams[] = [];
   const targetCalls: string[] = [];
   const ownCalls: string[] = [];
+  const net = recordingFetch(opt.bridge ?? 'fails');
+  const owns = [...(opt.owns ?? [])];
   const generated: unknown[] = [];
   const amountBase = baseOf(amount, coin.decimals);
   const quote = (): OneClickQuote => ({
@@ -206,7 +228,8 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
     tokens: registry,
     api,
     signer,
-    now: opt.clock ?? (() => Date.parse('2026-09-26T03:00:00.000Z')),
+    now: () => Date.parse('2026-09-26T03:00:00.000Z'),
+    fetchImpl: net.fetchImpl,
     sleepImpl: async () => {},
     pollIntervalMs: 1,
     pollTimeoutMs: 10,
@@ -216,25 +239,45 @@ function railOf(coin: Coin, amount: number, opt: Options = {}) {
       targetCalls.push(`${network}:${address}`);
       return targets.length > 0 ? (targets.shift() as Target | null) : null;
     },
-    ...(opt.bridge !== undefined
-      ? { fetchImpl: opt.bridge }
+    ...(opt.dataDir !== undefined
+      ? { dataDir: opt.dataDir }
       : {
-          ownDeposit: async (account: string, network: string) => {
-            ownCalls.push(`${account}:${network}`);
-            // Left out, the bridge answers with an address that is not the receiver.
-            if (!Array.isArray(opt.own)) return opt.own === undefined ? NOT_OWN : opt.own;
-            return (opt.own.length > 1 ? opt.own.shift() : opt.own[0]) ?? null;
+          ownDeposit: async (network: string): Promise<OwnList> => {
+            ownCalls.push(network);
+            if (opt.owns !== undefined) return (owns.length > 1 ? owns.shift() : owns[0]) ?? null;
+            // Left out, the list holds an address that is not the receiver.
+            return opt.own === undefined ? NOT_OWN : opt.own;
           },
         }),
-    ...(opt.liveFloor === true ? {} : { depositFloor: async () => (opt.floor === undefined ? null : opt.floor) }),
     ...(opt.closedIn === undefined ? {} : { routes: { check: routeAsked } }),
   } as Parameters<typeof intentsPayRail>[0]);
-  return { rail, quotes, targetCalls, ownCalls, generated, routeAsks };
+  return { rail, quotes, targetCalls, ownCalls, generated, routeAsks, urls: net.urls };
 }
 
 const XRP_OK: Target = { network: 'xrp', exists: true, requireDestTag: false, reserveXrp: 1 };
 const XLM_OK: Target = { network: 'stellar', exists: true, memoRequired: false, trustlines: [{ code: 'USDC', issuer: USDC_XLM_ISSUER, authorized: true, balance: '0', limit: '922337203685.4775807' }] };
-const NOT_OWN = { address: 'rSomebodyElse', memo: null };
+const NOT_OWN: OwnList = [{ address: 'rSomebodyElse', memo: null, kind: 'standing', network: 'xrp', deadline: null }];
+
+// One of our own deposit addresses, as the list names it.
+function oneTime(network: string, address: string, memo: string | null = null): OwnDeposit {
+  return { address, memo, kind: 'one_time', network, deadline: '2026-09-27T03:00:00.000Z' };
+}
+function standing(network: string, address: string, memo: string | null = null): OwnDeposit {
+  return { address, memo, kind: 'standing', network, deadline: null };
+}
+
+// A one-time address as the book keeps it, for the tests that read the list off disk.
+function bookEntry(chain: string, network: string, symbol: string, address: string): OneTimeDeposit {
+  return {
+    account: ACCOUNT, chain, network, symbol, assetId: `nep141:${chain}.omft.near`, decimals: 8, address, memo: null,
+    minimumBase: '100000000', minimum: '1', deadline: '2026-09-27T03:00:00.000Z', coldAt: null,
+    mintedAt: '2026-09-26T02:00:00.000Z', correlationId: 'c-1', signature: null, timestamp: null,
+  };
+}
+
+const ONE_TIME_WORDS = /is a one-time deposit address Phosphor got from NEAR Intents for money coming in on /;
+const STANDING_WORDS = /is your old NEAR Intents deposit address on /;
+const UNREAD_WORDS = /the app could not read its own list of deposit addresses, so it cannot rule out that /;
 
 async function refused(r: ReturnType<typeof railOf>, draft: IntentsPayDraft): Promise<string> {
   const sim = await r.rail.simulate(draft);
@@ -390,140 +433,143 @@ test('the Stellar reader keeps a trustline\'s buying liabilities', async () => {
   assert.equal(read.trustlines[0]?.buying, '95.0000000', JSON.stringify(read));
 });
 
-test('the bridge deposit address on Stellar, which routes by memo, is refused as a destination', async () => {
-  const r = railOf(COINS.XLM, 50, { targets: [XLM_OK], own: { address: OWN.stellar, memo: OWN.stellarMemo } });
-  assert.match(await refused(r, draftOf(COINS.XLM, OWN.stellar, 50)), /your own NEAR Intents deposit address on Stellar.*memo/);
+// ---------- our own deposit addresses ----------
+
+/* A standing address the bridge shared on Stellar and told apart by a memo: a payout carries no
+   memo, so it is refused by the address alone, with the old-address sentence. */
+test('our old standing deposit address on Stellar, which routes by memo, is refused as a destination with its sentence', async () => {
+  const r = railOf(COINS.XLM, 50, { targets: [XLM_OK], own: [standing('stellar', OWN.stellar, OWN.stellarMemo)] });
+  const summary = await refused(r, draftOf(COINS.XLM, OWN.stellar, 50));
+  assert.match(summary, new RegExp(`${OWN.stellar} is your old NEAR Intents deposit address on Stellar, which NEAR Intents is closing, so money sent to it may never reach your balance; nothing is sent, pay a wallet address instead`));
   assert.equal(r.quotes.length, 0);
-  // The bridge would not say what it is: on a memo chain that is not a check that passed.
+  assert.deepEqual(r.ownCalls, ['stellar']);
+  // A list that could not be read is not a check that passed.
   const blind = railOf(COINS.XLM, 50, { targets: [XLM_OK], own: null });
-  assert.match(await refused(blind, draftOf(COINS.XLM, PLAIN_XLM, 50)), /bridge did not say/);
+  assert.match(await refused(blind, draftOf(COINS.XLM, PLAIN_XLM, 50)), new RegExp(`${UNREAD_WORDS.source}${PLAIN_XLM} is one of them; nothing is sent\\. Try again in a minute`));
+  assert.equal(blind.quotes.length, 0);
 });
 
-// The bridge's minimum deposits, read from its supported_tokens on 2026-09-27.
-const DOGE_FLOOR = { listed: true as const, min: '1000000', decimals: 8 };
-const XRP_FLOOR = { listed: true as const, min: '2000000', decimals: 6 };
-
-test('the own deposit address on a chain with no memo is a round trip, allowed and said', async () => {
-  const r = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: DOGE_FLOOR });
-  const sim = await r.rail.simulate(draftOf(COINS.DOGE, OWN.doge, 200));
-  assert.equal(sim.ok, true, sim.summary);
-  assert.match(sim.summary, /your own NEAR Intents deposit address on Dogecoin: the money comes back into your balance/);
-  assert.ok(sim.send?.notes?.some((n) => /comes back into your balance/.test(n.text)));
+/* Until 0.11.5 a payout to our own address on a chain with no memo was a round trip held to the
+   bridge's minimum. It is a refusal now, whichever kind of address it is. */
+test('a payout to our own deposit address on a chain with no memo is refused, one-time or standing, each with its sentence', async () => {
+  const once = railOf(COINS.DOGE, 200, { own: [oneTime('doge', OWN.doge)] });
+  assert.match(
+    await refused(once, draftOf(COINS.DOGE, OWN.doge, 200)),
+    new RegExp(`${OWN.doge} is a one-time deposit address Phosphor got from NEAR Intents for money coming in on Dogecoin, not a wallet: a payout to it is not a payment to anyone, and money sent to it after its deadline may be lost; nothing is sent, pay a wallet address instead`),
+  );
+  const old = railOf(COINS.DOGE, 200, { own: [standing('doge', OWN.doge)] });
+  assert.match(await refused(old, draftOf(COINS.DOGE, OWN.doge, 200)), new RegExp(`${OWN.doge} ${STANDING_WORDS.source}Dogecoin`));
+  assert.equal(once.quotes.length + old.quotes.length, 0);
+  // An empty list is nothing of ours, and the payout goes ahead.
+  const none = railOf(COINS.DOGE, 200, { own: [] });
+  assert.equal((await none.rail.simulate(draftOf(COINS.DOGE, OWN.doge, 200))).ok, true);
 });
 
-/* Review M1 (2026-09-27): a payout to our own deposit address is a deposit, and the bridge
-   credits nothing under its minimum deposit for the token (XRP's is 2 XRP) nor a token it does not
-   list on that chain. Our own XRP deposit address does not exist on the ledger yet: a payout would
-   create it, lock 1 XRP as its reserve, and nothing shows the bridge credits such a payment. */
-test('a payout to our own deposit address is refused under the bridge minimum, for a token it does not take, and on XRP while the address does not exist', async () => {
+/* Review M1 (2026-09-27) held a payout to our own address to the bridge's minimum and to an XRP
+   account that exists. The address is refused now whatever the amount and whatever the ledger
+   says, and somebody else's address is a plain payout at the same small amount. */
+test('a payout to our own XRP deposit address is refused at any amount and whether or not the ledger has the account', async () => {
   const absent: Target = { network: 'xrp', exists: false, requireDestTag: false, reserveXrp: 1 };
-  const created = railOf(COINS.XRP, 5, { targets: [absent], own: { address: OWN.xrp, memo: null }, floor: XRP_FLOOR });
-  assert.match(await refused(created, draftOf(COINS.XRP, OWN.xrp, 5)), /your own NEAR Intents deposit address on XRP Ledger, and it does not exist on the ledger yet/);
-  const small = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: { address: OWN.xrp, memo: null }, floor: XRP_FLOOR });
-  assert.match(await refused(small, draftOf(COINS.XRP, OWN.xrp, 1.5)), /credits a XRP deposit on XRP Ledger only from 2 XRP; this payout delivers as little as 1\.455 XRP/);
-  const unlisted = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: { listed: false } });
-  assert.match(await refused(unlisted, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge does not take DOGE deposits on Dogecoin/);
-  const unread = railOf(COINS.DOGE, 200, { own: { address: OWN.doge, memo: null }, floor: null });
-  assert.match(await refused(unread, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge did not say the least DOGE deposit it credits on Dogecoin/);
-  assert.equal(created.quotes.length + small.quotes.length + unlisted.quotes.length + unread.quotes.length, 0);
-  // Somebody else's address is not a deposit, and the bridge's minimum says nothing about it.
-  const other = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: NOT_OWN, floor: XRP_FLOOR });
+  for (const [target, amount] of [[absent, 5], [XRP_OK, 1.5], [XRP_OK, 500]] as const) {
+    const r = railOf(COINS.XRP, amount, { targets: [target], own: [oneTime('xrp', OWN.xrp)] });
+    assert.match(await refused(r, draftOf(COINS.XRP, OWN.xrp, amount)), new RegExp(`${OWN.xrp} ${ONE_TIME_WORDS.source}XRP Ledger, not a wallet`));
+    assert.equal(r.quotes.length, 0);
+  }
+  const other = railOf(COINS.XRP, 1.5, { targets: [XRP_OK], own: [oneTime('xrp', OWN.xrp)] });
   assert.equal((await other.rail.simulate(draftOf(COINS.XRP, PLAIN_XRP, 1.5))).ok, true);
 });
 
-/* Review V4 (2026-09-27): the own-deposit read races six seconds to null, and on a chain with no
-   memo a null used to pass, which skipped the minimum-deposit rule and the deposit-route gate for
-   a payout to our own address. Not knowing is a refusal, at simulate and again at execute. */
-test('a payout is refused when the bridge does not say what our own deposit address on the chain is, at simulate and at execute', async () => {
-  const blind = railOf(COINS.DOGE, 200, { own: null, floor: DOGE_FLOOR });
-  assert.match(await refused(blind, draftOf(COINS.DOGE, OWN.doge, 200)), /bridge did not say what your own NEAR Intents deposit address on Dogecoin is/);
+/* Review V4 (2026-09-27): not knowing our own addresses is a refusal, at simulate and again at
+   execute, before any live quote. A list read that throws is the same as one that came back null. */
+test('a payout is refused when our own list of deposit addresses cannot be read, at simulate and at execute', async () => {
+  const blind = railOf(COINS.DOGE, 200, { own: null });
+  assert.match(await refused(blind, draftOf(COINS.DOGE, OWN.doge, 200)), UNREAD_WORDS);
   assert.equal(blind.quotes.length, 0);
-  // Read when the card was drawn, slow at the click: refused before any live quote.
-  const slow = railOf(COINS.DOGE, 200, { own: [{ address: OWN.doge, memo: null }, null], floor: DOGE_FLOOR });
+  // Read when the card was drawn, unreadable at the click: refused before any live quote.
+  const slow = railOf(COINS.DOGE, 200, { owns: [[], null] });
   const draft = draftOf(COINS.DOGE, OWN.doge, 200);
   assert.equal((await slow.rail.simulate(draft)).ok, true);
   const quotesBefore = slow.quotes.length;
-  await assert.rejects(slow.rail.execute(draft), /bridge did not say what your own NEAR Intents deposit address on Dogecoin is/);
-  assert.equal(slow.quotes.length, quotesBefore, 'a live quote was asked for with our own deposit address unknown');
+  await assert.rejects(slow.rail.execute(draft), UNREAD_WORDS);
+  assert.equal(slow.quotes.length, quotesBefore, 'a live quote was asked for with our own deposit addresses unknown');
+  assert.equal(slow.generated.length, 0);
+  // Added to the list between the card and the click: refused at execute.
+  const late = railOf(COINS.DOGE, 200, { owns: [[], [oneTime('doge', OWN.doge)]] });
+  assert.equal((await late.rail.simulate(draft)).ok, true);
+  await assert.rejects(late.rail.execute(draft), ONE_TIME_WORDS);
+  assert.equal(late.generated.length, 0);
 });
 
-test('our own deposit address on a memo chain is refused when the bridge sends the memo as a number', async () => {
-  const bridge = (async () => new Response(JSON.stringify({ result: { address: OWN.xrp, chain: 'xrp:mainnet', memo: 177690326 } }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
-  const r = railOf(COINS.XRP, 20, { targets: [XRP_OK], bridge, floor: XRP_FLOOR });
-  assert.match(await refused(r, draftOf(COINS.XRP, OWN.xrp, 20)), /your own NEAR Intents deposit address on XRP Ledger, which the bridge shares and tells apart by a memo/);
-  assert.equal(r.quotes.length, 0);
+test('a list read that throws refuses the payout like one that could not be read', async () => {
+  const quotes: unknown[] = [];
+  const rail = intentsPayRail({
+    keysPath: '/nonexistent/keys.json',
+    tokens: registry,
+    api: { tokens: async () => apiTokens, quote: async (p) => { quotes.push(p); throw new Error('never quoted'); }, generateIntent: async () => { throw new Error('no'); }, submitIntent: async () => { throw new Error('no'); }, status: async () => { throw new Error('no'); } },
+    signer: { address: () => OWNER as Address, signErc191: async () => { throw new Error('never signs'); } },
+    quoteKey: TEST_QUOTE_KEY,
+    receiverRead: async () => null,
+    ownDeposit: async () => { throw new Error('EACCES: permission denied'); },
+  });
+  const sim = await rail.simulate(draftOf(COINS.DOGE, OWN.doge, 200));
+  assert.equal(sim.ok, false, sim.summary);
+  assert.match(sim.summary, UNREAD_WORDS);
+  assert.equal(quotes.length, 0);
 });
 
-test('the bridge minimum is read for the payout chain, since one intents token is listed on several', () => {
-  const rows = parsePoaTokens([
-    { defuse_asset_identifier: 'xrp:mainnet:native', asset_name: 'XRP', decimals: 6, min_deposit_amount: '2000000', intents_token_id: 'nep141:xrp.omft.near' },
-    { defuse_asset_identifier: 'aptos:mainnet:0x692a::xrp::XRP', asset_name: 'XRP', decimals: 6, min_deposit_amount: '1', intents_token_id: 'nep141:xrp.omft.near' },
-  ]);
-  assert.deepEqual(depositFloorOf(rows, 'xrp', { assetId: 'nep141:xrp.omft.near', native: true, contract: null }), { listed: true, min: '2000000', decimals: 6 });
-  assert.deepEqual(depositFloorOf(rows, 'aptos', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: true, min: '1', decimals: 6 });
-  assert.deepEqual(depositFloorOf(rows, 'starknet', { assetId: 'nep141:xrp.omft.near', native: false, contract: null }), { listed: false });
+/* The rule is read off this Mac's disk, never off the bridge: until 0.11.5 a bridge that did not
+   answer refused every payout, and NEAR Intents is closing it. Here the bridge answers 500, or
+   never answers, and every URL the rail fetches is recorded: none is the bridge, and the payout
+   goes ahead on the list from the folder, which still refuses our own address. */
+for (const bridge of ['fails', 'hangs'] as const) {
+  test(`a bridge that ${bridge === 'fails' ? 'answers 500' : 'never answers'} is never asked on a payout and blocks no send`, { timeout: 10_000 }, async () => {
+    const dir = tempDir('phosphor-pay-own-');
+    createDepositBook(dir).add(bookEntry('doge', 'doge:mainnet', 'DOGE', OWN.doge));
+    fs.writeFileSync(depositPinsPath(dir), JSON.stringify({ [`${ACCOUNT}|btc:mainnet`]: { address: OWN.btc, memo: null, shownAt: '2026-09-26T00:00:00Z' } }));
+    const r = railOf(COINS.DOGE, 200, { dataDir: dir, bridge });
+    const other = 'DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L';
+    const sim = await r.rail.simulate(draftOf(COINS.DOGE, other, 200));
+    assert.equal(sim.ok, true, sim.summary);
+    assert.equal(r.quotes.length, 1);
+    assert.match(await refused(r, draftOf(COINS.DOGE, OWN.doge, 200)), new RegExp(`${OWN.doge} ${ONE_TIME_WORDS.source}Dogecoin`));
+    const btc = railOf(COINS.BTC, 0.001, { dataDir: dir, bridge });
+    assert.match(await refused(btc, draftOf(COINS.BTC, OWN.btc, 0.001)), new RegExp(`${OWN.btc} ${STANDING_WORDS.source}Bitcoin`));
+    const urls = [...r.urls, ...btc.urls];
+    assert.deepEqual(urls.filter((u) => u.includes('chaindefuser')), [], urls.join(' '));
+  });
+}
+
+/* A list that is on this Mac and cannot be read is not an empty list: a book or pins file that does
+   not parse refuses the payout, and a book row the app cannot type (another build's, a hand edit)
+   still names an address of ours. */
+test('a book or pins file that cannot be read refuses the payout, and a book row the app cannot type still names our address', async () => {
+  const other = 'DH5yaieqoZN36fDVciNyRueRGvGLR3mr7L';
+  const torn = tempDir('phosphor-pay-unread-');
+  fs.writeFileSync(depositBookPath(torn), `{"version":1,"deposits":[{"address":"${OWN.doge}"`);
+  assert.match(await refused(railOf(COINS.DOGE, 200, { dataDir: torn }), draftOf(COINS.DOGE, other, 200)), UNREAD_WORDS);
+
+  const brokenPins = tempDir('phosphor-pay-unread-');
+  fs.writeFileSync(depositPinsPath(brokenPins), '{broken');
+  assert.match(await refused(railOf(COINS.DOGE, 200, { dataDir: brokenPins }), draftOf(COINS.DOGE, other, 200)), UNREAD_WORDS);
+
+  const odd = tempDir('phosphor-pay-unread-');
+  fs.writeFileSync(depositBookPath(odd), JSON.stringify({ version: 1, deposits: [{ ...bookEntry('doge', 'doge:mainnet', 'DOGE', OWN.doge), decimals: '8', settled: null }] }));
+  assert.match(await refused(railOf(COINS.DOGE, 200, { dataDir: odd }), draftOf(COINS.DOGE, OWN.doge, 200)), new RegExp(`${OWN.doge} ${ONE_TIME_WORDS.source}`));
+  const sim = await railOf(COINS.DOGE, 200, { dataDir: odd }).rail.simulate(draftOf(COINS.DOGE, other, 200));
+  assert.equal(sim.ok, true, sim.summary);
 });
 
-/* 1Click can name a token by an id the bridge's row does not carry (a HOT omni id for a token the
-   bridge lists by its own nep141): the row is then found by the token's contract, in any case, or
-   as the chain's coin, the row with no contract. Nothing matching is a token the bridge does not
-   take there, never a guessed row. */
-test('the bridge row is matched by its contract, or as the chain\'s coin, when 1Click names the token by another id', () => {
-  const rows = parsePoaTokens([
-    { defuse_asset_identifier: 'tron:mainnet:native', asset_name: 'TRX', decimals: 6, min_deposit_amount: '1000000', intents_token_id: 'nep141:tron.omft.near' },
-    { defuse_asset_identifier: `tron:mainnet:${USDT_TRON_CONTRACT}`, asset_name: 'USDT', decimals: 6, min_deposit_amount: '5000000', intents_token_id: 'nep141:tron-d28a265909efecdcee7c5028585214ea0b96f015.omft.near' },
-    { defuse_asset_identifier: 'stellar:mainnet:USDC-GA5Z', asset_name: 'USDC', decimals: 7, min_deposit_amount: 'about ten', intents_token_id: 'nep245:v2_1.omni.hot.tg:1100_usdc' },
-  ]);
-  const other = 'nep245:v2_1.omni.hot.tg:728126428_other';
-  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: USDT_TRON_CONTRACT.toUpperCase() }), { listed: true, min: '5000000', decimals: 6 });
-  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: true, contract: null }), { listed: true, min: '1000000', decimals: 6 });
-  // A token with no contract that is not the coin, a contract no row carries, the coin on a chain
-  // whose rows all carry one, and a row whose minimum is not a whole number: none is listed.
-  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: null }), { listed: false });
-  assert.deepEqual(depositFloorOf(rows, 'tron', { assetId: other, native: false, contract: 'TXLAQ63Xg1NAzckPwKHvzw7CSEmLMEqcdj' }), { listed: false });
-  assert.deepEqual(depositFloorOf(rows, 'stellar', { assetId: other, native: true, contract: null }), { listed: false });
-  assert.deepEqual(depositFloorOf(rows, 'stellar', { assetId: 'nep245:v2_1.omni.hot.tg:1100_usdc', native: false, contract: null }), { listed: false });
-});
-
-/* The rail's own read of the bridge's minimums, not one a test hands in: the list is parsed for
-   the payout's chain, kept five minutes, and a list that does not come (a bridge that throws, or
-   answers with no rows, since it lists dozens) is no minimum at all, which on a payout to our own
-   deposit address is a refusal. */
-test('the bridge minimum is read from its live list: parsed for the chain, kept five minutes, and refused on when the list does not come', async () => {
-  let clock = Date.parse('2026-09-26T03:00:00.000Z');
-  let list: unknown[] | Error = [
-    { defuse_asset_identifier: 'doge:mainnet:native', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '30000000000', intents_token_id: 'nep141:doge.omft.near' },
-    { defuse_asset_identifier: 'aptos:mainnet:0x1::doge::DOGE', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '1', intents_token_id: 'nep141:doge.omft.near' },
-  ];
-  const asked: string[] = [];
-  const answer = (body: unknown): Response => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
-  const bridge = (async (_url: unknown, init?: RequestInit) => {
-    const method = String(JSON.parse(String(init?.body)).method);
-    asked.push(method);
-    if (method === 'deposit_address') return answer({ result: { address: OWN.doge, chain: 'doge:mainnet' } });
-    if (list instanceof Error) throw list;
-    return answer({ result: { tokens: list } });
-  }) as typeof fetch;
-  const r = railOf(COINS.DOGE, 200, { bridge, liveFloor: true, clock: () => clock });
-  const draft = draftOf(COINS.DOGE, OWN.doge, 200);
-  // 300 DOGE on Dogecoin, not the 1 base unit the same token has on Aptos.
-  assert.match(await refused(r, draft), /credits a DOGE deposit on Dogecoin only from 300 DOGE; this payout delivers as little as 194 DOGE/);
-  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 1);
-  // Kept five minutes: the list the bridge now sends is not read, then it is.
-  list = [{ defuse_asset_identifier: 'doge:mainnet:native', asset_name: 'DOGE', decimals: 8, min_deposit_amount: '100000000', intents_token_id: 'nep141:doge.omft.near' }];
-  clock += 4 * 60_000;
-  assert.match(await refused(r, draft), /only from 300 DOGE/);
-  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 1);
-  clock += 2 * 60_000;
-  assert.equal((await r.rail.simulate(draft)).ok, true, 'the list read after five minutes, 1 DOGE, was not used');
-  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 2);
-  // A bridge that throws, or answers with no rows, is no minimum: refused, and read again next time.
-  for (const failed of [new Error('socket hang up'), []]) {
-    list = failed;
-    clock += 6 * 60_000;
-    assert.match(await refused(r, draft), /bridge did not say the least DOGE deposit it credits on Dogecoin/);
-  }
-  assert.equal(asked.filter((m) => m === 'supported_tokens').length, 4);
+/* Hex chains outside EVM spell an account in 64 hex digits, and the rule compares hex by value, so
+   an EVM one-time address padded to 64 digits is the same number. The list is held to the payout
+   chain's family: a Base address in the book is not ours on Sui, and the Sui payout goes ahead. */
+test('a one-time EVM address in the book is not ours on a chain of another family, even spelled as the same number', async () => {
+  const dir = tempDir('phosphor-pay-family-');
+  const evm = '0x248f' + '0'.repeat(32) + 'ace7';
+  createDepositBook(dir).add(bookEntry('base', 'eth:8453', 'USDC', evm));
+  const padded = '0x' + '0'.repeat(24) + evm.slice(2);
+  const sui = railOf(COINS.SUI, 10, { dataDir: dir, echoRecipient: padded });
+  const sim = await sui.rail.simulate(draftOf(COINS.SUI, padded, 10));
+  assert.equal(sim.ok, true, sim.summary);
 });
 
 // ---------- TON ----------
@@ -541,30 +587,23 @@ test('a bounceable or raw TON address is sent as the same account non-bounceable
   assert.match(await refused(bounced, draftOf(COINS.GRAM, TON_EQ, 5)), /recipient|pay/i);
 });
 
-/* A payout to our own deposit address is a deposit into that chain's route (the lead, 2026-09-27):
-   TON deposits were paused that day, and a payout to our own TON deposit address simulated ok and
-   would have sat stuck at the bridge. The deposit route is asked at simulate and again at execute. */
-test('a payout to our own TON deposit address is refused while NEAR Intents has paused TON deposits, at simulate and at execute', async () => {
-  const floor = { listed: true as const, min: '10000000', decimals: 9 };
-  const closed = railOf(COINS.GRAM, 5, { own: { address: OWN.ton, memo: null }, floor, closedIn: ['ton'] });
-  const sim = await closed.rail.simulate(draftOf(COINS.GRAM, OWN.ton, 5));
-  assert.equal(sim.ok, false, sim.summary);
-  assert.equal(sim.reason, 'route_closed');
-  assert.match(sim.summary, /your own NEAR Intents deposit address on TON, so this payout is a TON deposit, and NEAR Intents has paused TON deposits right now/);
-  assert.ok(closed.routeAsks.includes('ton:in'), closed.routeAsks.join(' '));
-  assert.equal(closed.quotes.length, 0);
-  // Open when the card was drawn, paused by the click: refused before any live quote.
-  const later = railOf(COINS.GRAM, 5, { own: { address: OWN.ton, memo: null }, floor, closedIn: ['', 'ton'] });
-  const draft = draftOf(COINS.GRAM, OWN.ton, 5);
-  assert.equal((await later.rail.simulate(draft)).ok, true);
-  const quotesBefore = later.quotes.length;
-  const done = await later.rail.execute(draft);
-  assert.equal(done.ok, false);
-  assert.equal(done.reason, 'route_closed');
-  assert.equal(later.quotes.length, quotesBefore, 'a live quote was asked for on a paused deposit route');
-  // Somebody else's TON address is a payout and only the payout route counts.
-  const other = railOf(COINS.GRAM, 5, { own: NOT_OWN, closedIn: ['ton'] });
+/* Until 0.11.5 a payout to our own TON deposit address was a TON deposit and waited on the deposit
+   route. It is refused now by the address alone, in any spelling of the same account, and the
+   deposit route is never asked: a paused deposit route blocks nobody else's payout either. */
+test('a payout to our own TON deposit address is refused in any spelling, and the deposit route is never asked on a payout', async () => {
+  for (const given of [OWN.ton, TON_EQ, TON_RAW]) {
+    const r = railOf(COINS.GRAM, 5, { own: [oneTime('ton', OWN.ton)], closedIn: ['ton'] });
+    const sim = await r.rail.simulate(draftOf(COINS.GRAM, given, 5));
+    assert.equal(sim.ok, false, sim.summary);
+    assert.notEqual(sim.reason, 'route_closed');
+    assert.match(sim.summary, new RegExp(`${ONE_TIME_WORDS.source}TON, not a wallet`));
+    assert.equal(r.quotes.length, 0);
+    assert.ok(!r.routeAsks.includes('ton:in'), r.routeAsks.join(' '));
+  }
+  // Somebody else's TON address is a payout while TON deposits are paused, at simulate and at execute.
+  const other = railOf(COINS.GRAM, 5, { own: [], closedIn: ['ton'] });
   assert.equal((await other.rail.simulate(draftOf(COINS.GRAM, TON_EQ, 5))).ok, true);
+  await assert.rejects(other.rail.execute(draftOf(COINS.GRAM, TON_EQ, 5)), /stop before signing/);
   assert.ok(!other.routeAsks.includes('ton:in'), other.routeAsks.join(' '));
 });
 

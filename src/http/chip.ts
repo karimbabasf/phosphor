@@ -143,9 +143,12 @@ export async function handleChipRestore(ctx: Ctx, req: http.IncomingMessage, res
   sendJson(res, 202, { ok: true, run: started.run });
 }
 
-/* The vault's NEAR deposit address as the Receive row shows it (ctx.intentsReceive, the bridge's
-   address held to its pin and to whether NEAR Intents takes deposits on NEAR right now), or null:
-   no row, no address on it, a memo a transfer cannot carry, or a report for another account. */
+/* The vault's standing NEAR deposit address as the Receive row shows it, or null: no row, no
+   address on it, a memo a transfer cannot carry, or a report for another account. ALWAYS NULL
+   SINCE 2026-11-13: the POA bridge that gave one standing address per network is closing, and the
+   report carries no address (each deposit gets a one-time 1Click address, which takes NEP-141
+   tokens on NEAR, not plain NEAR). So the gas return below stays shut, on purpose: plain NEAR sent
+   to a one-time address is not documented as credited. It opens again with a standing address. */
 async function vaultNearAddress(ctx: Ctx, vault: string): Promise<string | null> {
   const report = await ctx.intentsReceive().catch(() => null);
   if (report === null || report.tampered || report.account?.toLowerCase() !== vault.toLowerCase()) return null;
@@ -156,7 +159,8 @@ async function vaultNearAddress(ctx: Ctx, vault: string): Promise<string | null>
 /* POST /api/vault/gas/return {} -> {ok, near, txHash}: what the old fee account holds, less what
    it keeps, back to this wallet's vault in one NEAR transfer signed by the account's derived key.
    The receiver is the vault's NEAR deposit address as the Receive row shows it, found here and never
-   read from the body. Window only: no agent tool, MCP tool or proposal reaches it. */
+   read from the body, and there is none since the bridge closed (vaultNearAddress), so this refuses
+   for now. Window only: no agent tool, MCP tool or proposal reaches it. */
 export async function handleGasReturn(ctx: Ctx, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
   const body = await guarded(ctx, '/api/vault/gas/return', req, res);
   if (body === null) return;
@@ -174,7 +178,7 @@ export async function handleGasReturn(ctx: Ctx, req: http.IncomingMessage, res: 
   }
   const to = await vaultNearAddress(ctx, vault);
   if (to === null) {
-    ctx.audit.append('app_start', "the old fee account's NEAR did not go back: the bridge showed no NEAR deposit address for the vault", {});
+    ctx.audit.append('app_start', "the old fee account's NEAR did not go back: NEAR Intents gives no standing NEAR address now", {});
     return sendJson(res, 200, chipRefusal('gas_return_failed'));
   }
   // Read now, never kept from above: a lock in between zeroes the session's seed.

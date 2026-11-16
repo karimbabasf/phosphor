@@ -2165,7 +2165,8 @@
   /* ---------- the deposit card ---------- */
 
   /* The agent is told only the address's ends; the card draws the whole address from the
-     window's own read of the wallet, and says in words where it cannot. */
+     deposit watch the agent's call started (GET /api/deposit), the one-time address the backend
+     minted for it, and says in words where it cannot. */
   function depositCard(data, extra) {
     var ok = data.ok !== false;
     var chain = String(data.chain || '');
@@ -2209,8 +2210,14 @@
 
     var slot = dom.el('div', 'tcard-deposit');
     body.appendChild(slot);
+    /* The watch's own sentence about the deposit (a refund, a short deposit), outside the slot
+       so it stays once the address has come down. Filled by followWatch. */
+    var told = dom.el('p', 'tcard-note');
+    told.dataset.role = 'deposit-note';
+    told.hidden = true;
+    body.appendChild(told);
 
-    depositAddress(chain, print).then(function (found) {
+    depositAddress(chain, symbol, print).then(function (found) {
       if (found.address) {
         /* The agent's card shows what can be sent and waits for the same tick Add money does
            before the address (Karim, 2026-09-25), with the same list and the same words. */
@@ -2222,15 +2229,24 @@
           var sym = String(picked || symbol || '').toUpperCase();
           if (slot.__netpick && typeof slot.__netpick.destroy === 'function') slot.__netpick.destroy();
           dom.clear(slot);
+          /* The address takes one coin: another one picked on the tick gets its own address
+             in Add money, never this one. */
+          if (sym !== String(found.symbol || '').toUpperCase()) {
+            return refuseDeposit(slot, { refused: 'This address takes ' + found.symbol + ' only. Add money makes one for ' + sym + '.', open: true }, chain, sym);
+          }
           var asked = pick && typeof pick.routeFor === 'function'
             ? pick.routeFor(chain, sym)
             : Promise.resolve({ failed: 'The address could not be checked here. Add money shows it.' });
           asked.then(function (route) {
             if (route.closed) return refuseDeposit(slot, { refused: route.closed, status: route.statusLink }, chain, sym);
             if (route.failed) return refuseDeposit(slot, { refused: route.failed, open: true }, chain, sym);
+            /* The deadline may have passed while the tick waited. */
+            var late = pick && typeof pick.undrawable === 'function' ? pick.undrawable(found.watch, chain, sym) : null;
+            if (late) return refuseDeposit(slot, { refused: late, open: true }, chain, sym);
             if (ends) dom.setHidden(ends, true);
             drawDeposit(slot, route.notice ? Object.assign({}, found, { notice: route.notice, status: route.statusLink }) : found, chain);
-            slot.__shown = { chain: chain, symbol: sym };
+            slot.__shown = { chain: chain, symbol: sym, address: found.address, startedAt: found.watch.startedAt || null, deadline: found.deadline, deadlineIso: found.watch.deadline };
+            armDeadline(slot);
           });
         };
         if (pick && typeof pick.render === 'function') {
@@ -2242,7 +2258,7 @@
         refuseDeposit(slot, found, chain, symbol);
       }
     });
-    followWatch(parts, data, extra.at, slot);
+    followWatch(parts, data, extra.at, slot, told);
     return parts.card;
   }
 
@@ -2258,16 +2274,23 @@
   }
 
   /* The address is drawn only where Add money would draw it (ui/screens/netpick.js): the wallet
-     file unedited, the wallet open, the network's address unchanged and the one the watch
-     holds, and its ends the ones the agent was told. */
-  function depositAddress(chain, print) {
+     file unedited, the wallet open, the network taking deposits, and the address the one the
+     deposit watch holds (GET /api/deposit), never one from the receive report. The watch has to
+     be for this card's network and coin, still waiting for its one deposit, before its deadline,
+     and its ends the ones the agent was told. */
+  function depositAddress(chain, symbol, print) {
     var moneyIn = window.PhosphorMoneyIn;
     var api = window.PhosphorApi;
     var read = moneyIn && typeof moneyIn.load === 'function'
       ? moneyIn.load()
       : (api && typeof api.intentsReceive === 'function' ? api.intentsReceive().then(function (r) { return r && r.data ? r.data : null; }) : null);
+    var watched = api && typeof api.deposit === 'function'
+      ? api.deposit().then(function (r) { return r && r.data && isObject(r.data.deposit) ? r.data.deposit : null; })
+      : Promise.reject(new Error('no watch'));
     var unread = { refused: 'The address could not be read here. Add money shows it.', open: true };
-    return Promise.resolve(read).then(function (report) {
+    return Promise.all([read, watched]).then(function (got) {
+      var report = got[0];
+      var watch = got[1];
       if (!isObject(report)) return unread;
       if (report.tampered) return { refused: 'The wallet file on this Mac has been edited, so no address in it can be trusted.' };
       var networks = Array.isArray(report.networks) ? report.networks : [];
@@ -2275,27 +2298,66 @@
       for (var i = 0; i < networks.length; i += 1) {
         if (isObject(networks[i]) && networks[i].id === chain) network = networks[i];
       }
-      if (network && typeof network.changed === 'string' && network.changed) return { refused: network.changed };
       // A network NEAR Intents has paused carries the backend's own sentence and where to read more.
       if (network && network.route === 'closed' && typeof network.unavailable === 'string' && network.unavailable) {
         return { refused: network.unavailable, status: network.statusLink };
       }
-      if (!network || network.unavailable || typeof network.address !== 'string' || !network.address) {
-        return { refused: 'No deposit address on this network right now.' };
-      }
+      if (!network || network.unavailable) return { refused: 'No deposit address on this network right now.' };
       if (report.verified !== true) return { refused: 'The whole address shows once the wallet is open.', open: true };
-      var watch = watchNow();
-      var held = watch && watch.chain === chain && typeof watch.address === 'string' && watch.address ? watch.address : network.address;
-      if (printOf(network.address) !== print || held !== network.address) {
+      if (!isObject(watch) || typeof watch.address !== 'string' || !watch.address) {
+        return { refused: 'This address is no longer being watched, so it is not shown. Add money makes a new one.', open: true };
+      }
+      var sym = String(symbol || '').toUpperCase();
+      if (watch.chain !== chain || String(watch.symbol || '').toUpperCase() !== sym || printOf(watch.address) !== print) {
         return { refused: 'This address is not the one your agent was given, so nothing is shown.' };
       }
+      var pick = window.PhosphorNetPick;
+      var problem = pick && typeof pick.undrawable === 'function'
+        ? pick.undrawable(watch, chain, sym)
+        : 'The address could not be checked here. Add money shows it.';
+      if (problem) return { refused: problem, open: true };
       return {
-        address: network.address,
-        memo: typeof network.memo === 'string' && network.memo ? network.memo : null,
+        address: watch.address,
+        symbol: sym,
+        memo: typeof watch.memo === 'string' && watch.memo ? watch.memo : null,
+        deadline: pick.deadlineOf(watch),
+        watch: watch,
         notice: network.route === 'degraded' && typeof network.notice === 'string' && network.notice ? network.notice : null,
         status: network.statusLink
       };
     }, function () { return unread; });
+  }
+
+  /* The card's address comes down when the local clock passes its deadline, by a timer that
+     reads the wall clock again at least every half a minute (a Mac that slept through it). */
+  var DEADLINE_CHECK_MS = 30 * 1000;
+
+  function armDeadline(slot) {
+    var shown = slot.__shown;
+    if (!shown || typeof shown.deadline !== 'number') return;
+    function check() {
+      if (slot.__shown !== shown) return;
+      var left = shown.deadline - Date.now();
+      if (left <= 0) {
+        takeDownDeposit(slot);
+        return;
+      }
+      window.setTimeout(check, Math.min(left, DEADLINE_CHECK_MS));
+    }
+    window.setTimeout(check, Math.min(Math.max(shown.deadline - Date.now(), 0), DEADLINE_CHECK_MS));
+  }
+
+  /* `used`: its watch saw money at it, so it says it has its one deposit rather than the deadline. */
+  function takeDownDeposit(slot, used) {
+    var shown = slot.__shown;
+    if (!shown) return;
+    slot.__shown = null;
+    dom.clear(slot);
+    var pick = window.PhosphorNetPick;
+    var words = used
+      ? (pick && typeof pick.usedWords === 'function' ? pick.usedWords() : 'This address already has its one deposit.')
+      : (pick && typeof pick.expiredWords === 'function' ? pick.expiredWords(shown.deadlineIso) : 'This address stopped taking money.');
+    refuseDeposit(slot, { refused: words, open: true }, shown.chain, shown.symbol);
   }
 
   /* The address in a well, Copy and the QR code under it, and one line that says what the last
@@ -2324,12 +2386,21 @@
 
     var row = dom.el('div', 'mcard-address-row');
     var well = dom.el('div', 'mcard-address-line tcard-deposit-well');
+    var once = null;
+    if (found.watch && pick && typeof pick.oneTimeWords === 'function') {
+      once = dom.el('p', 'tcard-note tcard-deposit-once', pick.oneTimeWords(found.watch.deadline));
+      once.setAttribute('role', 'alert');
+    }
     well.appendChild(pick && typeof pick.addressBlock === 'function'
       ? pick.addressBlock(found.address, typeof pick.kindOf === 'function' ? pick.kindOf(chain) : undefined)
       : dom.el('span', 'addr', found.address));
     row.appendChild(well);
     row.appendChild(checkedCopy(found.address, 'address', say));
     slot.appendChild(row);
+
+    if (once) slot.appendChild(once);
+    var coin = found.watch && typeof found.watch.symbol === 'string' ? found.watch.symbol.trim() : '';
+    if (once && coin && typeof pick.coinOnlyWords === 'function') slot.appendChild(dom.el('p', 'tcard-note tcard-deposit-coin', pick.coinOnlyWords(coin)));
 
     var qr = null;
     var actions = null;
@@ -2423,7 +2494,7 @@
      begun around when the card was. A card drawn again from a stored conversation is older than
      any watch running now, and says nothing. Until the first frame of its watch arrives, a new
      card says what the tool answered. */
-  function followWatch(parts, data, at, slot) {
+  function followWatch(parts, data, at, slot, told) {
     var word = parts.state;
     if (!word) return;
     var when = typeof at === 'number' ? at : Date.now();
@@ -2439,6 +2510,15 @@
         slot.__shown = null;
         dom.clear(slot);
         refuseDeposit(slot, { refused: watch.paused, status: watch.statusLink }, shown.chain, shown.symbol);
+      } else if (shown) {
+        /* Its own watch saying it is over (expired, or no address or another one on the frame),
+           or the local clock past the deadline, takes the address down. */
+        var own = isObject(watch) && ((shown.startedAt && watch.startedAt === shown.startedAt) || watch.address === shown.address);
+        // Money seen at it: one deposit per address, so it comes down saying so.
+        var used = own && pick && typeof pick.seenAt === 'function' && pick.seenAt(watch);
+        var over = own && (watch.phase === 'expired' || typeof watch.address !== 'string' || watch.address !== shown.address);
+        if (used) takeDownDeposit(slot, true);
+        else if (over || Date.now() >= shown.deadline) takeDownDeposit(slot);
       }
       var started = isObject(watch) ? Date.parse(watch.startedAt) : NaN;
       var mine = isObject(watch) && watch.chain === chain && String(watch.symbol || '').toUpperCase() === symbol
@@ -2454,6 +2534,11 @@
       dom.setText(word, label);
       word.setAttribute('data-state', phase === 'credited' ? 'landed' : 'watching');
       dom.setHidden(word, !label);
+      if (told && (mine || !followed)) {
+        var said = mine && typeof watch.note === 'string' ? watch.note.trim() : '';
+        dom.setText(told, said);
+        dom.setHidden(told, said === '');
+      }
     }
     paint(null);
     var store = window.PhosphorState;

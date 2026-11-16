@@ -25,6 +25,7 @@ import type { MarketData } from '../market/index.ts';
 import type { TradeService } from '../trade/service.ts';
 import type { Driver, DriverEvent } from '../driver.ts';
 import type { AgentPresence } from '../agents.ts';
+import type { ChatVendor } from '../providers/index.ts';
 import type { createChartStore } from '../chart.ts';
 import type { ChartSlots } from '../charts.ts';
 import type { SnapshotBroker } from '../snapshot.ts';
@@ -44,6 +45,7 @@ import type { RouteHealth } from '../preflight/route-health.ts';
 import type { VaultPrefs } from '../vault/prefs.ts';
 import type { Terms } from '../terms.ts';
 import type { DepositWatch } from '../vault/watch.ts';
+import type { DepositBook, DepositQuotes } from '../rails/deposit-quote.ts';
 import type { InviteNet, InviteService } from '../invite/claim.ts';
 import type { Received } from '../received.ts';
 import type { LivePrices } from '../ledger/live-prices.ts';
@@ -210,9 +212,16 @@ export type ServerDeps = {
      reason the token is: a test server has no shell. Absent means a relay with no transport key,
      which answers every ask with no_relay and leaves the wallet on the password path. */
   vault?: VaultRelay;
-  /* Where money comes in: the bridge's deposit addresses for this wallet's account. Optional so
-     a test can answer without the network; the app reads the bridge. */
+  /* Where money comes in: the networks and the coins NEAR Intents takes on each, with no address
+     (an address is minted when a card opens). Optional so a test can answer without the network. */
   intentsReceive?: () => Promise<IntentsReceiveReport>;
+  /* The line to 1Click a deposit card is opened over (src/rails/deposit-quote.ts): the coin list,
+     the one-time address a card mints, and the status of a minted address. Optional because demo
+     mode and every test server build none; absent, the report has no coins and no card mints. */
+  depositQuotes?: DepositQuotes;
+  /* The one-time addresses this wallet was handed (<dataDir>/deposit-quotes.json). Injected only
+     by tests; absent, createServer builds one over the data directory. */
+  depositBook?: DepositBook;
   /* The 1Click price list as assetId -> dollars, so the receive report can say what a floor is
      worth. Optional because a test has no 1Click and demo mode builds no client; absent, every
      floor is printed in the token's own unit alone. A throw here never fails the report. */
@@ -291,9 +300,9 @@ export type ServerDeps = {
   /* The invite claim's network: the verifier, the relay, 1Click, the clock. Injected only by
      tests; absent, src/invite/claim.ts builds the live ones. */
   invite?: InviteNet;
-  /* The deposits the bridge reported, for Activity (src/received.ts). Injected only by tests;
-     absent, createServer builds one over the data directory that reads the bridge in live mode.
-     Optional on Ctx too, because the tests that build a Ctx by hand predate it. */
+  /* The money that came in to this app's one-time addresses, for Activity (src/received.ts).
+     Injected only by tests; absent, createServer builds one over the data directory that asks
+     1Click in live mode. Optional on Ctx too, because the tests that build a Ctx by hand predate it. */
   received?: Received;
 };
 
@@ -366,6 +375,8 @@ export type ChatRegistry = {
   start(how: 'human' | 'app'): string | null;
   open(): { ok: true; chat: Chat } | { ok: false; error: string };
   close(chat: Chat): void;
+  // The person switched this chat's vendor; the new one carries the conversation on.
+  handoff(chat: Chat, to: ChatVendor): { ok: true } | { ok: false; error: string };
   payload(): Record<string, unknown>;
   stopAll(): void;
 };
@@ -391,6 +402,7 @@ export type Ctx = Omit<ServerDeps, 'getTheme' | 'setTheme' | 'getScreen' | 'keys
   terms: Terms;
   // The deposit watcher: one address at a time, until landed or a day.
   deposits: DepositWatch;
+  depositBook: DepositBook;
   // Invite codes: the check, the claim and the boot reconcile. See src/invite/claim.ts.
   invites: InviteService;
   /* Re-decide everything an agent proposed while the wallet was locked. Wired by the server

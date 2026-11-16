@@ -15,8 +15,9 @@
 //   status    the official status page (PagerDuty, status.near-intents.org), one read shared by
 //             every check. A live incident or maintenance that names a chain closes it; one that
 //             only touches a shared service warns every chain.
-//   bridge    the POA bridge lists no coin it credits there. Folded in by the receive report,
-//             which already holds that list (bridgeReason below).
+//   bridge    NEAR Intents lists no coin it takes there (1Click's token list, since the POA
+//             bridge's list closed on 2026-11-12). Folded in by the receive report, which already
+//             holds that list (bridgeReason below). The source keeps its old name.
 //   chain     how old the chain's newest block is. A seam only: the multi-chain reader is built
 //             elsewhere and wired later.
 //
@@ -122,12 +123,12 @@ export function withReason(verdict: RouteVerdict, reason: RouteReason | null): R
   return { ...verdict, reasons, state: combine(reasons) };
 }
 
-/* The bridge's voice. A network the bridge lists no coin for credits nothing sent to it, whatever
-   address it hands out. Only a list that was read counts: an empty list is a bridge that did not
-   answer, and that is not a reason to close thirty-five networks. */
+/* The coin list's voice. A network NEAR Intents lists no coin for credits nothing sent to it. Only
+   a list that was read counts: an empty list is a 1Click that did not answer, and that is not a
+   reason to close thirty-five networks. */
 export function bridgeReason(network: string, listed: number, listRead: boolean): RouteReason | null {
   if (!listRead || listed > 0) return null;
-  return { source: 'bridge', state: 'closed', text: `the NEAR Intents bridge lists no coin it credits on ${networkName(network)}` };
+  return { source: 'bridge', state: 'closed', text: `NEAR Intents takes no coin on ${networkName(network)} right now` };
 }
 
 // ---------- the 1Click probe ----------
@@ -511,11 +512,11 @@ export function routeSentence(verdict: RouteVerdict, flow: RouteFlow, audience: 
   if (verdict.state === 'closed') {
     const cause = verdict.reasons.find((r) => r.state === 'closed');
     if (flow === 'deposit') {
-      if (cause?.source === 'bridge') return `The NEAR Intents bridge credits nothing on ${name} right now, so no address is shown.`;
+      if (cause?.source === 'bridge') return `NEAR Intents takes no coin on ${name} right now, so no address is shown.`;
       return `NEAR Intents has paused ${name} deposits right now, so no address is shown. Money sent now may not arrive.${quoted}`;
     }
     if (flow === 'own_deposit') {
-      const why = cause?.source === 'bridge' ? `the NEAR Intents bridge credits nothing on ${name} right now` : `NEAR Intents has paused ${name} deposits right now`;
+      const why = cause?.source === 'bridge' ? `NEAR Intents takes no coin on ${name} right now` : `NEAR Intents has paused ${name} deposits right now`;
       return (
         `This is your own NEAR Intents deposit address on ${name}, so this payout is a ${name} deposit, and ${why}: ` +
         `the money would not come back into your balance, so nothing was signed and nothing moved.${quoted}`
@@ -576,9 +577,9 @@ export type RouteHealthDeps = {
    signature); absent, the TTLs above decide. A kept closed answer is used whatever its age.
    `waitMs` is how long the probe and the page may take before they count as unknown,
    the check's own deadline unless the ask is about to show an address (ADDRESS_WAIT_MS). */
-/* `deposit`: the ask is about money coming in through a bridge deposit address. 1Click plays no
-   part in a deposit (the bridge credits it), so it is not asked: the bridge that gave the address,
-   the status page and the chain decide (Karim, 2026-10-05: "dont rely on the 1click api"). */
+/* `deposit`: the ask is about money coming in through a deposit address. The probe is not asked:
+   the quote that mints the one-time address is 1Click's own answer for that exact coin, and the
+   status page and the chain decide before it (Karim, 2026-10-05: "dont rely on the 1click api"). */
 export type RouteAsk = { network: string; direction: RouteDirection; account: string | null; asset?: string; maxAgeMs?: number; waitMs?: number; deposit?: boolean };
 
 export type RouteHealth = { check(ask: RouteAsk): Promise<RouteVerdict> };
@@ -596,9 +597,10 @@ export async function routeGate(routes: RouteHealth | undefined, ask: RouteAsk, 
   return verdict.state === 'closed' ? { closed: sentence, notice: null } : { closed: null, notice: sentence };
 }
 
-/* Whether a deposit address may be shown on this verdict: no voice closes the route. A deposit's
-   verdict carries no 1Click voice (RouteAsk.deposit), and the address itself is the bridge's answer,
-   so a bridge that gave one and a status page that does not say the network is paused are enough. */
+/* Whether a deposit address may be minted on this verdict: no voice closes the route. A deposit's
+   verdict carries no probe (RouteAsk.deposit), and the address itself is 1Click's answer: the
+   quote that mints it refuses a pair 1Click will not take, so a status page that does not say the
+   network is paused is enough to ask for one. */
 export function depositConfirmed(verdict: RouteVerdict): boolean {
   return verdict.state !== 'closed';
 }

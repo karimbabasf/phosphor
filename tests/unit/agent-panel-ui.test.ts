@@ -80,8 +80,10 @@ test('the panel builds no control that decides anything', () => {
   // decides nothing about money, only whether the assistant's process ends. Latest is the quiet
   // control on the thread's bottom edge: it scrolls, and that is all it does. Change is a put-off
   // agent's way back on its roster row (UX review 2026-10-01, finding 9): it brings back the Allow
-  // card (ui/screens/agentask.js), which decides; the row does not.
-  const allowed = ['Start your agent', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest', 'Change'];
+  // card (ui/screens/agentask.js), which decides; the row does not. Switch hands the chat to the
+  // other vendor the window runs (src/http/chats.ts handoff): like Turn off, it decides which
+  // process answers, never anything about money.
+  const allowed = ['Start your agent', 'Turn off', 'Connect your own', 'Copy', 'Retry', 'Back', 'Keep running', 'Latest', 'Change', 'Switch'];
   assert.ok(labels.length > 0, 'the panel builds no buttons at all, so this test is not looking at it');
   for (const raw of labels) {
     const label = raw.replace(/^.*, '/, '').replace(/'$/, '');
@@ -95,6 +97,9 @@ test('the panel builds no control that decides anything', () => {
     "dom.el('button', 'steps-fold');",
     // "Waiting for your OK": it scrolls to the card that asks, and decides nothing.
     "dom.el('button', 'agent-waiting');",
+    // The assistant picker's key in the composer (2026-11-13): it opens the list of agents, and a
+    // pick hands the chat over like Switch did. It decides which process answers, never money.
+    "dom.el('button', 'composer-agent');",
   ];
   for (const site of sites) assert.ok(known.includes(site.trim()), `an unknown button site: ${site.trim()}`);
   assert.equal(/\bapprove\b|\brefuse\b/i.test(SOURCE), false, 'the panel names an approval route');

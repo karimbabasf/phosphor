@@ -33,7 +33,6 @@ function build(intents: IntentsRead | undefined = READ_OK) {
     sse: { broadcast: () => {}, broadcastState: () => {} },
     account: () => ACCOUNT,
     refresh: async () => {},
-    recent: async () => [],
     balance: async (_account, assetId) => balances.get(assetId) ?? null,
     now: () => Date.parse('2026-10-01T10:00:00.000Z'),
     pollMs: 5,

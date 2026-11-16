@@ -261,9 +261,11 @@
       return net.getJson('/api/deposit/route' + query, { noCache: true });
     },
 
-    depositShow: function (chain, symbol, address) {
+    /* Mints or reuses the one-time address for this network and coin and
+       starts the watch on it. No address is sent: the backend never takes
+       one from the window. */
+    depositShow: function (chain, symbol) {
       var body = { chain: chain, symbol: symbol };
-      if (address) body.address = address;
       return net.postJson('/api/deposit/show', body, { busy: 'deposit', label: 'Opening the deposit card' });
     },
 

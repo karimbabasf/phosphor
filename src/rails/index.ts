@@ -169,6 +169,8 @@ export function createRails(deps: RailDeps): RailRegistry {
     keysPath: deps.cfg.keysPath,
     tokens: deps.tokens,
     client,
+    // Other money on its way to the coin a swap buys, so NEAR's word settles only a rise that is its own.
+    proposals: deps.proposals,
   }) as Rail;
   const defaultSwap = swapRailOf(deps.cfg) === 'relay' ? relaySwap : oneClickSwap;
   const swapFor = (draft: WriteDraft): Rail => {
@@ -207,6 +209,8 @@ export function createRails(deps: RailDeps): RailRegistry {
       client,
       preflight,
       routes,
+      // Where our own deposit addresses are read from, so a payout to one is refused offline.
+      dataDir: deps.cfg.dataDir,
     }) as Rail,
     trade: tradeRail(deps.trade) as Rail,
     // Vault to allowance, behind a click and the vault's own Touch ID; never to anyone else.
