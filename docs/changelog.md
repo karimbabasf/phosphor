@@ -5,6 +5,28 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.6
+
+Built 2026-11-16, the deposit release. Tagged v0.11.6 on 2026-11-16.
+
+- Deposit addresses come from one-time 1Click quotes, not the POA bridge, which NEAR Intents is
+  closing. Each card mints its own address for one coin on one network, with the minimum and the
+  time it stops taking money (24 hours). An address takes one deposit: the card takes it down the
+  moment money is seen at it, and the next card mints a new one. Refunds go back to your balance.
+  The watch, Activity and the agent's deposit tool read 1Click's status.
+- Stellar deposits are not offered until 1Click quotes them, and coins 1Click marks deprecated
+  are never offered.
+- Sends to one of your own deposit addresses are refused from files on this Mac, so a closed
+  bridge never blocks a send.
+- The old fee account's gas return stays shut: it needs a standing NEAR address, which 1Click
+  gives only to partners.
+- A swap says Done within about 2 seconds of NEAR crediting it, down from about 7, and only on a
+  credit that swap alone explains.
+- After Touch ID, the allowance's coins show in about 0.2 seconds instead of waiting for the next
+  15 second read.
+- Pick the assistant from a picker beside the send key. Switching mid-chat hands the conversation
+  to the new assistant with a short summary of what came before.
+
 ## 0.11.5
 
 Built 2026-10-09. Tagged v0.11.5 on 2026-10-09.
