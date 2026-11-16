@@ -234,13 +234,18 @@ test('the signed service is started on each Apple silicon macOS GitHub hosts, by
     return Number(found[1]);
   };
   assert.equal(smoke.strategy?.['fail-fast'], false, 'every leg reports');
-  // One leg, the oldest, runs without holding the release: GitHub fails a retiring runner's jobs
-  // in brownout windows, and a brownout must never fail a release. Its line says when it goes.
+  // At most one leg, the oldest, runs without holding the release: GitHub fails a retiring
+  // runner's jobs in brownout windows, and a brownout must never fail a release. Its line says when
+  // it goes, and once GitHub retires it the line goes too: a cancelled leg skips publish even under
+  // continue-on-error (v0.11.6, macos-14, 2026-11-16).
   const retiring = /^\$\{\{ matrix\.os == '(macos-\d+)' \}\}$/.exec(smoke['continue-on-error'] ?? '')?.[1];
-  assert.ok(retiring !== undefined && labels.includes(retiring), 'one named leg does not hold the release');
-  assert.equal(Math.min(...labels.map(major)), major(retiring), 'and it is the oldest');
-  const line = new RegExp(String.raw`^ +- ${retiring} # (\d{4}-\d{2}-\d{2}): .*Delete this line after (\d{4}-\d{2}-\d{2})`, 'm').exec(source);
-  assert.ok(line !== null && line[1] < line[2], `the ${retiring} line says the date to delete it`);
+  assert.ok(smoke['continue-on-error'] === undefined || retiring !== undefined, 'continue-on-error names one leg or none');
+  if (retiring !== undefined) {
+    assert.ok(labels.includes(retiring), 'the leg that does not hold the release is in the matrix');
+    assert.equal(Math.min(...labels.map(major)), major(retiring), 'and it is the oldest');
+    const line = new RegExp(String.raw`^ +- ${retiring} # (\d{4}-\d{2}-\d{2}): .*Delete this line after (\d{4}-\d{2}-\d{2})`, 'm').exec(source);
+    assert.ok(line !== null && line[1] < line[2], `the ${retiring} line says the date to delete it`);
+  }
   // The rest hold it: the macOS the sign job checked on and a newer one.
   const holding = labels.filter((label) => label !== retiring).map(major);
   const signedOn = major(jobs.sign['runs-on'] ?? '');
