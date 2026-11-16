@@ -568,7 +568,9 @@ test('the address step starts the watch first and draws its one-time address, de
   const once = find(body, '.deposit-once')[0];
   assert.ok(once, 'no one-deposit sentence');
   assert.match(once.textContent, /^This address is for one deposit and stops taking money at .+\. Do not save it or send to it again; ask for a new one next time\.$/);
-  assert.equal(/UTC/.test(once.textContent), false, 'the deadline is not in the viewer\'s own clock');
+  // The zone this machine's clock names (PST on a Mac in SF, UTC on the CI runner), never a fixed one.
+  const ownZone = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' }).formatToParts(new Date()).find((p) => p.type === 'timeZoneName')!.value;
+  assert.ok(once.textContent.includes(` ${ownZone}.`), 'the deadline is not in the viewer\'s own clock');
   assert.equal(find(body, '.deposit-min')[0].textContent, 'Send at least 0.001 USDC.');
   assert.equal(find(body, '.deposit-coin')[0]?.textContent, 'USDC only. Any other coin sent to this address is not credited and may be lost.', 'the card does not say the address takes one coin');
   assert.equal(find(body, '.deposit-warn')[0].textContent, 'w', 'the network\'s warning is not drawn as the backend wrote it');

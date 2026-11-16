@@ -196,7 +196,7 @@ test('the report carries no address: every row is one-time, unshared, unchanged 
       { address: null, memo: null, oneTime: true, sharedWith: [], changed: null },
       row.id,
     );
-    assert.match(row.warning, new RegExp(`^${row.name.replace(/[()]/g, '\\$&')} only\\. Anything sent here from another network is lost\\.`), row.id);
+    assert.match(row.warning, new RegExp(`^${row.name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} only\\. Anything sent here from another network is lost\\.`), row.id);
   }
   assert.equal(report.note, 'Each deposit address comes from NEAR Intents for one deposit, for a day, and forwards it to your balance.');
   assert.equal(line.minted.length, 0, 'reading the report minted an address');
@@ -521,7 +521,7 @@ test('the agent deposit tool takes a registry id or a plain name and answers in 
     const out = await agentAsk(a.ctx, { chain, asset: 'nothing' });
     // The asset is wrong on purpose: the refusal names the network, which proves the alias resolved.
     assert.equal(out.ok, false);
-    assert.match(String(out.reason), new RegExp(`not credited on ${net(report, id).words.replace(/[()]/g, '\\$&')}`), `${chain} did not resolve to ${id}`);
+    assert.match(String(out.reason), new RegExp(`not credited on ${net(report, id).words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`), `${chain} did not resolve to ${id}`);
     assert.equal(a.line!.minted.length, 0, 'a refused asset was minted for');
   }
   const unknown = await agentAsk(doorFor(report).ctx, { chain: 'ETH mainnet on binance', asset: 'USDC' });
@@ -1019,7 +1019,7 @@ test('Karim, 2026-10-05: a deposit never waits on the route probe: hung or refus
   }
   assert.equal(asked.quotes, 0, 'the route checker quoted for a deposit');
   assert.equal(d.line!.minted.length, 1, 'the second card did not reuse the first address');
-  assert.ok(asked.urls.every((u) => !u.includes('bridge.chaindefuser.com')), 'the old bridge was asked');
+  assert.ok(asked.urls.every((u) => new URL(u).host !== 'bridge.chaindefuser.com'), 'the old bridge was asked');
 });
 
 test('a status page that pauses the network closes both doors, and a page nobody could read leaves them open', async () => {
@@ -1106,6 +1106,6 @@ test('what the status page wrote reaches the agent only quoted and labeled as da
 
 test('nothing in this file reached the network, and the old bridge least of all', () => {
   globalThis.fetch = realFetch;
-  assert.ok(fetched.every((u) => !u.includes('bridge.chaindefuser.com')), `the bridge was asked: ${fetched.join(', ')}`);
+  assert.ok(fetched.every((u) => new URL(u).host !== 'bridge.chaindefuser.com'), `the bridge was asked: ${fetched.join(', ')}`);
   assert.deepEqual(fetched, []);
 });

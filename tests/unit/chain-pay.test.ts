@@ -156,7 +156,7 @@ function recordingFetch(bridge: 'fails' | 'hangs'): { fetchImpl: typeof fetch; u
   const fetchImpl = (async (input: unknown) => {
     const url = input instanceof Request ? input.url : String(input);
     urls.push(url);
-    if (url.includes(BRIDGE_HOST) && bridge === 'hangs') return new Promise<Response>(() => {});
+    if (new URL(url).host === BRIDGE_HOST && bridge === 'hangs') return new Promise<Response>(() => {});
     return new Response('down', { status: 500 });
   }) as typeof fetch;
   return { fetchImpl, urls };
