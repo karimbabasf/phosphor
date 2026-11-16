@@ -460,21 +460,19 @@ jobs:
 
   # The signed files, on each Apple silicon macOS that GitHub hosts. The build is aarch64 alone,
   # so the -intel and -large runners (x64) cannot run it. macos-15 and macos-26 hold the release:
-  # publish needs them. macos-14 is the oldest left and runs without holding it, because GitHub
-  # fails its jobs in brownout windows until it retires it on 2026-11-02
-  # (actions/runner-images#13518), and a brownout must never fail a release. No runner has macOS
-  # 13, so 13.5, the floor in tauri.conf.json, is held by the release check's minimum version rule.
+  # publish needs them. GitHub retired macos-14 on 2026-11-02 (actions/runner-images#13518): its
+  # job was cancelled at start, and a cancelled job skips publish even under continue-on-error. No
+  # runner has macOS 13 or 14, so 13.5, the floor in tauri.conf.json, is held by the release
+  # check's minimum version rule.
   smoke:
     name: The vault service starts on ${{ matrix.os }}
     needs: [build, sign]
-    continue-on-error: ${{ matrix.os == 'macos-14' }}
     strategy:
       fail-fast: false
       matrix:
         os:
           - macos-15
           - macos-26
-          - macos-14 # 2026-10-03: does not hold the release. Delete this line after 2026-11-02, when GitHub retires macos-14.
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     permissions: {}

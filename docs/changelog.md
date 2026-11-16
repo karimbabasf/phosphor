@@ -5,9 +5,18 @@ What changed in each version of Phosphor, newest first, written from the git his
 describe, and a test fails the suite when it is not the version in `package.json`. Versions
 without a git tag say so.
 
+## 0.11.7
+
+Built 2026-11-16, the deposit release. Tagged v0.11.7 on 2026-11-16. There is no 0.11.6 release:
+v0.11.6 was tagged and signed, and its release stopped on a test runner GitHub had retired, so
+0.11.7 carries everything listed under 0.11.6 below.
+
+- The release no longer waits on macOS 14, which GitHub stopped hosting, and the disk image is
+  built again if the build machine holds it open for a moment.
+
 ## 0.11.6
 
-Built 2026-11-16, the deposit release. Tagged v0.11.6 on 2026-11-16.
+Built 2026-11-16. Tagged v0.11.6 on 2026-11-16, never published.
 
 - Deposit addresses come from one-time 1Click quotes, not the POA bridge, which NEAR Intents is
   closing. Each card mints its own address for one coin on one network, with the minimum and the

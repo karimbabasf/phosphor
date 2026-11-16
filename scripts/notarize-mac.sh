@@ -225,7 +225,9 @@ rm -rf "$mounted/Phosphor.app"
 ditto "$app" "$mounted/Phosphor.app"
 rm -rf "$mounted/.fseventsd"
 sync
-hdiutil detach "$mounted" >/dev/null
+# Spotlight or fseventsd can hold the volume for a moment ("Resource busy", 2026-11-16): retry, then force.
+for try in 1 2 3 4 5; do hdiutil detach "$mounted" >/dev/null 2>&1 && break; sleep 3; done
+if mount | grep -qF " on $mounted "; then hdiutil detach "$mounted" -force >/dev/null; fi
 mounted=""
 hdiutil convert "$rw" -format UDZO -imagekey zlib-level=9 -ov -o "$work/out.dmg" >/dev/null
 mv -f "$work/out.dmg" "$dmg"
